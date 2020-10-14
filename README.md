@@ -18,7 +18,7 @@ int b() { return 1; }
 int a() { return b(); }
 ```
 conforming to the C-spec is impossible. Therefore, the goal is *most reasonable C-programs should compile*.
-Besides out-of-order compilation, the compiler also supports assignments between "differant" anonymous structs
+Besides out-of-order compilation, the compiler also supports assignments between "different" anonymous structs
 with the same fields allowing for assignments like
 ```
 #define pair(type_a, type_b) struct { type_a first; type_b second; }
