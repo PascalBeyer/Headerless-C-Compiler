@@ -1,74 +1,74 @@
 
-struct explain_dependency{
-    struct explain_dependency *next;
-    struct explain_node *dep;
-};
-
 struct explain_node{
-    unique_string node;
-    struct token *token; // null if we do not know.
+    struct explain_node *next;
+    
+    struct token *sleeping_identifier;
+    struct token_and_compilation_unit{
+        struct token *token;
+        struct compilation_unit *compilation_unit;
+    } *locations;
+    u32 amount_of_locations;
+    u32 location_capacity;
     
     struct explain_node *outgoing_edge;
-    struct explain_dependency *dep_list;
     b32 visited;
 };
 
-func struct explain_node *visit_nodes_fill_in_outgoings_and_return_circular_dependency(struct explain_node *node){
-    node->visited = true;
-    for(struct explain_dependency *dep = node->dep_list; dep; dep = dep->next){
-        if(dep->dep->visited){
-            return dep->dep;
-        }
-        
-        struct explain_node *circle = visit_nodes_fill_in_outgoings_and_return_circular_dependency(dep->dep);
-        if(circle){
-            return circle;
-        }
-    }
-    return null;
-}
-
-func void report_error_for_unresolved_sleepers(struct context *context){
+func void report_errors_for_unresolved_sleepers(struct context *context, struct sleeper_table *sleeper_table){
+    context->should_exit_statement = false;
     context->should_sleep = false;
-    assert(!context->error);
+    context->error = false;
     
     b32 error = false;
-    struct memory_arena *node_arena = context->arena;
-    struct tempoary_memory temp = begin_tempoary_memory(node_arena);
-    struct explain_node *nodes = push_data(node_arena, struct explain_node, 0);
-    u32 amount_of_nodes = 0;
+    
+    struct {
+        struct explain_node *first;
+        struct explain_node *last;
+    } nodes = zero_struct;
+    
     
     begin_error_report(context);
     
-    struct memory_arena *edge_arena = &context->scratch;
-    struct tempoary_memory temp2 = begin_tempoary_memory(edge_arena);
+    struct temporary_memory temp = begin_temporary_memory(&context->scratch);
     
-    // iteralte throught the 'sleepr_table' which is a map 'sleeping_on' -> list 'sleeper', and construct
+    // iterate throught the 'sleeper_table' which is a map 'sleeping_on' -> list 'sleeper', and construct
     // a graph 'sleeper' -> 'sleeping_on'. In the below we then only report undeclared identifiers for terminal
-    // nodes in this graph    -10.08.2020
-    for(u32 i = 0; i < globals.sleeper_table.capacity; i++){
-        struct sleeper_node *sleeper_node = globals.sleeper_table.nodes + i;
+    // nodes in this graph                                                                          -10.08.2020
+    
+    // each 'explain_node' in this graph represents an
+    //     an 'identifier' which is sleeping,
+    //     an 'outgoing_edge' to what we are sleeping on
+    //     a list of tokens which sleep on us (for error reporting)
+    
+    for(u32 i = 0; i < sleeper_table->capacity; i++){
+        struct sleeper_node *sleeper_node = sleeper_table->nodes + i;
         if(!sleeper_node->first_sleeper) continue;
         
-        unique_string sleeping_on = sleep_hash_get_sleep_on(sleeper_node->hash);;
+        struct token *sleeping_on = sleeper_node__get_token(sleeper_node);
+        
         for(struct work_queue_entry *work = sleeper_node->first_sleeper; work; work = work->next){
             // find out who is sleeping. This can be null meaning that we don't know yet. E.g.:
             //      imt foo(){}
-            // would sleep at 'imt' (typepo for int) and not know, that the sleeper is 'foo'.
+            // would sleep at 'imt' (typo for int) and not know, that the sleeper is 'foo'.
             struct token *sleeping = null;
             struct token *sleeping_on_token = work->sleeping_on;
+            struct compilation_unit *compilation_unit = null;
+            
             switch(work->description){
                 case WORK_parse_global_scope_entry:{
                     struct parse_work *parse = work->data;
+                    compilation_unit = parse->compilation_unit;
                     // @cleanup: @incomplete: we right now have it be 0 if its invalid identifier is that right?
                     if(parse->sleeping_ident){
-                        b32 is_valid = (parse->sleeping_ident->value != globals.invalid_identifier);
+                        b32 is_valid = !atoms_match(parse->sleeping_ident->atom, globals.invalid_identifier);
                         sleeping = is_valid ? parse->sleeping_ident : 0;
                     }
                     error = true;
                 }break;
                 case WORK_parse_function_body:{
                     struct parse_work *parse = work->data;
+                    compilation_unit = parse->compilation_unit;
+                    
                     struct ast_function *function = parse->function;
                     sleeping = function->base.token;
                     error = true;
@@ -76,41 +76,22 @@ func void report_error_for_unresolved_sleepers(struct context *context){
                 invalid_default_case();
             }
             
-            
-#if 0
-            if(work->description == WORK_parse_global_scope_entry){
-                if(sleeping && sleeping->value){
-                    print("%.*s ", sleeping->value->amount, sleeping->value->data);
-                }else{
-                    print("??? ");
-                }
-                char *sleep_purposes[] = {
-                    "invalid",
-                    "on_struct",
-                    "on_decl",
-                };
-                char *purpose_string = sleep_purposes[sleep_hash_get_purpose(sleeper_node->hash)];
-                
-                print("sleeping on %.*s with purpose %s\n", sleeping_on->length, sleeping_on->data, purpose_string);
-            }
-#endif
-            
             // we could have a type and an identifier of the same name... we don't really have good access to
             // the sleep reason right now. Otherwise we could assert here... @cleanup
             //assert(!lookup_identifier(context, sleeping_on) || !lookup_type(context, sleeping_on));
-            assert(!sleeping || sleeping->value);
+            assert(!sleeping || sleeping->data);
             
             struct explain_node *begin_node = null;
             struct explain_node *end_node   = null;
             
-            for(u32 node_index = 0; node_index < amount_of_nodes; node_index++){
-                struct explain_node *node = nodes + node_index;
-                if(node->node == sleeping_on){
+            for(struct explain_node *node = nodes.first; node; node = node->next){
+                if(atoms_match(node->sleeping_identifier->atom, sleeping_on->atom)){
                     end_node = node;
                     if(begin_node) break;
-                }else if(sleeping && node->node == sleeping->value){
+                }else if(sleeping && atoms_match(node->sleeping_identifier->atom, sleeping->atom)){
                     begin_node = node;
-                    node->token = sleeping;
+                    // explain!!! what is this?
+                    //  node->token = sleeping;
                     if(end_node) break;
                 }
             }
@@ -124,166 +105,228 @@ func void report_error_for_unresolved_sleepers(struct context *context){
                 //
                 // void _start(sleeping a){}
                 // void _start(sleeping a){}
-                // 
+                //
                 // as both _start would go to sleep on _sleeping and never report multiple definitions.
-                if(begin_node->outgoing_edge) continue; // @note: not implied as we could have chaines
+                if(begin_node->outgoing_edge) continue; // @note: not implied as we could have chains
             }else{
                 if(sleeping){ // if we know what we are sleeping on add it to the graph
-                    struct explain_node *new_node = push_struct(node_arena, struct explain_node);
-                    new_node->node = sleeping->value;
-                    new_node->token = sleeping;
-                    amount_of_nodes += 1;
+                    struct explain_node *new_node = push_struct(&context->scratch, struct explain_node);
+                    new_node->sleeping_identifier = sleeping;
+                    new_node->amount_of_locations  = 1;
+                    new_node->location_capacity    = 4;
+                    struct token_and_compilation_unit *locations = push_uninitialized_data(&context->scratch, struct token_and_compilation_unit, 4);
+                    locations[0].token = sleeping;
+                    locations[0].compilation_unit = compilation_unit;
+                    new_node->locations = locations;
+                    
+                    sll_push_back(nodes, new_node);
                     begin_node = new_node;
                 }
             }
             
             if(!end_node){
-                struct explain_node *new_node = push_struct(node_arena, struct explain_node);
-                new_node->node = sleeping_on;
-                new_node->token = sleeping_on_token;
-                amount_of_nodes += 1;
+                struct explain_node *new_node = push_struct(&context->scratch, struct explain_node);
+                new_node->sleeping_identifier = sleeping_on;
+                new_node->amount_of_locations  = 1;
+                new_node->location_capacity    = 4;
                 
+                struct token_and_compilation_unit *locations = push_uninitialized_data(&context->scratch, struct token_and_compilation_unit, 4);
+                locations[0].token = sleeping_on_token;
+                locations[0].compilation_unit = compilation_unit;
+                new_node->locations = locations;
+                
+                sll_push_back(nodes, new_node);
                 end_node = new_node;
+            }else{
+                // if we already have an end node add our 'sleeping_on' token
+                if(!end_node->outgoing_edge){
+                    dynarray_maybe_grow(struct token_and_compilation_unit, &context->scratch, end_node->locations,
+                            end_node->amount_of_locations, end_node->location_capacity);
+                    smm index = end_node->amount_of_locations++;
+                    end_node->locations[index].token = sleeping_on_token;
+                    end_node->locations[index].compilation_unit = compilation_unit;
+                }
             }
             
             // @note: if we don't have a begin_node we don't know what we are sleeping on and
             //        just want to make sure we have a node for 'sleeping_on'.
             //        So no edge needed.
-            if(begin_node){ 
-                struct explain_dependency *dep = push_struct(edge_arena, struct explain_dependency);
-                dep->next = begin_node->dep_list;
-                begin_node->dep_list = dep;
-                dep->dep = end_node;
-                
+            if(begin_node){
                 assert(!begin_node->outgoing_edge);
                 begin_node->outgoing_edge = end_node;
             }
         }
     }
     
-    // @cleanup: @note: we still cant print multiple locations for a single undeclared identifier, as we 
-    // only get one location for it. this is unfortunate.
-    // this might actually be fixable in just this system, but I am not gonna do that right now -16.12.2019
-    
     b32 reported_undeclared_identifiers = false;
-    for(u32 i = 0; i < amount_of_nodes; i++){
-        struct explain_node *node = nodes + i;
+    for(struct explain_node *node = nodes.first; node; node = node->next){
+        // if the node does not have an outgoing edge, this means that the node does not sleep on anybody.
+        // Therefor it was not in the sleeper table and is a unresolved identifier.
+        // So report everyone that is sleeping on it here.                               14.05.2021
+        
         if(!node->outgoing_edge){
-            assert(node->token);
-
-            report_error(context, node->token, "Undeclared identifier.");
+            assert(node->amount_of_locations > 0);
+            for(u32 location_index = 0; location_index < node->amount_of_locations; location_index++){
+                report_error(context, node->locations[location_index].token, "[%d] Undeclared identifier.", node->locations[location_index].compilation_unit->index);
+            }
             reported_undeclared_identifiers = true;
+            error = true;
         }
     }
     
-    if(!reported_undeclared_identifiers){
-        for(u32 i = 0; i < amount_of_nodes; i++){
-            struct explain_node *node = nodes + i;
-            if(node->visited) continue;
-            struct explain_node *circle = visit_nodes_fill_in_outgoings_and_return_circular_dependency(node);
-            if(circle){
-                print("Program contains circular dependencies:\n");
-                struct explain_node *circle_it = circle;
-                for(; 
-                    circle_it->outgoing_edge != circle; 
-                    circle_it = circle_it->outgoing_edge){
-                    
-                    report_error(context, circle_it->token, "Part of the cycle.");
-                }
-                
-                report_error(context, circle_it->token, "Part of the cycle.");
-                
-                error = true;
+    if(!reported_undeclared_identifiers && nodes.first){
+        
+        // if we have not reported unresolved identifiers, that means every node has 'outgoing_edge' set.
+        // This must mean there is a cycle. In fact we can find this cycle by walking the nodes along the 'outgoing_edge'
+        // eventually we have to reach a node we have already been at.
+        // note that any given identifier doesn't necessarly have to be part of the cycle, as it could just 'lead' to it.
+        //                                                                                              14.05.2021
+        struct explain_node *cycle = null;
+        
+        for(struct explain_node *node = nodes.first; ; node = node->outgoing_edge){
+            
+            if(node->visited){
+                cycle = node;
                 break;
             }
+            
+            node->visited = true;
         }
-    }else{
+
+        assert(cycle);
+        
+        report_error(context, 0, "Program contains circular dependencies:");
+        struct explain_node *cycle_it = cycle;
+        for(; cycle_it->outgoing_edge != cycle; cycle_it = cycle_it->outgoing_edge){
+            report_error(context, cycle_it->locations->token, "Part of the cycle.");
+        }
+        
+        report_error(context, cycle_it->locations->token, "Part of the cycle.");
+        
         error = true;
     }
     
     end_error_report(context);
     if(error || context->error){
         assert(!sll_is_empty(context->error_list)); // we better have something to report.
-        print_error_stream(context);
-        globals.an_error_has_accured = true;
+        globals.an_error_has_occurred = true;
         os_debug_break();
     }
     
-    end_tempoary_memory(temp);
-    end_tempoary_memory(temp2);
+    end_temporary_memory(temp);
 }
 
 
-func void report_error_for_undefined_functions_and_types(struct context *context){
+func struct dll_import_node *lookup_function_in_dll_imports(struct context *context, struct ast_function *function){
+    begin_counter(context, lookup_dll_import);
+    
+    struct string identifier = function->identifier->string;
+    
+    for(struct library_node *library = globals.libraries.first; library; library = library->next){
+        
+        struct dll_import_node *found = ar_lookup_symbol(context->arena, library, identifier);
+        if(found) return found;
+        
+#if 0
+        if(found){
+            if(first_dll_import_node){
+                report_warning(context, WARNING_cannot_distinguish_dll_imports, function->base.token, "Function is defined in both '%.*s' and '%.*s'.", first_dll_import_node->path.size, first_dll_import_node->name.data, dll->name.size, dll->name.data);
+                break;
+            }
+            first_dll_import_node = dll;
+            // function->memory_location = location; // @cleanup: right now immediate execution is dead so not sure
+        }
+#endif
+    }
+    
+    
+    end_counter(context, lookup_dll_import);
+    return null;
+}
+
+func void report_errors_for_undefined_functions_and_types(struct context *context, struct ast_table *ast_table){
     assert(!context->error && !context->should_sleep);
     
-    // everything below is in one giant error report, so we don't have to reset 'context->error' everytime
-    begin_error_report(context); 
+    // Everything below is in one giant error report, so we don't have to reset 'context->error' everytime.
+    begin_error_report(context);
     
-    for(u64 i = 0; i < globals.global_declarations.capacity; i++){
-        struct ast_node *node = globals.global_declarations.nodes + i;
+    for(u64 ast_index = 0; ast_index < ast_table->capacity; ast_index++){
+        struct ast_node *node = ast_table->nodes + ast_index;
         if(!node->ast) continue;
         
         if(node->ast->kind == AST_function){
             struct ast_function *function = cast(struct ast_function *)node->ast;
-            if((function->type->flags & FUNCTION_TYPE_FLAGS_is_dllimport) && 
-               (function->as_decl.flags & DECLARATION_FLAGS_is_referanced)){
-                begin_counter(lookup_dll_import);
-                
-                struct tempoary_memory temp2 = begin_tempoary_memory(context->arena);
-                char *c_string = push_cstring_from_string(context->arena, *function->identifier);
-                
-                struct dll_import_node *first_dll_import_node = null;
-                for(struct dll_import_node *dll = globals.dll_imports.first; dll; dll = dll->next){
-                    // @cleanup: specify the index or whatever
-                    u8 *location = (u8 *)GetProcAddress(dll->module_handle, c_string);
-                    SetLastError(0);
+            
+            if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic) continue;
+            if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
+            
+            if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
+                if(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry){
+                    struct dll_import_node *import = lookup_function_in_dll_imports(context, function);
                     
-                    if(location){
-                        if(first_dll_import_node){
-                            report_error(context, function->base.token, "Function is defined in both '%.*s' and '%.*s'.", first_dll_import_node->name.size, first_dll_import_node->name.data, dll->name.size, dll->name.data);
-                            break;
-                        }
-                        first_dll_import_node = dll;
-                        function->memory_location = location;
+                    if(!import){
+                        report_error(context, function->base.token, "Function is not contained in any of the imported dlls.");
                     }
+                    
+                    function->dll_import_node = import;
                 }
-                
-                if(!function->memory_location){
-                    report_error(context, function->base.token, "Function is not contained in any of the imported dlls.");
-                }
-                function->dll_import_node = first_dll_import_node;
-                
-                end_tempoary_memory(temp2);                
-                end_counter(lookup_dll_import);
+                continue;
             }
             
-            
-            if(!function->is_defined){
-                if(function->as_decl.flags & DECLARATION_FLAGS_is_referanced){
-                    report_error(context, function->base.token, "Function was declared and referanced but never defined.");
+            if(!function->scope){
+                if(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry){
+                    // :dllimports_with_missing_declspec
+                    // @note: apparently MSVC does note require 'dllimport' it appears to be a keyword
+                    //        that gets rid of one indirection which link.exe/we have to insert
+                    //        thus we generate a call to a rip relative jump, i.e.
+                    //            jmp [rip + <offset_off_dll_import_in_import_table>]
+                    struct dll_import_node *import = lookup_function_in_dll_imports(context, function);
+                    if(import){
+                        function->as_decl.flags |= DECLARATION_FLAGS_is_dll_import_with_missing_declspec;
+                        function->dll_import_node = import;
+                    }else{
+                        if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
+                            report_error(context, function->base.token, "A function marked '__declspec(dllexport)' must be defined.");
+                        }else{
+                            assert(function->token_that_referenced_this_function);
+                            
+                            // @cleanup: what about main?
+                            report_error(context, function->base.token, "Function was declared and referenced but never defined.");
+                            report_error(context, function->token_that_referenced_this_function, "... Here the function was referenced.");
+                        }
+                    }
                 }else{
-                    //report_info(context, function->base.token, "Function was declared but never defined.");    
+                    report_warning(context, WARNING_function_declared_but_never_defined, function->base.token, "Function was declared but never defined.");
                 }
-            }else if(!(function->as_decl.flags & DECLARATION_FLAGS_is_referanced)){
-                //report_info(context, function->base.token, "Function was defined but never referanced.");
+            }else if(!(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry)){
+                report_warning(context, WARNING_function_defined_but_unreachable, function->base.token, "Function was defined but unreachable from main.");
             }
             
         }else if(node->ast->kind == AST_declaration){
-            struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
-            if(!(decl->flags & DECLARATION_FLAGS_is_referanced)){
-                assert(string_is_printable(decl->base.token->file->absolute_file_path));
-                //report_info(context, decl->base.token, "Global declaration was never referanced.");
-            }
+            struct ast_declaration *decl = (struct ast_declaration *)node->ast;
             
+            if(type_is_array_of_unknown_size(decl->type)){
+                // 
+                // From the c-spec:
+                // 
+                // "If at the end of the translation unit containing
+                // 
+                //     int i[];
+                // 
+                // the array i still has incomplete type, the implicit initializer causes it to have one element,
+                // which is set to zero on program startup."
+                // 
+                
+                report_warning(context, WARNING_array_of_unknown_size_never_filled_in, decl->base.token, "Bounds for array of unknown size were never filled in. Assuming an array length of one.");
+                patch_array_size(context, (struct ast_array_type *)decl->type, 1, decl->base.token);
+            }
         }else{
             // I think these are fine, maybe one could do type never used or something later.
             assert(node->ast->kind == AST_typedef);
         }
     }
     
-    // @cleanup: later also check both functions and types for unused ones
-    
+    /* not sure if this actually did anything...
     for(u64 i = 0; i < globals.compound_types.capacity; i++){
         struct ast_node *node = globals.compound_types.nodes + i;
         if(!node->ast) continue;
@@ -296,12 +339,12 @@ func void report_error_for_undefined_functions_and_types(struct context *context
             if(decl->type->kind == AST_pointer_type){
                 struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)decl->type;
                 
-                /* @incomplete: this case will currently not be detected.
+    @incomplete: this case will currently not be detected.
                 struct{
                     struct unresolved *first;
                     struct unresolved *last;
                 } debug_members;
-                */
+                
                 
                 // @sigh @speed looping until its not a pointer again @yikes
                 while(pointer->pointer_to->kind == AST_pointer_type){
@@ -317,13 +360,13 @@ func void report_error_for_undefined_functions_and_types(struct context *context
             }
         }
     }
+    */
     end_error_report(context);
     
     if(context->error){
-        globals.an_error_has_accured = true;;
+        globals.an_error_has_occurred = true;
     }
     
-    print_error_stream(context);
 }
 
 

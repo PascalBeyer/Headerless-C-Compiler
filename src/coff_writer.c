@@ -2,22 +2,22 @@
 static void read_pdb(struct memory_arena *scratch, struct os_file pdb_file);
 
 //////////////////////////////////////////////////////
-// PE helpers
+// PE helpers                                       //
 //////////////////////////////////////////////////////
 static const u8 DOS_STUB[] = {
-    0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 
-    0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd0, 0x00, 0x00, 0x00, 
-    0x0e, 0x1f, 0xba, 0x0e, 0x00, 0xb4, 0x09, 0xcd, 0x21, 0xb8, 0x01, 0x4c, 0xcd, 0x21, 0x54, 0x68, 
-    0x69, 0x73, 0x20, 0x70, 0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x20, 0x63, 0x61, 0x6e, 0x6e, 0x6f, 
-    0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6e, 0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20, 
-    0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-    0xfd, 0xa2, 0x09, 0x47, 0xb9, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x67, 0x14, 
-    0x9b, 0xa3, 0x66, 0x15, 0xba, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x66, 0x14, 0xb6, 0xc3, 0x67, 0x14, 
-    0x1b, 0xa0, 0x63, 0x15, 0xb8, 0xc3, 0x67, 0x14, 0x1b, 0xa0, 0x65, 0x15, 0xb8, 0xc3, 0x67, 0x14, 
-    0x52, 0x69, 0x63, 0x68, 0xb9, 0xc3, 0x67, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4e, 0x44, 0x47, 
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+    0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
+    0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd0, 0x00, 0x00, 0x00,
+    0x0e, 0x1f, 0xba, 0x0e, 0x00, 0xb4, 0x09, 0xcd, 0x21, 0xb8, 0x01, 0x4c, 0xcd, 0x21, 0x54, 0x68,
+    0x69, 0x73, 0x20, 0x70, 0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x20, 0x63, 0x61, 0x6e, 0x6e, 0x6f,
+    0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6e, 0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20,
+    0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xfd, 0xa2, 0x09, 0x47, 0xb9, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x67, 0x14,
+    0x9b, 0xa3, 0x66, 0x15, 0xba, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x66, 0x14, 0xb6, 0xc3, 0x67, 0x14,
+    0x1b, 0xa0, 0x63, 0x15, 0xb8, 0xc3, 0x67, 0x14, 0x1b, 0xa0, 0x65, 0x15, 0xb8, 0xc3, 0x67, 0x14,
+    0x52, 0x69, 0x63, 0x68, 0xb9, 0xc3, 0x67, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4e, 0x44, 0x47,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
 
 static_assert(sizeof(DOS_STUB) >= 0x3c);
@@ -106,9 +106,9 @@ typedef struct _IMAGE_DEBUG_DIRECTORY {
 
 typedef struct _IMAGE_IMPORT_DESCRIPTOR {
     DWORD ImportLookupRVA;
-    DWORD TimeDateStamp; 
+    DWORD TimeDateStamp;
     
-    DWORD ForwarderChain; 
+    DWORD ForwarderChain;
     DWORD Name;
     DWORD ImportAddressRVA;
 } IMAGE_IMPORT_DESCRIPTOR;
@@ -116,13 +116,13 @@ typedef IMAGE_IMPORT_DESCRIPTOR __unaligned *PIMAGE_IMPORT_DESCRIPTOR;
 
 typedef enum _UNWIND_OP_CODES {
     UWOP_PUSH_NONVOL = 0, /* info == register number */
-    UWOP_ALLOC_LARGE,     /* no info, alloc size in next 2 slots */
-    UWOP_ALLOC_SMALL,     /* info == size of allocation / 8 - 1 */
-    UWOP_SET_FPREG,       /* no info, FP = RSP + UNWIND_INFO.FPRegOffset*16 */
-    UWOP_SAVE_NONVOL,     /* info == register number, offset in next slot */
-    UWOP_SAVE_NONVOL_FAR, /* info == register number, offset in next 2 slots */
+    UWOP_ALLOC_LARGE = 1,     /* no info, alloc size in next 2 slots */
+    UWOP_ALLOC_SMALL = 2,     /* info == size of allocation / 8 - 1 */
+    UWOP_SET_FPREG   = 3,       /* no info, FP = RSP + UNWIND_INFO.FPRegOffset*16 */
+    UWOP_SAVE_NONVOL = 4,     /* info == register number, offset in next slot */
+    UWOP_SAVE_NONVOL_FAR = 5, /* info == register number, offset in next 2 slots */
     UWOP_SAVE_XMM128 = 8, /* info == XMM reg number, offset in next slot */
-    UWOP_SAVE_XMM128_FAR, /* info == XMM reg number, offset in next 2 slots */
+    UWOP_SAVE_XMM128_FAR = 9, /* info == XMM reg number, offset in next 2 slots */
     UWOP_PUSH_MACHFRAME   /* info == 0: no error-code, 1: error-code */
 } UNWIND_CODE_OPS;
 typedef union _UNWIND_CODE {
@@ -183,19 +183,22 @@ func UNWIND_INFO *function_fill_in_unwind_info(struct memory_arena *emit_arena, 
         *cast(u32 *)push_struct_(emit_arena, sizeof(u32), 1) = save_truncate_smm_to_u32(ast_function->stack_space_needed);
     }
     
-    { // code for establishing the Frame Pointer 
+    { // code for establishing the Frame Pointer
         unwind->CountOfCodes += 1;
         UNWIND_CODE *code = push_struct(emit_arena, UNWIND_CODE);
         code->CodeOffset = 4; // after push rbp and mov rbp, rsp
         code->UnwindOp = UWOP_SET_FPREG;
     }
     
-    {// code for pushing RBP, later we have to do the same for other things we push @incomplete:
-        unwind->CountOfCodes += 1;
-        UNWIND_CODE *code = push_struct(emit_arena, UNWIND_CODE);
-        code->CodeOffset = 1; // after push rbp, which is '55'
-        code->UnwindOp = UWOP_PUSH_NONVOL | (5 << 4);        
-        //code->OpInfo   = 5; // RBP
+    for(u32 i = 0; i < 16; i++){
+        
+        if(ast_function->pushed_register_mask & (1 << i)){
+            unwind->CountOfCodes += 1;
+            UNWIND_CODE *code = push_struct(emit_arena, UNWIND_CODE);
+            code->CodeOffset = 1; // after push rbp, which is '55'
+            code->UnwindOp = UWOP_PUSH_NONVOL | (UBYTE)(i << 4);
+            //code->OpInfo   = 5; // RBP
+        }
     }
     
     if(unwind->CountOfCodes & 1){
@@ -210,20 +213,6 @@ func UNWIND_INFO *function_fill_in_unwind_info(struct memory_arena *emit_arena, 
     return unwind;
 }
 
-
-// @WARNING: this has to match the union in 'exe_write_context' below
-enum section_id{
-    SECTION_ID_none,
-    
-    SECTION_ID_text,
-    SECTION_ID_bss, 
-    SECTION_ID_rdata,
-    SECTION_ID_data,
-    SECTION_ID_pdata,
-    
-    SECTION_ID_count,
-};
-
 struct exe_write_context{
     u8 *base_address;
     u8 *end_address;
@@ -232,30 +221,31 @@ struct exe_write_context{
     IMAGE_FILE_HEADER *coff;
     IMAGE_OPTIONAL_HEADER64 *header;
     
-    union{
-        IMAGE_SECTION_HEADER *section_headers[SECTION_ID_count];
-        struct{
-            // @WARNING: this hash to match the enum 'section_id' above
-            IMAGE_SECTION_HEADER *none; // this should be null
-            IMAGE_SECTION_HEADER *text;
-            IMAGE_SECTION_HEADER *bss;
-            IMAGE_SECTION_HEADER *rdata;
-            IMAGE_SECTION_HEADER *data;
-            IMAGE_SECTION_HEADER *pdata;
-        };
-    };
+    u32 amount_of_sections;
+    IMAGE_SECTION_HEADER *section_headers[0x10];
 };
 
-func IMAGE_SECTION_HEADER *write_section_header(struct exe_write_context *ctx, struct memory_arena *arena, char *name, u32 characteristics){
+func IMAGE_SECTION_HEADER *write_section_header(struct exe_write_context *context, struct memory_arena *arena, char *name, u32 characteristics){
+    
     IMAGE_SECTION_HEADER *section = push_struct(arena, IMAGE_SECTION_HEADER);
+    
     for(u32 i = 0; i < 8; i++){
         section->Name[i] = *name++;
         if(!*name)break;
     }
+    
     section->Characteristics = characteristics;
-    ctx->coff->NumberOfSections++; 
+    context->coff->NumberOfSections++;
+    
+    
+    context->section_headers[context->amount_of_sections++] = section;
     
     return section;
+}
+
+s16 section_id_for_section(struct exe_write_context *context, IMAGE_SECTION_HEADER *section){
+    assert(context->section_headers[0] <= section && section <= context->section_headers[context->amount_of_sections - 1]);
+    return (s16)(section - context->section_headers[0]) + 1;
 }
 
 struct section_write_context{
@@ -268,8 +258,8 @@ struct section_write_context{
     IMAGE_SECTION_HEADER *section;
 };
 
-func u32 make_relative_virtual_address(struct section_write_context *ctx, void *pointer){
-    return save_truncate_smm_to_u32(cast(u8 *)pointer - ctx->section_memory_location + ctx->section->VirtualAddress);
+func u32 make_relative_virtual_address(struct section_write_context *context, void *pointer){
+    return save_truncate_smm_to_u32(cast(u8 *)pointer - context->section_memory_location + context->section->VirtualAddress);
 }
 
 func void begin_section(struct section_write_context *context, IMAGE_SECTION_HEADER *section){
@@ -290,9 +280,9 @@ func void end_section(struct section_write_context *context){
     context->virtual_address = align_up(context->virtual_address + actual_size, 0x1000);
 }
 
-/////////////////////////////////////////////////////////////////////
+//_____________________________________________________________________________________________________________________
 // PDB helpers
-/////////////////////////////////////////////////////////////////////
+
 
 // based on hashStringV1 in llvm, which is based on Hasher::lhashPbCb
 func u32 pdb_string_hash(struct string string){
@@ -315,10 +305,10 @@ func u32 pdb_string_hash(struct string string){
     }
     
     if(remaining){
-        ret ^= *(string.data + at);
+        ret ^= *(u8 *)(string.data + at);
     }
     
-    const u32 to_lower = 0x20202020;
+    u32 to_lower = 0x20202020;
     ret |= to_lower;
     ret ^= (ret >> 11);
     ret ^= (ret >> 16);
@@ -328,7 +318,7 @@ func u32 pdb_string_hash(struct string string){
 
 
 struct pdb_header{
-    u8 signiture[32];
+    u8 signature[32];
     u32 page_size;
     u32 free_page_map;
     u32 number_of_pages;
@@ -337,11 +327,11 @@ struct pdb_header{
     u32 page_number_of_directory_stream_number_list; // i.e some relative pointer to an array
 };
 
-static const u8 pdb_signiture[] = {
-    0x4d, 0x69, 0x63, 0x72, 0x6f, 0x73, 0x6f, 0x66, 0x74, 0x20, 0x43, 0x2f, 0x43, 0x2b, 0x2b, 0x20, 
+static const u8 pdb_signature[] = {
+    0x4d, 0x69, 0x63, 0x72, 0x6f, 0x73, 0x6f, 0x66, 0x74, 0x20, 0x43, 0x2f, 0x43, 0x2b, 0x2b, 0x20,
     0x4d, 0x53, 0x46, 0x20, 0x37, 0x2e, 0x30, 0x30, 0x0d, 0x0a, 0x1a, 0x44, 0x53, 0x00, 0x00, 0x00,
 };
-static_assert(sizeof(pdb_signiture) == 32);
+static_assert(sizeof(pdb_signature) == 32);
 
 struct tpi_stream{
     u32 version;            // always 20040203
@@ -350,7 +340,7 @@ struct tpi_stream{
     u32 maximal_type_index; // -> maximal_type_index - minimal_type_index = amount
     u32 amount_of_bytes_of_type_record_data_following_the_header;
     
-    u16 hash_stream_index; 
+    u16 hash_stream_index;
     s16 hash_aux_stream_index; // unknown, can be -1
     
     u32 hash_key_size;         // usually 4 bytes
@@ -371,38 +361,11 @@ struct tpi_stream{
     u32 incremental_linking_hash_table_length;
 };
 
-enum CV_basic_type{
-    CV_none = 0x0,
-    CV_void = 0x3,
-    
-    CV_s8  = 0x68,
-    CV_u8  = 0x69,
-    CV_s16 = 0x72,
-    CV_u16 = 0x73,
-    CV_s32 = 0x74,
-    CV_u32 = 0x75,
-    CV_s64 = 0x76,
-    CV_u64 = 0x77,
-    
-    CV_f32 = 0x40,
-    CV_f64 = 0x41,
-    
-    
-    //CV_s8_pointer = 0x0168,
-    //CV_u8_pointer = 0x0169,
-    
-    // char *
-    CV_s8_pointer = 0x0620,
-    
-    // unsigned char *
-    CV_u8_pointer = 0x0670,
-};
-
 struct dbi_stream{
-    u32 version_signiture;                             // always -1
+    u32 version_signature;                             // always -1
     u32 version;                                       // always 19990903
     u32 amount_of_times_the_pdb_has_been_written;      // same as in pdb_stream
-    u16 index_of_the_global_symbol_stream;        
+    u16 index_of_the_global_symbol_stream;
     u16 toolchain_version; // u16 major_version: 8, minor_version : 7, is_new_version_format : 1;
     u16 index_of_the_public_symbol_stream;             // what are these indices? are they in the stream array?
     u16 version_number_of_mspdb;                       // we dont use this?
@@ -416,34 +379,33 @@ struct dbi_stream{
     u32 offset_of_the_MFC_type_server_in_the_type_server_map_substream; // unknown what this is for
     u32 optional_debug_header_substream_byte_size; // substream 6
     u32 edit_and_continue_substream_byte_size;     // substream 5
-    //unkown what the last flag does /DEBUG:CTYPES link flag
-    u16 flags; // u16 incrementally_linked :1, private_symbols_stripped :1, has_conflict_types       :1; // 
+    // unknown what the last flag does /DEBUG:CTYPES link flag
+    u16 flags; // u16 incrementally_linked :1, private_symbols_stripped :1, has_conflict_types       :1; 
     u16 machine;                                        // for us always 0x8664 (x86_64)
     u32 padding;
 };
 
-// i do not understand what this is for....
 struct section_contribution_entry{
     s16 section_id;
     // this seems to be one based and can be used to identify the section from some other data
     char Padding1[2];
-    int32_t offset; // offset of the contribution in the section. can be computed contrib.rva - section.rva
-    int32_t size;   // size of the contribution
-    uint32_t characteristics; 
+    s32 offset; // offset of the contribution in the section. can be computed contrib.rva - section.rva
+    s32 size;   // size of the contribution
+    u32 characteristics;
     s16 module_index;    // the module, that is responsible for the contribution
     char Padding2[2];
-    uint32_t data_crc;         // CRC-32 check sums
-    uint32_t reloc_crc;        // CRC-32 check sums
+    u32 data_crc;         // CRC-32 check sums
+    u32 reloc_crc;        // CRC-32 check sums
 };
 
 struct dbi_module_info{
     u32 pad1; // currently open module in the source code???
     struct section_contribution_entry first_section_contribution_entry; // the modules first section_contribution_entry
-    u16 flags; 
+    u16 flags;
     // {was_written_since_dbi_was_opened : 1,unused :7, index_into_TSM_list_for_this_mods_server;}
     u16 module_symbol_stream_index;
     // these 3 correspond to the sizes of Symbols C11LineInfo and C13LineInfo
-    u32 byte_size_of_symbol_information; 
+    u32 byte_size_of_symbol_information;
     u32 byte_size_of_c11_line_information; // not understood assumed to be 0
     u32 byte_size_of_c13_line_information;
     u16 amount_of_source_files;
@@ -529,7 +491,7 @@ struct pdb_write_context{
     smm pdb_size;
     
     // @hmm: Right now we do the whole pdb thing, where pages could be all over the place...
-    // I actually don't really see a reason for that. Maybe it would be faster if this was just 
+    // I actually don't really see a reason for that. Maybe it would be faster if this was just
     // u16 starting_page_index; u16 ending_page_index; and we just commit to writing stuff out sequentially
     // @hmm: actually if we have to write these multi threaded (:PDBFunctionSize) there is good reason
     struct page_list{
@@ -554,11 +516,11 @@ struct pdb_write_context{
     struct pdb_type_info{
         u32 pointer_type_index;
         struct ast_type *type;
-    }*type_index_to_type_info; 
+    }*type_index_to_type_info;
     smm maximal_amount_of_type_indices;
     smm amount_of_type_indices;
     
-    // for emitting type info: (TPI stream/IPI stream) 
+    // for emitting type info: (TPI stream/IPI stream)
     // @WARNING: this means that TPI < TPI_hash < IPI < IPI_hash;
     struct pdb_location type_record_data_begin;
     struct pdb_index_offset_buffer_entry{
@@ -570,13 +532,14 @@ struct pdb_write_context{
     smm index_offset_buffer_boundary;
     
     // MODULE stream
-    smm pdb_line_at; // used to track the line number when emiting line information
+    smm pdb_line_at; // used to track the line number when emitting line information
     smm pdb_offset_at;
     smm pdb_amount_of_lines;
     
     struct pdb_location module_stream_begin;
     smm current_block32_offset_in_stream;
     
+    s16 text_section_id;
 };
 
 func struct pdb_location get_current_pdb_location(struct pdb_write_context *context){
@@ -616,7 +579,8 @@ func u8 *pdb_page_from_index(struct pdb_write_context *context, smm index){
 
 func void stream_push_page(struct pdb_write_context *context, struct page_list *list){
     retry:;
-    u8 *page = push_data(context->arena, u8, 0x1000);
+    // @cleanup: is uninitialized correct here?
+    u8 *page = push_uninitialized_data(context->arena, u8, 0x1000);
     
     struct page_list_node *node = push_struct(context->scratch, struct page_list_node);
     
@@ -628,7 +592,7 @@ func void stream_push_page(struct pdb_write_context *context, struct page_list *
     
     // :free_page_map
     // we implicitly push free page maps when we have to.
-    // The pdb format has free page maps every 0x1000 blocks and they cover 
+    // The pdb format has free page maps every 0x1000 blocks and they cover
     // the first '8 * 0x1000' blocks, so there are like way to many of them... but that's just life
     if((node->page_index & (0x1000 - 1)) == 1){
         sll_push_back(context->free_page_maps, node);
@@ -769,7 +733,7 @@ func u32 stream_begin_symbol(struct pdb_write_context *context, u16 symbol_kind)
         if(offset > context->index_offset_buffer_boundary){
             u32 index = context->index_offset_buffer_at++;
             if(index >= context->index_offset_buffer_size){
-                struct pdb_index_offset_buffer_entry *new_entries = push_data(context->scratch, struct pdb_index_offset_buffer_entry, context->index_offset_buffer_size * 2);
+                struct pdb_index_offset_buffer_entry *new_entries = push_uninitialized_data(context->scratch, struct pdb_index_offset_buffer_entry, context->index_offset_buffer_size * 2);
                 memcpy(new_entries, context->index_offset_buffer, context->index_offset_buffer_size * sizeof(context->index_offset_buffer[0]));
                 context->index_offset_buffer_size *= 2;
                 context->index_offset_buffer = new_entries;
@@ -781,7 +745,7 @@ func u32 stream_begin_symbol(struct pdb_write_context *context, u16 symbol_kind)
     }
     
     // size of the symbol is filled in stream_end_symbol
-    context->active_symbol = stream_allocate_bytes(context, sizeof(u16)); 
+    context->active_symbol = stream_allocate_bytes(context, sizeof(u16));
     stream_emit_struct(context, &symbol_kind, sizeof(u16));
     
     return ret;
@@ -794,16 +758,18 @@ func void stream_end_symbol(struct pdb_write_context *context){
     
     // -2 because the length field excludes the 'size' field on the symbol record
     smm size = pdb_location_diff(current_loc, context->active_symbol) - 2;
+    if(size > max_u16){
+        // :ERROR :pdb_symbol_overflow
+        print("Internal Compiler Error:\n");
+        print("A symbol in the '.pdb' has a size of %lld but the biggest size allowed is 65535.\n", size);
+        print("This might probably leads to a coruppt '.pdb'. Sorry!\n");
+        // os_panic(1);
+    }
     u16 size_u16 = to_u16(size);
     stream_write_bytes(context, &context->active_symbol, &size_u16, sizeof(u16));
     context->in_symbol = false;
 }
 
-
-struct coff_context{
-    struct exe_write_context exe;
-    struct pdb_write_context pdb;
-};
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -817,7 +783,7 @@ struct coff_context{
 #define begin_symbol(type) stream_begin_symbol(context, type)
 #define end_symbol() stream_end_symbol(context)
 
-func void stream_emit_size_and_name(struct pdb_write_context *context, smm value, b32 is_signed, struct string *string){
+func void stream_emit_size_and_name(struct pdb_write_context *context, smm value, b32 is_signed, struct string string){
     if(is_signed){
         smm val = value;
         if(val >= 0){
@@ -864,24 +830,8 @@ func void stream_emit_size_and_name(struct pdb_write_context *context, smm value
         }
     }
     
-    out_string(*string);
+    out_string(string);
     out_f3f2f1_align(sizeof(u32));
-}
-
-func u32 tpi_emit_predecl(struct pdb_write_context *context, struct ast_type *type){
-    assert(type->kind == AST_struct || type->kind == AST_union);
-    struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
-    u32 ret = begin_symbol(0x1505);{
-        out_int(0, u16);        // count (0 for forward ref)
-        out_int((1 << 7), u16); // properties: forward_ref flag
-        out_int(0, u32);        // the LF_FIELDLIST (0 for forward ref)
-        if(type->kind == AST_struct){
-            out_int(0, u32);    // derived
-            out_int(0, u32);    // vshape
-        }
-        stream_emit_size_and_name(context, 0, false, compound->identifier);
-    }end_symbol();
-    return ret;
 }
 
 
@@ -891,17 +841,18 @@ struct gsi_hash_bucket{
     struct string name;
     u32 hash;
     u32 symbol_offset;
+    u32 rva;
 };
 
-func b32 global_symbol_stream_hash_table_add(struct gsi_hash_bucket **hash_table, u32 ref_offset, struct memory_arena *scratch, struct string name){
+func b32 global_symbol_stream_hash_table_add(struct gsi_hash_bucket **hash_table, struct memory_arena *scratch, u32 ref_offset, smm rva, struct string name){
     
     u32 hash = pdb_string_hash(name);
     struct gsi_hash_bucket *new_bucket = push_struct(scratch, struct gsi_hash_bucket);
     new_bucket->hash = hash;
-    // @note: +1 for some stupid reason
-    // this offset is the offset in the symbol record stream, so no module index.
-    new_bucket->symbol_offset = ref_offset + 1;
+    
+    new_bucket->symbol_offset = ref_offset;
     new_bucket->name = name;
+    new_bucket->rva  = (u32)rva;
     
     struct gsi_hash_bucket *start = hash_table[hash % IPHR_HASH];
     if(!start){
@@ -944,9 +895,45 @@ func b32 global_symbol_stream_hash_table_add(struct gsi_hash_bucket **hash_table
 }
 
 func void tpi_push_to_type_stack(struct pdb_write_context *context, struct ast_type *type){
-    // @incomplete: grow the stack
+    
+    dynarray_maybe_grow(struct ast_type *, context->scratch, context->type_stack, context->type_stack_at, context->type_stack_size);
     assert(context->type_stack_at < context->type_stack_size);
     context->type_stack[context->type_stack_at++] = type;
+}
+
+func struct pdb_type_info *get_type_info_for_type_index(struct pdb_write_context *context, smm type_index){
+    if(type_index >= context->maximal_amount_of_type_indices){
+        smm new_max = context->maximal_amount_of_type_indices << 1;
+        struct pdb_type_info *new_mem = push_data(context->scratch, struct pdb_type_info, new_max);
+        memcpy(new_mem, context->type_index_to_type_info, context->maximal_amount_of_type_indices * sizeof(new_mem[0]));
+        context->type_index_to_type_info = new_mem;
+        context->maximal_amount_of_type_indices = new_max;
+    }
+    
+    assert(type_index < context->maximal_amount_of_type_indices);
+    return &context->type_index_to_type_info[type_index];
+}
+
+func u32 tpi_emit_predecl(struct pdb_write_context *context, struct ast_type *type){
+    assert(type->kind == AST_struct || type->kind == AST_union);
+    struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
+    
+    u16 lf_kind = type->kind == AST_struct ? 0x1505 : 0x1506;
+    u32 ret = begin_symbol(lf_kind);{
+        out_int(0, u16);        // count (0 for forward ref)
+        out_int((1 << 7) /*| (1 << 9) */, u16); // properties: forward_ref flag, has unique name
+        out_int(0, u32);        // the LF_FIELDLIST (0 for forward ref)
+        if(type->kind == AST_struct){
+            out_int(0, u32);    // derived
+            out_int(0, u32);    // vshape
+        }
+        stream_emit_size_and_name(context, 0, false, compound->identifier.string);
+    }end_symbol();
+    
+    struct pdb_type_info *info = get_type_info_for_type_index(context, ret);
+    info->type = type;
+    
+    return ret;
 }
 
 func u32 tpi_maybe_emit_predecl(struct pdb_write_context *context, struct ast_type *type){
@@ -955,10 +942,10 @@ func u32 tpi_maybe_emit_predecl(struct pdb_write_context *context, struct ast_ty
         assert(type->pdb_type_index);
         type_index = type->pdb_type_index;
     }else{
-        assert(type->flags & TYPE_FLAG_pdb_tempoary);
+        assert(type->flags & TYPE_FLAG_pdb_temporary);
         assert(!type->pdb_type_index);
         if(!type->pdb_predecl_type_index){
-            type->pdb_predecl_type_index = tpi_emit_predecl(context, type); 
+            type->pdb_predecl_type_index = tpi_emit_predecl(context, type);
         }
         type_index = type->pdb_predecl_type_index;
     }
@@ -982,10 +969,20 @@ func void tpi_emit_type_index_or_predecl_type_index(struct pdb_write_context *co
     }
 }
 
+func b32 tpi_maybe_recurse_again_into_type(struct pdb_write_context *context, struct ast_type *type){
+    if(type->kind != AST_struct && type->kind != AST_union && !(type->flags & TYPE_FLAG_pdb_permanent)){
+        tpi_push_to_type_stack(context, type);
+        return true;
+    }
+    return false;
+}
+
+
 func void tpi_register_type(struct pdb_write_context *context, struct ast_type *initial_type){
+    
     if(initial_type->flags & TYPE_FLAG_pdb_permanent){
         assert(initial_type->pdb_type_index);
-        return; // already emited this type
+        return; // already emitted this type
     }
     
     // reset the type_stack
@@ -993,104 +990,169 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
     tpi_push_to_type_stack(context, initial_type);
     
     u32 type_index;
-    while(context->type_stack_at){
+    while(context->type_stack_at > 0){
         struct ast_type *type = context->type_stack[context->type_stack_at - 1];
-        type->flags |= TYPE_FLAG_pdb_tempoary;
         
-        // maybe recurse, if we are in a compound_type
+        type->flags |= TYPE_FLAG_pdb_temporary;
+        
+        // General algorithm:
+        //     1) if we are a compound type (struct or union) recurse into any members that have not yet
+        //        been assigned type indicies.
+        //     2) at this point we either have non-struct-non-union, or every member is already emitted.
+        //
+        
         if(type->kind == AST_struct || type->kind == AST_union){
             struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
             b32 should_recurse = false;
-            for_ast_list(compound->declarations){
-                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+            for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
+                struct ast_type *member_type = compound->members[member_index].type;
+                
                 // @cleanup: defined type for typedefs
                 
-                if(decl->type->flags & (TYPE_FLAG_pdb_tempoary | TYPE_FLAG_pdb_permanent)){
-                    // these are fine, either we emit a predecl below, or we have already emited it
+                if(member_type->flags & (TYPE_FLAG_pdb_temporary | TYPE_FLAG_pdb_permanent)){
+                    // these are fine, either we emit a predecl below, or we have already emitted it
                 }else{
-                    tpi_push_to_type_stack(context, decl->type);
+                    tpi_push_to_type_stack(context, member_type);
                     should_recurse = true;
                     break;
                 }
             }
-            if(should_recurse) continue;
             
+            if(should_recurse) continue;
         }
         
         switch(type->kind){
             case AST_enum:{
                 struct ast_compound_type *ast_enum = cast(struct ast_compound_type *)type;
                 
+                // :long_field_lists
+                //
+                // An enum (or any fieldlist for that matter), can have to many entries to fit into a single
+                // symbol, as symbols can only have a size that fits into 16 bit.
+                // If this is the case the last entry of the fieldlist is an LF_INDEX which references a 
+                // fieldlist which continues the enum. 
+                // The LF_enum then references the first LF_FIELDLIST. 
+                //
+                s32 previous_fieldlist = -1;
+                
                 u32 fieldlist = begin_symbol(0x1203); // LF_FIELDLIST
-                for_ast_list(ast_enum->declarations){
-                    assert(it->value->kind == AST_declaration);
-                    struct ast_declaration *decl = cast(struct ast_declaration *) it->value;
-                    s32 value = integer_literal_as_s32(decl->assign_expr);
+                
+                for(u32 member_index = 0; member_index < ast_enum->amount_of_members; member_index++){
+                    struct compound_member *member = &ast_enum->members[member_index];
+                    
+                    s32 value = (s32)member->enum_value;
                     
                     out_int(0x1502, u16); // LF_ENUMERATE
                     out_int(3, u16);      // @cleanup: attributes?
-                    stream_emit_size_and_name(context, value, true, decl->identifier);
+                    stream_emit_size_and_name(context, value, true, member->name->string);
+                    
+                    {
+                        // 
+                        // yikes, this does not really fix the problem, does it?
+                        // it only makes it less likely...
+                        //
+                        struct pdb_location current_loc = get_current_pdb_location(context);
+                        smm size = pdb_location_diff(current_loc, context->active_symbol) - 2;
+                        if(size + 0x100 > 65536){
+                            if(previous_fieldlist != -1){
+                                out_int(0x1404, u16); // LF_INDEX
+                                out_int(0, u16); // pad
+                                out_int(previous_fieldlist, u32);
+                            }
+                            end_symbol();
+                            
+                            previous_fieldlist = fieldlist;
+                            fieldlist = begin_symbol(0x1203);
+                        }
+                    }
+                }
+                
+                if(previous_fieldlist != -1){
+                    out_int(0x1404, u16); // LF_INDEX
+                    out_int(0, u16); // pad
+                    out_int(previous_fieldlist, u32);
                 }
                 end_symbol();
                 
                 type_index = begin_symbol(0x1507);{ // LF_ENUM
-                    out_int(ast_enum->declarations.count, u16);
+                    out_int(ast_enum->amount_of_members, u16);
                     out_int(0, u16);    // @incomplete: properties
                     out_int(CV_s32, u32); // underlying type
                     out_int(fieldlist, u32);
-                    out_string(*ast_enum->identifier); // no size for enums
+                    out_string(ast_enum->identifier); // no size for enums
                 }end_symbol();
             }break;
             case AST_struct: case AST_union:{
                 struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
                 
+                b32 should_recurse_into_type = false;
                 // emit predeclarations if we need to
-                for_ast_list(compound->declarations){
-                    struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                    tpi_maybe_emit_predecl(context, decl->type);
+                
+                for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
+                    struct ast_type *member_type = compound->members[member_index].type;
+                    if(tpi_maybe_recurse_again_into_type(context, member_type)){
+                        should_recurse_into_type = true;
+                        break;
+                    }
+                    tpi_maybe_emit_predecl(context, member_type);
                 }
+                if(should_recurse_into_type) continue;
                 
                 u32 fieldlist = begin_symbol(0x1203); // LF_FIELDLIST
-                for_ast_list(compound->declarations){
-                    struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                    assert(decl->type->flags & (TYPE_FLAG_pdb_tempoary | TYPE_FLAG_pdb_permanent));
+                
+                for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
+                    struct compound_member *member = &compound->members[member_index];
+                    if(member->name == globals.invalid_identifier_token) continue;
+                    
+                    assert(member->type->flags & (TYPE_FLAG_pdb_temporary | TYPE_FLAG_pdb_permanent));
                     // @note: right now we are not doing LF_NESTTYPE... is that one necessary?
                     //        it seems to be used when we have a unnamed type with no ident
                     out_int(0x150d, u16); // LF_MEMBER
-                    out_int(0, u16); // attributes @cleanup:
-                    tpi_emit_type_index_or_predecl_type_index(context, decl->type, decl->defined_type);
-                    stream_emit_size_and_name(context, decl->offset_in_type, false, decl->identifier);              
+                    out_int(3, u16); // attributes: @cleanup: this did not seem to matter but this means 'ref'
+                    tpi_emit_type_index_or_predecl_type_index(context, member->type, member->defined_type);
+                    stream_emit_size_and_name(context, member->offset_in_type, false, member->name->string);
                 } end_symbol();
-                
                 
                 // LF_STRUCTURE or LF_UNION
                 u16 lf_kind = type->kind == AST_struct ? 0x1505 : 0x1506;
                 type_index = begin_symbol(lf_kind);{
-                    out_int(compound->declarations.count, u16);
-                    out_int(0, u16);         // @incomplete: properties?
-                    out_int(fieldlist, u32); 
+                    out_int(compound->amount_of_members, u16);
+                    out_int(0  /*| (1 << 9) */, u16); // properties: has unique name
+                    out_int(fieldlist, u32);
                     if(type->kind == AST_struct){
                         out_int(0, u32);         // derived (c++)
                         out_int(0, u32);         // vshape (c++)
                     }
-                    stream_emit_size_and_name(context, type->size, false, compound->identifier);
+                    stream_emit_size_and_name(context, type->size, false, compound->identifier.string);
                 }end_symbol();
                 
             }break;
             case AST_pointer_type:{
                 struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)type;
+                
+                // 
+                // In the case of:
+                //     struct unresolved *pointer;
+                // Where we did not dereference 'pointer', but 'unresolved' gets defined _later_
+                // this pointer is still pointing to an unresolved type.
+                // If this is the case we try to patch it here.
+                // 
+                maybe_resolve_unresolved_type(&pointer->pointer_to);
+                
                 struct ast_type *pointer_to = pointer->pointer_to;
                 
-                u32 pointer_to_type_index;
-                if(pointer_to->flags & (TYPE_FLAG_pdb_permanent|TYPE_FLAG_pdb_tempoary)){
-                    pointer_to_type_index = tpi_maybe_emit_predecl(context, pointer_to);
-                }else{
+                if(!(pointer_to->flags & (TYPE_FLAG_pdb_permanent|TYPE_FLAG_pdb_temporary))){
                     tpi_push_to_type_stack(context, pointer_to);
                     continue;
                 }
                 
+                if(tpi_maybe_recurse_again_into_type(context, pointer_to)) continue;
+                
+                u32 pointer_to_type_index = tpi_maybe_emit_predecl(context, pointer_to);
+                
                 // check if we already have this pointer
-                struct pdb_type_info *info = &context->type_index_to_type_info[pointer_to_type_index];
+                
+                struct pdb_type_info *info = get_type_info_for_type_index(context, pointer_to_type_index);
                 if(info->pointer_type_index){
                     type_index = info->pointer_type_index;
                 }else{
@@ -1103,10 +1165,11 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
                 
             }break;
             case AST_array_type:{
-                struct ast_array_type *array = cast(struct ast_array_type *)type;
+                struct ast_array_type *array = (struct ast_array_type *)type;
                 struct ast_type *element_type = array->element_type;
                 
-                if(element_type->flags & (TYPE_FLAG_pdb_permanent|TYPE_FLAG_pdb_tempoary)){
+                if(element_type->flags & (TYPE_FLAG_pdb_permanent|TYPE_FLAG_pdb_temporary)){
+                    if(tpi_maybe_recurse_again_into_type(context, element_type)) continue;
                     tpi_maybe_emit_predecl(context, element_type);
                 }else{
                     tpi_push_to_type_stack(context, element_type);
@@ -1116,18 +1179,18 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
                 type_index = begin_symbol(0x1503);{ // LF_ARRAY
                     tpi_emit_type_index_or_predecl_type_index(context, element_type, array->element_type_defined_type); // underlying_type
                     out_int(CV_s64, u32); // index type
-                    stream_emit_size_and_name(context, array->base.size, false, &string("")); // I think this always has an empty name.
+                    stream_emit_size_and_name(context, array->base.size, false, string("")); // I think this always has an empty name.
                 }end_symbol();
                 
             }break;
             case AST_function_type:{
                 struct ast_function_type *function_type = cast(struct ast_function_type *)type;
                 
-                if(function_type->return_type->flags & (TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_tempoary)){
-                    // @cleanup: I think these can be 'self_referantial' if you have 
+                if(function_type->return_type->flags & (TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary)){
+                    // @cleanup: I think these can be 'self_referantial' if you have
                     //     struct comp { struct comp *(*asd)(); }
                     // that should make a predecl for struct comp @cleanup: maybe test this
-                    
+                    if(tpi_maybe_recurse_again_into_type(context, function_type->return_type)) continue;
                     tpi_maybe_emit_predecl(context, function_type->return_type);
                 }else{
                     tpi_push_to_type_stack(context, function_type->return_type);
@@ -1138,7 +1201,11 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
                 for_ast_list(function_type->argument_list){
                     struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
                     
-                    if(decl->type->flags & (TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_tempoary)){    
+                    if(decl->type->flags & (TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary)){
+                        if(tpi_maybe_recurse_again_into_type(context, decl->type)){
+                            should_recurse = true;
+                            break;
+                        }
                         tpi_maybe_emit_predecl(context, decl->type);
                     }else{
                         tpi_push_to_type_stack(context, decl->type);
@@ -1165,25 +1232,31 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
                 }end_symbol();
                 
             }break;
+            case AST_bitfield_type:{
+                struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)type;
+                type_index = begin_symbol(0x1205);{ // LF_BITFIELD
+                    out_int(bitfield->base_type->pdb_type_index, u32);
+                    out_int(bitfield->width, s8);
+                    out_int(bitfield->bit_index, s8);
+                }end_symbol();
+            }break;
             case AST_unresolved_type:{
-                // @ugh, we would want to put T_NOTYPE here probably but that is '0' and we use 0 as an invalid 
+                // struct ast_unresolved_type *unresolved = (struct ast_unresolved_type *)type;
+                
+                // @ugh, we would want to put T_NOTYPE here probably but that is '0' and we use 0 as an invalid
                 //       value. @cleanup:
                 type_index = CV_void;
+                
+                // print("**** unresolved!\n"); @cleanup: This goes away, when we finish our new CodeView/PDB backend.
             }break;
             invalid_default_case(type_index = 0);
         }
         
         type->flags |= TYPE_FLAG_pdb_permanent;
-        type->flags &= ~TYPE_FLAG_pdb_tempoary;
+        type->flags &= ~TYPE_FLAG_pdb_temporary;
         type->pdb_type_index = type_index;
-        if(type_index >= context->maximal_amount_of_type_indices){
-            smm new_max = context->maximal_amount_of_type_indices << 1;
-            struct pdb_type_info *new_mem = push_zero_data(context->scratch, struct pdb_type_info, new_max);
-            memcpy(new_mem, context->type_index_to_type_info, context->maximal_amount_of_type_indices * sizeof(new_mem[0]));
-            context->type_index_to_type_info = new_mem;
-            context->maximal_amount_of_type_indices = new_max;
-        }
-        context->type_index_to_type_info[type->pdb_type_index].type = type;
+        
+        get_type_info_for_type_index(context, type->pdb_type_index)->type = type;
         
         context->type_stack_at -= 1;
         context->amount_of_type_indices = max_of(context->amount_of_type_indices, type_index);
@@ -1227,24 +1300,33 @@ func void tpi_register_all_types_in_ast__recursive(struct pdb_write_context *con
             struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
             tpi_register_all_types_in_ast__recursive(context, ast_switch->statement);
         }break;
+        case AST_label:{
+            struct ast_label *ast_label = cast(struct ast_label *)ast;
+            if(ast_label->statement) tpi_register_all_types_in_ast__recursive(context, ast_label->statement);
+        }break;
+        case AST_case:{
+            struct ast_case *ast_case = cast(struct ast_case *)ast;
+            if(ast_case->statement) tpi_register_all_types_in_ast__recursive(context, ast_case->statement);
+        }break;
         default:{
             // everything else is fine.
         }break;
     }
 }
 
-/////////////////////////////////////////////////////////////////////
-
-// @sigh: we have these two helper routines purely because for statements don't really have a place to put their
-//        declaration.
+//_____________________________________________________________________________________________________________________
 
 func void pdb_emit_regrels_for_scope(struct pdb_write_context *context, struct ast_scope *scope){
     // @note: it seems, that all declarations need to be at the beginning of the scope.
     //        so we loop here over all of them instead of doing it recursively
-    for(smm i = 0; i < scope->amount_of_declarations; i++){
+    for(smm i = 0; i < scope->current_max_amount_of_declarations; i++){
         struct ast_declaration *decl = scope->declarations[i];
-        // enums don't get 'S_REGREL32'... @cleanup: maybe they get constants?
+        if(!decl) continue;
+        
+        // Skip typedefs.
         if(decl->base.kind != AST_declaration) continue;
+        
+        // Enums don't get 'S_REGREL32'... @cleanup: maybe they get constants?
         if((decl->flags & DECLARATION_FLAGS_is_enum_member)) continue;
         
         if(decl->flags & DECLARATION_FLAGS_is_local_persist){
@@ -1257,7 +1339,7 @@ func void pdb_emit_regrels_for_scope(struct pdb_write_context *context, struct a
             out_int(offset_of_rbp, u32);
             tpi_emit_type_index_or_predecl_type_index(context, decl->type, decl->defined_type);
             out_int(334, u16); // CV_AMD64_RBP (cvconst.h)
-            out_string(*decl->identifier);
+            out_string(decl->identifier->string);
         }end_symbol();
     }
     
@@ -1275,7 +1357,7 @@ func struct pdb_location pdb_begin_scope(struct pdb_write_context *context, stru
         pointer_to_end_loc = stream_allocate_bytes(context, sizeof(u32));
         out_int(scope_size, u32);                                     // size of the scope in bytes
         out_int(offset_in_text_section, u32);                         // offset in segment
-        out_int(SECTION_ID_text, u16);                                // segment
+        out_int(context->text_section_id, u16);                                // segment
     }end_symbol();
     context->current_block32_offset_in_stream = scope_offset_in_symbol_stream;
     return pointer_to_end_loc;
@@ -1285,11 +1367,17 @@ func void emit_debug_info_for_ast__recursive(struct pdb_write_context *context, 
     assert(ast->byte_offset_in_function >= 0);
     switch(ast->kind){
         case AST_scope:{
-            // @cleanup: skip if there are no declarations in the scope, 
-            //           also maybe skip if function->scope == scope
+            // @cleanup: skip if there are no declarations in the scope.
+            
+            
+            struct pdb_location pointer_to_end_loc = zero_struct;
             struct ast_scope *scope = cast(struct ast_scope *)ast;
             smm old_offset = context->current_block32_offset_in_stream;
-            struct pdb_location pointer_to_end_loc = pdb_begin_scope(context, function, scope);
+            
+            if(ast != function->scope){
+                // @note: do not emit a scope for the initial scope as it is implied by the frameproc
+                pointer_to_end_loc = pdb_begin_scope(context, function, scope);
+            }
             
             pdb_emit_regrels_for_scope(context, scope);
             
@@ -1297,10 +1385,12 @@ func void emit_debug_info_for_ast__recursive(struct pdb_write_context *context, 
                 emit_debug_info_for_ast__recursive(context, function, it->value);
             }
             
-            u32 diff = pdb_current_offset_from_location(context, context->module_stream_begin);
-            stream_write_bytes(context, &pointer_to_end_loc, &diff, sizeof(u32));
-            begin_symbol(0x6);{ // S_END
-            }end_symbol();
+            if(ast != function->scope){
+                u32 diff = pdb_current_offset_from_location(context, context->module_stream_begin);
+                stream_write_bytes(context, &pointer_to_end_loc, &diff, sizeof(u32));
+                begin_symbol(0x6);{ // S_END
+                }end_symbol();
+            }
             context->current_block32_offset_in_stream = old_offset; // @cleanup: should maybe be called pointer
             
         }break;
@@ -1314,9 +1404,15 @@ func void emit_debug_info_for_ast__recursive(struct pdb_write_context *context, 
         case AST_do_while:
         case AST_for:{
             struct ast_for *ast_for = cast(struct ast_for *)ast;
-            // @note: this does NOT work as this scope is empty 
-            //            emit_debug_info_for_ast__recursive(context, function, &ast_for->scope_for_decl->base);
-            //        so we have to do it manually
+            
+            // 
+            // @clenaup: This is really ugly.
+            //           The body for the ast_for is at 'ast_for->body', 
+            //           but the declaration lives in 'ast_for->scope_for_decl'.
+            //           The 'ast_for->scope_for_decl' is empty and does not contain 'ast_for->body'.
+            //           Hence, we have to emit a block manually.
+            // 
+            
             
             smm old_offset = context->current_block32_offset_in_stream;
             struct pdb_location pointer_to_end_loc = pdb_begin_scope(context, function, ast_for->scope_for_decl);
@@ -1338,20 +1434,28 @@ func void emit_debug_info_for_ast__recursive(struct pdb_write_context *context, 
             struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
             emit_debug_info_for_ast__recursive(context, function, ast_switch->statement);
         }break;
+        case AST_label:{
+            struct ast_label *ast_label = cast(struct ast_label *)ast;
+            if(ast_label->statement) emit_debug_info_for_ast__recursive(context, function, ast_label->statement);
+        }break;
+        case AST_case:{
+            struct ast_case *ast_case = cast(struct ast_case *)ast;
+            if(ast_case->statement) emit_debug_info_for_ast__recursive(context, function, ast_case->statement);
+        }break;
+        default: break;
     }
 }
 
 
 func void emit_debug_info_for_function(struct pdb_write_context *context, struct ast_function *function){
-    begin_counter(emit_debug_for_function);
     // @cleanup: is this needed somewhere else?
-    context->current_block32_offset_in_stream = function->debug_symbol_offset; 
+    context->current_block32_offset_in_stream = function->debug_symbol_offset;
     emit_debug_info_for_ast__recursive(context, function, function->scope);
-    
-    end_counter(emit_debug_for_function);
 }
 
-//////////////////////////////////////////////////////////////////////////////
+//_____________________________________________________________________________________________________________________
+// 
+
 func void emit_one_pdb_line_info(struct pdb_write_context *context){
     // @cleanup: line should only have lower bits set.. not sure?
     u32 line   = save_truncate_smm_to_u32(context->pdb_line_at);
@@ -1364,17 +1468,18 @@ func void emit_one_pdb_line_info(struct pdb_write_context *context){
 }
 
 func void emit_pdb_line_info_for_ast__recursive(struct pdb_write_context *context, struct ast_function *function, struct ast *ast){
-    if(ast->token->line != context->pdb_line_at){
-        assert(ast->token->line > context->pdb_line_at);
-        context->pdb_offset_at = ast->byte_offset_in_function + function->size_of_prolog;
-        context->pdb_line_at   = ast->token->line;
-        emit_one_pdb_line_info(context);
-    }
     
     switch(ast->kind){
-        // @cleanup: maybe recurse into struct literals...
+        case AST_typedef:
+        case AST_function:{
+            // these have no code associated with them.
+        }break;
+        
         case AST_if:{
             struct ast_if *ast_if = cast(struct ast_if *)ast;
+            // @cleanup: this did not work... one line if with a 'continue' as the thing! << recheck this
+            emit_pdb_line_info_for_ast__recursive(context, function, ast_if->condition);
+            
             emit_pdb_line_info_for_ast__recursive(context, function, ast_if->statement);
             if(ast_if->else_statement){
                 emit_pdb_line_info_for_ast__recursive(context, function, ast_if->else_statement);
@@ -1382,11 +1487,12 @@ func void emit_pdb_line_info_for_ast__recursive(struct pdb_write_context *contex
         }break;
         case AST_do_while:{
             struct ast_for *do_while = cast(struct ast_for *)ast;
-            emit_pdb_line_info_for_ast__recursive(context, function, do_while->body);
             
             if(do_while->condition){
                 emit_pdb_line_info_for_ast__recursive(context, function, do_while->condition);
             }
+            
+            emit_pdb_line_info_for_ast__recursive(context, function, do_while->body);
         }break;
         case AST_for:{
             struct ast_for *ast_for = cast(struct ast_for *)ast;
@@ -1398,11 +1504,11 @@ func void emit_pdb_line_info_for_ast__recursive(struct pdb_write_context *contex
                 emit_pdb_line_info_for_ast__recursive(context, function, ast_for->condition);
             }
             
+            emit_pdb_line_info_for_ast__recursive(context, function, ast_for->body);
+            
             if(ast_for->increment){
                 emit_pdb_line_info_for_ast__recursive(context, function, ast_for->increment);
             }
-            
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_for->body);
         }break;
         case AST_scope:{
             struct ast_scope *scope = cast(struct ast_scope *)ast;
@@ -1415,26 +1521,259 @@ func void emit_pdb_line_info_for_ast__recursive(struct pdb_write_context *contex
             emit_pdb_line_info_for_ast__recursive(context, function, ast_switch->switch_on);
             emit_pdb_line_info_for_ast__recursive(context, function, ast_switch->statement);
         }break;
+        case AST_case:{
+            struct ast_case *ast_case = cast(struct ast_case *)ast;
+            if(ast_case->statement) emit_pdb_line_info_for_ast__recursive(context, function, ast_case->statement);
+        }break;
+        case AST_label:{
+            struct ast_label *ast_label = cast(struct ast_label *)ast;
+            if(ast_label->statement) emit_pdb_line_info_for_ast__recursive(context, function, ast_label->statement);
+        }break;
+        
+        case AST_asm_block:{
+            struct ast_asm_block *asm_block = cast(struct ast_asm_block *)ast;
+            for(struct asm_instruction *inst = asm_block->instructions.first; inst; inst = inst->next){
+                context->pdb_offset_at = inst->byte_offset_in_function + function->size_of_prolog;
+                context->pdb_line_at   = inst->token->line;
+                emit_one_pdb_line_info(context);
+            }
+        }break;
+        
+        case AST_declaration:{
+            struct ast_declaration *decl = (struct ast_declaration *)ast;
+            
+            // dont emit lines for declarations that dont have initializers
+            if(!decl->assign_expr) break;
+            
+            // dont emit lines for declarations that are static
+            if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist)) break;
+            
+            if(decl->assign_expr->kind == AST_compound_literal){
+                // recurse into struct literals as these can be (and often are) multi line!
+                struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)decl->assign_expr;
+                for_ast_list(compound_literal->assignment_list){
+                    emit_pdb_line_info_for_ast__recursive(context, function, it->value);
+                }
+                break;
+            }
+        } // fallthrough
+        default:{
+            
+            if(ast->token->line != context->pdb_line_at){
+                assert(ast->byte_offset_in_function >= 0); // make sure we set the value.
+                
+                
+                smm offset_at = ast->byte_offset_in_function + function->size_of_prolog;
+                
+                // @cleanup: if '==' we should have not emit the last entry. I am ignoring this for now.
+                //           This probably means 'emit_one_pdb_line_info' is supposed to be "lazy".
+                assert(offset_at >= context->pdb_offset_at);
+                context->pdb_offset_at = offset_at;
+                context->pdb_line_at   = ast->token->line;
+                emit_one_pdb_line_info(context);
+            }
+        }break;
     }
 }
 
 func void emit_pdb_line_info_for_function(struct pdb_write_context *context, struct ast_function *function){
-    assert(function == function->is_defined);
-    
     context->pdb_amount_of_lines = 0;
     context->pdb_offset_at = 0;
-    context->pdb_line_at   = function->base.token->line;
+    context->pdb_line_at   = function->scope->token->line;
     emit_one_pdb_line_info(context); // emit an initial one and then we always emit _after_ updating
     
     emit_pdb_line_info_for_ast__recursive(context, function, function->scope);
+    
 }
 
+//_____________________________________________________________________________________________________________________
 
-//////////////////////////////////////////////////////////////////////////////
 
-func struct coff_context print_coff(struct ast_function *entry_point, struct memory_arena *arena, struct memory_arena *scratch){
+struct symbol_context{
+    struct ast_list initialized_declarations;
+    struct ast_list uninitialized_declarations;
     
-    begin_counter(print_exe);
+    struct ast_list functions_with_a_body;
+    struct ast_list typedefs;
+    struct ast_list dllexports;
+    struct ast_list dll_function_stubs;
+    struct ast_list dll_imports;
+    
+    struct timing_events timing_events;
+};
+
+func void insert_function_into_the_right_list(struct symbol_context *symbol_context, struct ast_function *function, struct memory_arena *scratch){
+    
+    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic)  return;
+    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) return;
+    
+    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
+        if(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry){
+            assert(function->dll_import_node);
+            ast_list_append(&symbol_context->dll_imports, scratch, &function->base);
+        }
+    }else{
+        if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
+            ast_list_append(&symbol_context->dllexports, scratch, &function->base);
+        }
+        
+        if(function->as_decl.flags & DECLARATION_FLAGS_is_dll_import_with_missing_declspec){
+            // :dllimports_with_missing_declspec
+            // 
+            // if we have a function like
+            //     extern double asin(double a);
+            // but we found it in 'ucrtbased.dll', then we allow that, but we have to insert an
+            // additional indirection, as all functions expect to call this directly.
+            // MSVC (or more so link.exe) also does this and the CRT relies on this feature.
+            //                                                              -20.09.2020
+            
+            ast_list_append(&symbol_context->dll_function_stubs, scratch, &function->base);
+            ast_list_append(&symbol_context->dll_imports, scratch, &function->base);
+            return;
+        }
+        
+        if(!function->scope){
+            // We allow non-referanced non-defined functions.
+            assert(!(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry));
+            return;
+        }
+        
+        if(!(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry)){
+            // :only_emit_functions_that_are_reachable_from_main
+            // If we detected this function to be unreachable from main, we did not emit code for it
+            // and so we have to skip it here.
+            assert(!function->memory_location);
+            return;
+        }
+        
+        ast_list_append(&symbol_context->functions_with_a_body, scratch, &function->base);
+        assert(function->scope);
+        
+        for_ast_list(function->static_variables){
+            struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+            if(decl->assign_expr){
+                ast_list_append(&symbol_context->initialized_declarations, scratch, &decl->base);
+            }else{
+                ast_list_append(&symbol_context->uninitialized_declarations, scratch, &decl->base);
+            }
+        }
+    }
+}
+
+func void add_declarations_for_ast_table(struct symbol_context *symbol_context, struct memory_arena *arena, struct ast_table *table){
+    for(u64 i = 0; i < table->capacity; i++){
+        struct ast_node *node = table->nodes + i;
+        if(!node->ast) continue;
+        
+        if(node->ast->kind == AST_declaration || node->ast->kind == AST_typedef){
+            struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
+            
+            //
+            // Skip declarations which are never referenced and not exported.
+            //
+            if((decl->times_referenced == 0) && !(decl->flags & DECLARATION_FLAGS_is_dllexport)){
+                continue;
+            }
+        }
+        
+        if(node->ast->kind == AST_typedef){
+            ast_list_append(&symbol_context->typedefs, arena, node->ast);
+            continue;
+        }
+        
+        
+        if(table != &globals.global_declarations){
+            struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
+            //
+            // This is one of the local declaration tables, all members in here should be static.
+            //
+            assert(decl->flags & DECLARATION_FLAGS_is_static);
+        }
+        
+        if(node->ast->kind == AST_function){
+            struct ast_function *function = cast(struct ast_function *)node->ast;
+            insert_function_into_the_right_list(symbol_context, function, arena);
+        }else{
+            assert(node->ast->kind == AST_declaration);
+            struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
+            if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
+            
+            if(decl->assign_expr){
+                ast_list_append(&symbol_context->initialized_declarations, arena, node->ast);
+            }else{
+                ast_list_append(&symbol_context->uninitialized_declarations, arena, node->ast);
+            }
+        }
+    }
+}
+
+func void print_coff(struct memory_arena *arena, struct memory_arena *scratch){
+    
+    begin_counter(&symbol_context, gather_symbols);
+    struct symbol_context symbol_context = zero_struct;
+    
+    add_declarations_for_ast_table(&symbol_context, arena, &globals.global_declarations);
+    
+    for(smm i = 0; i < globals.compilation_units.amount; i++){
+        struct compilation_unit *unit = globals.compilation_units.data + i;
+        add_declarations_for_ast_table(&symbol_context, arena, &unit->static_declaration_table);
+    }
+    
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        for_ast_list(thread_context->local_functions){
+            struct ast_function *function = cast(struct ast_function *)it->value;
+            insert_function_into_the_right_list(&symbol_context, function, arena);
+        }
+    }
+    
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        // 
+        // Append the declarations for 'global_struct_and_array_literals' to the 'initialized_declarations'.
+        // 
+        
+        for_ast_list(thread_context->global_struct_and_array_literals){
+            struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)it->value;
+            
+            ast_list_append(&symbol_context.initialized_declarations, arena, &compound_literal->decl->base);
+        }
+    }
+    
+    end_counter(&symbol_context, gather_symbols);
+    
+    
+    begin_counter(&symbol_context, print_exe);
+    
+    assert(globals.output_file_type == OUTPUT_FILE_exe || globals.output_file_type == OUTPUT_FILE_dll);
+    
+    struct temporary_memory temporary_memory = begin_temporary_memory(scratch);
+    
+    struct ast_list *initialized_declarations   = &symbol_context.initialized_declarations;
+    struct ast_list *uninitialized_declarations = &symbol_context.uninitialized_declarations;
+    struct ast_list *functions_with_a_body = &symbol_context.functions_with_a_body;
+    struct ast_list *dll_function_stubs    = &symbol_context.dll_function_stubs;
+    struct ast_list *typedefs   = &symbol_context.typedefs;
+    struct ast_list *dllexports = &symbol_context.dllexports;
+    
+    char *file_extension = null;
+    switch(globals.output_file_type){
+        case OUTPUT_FILE_exe: file_extension = "exe"; break;
+        case OUTPUT_FILE_dll: file_extension = "dll"; break;
+        invalid_default_case();
+    }
+    
+    struct string output_file_path = globals.output_file_path;
+    struct string exe_full_path = push_format_string(arena, "%.*s.%s",  output_file_path.size, output_file_path.data, file_extension);
+    struct string pdb_full_path = push_format_string(arena, "%.*s.pdb", output_file_path.size, output_file_path.data);
+    replace_characters(pdb_full_path, "/", '\\');
+    replace_characters(exe_full_path, "/", '\\');
+    
+    /////////////////////////////////////////////////////////////////////////////////////
+    //                              start writing the exe                              //
+    /////////////////////////////////////////////////////////////////////////////////////
+    
     
     /////////////////////////////////////////////////////////
     // EXE layout:                                         //
@@ -1449,13 +1788,11 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     // data of section n (0x200 aligned)                   //
     /////////////////////////////////////////////////////////
     
-    struct coff_context ret = zero_struct;
-    struct exe_write_context *exe = &ret.exe;
-    struct tempoary_memory temp = begin_tempoary_memory(scratch);
+    struct exe_write_context *exe = &(struct exe_write_context)zero_struct;
     
     push_align(arena, 0x1000);
     
-    u8 *base_address = push_data(arena, u8, sizeof(DOS_STUB));
+    u8 *base_address = push_uninitialized_data(arena, u8, sizeof(DOS_STUB));
     memcpy(base_address, DOS_STUB, sizeof(DOS_STUB));
     
     // @note: this is just hardcoded in the dos stub
@@ -1474,7 +1811,20 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         coff->NumberOfSections = 0; // filled dynamically in write_section_header
         coff->TimeDateStamp = 0x5DA82834; // @cleanup: this is 17.10.19
         coff->SizeOfOptionalHeader = sizeof(IMAGE_OPTIONAL_HEADER64);
-        coff->Characteristics = 0x1 | 0x2 | 0x20; 
+        
+        WORD RELOCATIONS_STRIPPED = 0x1;
+        WORD EXECUTABLE_IMAGE     = 0x2;
+        WORD LARGE_ADDRESS_AWARE  = 0x20;
+        WORD IS_DLL               = 0x2000;
+        
+        coff->Characteristics = EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE;
+        if(!globals.dynamic_base){
+            coff->Characteristics |= RELOCATIONS_STRIPPED;
+        }
+        
+        if(globals.output_file_type == OUTPUT_FILE_dll){
+            coff->Characteristics |= IS_DLL;
+        }
         
         exe->coff = coff;
     }
@@ -1483,31 +1833,50 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         IMAGE_OPTIONAL_HEADER64 *header = push_struct(arena, IMAGE_OPTIONAL_HEADER64);
         header->Magic = 0x20b;
         header->MajorLinkerVersion = 14; // @note: copied from lld
-        header->MinorLinkerVersion = 11; 
+        header->MinorLinkerVersion = 11;
         
-        //header->SizeOfCode = ???;
-        //header->SizeOfInitializedData = ????;
-        //header->SizeOfUninitializedData = 0; // filled in bss 
-        //header->AddressOfEntryPoint = ???;
-        //header->BaseOfCode = ???;
+        // header->SizeOfCode = ???;
+        // header->SizeOfInitializedData = ????;
+        // header->SizeOfUninitializedData = 0; // filled in bss
+        // header->AddressOfEntryPoint = ???;
+        // header->BaseOfCode = ???;
         
         // copied from a dumpbin
         header->ImageBase = 0x140000000;
+        if(globals.output_file_type == OUTPUT_FILE_dll){
+            header->ImageBase = 0x180000000;
+        }
+        
         header->SectionAlignment = 0x1000;
         header->FileAlignment    = 0x200;
         header->MajorOperatingSystemVersion = 6;
         header->MinorOperatingSystemVersion = 0;
         header->MajorImageVersion = 0;
         header->MinorImageVersion = 0;
-        header->MajorSubsystemVersion = 6;
-        header->MinorSubsystemVersion = 0;
         header->Win32VersionValue = 0;
         
-        //header->SizeOfImage = ???;
-        //header->SizeOfHeaders = ???;
-        //header->CheckSum = ???; // this is left 0 by msvc
-        header->Subsystem = 3; // this is windows or console, 3 is console
-        header->DllCharacteristics = 0x8120; // this was weird stuff.
+        // header->SizeOfImage = ???;
+        // header->SizeOfHeaders = ???;
+        // header->CheckSum = ???; // this is left 0 by msvc
+        
+        header->Subsystem = (WORD)((globals.pe_subsystem == 0) ? PE_SUBSYSTEM_console : globals.pe_subsystem);
+        
+        // @cleanup: This should be able to be set specifically, as well as default initialized based on the subsystem.
+        //    https://learn.microsoft.com/en-us/cpp/build/reference/subsystem-specify-subsystem?view=msvc-170
+        //    
+        header->MajorSubsystemVersion = 6;
+        header->MinorSubsystemVersion = 0;
+        
+        WORD DLL_HIGH_ENTROPY_VA       = 0x0020;
+        WORD DLL_DYNAMIC_BASE          = 0x0040;
+        WORD DLL_NX                    = 0x0100;
+        WORD DLL_TERMINAL_SERVER_AWARE = 0x8000;
+        
+        header->DllCharacteristics = DLL_HIGH_ENTROPY_VA | DLL_NX;
+        
+        if(!(globals.output_file_type == OUTPUT_FILE_dll))    header->DllCharacteristics |= DLL_TERMINAL_SERVER_AWARE; // not sure what this field means
+        if(globals.dynamic_base) header->DllCharacteristics |= DLL_DYNAMIC_BASE;
+        
         header->SizeOfStackReserve = mega_bytes(1);
         header->SizeOfStackCommit  = mega_bytes(1);
         header->SizeOfHeapReserve  = 0;
@@ -1519,222 +1888,43 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     }
     
     
-    // gather global symbols
-    struct ast_list *initialized_declarations = &(struct ast_list)zero_struct;
-    struct ast_list *uninitialized_declarations = &(struct ast_list)zero_struct;
-    
-    struct ast_list *functions = &(struct ast_list)zero_struct;
-    //struct ast_list *dll_functions = &(struct ast_list)zero_struct;
-    
-    for(u64 i = 0; i < globals.global_declarations.capacity; i++){
-        struct ast_node *node = globals.global_declarations.nodes + i;
-        if(!node->ast) continue;
-        if(node->ast->kind == AST_typedef) continue;
-        if(node->ast->kind != AST_function){
-            assert(node->ast->kind == AST_declaration);
-            struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
-            if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
-            if(decl->assign_expr){
-                ast_list_append(initialized_declarations, scratch, node->ast);
-            }else{
-                ast_list_append(uninitialized_declarations, scratch, node->ast);
-            }
-            
-            continue;
-        }
-        struct ast_function *function = cast(struct ast_function *)node->ast;
-        if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic) continue;
-        if(function->type->flags & FUNCTION_TYPE_FLAGS_is_dllimport) {
-            //ast_list_append(dll_functions, scratch, node->ast);
-            if(function->as_decl.flags & DECLARATION_FLAGS_is_referanced){
-                ast_list_append(&function->dll_import_node->functions, scratch, &function->base);
-            }
-        }else{
-            if(!function->is_defined){
-                // we allow non-referanced non-defined functions
-                assert(!(function->as_decl.flags & DECLARATION_FLAGS_is_referanced));
-                continue;
-            }
-            function = function->is_defined;
-            ast_list_append(functions, scratch, &function->base);
-            for_ast_list(function->static_variables){
-                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                if(decl->assign_expr){
-                    ast_list_append(initialized_declarations, scratch, &decl->base);
-                }else{
-                    ast_list_append(uninitialized_declarations, scratch, &decl->base);
-                }
-            }
-        }
-    }
-    // @hmm: code duplication
-    for_ast_list(globals.local_functions){
-        struct ast_function *function = cast(struct ast_function *)it->value;
-        if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic) continue;
-        if(function->type->flags & FUNCTION_TYPE_FLAGS_is_dllimport){
-            //ast_list_append(dll_functions, scratch, it->value);
-            if(function->as_decl.flags & DECLARATION_FLAGS_is_referanced){
-                ast_list_append(&function->dll_import_node->functions, scratch, &function->base);
-            }
-        }else{
-            if(!function->is_defined){
-                // we allow non-referanced non-defined functions
-                assert(!(function->as_decl.flags & DECLARATION_FLAGS_is_referanced));
-                continue;
-            }
-            function = function->is_defined;
-            ast_list_append(functions, scratch, &function->base);
-            for(struct ast_list_node *decl_node = function->static_variables.first; decl_node; decl_node = decl_node->next){
-                struct ast_declaration *decl = cast(struct ast_declaration *)decl_node->value;
-                if(decl->assign_expr){
-                    ast_list_append(initialized_declarations, scratch, &decl->base);
-                }else{
-                    ast_list_append(uninitialized_declarations, scratch, &decl->base);
-                }
-            }
-        }
-    }
-    
-    // Sort the functions by address, this seems to be what they want usually 
-    // needed for pdata and maybe later in the pdb
-    begin_counter(sort_functions);
-    if(functions->count > 1){
-        struct sort_function_node{ 
-            struct sort_function_node *next;
-            struct ast_list list;
-            smm min;
-            smm max;
-        };
-        
-        struct sort_function_stack_node{
-            struct sort_function_stack_node *next;
-            struct sort_function_node node;
-        };
-        
-        struct{
-            struct sort_function_stack_node *first;
-            struct sort_function_stack_node *last;
-        } stack = zero_struct;
-        
-        struct sort_function_stack_node *initial = push_struct(scratch, struct sort_function_stack_node);
-        sll_push_front(stack, initial);
-        
-        initial->node.min = 0;
-        initial->node.max = globals.text_section_offset_allocator;
-        initial->node.list = *functions;
-        
-        while(!sll_is_empty(stack)){
-            struct sort_function_stack_node *stack_node = stack.first;
-            sll_pop_front(stack);
-            
-            struct sort_function_node *node = &stack_node->node;
-            smm piveot = ((node->max - node->min) >> 1) + node->min;
-            
-            assert(node->list.count > 1);
-            
-            struct ast_list smaller = zero_struct;
-            struct ast_list bigger  = zero_struct;
-            
-            for(struct ast_list_node *it = node->list.first; it; ){
-                struct ast_list_node *next = it->next;
-                
-                struct ast_function *function = (struct ast_function *)it->value;
-                assert(function->is_defined == function);
-                
-                // non dll functions should better have been emited.
-                assert(function->offset_in_text_section >= 0);
-                if(function->offset_in_text_section > piveot){
-                    sll_push_back(bigger, it);
-                    bigger.count++;
-                }else{
-                    sll_push_back(smaller, it);
-                    smaller.count++;
-                }
-                it = next;
-            }
-            
-            if(bigger.count && smaller.count){
-                struct sort_function_stack_node *new_stack_node = push_struct(scratch, struct sort_function_stack_node);
-                struct sort_function_node *new_node = &new_stack_node->node;
-                new_node->list = bigger;
-                new_node->min  = piveot;
-                new_node->max  = node->max;
-                
-                node->list = smaller;
-                node->max  = piveot;
-                
-                new_node->next = node->next;
-                node->next = new_node;
-                
-                if(node->list.count > 1){
-                    sll_push_front(stack, stack_node);
-                }
-                
-                if(new_node->list.count > 1){
-                    sll_push_front(stack, new_stack_node);
-                }
-            }else{
-                if(smaller.count){
-                    node->max  = piveot;
-                    sll_push_front(stack, stack_node);
-                }else{
-                    assert(bigger.count);
-                    node->list = bigger;
-                    node->min = piveot;
-                    sll_push_front(stack, stack_node);
-                }
-            }
-        }
-        
-        struct ast_list sorted = zero_struct;
-        for(struct sort_function_node *it = &initial->node; it; it = it->next){
-            sll_push_back_list(sorted, it->list);
-            sorted.count += it->list.count;
-        }
-        
-        *functions = sorted;
-    }
-    end_counter(sort_functions);
-    
-    /////////////////////////////////////////////////////////////////////////////////////
-    //                              start writing the exe                              //
-    /////////////////////////////////////////////////////////////////////////////////////
-    
     // section table:
 #define SECTION_read                  0x40000000
 #define SECTION_execute               0x20000000
 #define SECTION_code                  0x00000020
-#define SECTION_initalized_data       0x00000040
+#define SECTION_initialized_data      0x00000040
 #define SECTION_uninitialized_data    0x00000080
 #define SECTION_write                 0x80000000
+#define SECTION_discardable           0x02000000
     
-    assert(functions->count); // @cleanup: can this fail?
-    
-    // @note: apperantly the order of these and the order of the sections below must match
+    // @note: apparently the order of these and the order of the sections below must match
     // @note: @Warning: we also use this as the order for 'enum section_id'
     
-    IMAGE_SECTION_HEADER *text = 
-        write_section_header(exe, arena, ".text", SECTION_read | SECTION_execute | SECTION_code);
-    exe->text = text;
+    IMAGE_SECTION_HEADER *text = null;
+    if(functions_with_a_body->count){
+        text = write_section_header(exe, arena, ".text", SECTION_read | SECTION_execute | SECTION_code);
+    }
     
     IMAGE_SECTION_HEADER *bss = null;
-    if(uninitialized_declarations->count) bss =
-        write_section_header(exe, arena, ".bss", SECTION_read | SECTION_write | SECTION_uninitialized_data);
-    exe->bss = bss;
+    if(uninitialized_declarations->count){
+        bss = write_section_header(exe, arena, ".bss", SECTION_read | SECTION_write | SECTION_uninitialized_data);
+    }
     
     // @note: for now we allways have rdata, what happens if this is empty?
-    IMAGE_SECTION_HEADER *rdata =
-        write_section_header(exe, arena, ".rdata", SECTION_read | SECTION_initalized_data);
-    exe->rdata = rdata;
+    IMAGE_SECTION_HEADER *rdata = write_section_header(exe, arena, ".rdata", SECTION_read | SECTION_initialized_data);
     
     IMAGE_SECTION_HEADER *data = null;
-    if(initialized_declarations->count) data =
-        write_section_header(exe, arena, ".data", SECTION_read | SECTION_write | SECTION_initalized_data);
-    exe->data = data;
+    if(initialized_declarations->count){
+        data = write_section_header(exe, arena, ".data", SECTION_read | SECTION_write | SECTION_initialized_data);
+    }
     
-    IMAGE_SECTION_HEADER *pdata = 
-        write_section_header(exe, arena, ".pdata", SECTION_read | SECTION_initalized_data);
-    exe->pdata = pdata;
+    IMAGE_SECTION_HEADER *reloc = null;
+    if(globals.dynamic_base && globals.have_absolute_patch){ 
+        reloc = write_section_header(exe, arena, ".reloc", SECTION_read | SECTION_initialized_data | SECTION_discardable);
+    }
+    
+    IMAGE_SECTION_HEADER *pdata = null;
+    if(text) pdata = write_section_header(exe, arena, ".pdata", SECTION_read | SECTION_initialized_data);
     
     // :End of section table
     u32 actual_header_size = save_truncate_smm_to_u32(arena_current(arena) - base_address);
@@ -1745,50 +1935,95 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     section_writer->base_address = exe->base_address;
     section_writer->arena = arena;
     
+    // Crappy guid
+    u8 pdb_guid[16];{
+        //
+        // Unique enough!
+        //
+        assert(sizeof(SYSTEMTIME) == sizeof(pdb_guid));
+        GetSystemTime((PSYSTEMTIME)pdb_guid);
+        ((u64 *)pdb_guid)[0] ^= __rdtsc();
+        ((u64 *)pdb_guid)[1] ^= GetTickCount64();
+    }
     
-    {   // .text section
+    if(text){   
+        
+        //
+        // Write out the '.text' section
+        //
+        
         begin_section(section_writer, text);
         
-        u8 *memory_for_functions = push_data(arena, u8, globals.text_section_offset_allocator);
-        for_ast_list(*functions){
+        
+        for_ast_list(*functions_with_a_body){
             struct ast_function *function = cast(struct ast_function *)it->value;
             
-            u8 *function_memory = memory_for_functions + function->offset_in_text_section;
+            smm function_size = function->size_of_prolog + function->byte_size_without_prolog;
             
-            u8 *at = function_memory;
+            u8 *memory_for_function = push_uninitialized_data(arena, u8, function_size);
+            
+            u8 *at = memory_for_function;
             memcpy(at, function->base_of_prolog, function->size_of_prolog);
             at += function->size_of_prolog;
+            
             memcpy(at, function->base_of_main_function, function->byte_size_without_prolog);
             function->base_of_main_function = at;
             at += function->byte_size_without_prolog;
-            memset(at, 0xcc, function->byte_size - (at - function_memory));
             
-            function->memory_location = function_memory;
-            function->relative_virtual_address = make_relative_virtual_address(section_writer, function_memory);
-            // @cleanup: this should go into its own variable. and probably set atomically in emit_code_for_ast, so we don't have to patch everything
+            push_align_initialized_to_specific_value(arena, 16, 0xcc);
+            
+            function->offset_in_text_section   = memory_for_function - section_writer->section_memory_location;
+            function->memory_location          = memory_for_function;
+            function->relative_virtual_address = make_relative_virtual_address(section_writer, memory_for_function);
+        }
+        
+        for_ast_list(*dll_function_stubs){
+            // :dllimports_with_missing_declspec
+            // we emit a 'jmp [rip + offset]' here for the dll imports.
+            // MSVC does the same.
+            struct ast_function *function = cast(struct ast_function *)it->value;
+            
+            u8 *memory_for_stub = push_uninitialized_data(arena, u8, 6);
+            
+            memory_for_stub[0] = 0xff;
+            memory_for_stub[1] = 0x25; // jmp [rip + offset_32bit]
+            function->offset_in_text_section = memory_for_stub - section_writer->section_memory_location;
+            function->memory_location = memory_for_stub;
+            function->relative_virtual_address = make_relative_virtual_address(section_writer, memory_for_stub);
         }
         
         end_section(section_writer);
         
-        exe->header->SizeOfCode = exe->text->SizeOfRawData;
-        exe->header->BaseOfCode = exe->text->VirtualAddress;
+        exe->header->SizeOfCode = text->SizeOfRawData;
+        exe->header->BaseOfCode = text->VirtualAddress;
         
-        exe->header->AddressOfEntryPoint = cast(DWORD)entry_point->relative_virtual_address;
+        if(!globals.no_entry){
+            exe->header->AddressOfEntryPoint = (DWORD)globals.entry_point->relative_virtual_address;
+        }
     }
     
     if(bss){
+        
+        //
+        // Write out the '.bss' section
+        //
+        
         begin_section(section_writer, bss);
         end_section(section_writer);
         
         smm size = 0;
         for_ast_list(*uninitialized_declarations){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-            size = align_up(size, decl->type->alignment);
+            
+            smm alignment = get_declaration_alignment(decl);
+            smm decl_size = get_declaration_size(decl);
+            
+            size = align_up(size, alignment);
             decl->relative_virtual_address = bss->VirtualAddress + size;
-            size += decl->type->size;
+            size += decl_size;
         }
         
-        // @incomplete: what to do when this gets bigger then 0xFFFFFFFF
+        // @incomplete: what to do when this gets bigger than 0xFFFFFFFF
         u32 bss_size = to_u32(align_up(size, 0x1000));
         section_writer->virtual_address += bss_size;
         bss->Misc.VirtualSize = bss_size;
@@ -1797,180 +2032,496 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     }
     
     
-    if(rdata){ // .rdata
+    if(rdata){
+        
+        //
+        // Write out the '.rdata' section
+        //
+        
         begin_section(section_writer, rdata);
-        { // import directory table
+        if(!sll_is_empty(globals.dlls)){ // import directory table
             u8 *import_begin = arena_current(arena);
             
             // First an array of 'IMAGE_IMPORT_DESCRIPTOR' one for every dll.
             // @note: +1 as zero_terminated
-            IMAGE_IMPORT_DESCRIPTOR *import_descriptors = push_zero_data(arena, IMAGE_IMPORT_DESCRIPTOR, globals.dll_imports.amount + 1);
+            IMAGE_IMPORT_DESCRIPTOR *import_descriptors = push_data(arena, IMAGE_IMPORT_DESCRIPTOR, globals.dlls.amount + 1);
             u8 *import_end = arena_current(arena);
-            
-            {            
-                u32 dll_import_index = 0;
-                for(struct dll_import_node *node = globals.dll_imports.first; node; node = node->next, dll_import_index++){
-                    IMAGE_IMPORT_DESCRIPTOR *import = import_descriptors + dll_import_index;                    
-                    import->TimeDateStamp = 0;
-                    import->ForwarderChain = 0;
-                    //import->ImportLookupRVA = ???;
-                    //import->name = ????;
-                    //import->ImportAddressRVA = ???;
-                    
-                    char *string = push_cstring_from_string(arena, node->name);
-                    import->Name = make_relative_virtual_address(section_writer, string);
-                    
-                    u64 *import_address_table = push_data(arena, u64, node->functions.count + 1);        
-                    // "The last entry is set to zero (NULL) to indicate the end of the table"
-                    import_address_table[node->functions.count] = 0; 
-                    
-                    {
-                        u32 i = 0;
-                        for_ast_list(node->functions){
-                            struct ast_function *function = cast(struct ast_function *)it->value;
-                            u16 *hint = push_struct(arena, u16); // we do not care right now @incomplete:
-                            push_cstring_from_string(arena, *function->identifier);
-                            //push_zero_align(arena, 0x16);
-                            
-                            // the other functions are relative to 
-                            function->memory_location = (u8 *)(import_address_table + i);
-                            function->relative_virtual_address = make_relative_virtual_address(section_writer, import_address_table + i);
-                            import_address_table[i] = make_relative_virtual_address(section_writer, hint);
-                            i++;
-                        }
-                    }
-                    
-                    // "The RVA of the import address table. The contents of this table are identical to the contents of the import lookup table until the image is bound"
-                    u64 *import_lookup_table = push_array_copy(arena, u64, import_address_table, node->functions.count + 1);
-                    
-                    
-                    
-                    import->ImportAddressRVA = make_relative_virtual_address(section_writer, import_address_table);
-                    import->ImportLookupRVA  = make_relative_virtual_address(section_writer, import_lookup_table);
-                    
-                }
-                assert(dll_import_index == globals.dll_imports.amount);
-            }
             
             // Import data directory
             exe->header->DataDirectory[1].VirtualAddress = make_relative_virtual_address(section_writer, import_begin);
             exe->header->DataDirectory[1].Size = save_truncate_smm_to_u32(import_end - import_begin);
             
-            if(globals.want_pdb){
-                // setup the 'debug directory' which maps the exe to the pdb
-                u8 *debug_info_begin = arena_current(arena);
-                {
-                    /*
-                    +0h   dword        "RSDS" signature
-                    +4h   GUID         16-byte Globally Unique Identifier
-                    +14h  dword        "age"
-                    +18h  byte string  zero terminated UTF8 path and file name
-                    */
-                    u8 *rsds = push_data(arena, u8, 4);
-                    rsds[0] = 'R'; rsds[1] = 'S'; rsds[2] = 'D'; rsds[3] = 'S'; 
-                    u32 *guid = push_data(arena, u32, 4);
+            u32 dll_import_index = 0;
+            for(struct dll_node *dll_node = globals.dlls.first; dll_node; dll_node = dll_node->next, dll_import_index++){
+                IMAGE_IMPORT_DESCRIPTOR *import = import_descriptors + dll_import_index;
+                import->TimeDateStamp = 0;
+                import->ForwarderChain = 0;
+                //import->ImportLookupRVA = ???;
+                //import->name = ????;
+                //import->ImportAddressRVA = ???;
+                
+                char *string = push_cstring_from_string(arena, dll_node->name);
+                import->Name = make_relative_virtual_address(section_writer, string);
+                
+                u64 *import_address_table = push_uninitialized_data(arena, u64, dll_node->import_list.count + 1);
+                // "The last entry is set to zero (NULL) to indicate the end of the table"
+                import_address_table[dll_node->import_list.count] = 0;
+                
+                u32 import_address_table_index = 0;
+                for(struct dll_import_node *import_node = dll_node->import_list.first; import_node; import_node = import_node->next){
+                    u16 *hint = push_struct(arena, u16); // we do not care right now @incomplete:
+                    *hint = import_node->ordinal_hint;
+                    push_cstring_from_string(arena, import_node->import_name);
                     
-                    // @cleanup: md5
-                    guid[0] = 0x13371337;
-                    guid[1] = 0x13371337;
-                    guid[2] = 0x13371337;
-                    guid[3] = 0x13371337;
-                    u32 *age = push_struct(arena, u32);
-                    *age = 1;
-                    push_cstring_from_string(arena, globals.pdb_full_path);
+                    import_address_table[import_address_table_index] = make_relative_virtual_address(section_writer, hint);
+                    import_node->memory_location = (u8*)&import_address_table[import_address_table_index];
+                    
+                    import_address_table_index++;
                 }
-                u8 *debug_info_end = arena_current(arena);
+                assert(import_address_table_index == dll_node->import_list.count);
                 
-                IMAGE_DEBUG_DIRECTORY *debug = push_struct(arena, IMAGE_DEBUG_DIRECTORY);
-                debug->Characteristics = 0; // "reserved and must be zero"
-                debug->TimeDateStamp = 0;
-                debug->MajorVersion = 11; // @cleanup: find the real numbers for these!
-                debug->MinorVersion = 0;
-#define IMAGE_DEBUG_TYPE_CODEVIEW 2
-                debug->Type = IMAGE_DEBUG_TYPE_CODEVIEW;
-                debug->SizeOfData = to_u32(debug_info_end - debug_info_begin);
-                debug->AddressOfRawData = make_relative_virtual_address(section_writer, debug_info_begin); 
-                debug->PointerToRawData = to_u32(debug_info_begin - exe->base_address);
+                // "The RVA of the import address table. The contents of this table are identical to the contents of the import lookup table until the image is bound"
+                u64 *import_lookup_table = push_array_copy(arena, u64, import_address_table, dll_node->import_list.count + 1);
                 
-                // Debug directory
-                exe->header->DataDirectory[6].VirtualAddress = make_relative_virtual_address(section_writer, debug);
-                exe->header->DataDirectory[6].Size = sizeof(IMAGE_DEBUG_DIRECTORY);
-                
+                import->ImportAddressRVA = make_relative_virtual_address(section_writer, import_address_table);
+                import->ImportLookupRVA  = make_relative_virtual_address(section_writer, import_lookup_table);
             }
+            assert(dll_import_index == globals.dlls.amount);
             
-            for(s64 i = 0; i < globals.string_table.capacity; i++){
-                struct string_table_entry *val = globals.string_table.entries + i;
-                if(!val->value) continue;
-                // :string_literal_location
-                // @hack?: we copy the data pointer here, so it is valid for patching
-                // I cant decide between 'this is a gross hack' and 'this is really smart'...
-                
-                char* cstring = push_cstring_from_string(arena, *val->value);
-                smm addr = make_relative_virtual_address(section_writer, cstring) + exe->header->ImageBase;
-                val->value->data = cast(u8 *)(addr);
-            }
-            
-            
-            // @note: float literals are loaded rip realtive so emit them here in rdata
-            for_ast_list(*functions){
+            for_ast_list(symbol_context.dll_imports){
                 struct ast_function *function = cast(struct ast_function *)it->value;
-                for(struct ast_float_literal *lit = function->float_literals.first; lit; lit = lit->next){
+                struct dll_import_node *dll_import_node = function->dll_import_node;
+                
+                u8 *memory_location = dll_import_node->memory_location;
+                smm relative_virtual_address = make_relative_virtual_address(section_writer, memory_location);
+                
+                if(function->as_decl.flags & DECLARATION_FLAGS_is_dll_import_with_missing_declspec){
+                    smm dest = relative_virtual_address;
+                    smm from = function->relative_virtual_address + 6;
+                    s32 rel =  save_truncate_smm_to_s32(dest - from);
+                    memcpy(function->memory_location + 2, &rel, sizeof(s32));
+                }else{
+                    // the other functions are relative to
+                    function->memory_location = memory_location;
+                    function->relative_virtual_address = relative_virtual_address;
+                }
+            }
+        }
+        
+        if(globals.want_debug_information){
+            // setup the 'debug directory' which maps the exe to the pdb
+            push_align(arena, 8);
+            push_struct(arena, u32); // we want the guid to be 8 byte aligned I think, so we align to mod 8 = 4.
+            // this is at least what link.exe seems to do.
+            
+            u8 *debug_info_begin = arena_current(arena);
+            {
+                
+                // +0h   dword        "RSDS" signature
+                // +4h   GUID         16-byte Globally Unique Identifier
+                // +14h  dword        "age"
+                // +18h  byte string  zero terminated UTF8 path and file name
+                
+                u8 *rsds = push_uninitialized_data(arena, u8, 4);
+                rsds[0] = 'R'; rsds[1] = 'S'; rsds[2] = 'D'; rsds[3] = 'S';
+                u8 *guid = push_uninitialized_data(arena, u8, 16);
+                memcpy(guid, pdb_guid, sizeof(pdb_guid));
+                
+                u32 *age = push_struct(arena, u32);
+                *age = 1;
+                push_cstring_from_string(arena, pdb_full_path);
+            }
+            u8 *debug_info_end = arena_current(arena);
+            
+            push_align(arena, 4);
+            
+            IMAGE_DEBUG_DIRECTORY *debug = push_struct(arena, IMAGE_DEBUG_DIRECTORY);
+            debug->Characteristics = 0; // "reserved and must be zero"
+            debug->TimeDateStamp = 0;
+            debug->MajorVersion = 0; // @note: version seems to be 0.0
+            debug->MinorVersion = 0;
+#define IMAGE_DEBUG_TYPE_CODEVIEW 2
+            debug->Type = IMAGE_DEBUG_TYPE_CODEVIEW;
+            debug->SizeOfData = to_u32(debug_info_end - debug_info_begin);
+            debug->AddressOfRawData = make_relative_virtual_address(section_writer, debug_info_begin);
+            debug->PointerToRawData = to_u32(debug_info_begin - exe->base_address);
+            
+            // Debug directory
+            exe->header->DataDirectory[6].VirtualAddress = make_relative_virtual_address(section_writer, debug);
+            exe->header->DataDirectory[6].Size = sizeof(IMAGE_DEBUG_DIRECTORY);
+        }
+        
+        
+        {
+            // 
+            // @note: string literals are loaded rip realtive so emit them here in rdata
+            // 
+            smm amount_of_strings = 0;
+            
+            for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+                struct context *thread_context = globals.thread_infos[thread_index].context;
+                amount_of_strings += thread_context->string_literals.amount_of_strings;
+            }
+            
+            struct temporary_memory temp = begin_temporary_memory(scratch);
+            
+            smm capacity = u64_round_up_to_next_power_of_two((u64)(1.5 * amount_of_strings));
+            struct string *string_table = push_data(scratch, struct string, capacity);
+            
+            for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+                struct context *thread_context = globals.thread_infos[thread_index].context;
+                for(struct ast_string_literal *lit = thread_context->string_literals.first; lit; lit = lit->next){
                     
-                    if(lit->base.resolved_type == &globals.typedef_f32){
-                        f32 *_float = push_struct(arena, f32);
-                        *_float = (f32)lit->value;
-                        lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
-                    }else{
-                        assert(lit->base.resolved_type == &globals.typedef_f64);
-                        f64 *_float = push_struct(arena, f64);
-                        *_float = lit->value;
-                        lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
+                    // :string_kind_is_element_size
+                    smm element_size = (smm)lit->string_kind;
+                    
+#if defined(_Debug)
+                    struct ast_array_type *array = (struct ast_array_type *)lit->base.resolved_type;
+                    assert(array->element_type->size == element_size);
+#endif
+                    struct string string_literal = lit->value;
+                    
+                    u64 hash = string_djb2_hash(string_literal);
+                    
+                    for(smm table_index = 0; table_index < capacity; table_index++){
+                        smm index = (hash + table_index) & (capacity - 1);
+                        
+                        if(string_table[index].data == null){
+                            
+                            push_zero_align(arena, element_size);
+                            u8 *base = push_string_copy(arena, string_literal).data;
+                            push_data(arena, u8, element_size);
+                            
+                            string_table[index].data = base;
+                            string_table[index].size = string_literal.size + element_size;
+                            
+                            lit->relative_virtual_address = make_relative_virtual_address(section_writer, base);
+                            
+                            break;
+                        }
+                        
+                        // 
+                        // The strings match if
+                        //  1) The size is the size plus the null terminator.
+                        //  2) The string is null terminated for element_size bytes.
+                        //  3) The strings minus the null terminator match.
+                        // 
+                        if(string_table[index].size != string_literal.size + element_size) continue;
+                        if(memcmp(string_table[index].data + string_literal.size, (char[]){0, 0, 0, 0}, element_size) != 0) continue;
+                        if(memcmp(string_table[index].data, string_literal.data, string_literal.size) != 0) continue;
+                        
+                        lit->relative_virtual_address = make_relative_virtual_address(section_writer, string_table[index].data);
+                        break;
                     }
                 }
+            }
+            
+            end_temporary_memory(temp);
+        }
+        
+        
+        // @note: float literals are loaded rip realtive so emit them here in rdata
+        for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+            struct context *thread_context = globals.thread_infos[thread_index].context;
+            
+            for(struct ast_float_literal *lit = thread_context->float_literals.first; lit; lit = lit->next){
+                if(lit->base.resolved_type == &globals.typedef_f32){
+                    f32 *_float = push_struct(arena, f32);
+                    *_float = (f32)lit->value;
+                    lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
+                }else{
+                    assert(lit->base.resolved_type == &globals.typedef_f64);
+                    f64 *_float = push_struct(arena, f64);
+                    *_float = lit->value;
+                    lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
+                }
+            }
+        }
+        
+        if(dllexports->count){
+            u32 *export_address_table = push_data(arena, u32, dllexports->count);
+            u32 *name_pointer_table   = push_data(arena, u32, dllexports->count);
+            u16 *ordinal_table        = push_data(arena, u16, dllexports->count);
+            
+            // @cleanup: what is this for exe's?
+            char *dll_name = push_cstring_from_string(arena, exe_full_path);
+            
+            push_align(arena, sizeof(u32));
+            u8 *edata_start = arena_current(arena);
+            
+            u32 ordinal_base = 1;
+            
+            *push_struct(arena, u32) = 0; // exports flags (reserved, must be zero).
+            *push_struct(arena, u32) = 0xffffffff; // time date stamp
+            *push_struct(arena, u16) = 0; // major version
+            *push_struct(arena, u16) = 0; // minor version
+            
+            // dll name rva (rva of a string that contains the name of the dll)
+            *push_struct(arena, u32) = make_relative_virtual_address(section_writer, dll_name);
+            *push_struct(arena, u32) = ordinal_base; // starting ordinal number
+            
+            // @note: these seem to be the same as far as I can tell
+            
+            // number of entries in the "export address table"
+            *push_struct(arena, u32) = to_u32(dllexports->count);
+            // number of entries in the "name pointer table" and "ordinal table"
+            *push_struct(arena, u32) = to_u32(dllexports->count);
+            
+            // rva of the "export address table"
+            *push_struct(arena, u32) = make_relative_virtual_address(section_writer, export_address_table);
+            
+            // rva of the "name pointer table"
+            *push_struct(arena, u32) = make_relative_virtual_address(section_writer, name_pointer_table);
+            
+            // rva of the "ordinal table"
+            *push_struct(arena, u32) = make_relative_virtual_address(section_writer, ordinal_table);
+            
+            exe->header->DataDirectory[0].VirtualAddress = make_relative_virtual_address(section_writer, edata_start);
+            exe->header->DataDirectory[0].Size = to_u32(arena_current(arena) - edata_start);
+            
+#define function_node_smaller(a, b) \
+            string_lexically_smaller( \
+                    ((struct ast_function *)a->value)->identifier->string, \
+                    ((struct ast_function *)b->value)->identifier->string)
+            
+            sll_sort(*dllexports, scratch, function_node_smaller);
+#undef function_node_smaller
+            
+            // emit all the names
+            
+            u32 i = 0;
+            for_ast_list(*dllexports){
+                assert(it->value->kind == AST_function);
+                struct ast_function *function = cast(struct ast_function *)it->value;
+                assert(function->relative_virtual_address); // The function better be emitted!
+                
+                
+                char *function_name = push_cstring_from_string(arena, function->identifier->string);
+                name_pointer_table[i] = make_relative_virtual_address(section_writer, function_name);
+                export_address_table[i] = to_u32(function->relative_virtual_address);
+                ordinal_table[i] = to_u16((smm)i);
+                i++;
             }
         }
         end_section(section_writer);
         
-        exe->header->SizeOfInitializedData += exe->rdata->SizeOfRawData;
+        exe->header->SizeOfInitializedData += rdata->SizeOfRawData;
     }
     
     if(data){ // .data
-        // @note: the data section cannot be empty apperantly
+        // @note: the data section cannot be empty apparently
         begin_section(section_writer, data);
         
         for_ast_list(*initialized_declarations){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-            push_zero_align(arena, decl->type->alignment);
+            
+            smm alignment = get_declaration_alignment(decl);
+            smm decl_size = get_declaration_size(decl);
+            
+            push_zero_align(arena, alignment);
             
             assert(decl->memory_location);
             
-            u8 *mem = push_data(arena, u8, decl->type->size);
-            u8 *initializer = cast(u8 *)decl->memory_location;
-            memcpy(mem, initializer, decl->type->size);
+            u8 *mem = push_uninitialized_data(arena, u8, decl_size);
+            memcpy(mem, decl->memory_location, decl_size);
             
             decl->memory_location = mem;
             decl->relative_virtual_address = make_relative_virtual_address(section_writer, mem);
         }
         
         end_section(section_writer);
-        exe->header->SizeOfInitializedData += exe->data->SizeOfRawData;
+        exe->header->SizeOfInitializedData += data->SizeOfRawData;
     }
     
-    { // .pdata
+    // From this point all functions and all declarations have their relative virtual address set.
+    // thus we can patch now.
+    
+    struct relocation_node{
+        struct relocation_node *next;
+        smm offset_in_page;
+    };
+    
+    struct base_relocation_block{
+        struct base_relocation_block *next;
+        smm page_rva;
+        struct{
+            struct relocation_node *first;
+            struct relocation_node *last;
+            smm count;
+        } relocations;
+    };
+    
+    struct{
+        struct base_relocation_block *first;
+        struct base_relocation_block *last;
+        smm count;
+    } relocation_blocks = zero_struct;
+    
+    
+    // :patch :patches
+    begin_counter(timing, patch);
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for(struct patch_node *patch = thread_context->local_patch_list.first; patch; patch = patch->next){
+            
+            // The destination has to have memory associated with it so 'memory_location'.
+            assert(patch->dest_declaration->memory_location);
+            if(patch->source->kind == AST_declaration || patch->source->kind == AST_function){
+                // The source has to have memory when loaded, i.e. a 'relative virtual address'.
+                struct ast_declaration *decl = (struct ast_declaration *)patch->source;
+                assert(decl->relative_virtual_address > 0);
+            }
+            
+            u8 *memory_location = patch->dest_declaration->memory_location + patch->location_offset_in_dest_declaration;
+            
+            // @hack... this is ugly.. we emit first the body then the prolog, so everything is actually
+            //          relative to 'function->memory_location + function->size_of_prolog'
+            // @cleanup: could we do everything relative to 'emit_pool.base'?
+            if(patch->dest_declaration->base.kind == AST_function){
+                struct ast_function *function = cast(struct ast_function *)patch->dest_declaration;
+                
+                memory_location += function->size_of_prolog;
+                patch->rip_at   += function->size_of_prolog;
+            }
+            
+            if(patch->kind == PATCH_rip_relative){
+                assert(patch->dest_declaration->base.kind == AST_function);
+                assert(patch->rip_at >= 0);
+                
+                if(patch->source->kind == AST_function || patch->source->kind == AST_declaration){
+                    struct ast_declaration *source_declaration = cast(struct ast_declaration *)patch->source;
+                    
+                    // :patches_are_32_bit all functions that might need a patch are from us thus 32 bit are enough,
+                    //                     this is now not true anymore, as we have to patch 64 bit locations for memory accesses
+                    smm source_location = source_declaration->relative_virtual_address;
+                    smm dest_location   = patch->dest_declaration->relative_virtual_address;
+                    
+                    // @note: this is used to access a member of a struct or a member of an array.
+                    source_location += patch->location_offset_in_source_declaration;
+                    smm rip_at = dest_location + patch->rip_at;
+                    *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
+                }else if(patch->source->kind == AST_float_literal){
+                    struct ast_float_literal *f = cast(struct ast_float_literal *)patch->source;
+                    assert(f->relative_virtual_address);
+                    
+                    smm dest_location = patch->dest_declaration->relative_virtual_address;
+                    smm rip_at = dest_location + patch->rip_at;
+                    smm source_location = f->relative_virtual_address;
+                    *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
+                }else{
+                    
+                    if(patch->source->kind != AST_string_literal){
+                        report_internal_compiler_error(patch->source->token, "Not a string literal, but %d\n", patch->source->kind);
+                    }
+                    
+                    assert(patch->source->kind == AST_string_literal);
+                    struct ast_string_literal *lit = cast(struct ast_string_literal *)patch->source;
+                    
+                    smm dest_location = patch->dest_declaration->relative_virtual_address;
+                    smm source_location = lit->relative_virtual_address;
+                    
+                    smm rip_at = dest_location + patch->rip_at;
+                    *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
+                }
+            }else{
+                assert(patch->kind == PATCH_absolute);
+                assert(patch->dest_declaration->base.kind == AST_declaration);
+                
+                smm source_location;
+                if(patch->source->kind == AST_function || patch->source->kind == AST_declaration){
+                    struct ast_declaration *decl = cast(struct ast_declaration *)patch->source;
+                    
+                    assert(decl->relative_virtual_address);
+                    source_location = decl->relative_virtual_address + exe->header->ImageBase;
+                    source_location += patch->location_offset_in_source_declaration;
+                }else{
+                    assert(patch->source->kind == AST_string_literal);
+                    struct ast_string_literal *lit = cast(struct ast_string_literal *)patch->source;
+                    
+                    source_location = (smm)lit->relative_virtual_address + exe->header->ImageBase;
+                }
+                
+                *cast(smm *)memory_location = source_location;
+                
+                if(globals.dynamic_base){
+                    smm rva = patch->dest_declaration->relative_virtual_address + patch->location_offset_in_dest_declaration;
+                    smm page_rva = rva & ~((1ull << 12) - 1);
+                    smm offset   = rva &  ((1ull << 12) - 1);
+                    
+                    struct base_relocation_block *block = null;
+                    
+                    // @cleanup: linear search...
+                    for(struct base_relocation_block *it = relocation_blocks.first; it; it = it->next){
+                        if(it->page_rva == page_rva){
+                            block = it;
+                            break;
+                        }
+                    }
+                    
+                    if(!block){
+                        block = push_struct(scratch, struct base_relocation_block);
+                        block->page_rva = page_rva;
+                        sll_push_back(relocation_blocks, block);
+                        relocation_blocks.count++;
+                    }
+                    
+                    struct relocation_node *node = push_struct(scratch, struct relocation_node);
+                    node->offset_in_page = offset;
+                    sll_push_back(block->relocations, node);
+                    block->relocations.count++;
+                }
+            }
+        }
+    }
+    end_counter(timing, patch);
+    
+    if(reloc){
+        
+        begin_section(section_writer, reloc);
+        for(struct base_relocation_block *block = relocation_blocks.first; block; block = block->next){
+            *push_struct(arena, u32) = to_u32(block->page_rva);
+            
+            smm count = block->relocations.count;
+            if(count & 1) count++;
+            
+            *push_struct(arena, u32) = to_u32((smm)(count * sizeof(u16) + 2 * sizeof(u32)));
+            
+            for(struct relocation_node *node = block->relocations.first; node; node = node->next){
+                // four bits of type (10 = IMAGE_REL_BASED_DIR64) and then the offset in the page
+                *push_struct(arena, u16) = to_u16((10 << 12) | node->offset_in_page);
+            }
+            
+            // block must be aligned on a 32bit boundary so push pad in case its not
+            // 0 is pad
+            if(block->relocations.count & 1) push_struct(arena, u16);
+        }
+        end_section(section_writer);
+        
+        // Reloc data directory
+        exe->header->DataDirectory[5].VirtualAddress = reloc->VirtualAddress;
+        exe->header->DataDirectory[5].Size = reloc->Misc.VirtualSize;
+        // @note: this needs to be the actual size (which is reloc->Misc.VirtualSize)
+        // and cant be 'reloc->SizeOfRawData', because then it just silently fails.
+    }
+    
+    
+    if(pdata){ // .pdata
         begin_section(section_writer, pdata);
         
-        // @note: @WARNING: These have to be sorted by address, right now we just sort the 
+        // @note: @WARNING: These have to be sorted by address, right now we just sort the
         //                  functions after gathering them!
-        RUNTIME_FUNCTION *rtfs = push_zero_data(arena, RUNTIME_FUNCTION, functions->count);
+        RUNTIME_FUNCTION *rtfs = push_data(arena, RUNTIME_FUNCTION, functions_with_a_body->count);
         
         u32 i = 0;
-        for_ast_list(*functions){
+        for_ast_list(*functions_with_a_body){
             struct ast_function *function = cast(struct ast_function *)it->value;
             RUNTIME_FUNCTION *rtf = rtfs + i;
             
             rtf->BeginAddress = save_truncate_smm_to_u32(function->relative_virtual_address);
-            // @ugh @cleanup:
-            rtf->EndAddress = save_truncate_smm_to_u32(function->relative_virtual_address + function->byte_size);
+            rtf->EndAddress   = save_truncate_smm_to_u32(function->relative_virtual_address + function->byte_size);
+            
+            // print("%-40.*s -> [0x%.8x, 0x%.8x]\n", function->identifier.size, function->identifier.data, rtf->BeginAddress, rtf->EndAddress);
             
             UNWIND_INFO *unwind = function_fill_in_unwind_info(arena, function);
             rtf->UnwindInfoAddress = make_relative_virtual_address(section_writer, unwind);
@@ -1980,48 +2531,90 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         
         // Exception data directory
         exe->header->DataDirectory[3].VirtualAddress = make_relative_virtual_address(section_writer, rtfs);
-        exe->header->DataDirectory[3].Size = to_u32((smm)sizeof(RUNTIME_FUNCTION) * functions->count);
+        exe->header->DataDirectory[3].Size = to_u32((smm)sizeof(RUNTIME_FUNCTION) * functions_with_a_body->count);
     }
     
     
     exe->header->SizeOfImage = section_writer->virtual_address;
+    if(!text){
+        // @note: set the base of the code to be the first section, its zero sized anyway, but that is what
+        //        link.exe seems to do!
+        exe->header->BaseOfCode = 0x1000;
+    }
     push_zero_align(arena, 0x200);
     exe->end_address = arena_current(arena);
     
-    end_counter(print_exe);
+    end_counter(timing, print_exe);
     
-    if (!globals.want_pdb) {
-        end_tempoary_memory(temp);
-        return ret;
+    
+    if(!globals.dont_print_the_files_because_we_are_in_a_test_suite){
+        
+        // 
+        // Write exe file to disk.
+        // 
+        
+        begin_counter(context, write_exe);
+        char *exe_name = push_cstring_from_string(arena, exe_full_path);
+        smm size = exe->end_address - exe->base_address;
+        
+        b32 success;
+        {
+            u8 *buffer = exe->base_address;
+            smm buffer_size = size;
+            
+            //u32 FILE_FLAG_NO_BUFFERING = 0x20000000;
+            u32 FILE_FLAG_NO_BUFFERING = 0;
+            
+            HANDLE file_handle = CreateFileA(exe_name, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_FLAG_NO_BUFFERING, NULL);
+            
+            // ignore FILE_ALREADY_EXISTS
+            if(GetLastError() == 183) SetLastError(0);
+            //if(GetLastError()) print("Warning: GetLastError in create file: %d\n", GetLastError());
+            
+            DWORD bytes_written;
+            
+            success = WriteFile(file_handle, buffer, save_truncate_smm_to_s32(buffer_size), &bytes_written, 0);
+            
+            success = success && (bytes_written == buffer_size);
+            
+            begin_counter(context, virus_scanner);
+            // @note: this apparently invokes the anti virus scanner or something thus it takes 200ms...
+            CloseHandle(file_handle);
+            end_counter(context, virus_scanner);
+        }
+        //b32 success = os_write_file(exe_name, coff.exe.base_address, size);
+        end_counter(context, write_exe);
+        
+        if(success){
+            print("Wrote file: '%s'\n", exe_name);
+        }else{
+            print("Error: Unable to write file '%s'.\n", exe_name);
+            globals.an_error_has_occurred = true;
+        }
     }
     
-    begin_counter(print_pdb);
+    if (!globals.want_debug_information || /*we failed to write the .exe*/globals.an_error_has_occurred) {
+        end_temporary_memory(temporary_memory);
+        return;
+    }
     
     ///////////////////////////////////////////////////////////////////////////////
     //                                  PDB                                      //
     ///////////////////////////////////////////////////////////////////////////////
     
+    begin_counter(timing, print_pdb);
     
-    // @note: do not do end temporary memory here, tho it seems tempting.. We need the list we created above.
-    //        e.g functions, dll_functions, ...
-    
-    
-    struct string pdb_full_path = push_string_copy(scratch, globals.pdb_full_path);
-    replace_characters(pdb_full_path, "/", '\\');
-    struct string exe_full_path = push_string_copy(scratch, globals.exe_full_path);
-    replace_characters(exe_full_path, "/", '\\');
-    
-    
-    struct pdb_write_context *context = &ret.pdb;
+    struct pdb_write_context *context = &(struct pdb_write_context)zero_struct;
+    if(text) context->text_section_id = section_id_for_section(exe, text); // Only used for the debug info for functions.
     context->arena = arena;
     context->scratch = scratch;
     
-    // the pdb format is formated in pages: first 3 pages are 
+    // the pdb format is formated in pages: first 3 pages are
     // 1) The PDB header
     // 2) The first free block map
     // 3) The second free block map
     
-    // everthing after that is data, organized is so called streams.
+    // everything after that is data, organized is so called streams.
     // each stream has an entry in the _stream directory_.
     // The stream directory is a map of _stream indices_ to a list of pages.
     // the data associated to the stream is then serial in the pages associated to the stream.
@@ -2033,53 +2626,54 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     // stream 3: DBI Stream (DBI DeBugInfo)
     // stream 4: IPI Stream
     
-    /* From the github: tho it seems wrong... this is what they think
-    1	    Pdb (header)	             Version information, and information to connect this PDB to the EXE
-    2	    Tpi (Type manager)	       All the types used in the executable.
-    3	    Dbi (Debug information)	  Holds section contributions, and list of ‘Mods’
-    4	    NameMap	                  Holds a hashed string table
-    4-(n+4)  n Mod’s (Module information) Each Mod stream holds symbols and line numbers for one compiland
-    n+4	  Global symbol hash	       An index that allows searching in global symbols by name
-    n+5	  Public symbol hash	       An index that allows searching in public symbols by addresses
-    n+6	  Symbol records	           Actual symbol records of global and public symbols
-    n+7	  Type hash	                Hash used by the TPI stream.
-          */
+    
+    // From the github: tho it seems wrong... this is what they think
+    //    1        Pdb (header)                 Version information, and information to connect this PDB to the EXE
+    //    2        Tpi (Type manager)           All the types used in the executable.
+    //    3        Dbi (Debug information)      Holds section contributions, and list of Mods
+    //    4        NameMap                      Holds a hashed string table
+    //    4-(n+4)  n Mods (Module information) Each Mod stream holds symbols and line numbers for one compiland
+    //    n+4      Global symbol hash           An index that allows searching in global symbols by name
+    //    n+5      Public symbol hash           An index that allows searching in public symbols by addresses
+    //    n+6      Symbol records               Actual symbol records of global and public symbols
+    //    n+7      Type hash                    Hash used by the TPI stream.
+    
     
     // the layout we choose corresponds to the 'stream_index' enum above.
     
-    // the stream directory will in our case not be more then a page, but there is a double
+    // the stream directory will in our case not be more than a page, but there is a double
     // indirection in case it would be.
     // pdb_header->page_number_of_directory_stream_number_list points to an array of pages.
     
-    // this gives us the directiory stream which follows the layout:
+    // this gives us the directory stream which follows the layout:
     // directory_stream:
     // u32 amount_of_streams;
-    // u32 stream_sizes[amount_of_streams]
-    // u32 stream_one_pages[]
-    // u32 stream_two_pages[]
+    // u32 stream_sizes[amount_of_streams];
+    // u32 stream_one_pages[];
+    // u32 stream_two_pages[];
     // ...
     
     // Differance between TPI and IPI is only what appears in them. See this table:
-    // TPI Stream	IPI Stream
-    // LF_POINTER	LF_FUNC_ID
+    // TPI Stream    IPI Stream
+    // LF_POINTER    LF_FUNC_ID
     // LF_MODIFIER   LF_MFUNC_ID
     // LF_PROCEDURE  LF_BUILDINFO
     // LF_MFUNCTION  LF_SUBSTR_LIST
-    // LF_LABEL	  LF_STRING_ID
-    // LF_ARGLIST	LF_UDT_SRC_LINE
+    // LF_LABEL      LF_STRING_ID
+    // LF_ARGLIST    LF_UDT_SRC_LINE
     // LF_FIELDLIST  LF_UDT_MOD_SRC_LINE
-    // LF_ARRAY	 
-    // LF_CLASS	 
-    // LF_STRUCTURE	 
-    // LF_INTERFACE	 
-    // LF_UNION	 
-    // LF_ENUM	 
-    // LF_TYPESERVER2	 
-    // LF_VFTABLE	 
-    // LF_VTSHAPE	 
-    // LF_BITFIELD	 
-    // LF_METHODLIST	 
-    // LF_PRECOMP	 
+    // LF_ARRAY
+    // LF_CLASS
+    // LF_STRUCTURE
+    // LF_INTERFACE
+    // LF_UNION
+    // LF_ENUM
+    // LF_TYPESERVER2
+    // LF_VFTABLE
+    // LF_VTSHAPE
+    // LF_BITFIELD
+    // LF_METHODLIST
+    // LF_PRECOMP
     // LF_ENDPRECOMP
     
     const u32 page_size = 0x1000;
@@ -2089,7 +2683,7 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     struct pdb_header *pdb_header = push_struct(arena, struct pdb_header);
     context->pdb_header = pdb_header;
     {
-        memcpy(pdb_header->signiture, pdb_signiture, sizeof(pdb_signiture));
+        memcpy(pdb_header->signature, pdb_signature, sizeof(pdb_signature));
         pdb_header->page_size = page_size;
         pdb_header->free_page_map = 1; // has to be 1 or 2
         //pdb_header->number_of_file_pages;
@@ -2103,12 +2697,12 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     // but here would be the free page map 1 and 2 :free_page_maps
     
     
-    // From this point on we use the macros instread of working on arena directly 
+    // From this point on we use the macros instead of working on arena directly
     
-    // stream 0: Previous stream directory 
+    // stream 0: Previous stream directory
     // we have to figure out of we can leave this out....
     
-    begin_counter(pdb_stream);
+    begin_counter(timing, pdb_stream);
     // stream 1: PDB stream
     { // :pdb_stream
         set_current_stream(context, STREAM_PDB);
@@ -2116,12 +2710,9 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             u32 version;
             u32 time_in_seconds_since_1970;
             u32 amount_of_times_the_pdb_has_been_written;
-            u32 guid1;
-            u32 guid2;
-            u32 guid3;
-            u32 guid4;
+            u8 guid[16];
             u32 length_of_the_string_buffer;
-            char buffer_of_named_stream_names[];
+            //char buffer_of_named_stream_names[];
         };
         
         struct pdb_stream pdb = zero_struct;
@@ -2129,25 +2720,17 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         pdb.version = 20000404;
         pdb.time_in_seconds_since_1970 = 0x5DA82834; // @cleanup: this is 17.10.19
         pdb.amount_of_times_the_pdb_has_been_written = 1;
-        // who cares!
-        //int _rdrand32_step (unsigned int* val);
-        //_rdrand32_step(&pdb.guid1);
-        //_rdrand32_step(&pdb.guid2);
-        //_rdrand32_step(&pdb.guid3);
-        //_rdrand32_step(&pdb.guid4);
-        pdb.guid1 = 0x13371337;
-        pdb.guid2 = 0x13371337;
-        pdb.guid3 = 0x13371337;
-        pdb.guid4 = 0x13371337;
+        
+        memcpy(pdb.guid, pdb_guid, sizeof(pdb_guid));
         
         char string_table[] = "/LinkInfo\0/names";
         
-        pdb.length_of_the_string_buffer = sizeof(string_table); 
+        pdb.length_of_the_string_buffer = sizeof(string_table);
         
         out_struct(pdb);
         out_struct(string_table);
         
-        // following the pdb_stream_header there is a serialized hash table, that maps 
+        // following the pdb_stream_header there is a serialized hash table, that maps
         // offsets of strings in the string_table above to stream_indices or in other words
         // stream names to named streams
         // for us it seems that the only named streams are a "/LinkInfo" and "/names", but "/LinkInfo" is empty
@@ -2163,7 +2746,7 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         out_int(0, u32); // no deleted buckets
         
         // no comes an array of all _present_ hash buckets so in our case 2 buckets.
-        // these hash buckets are key value pairs, the key is the offset in the string_table and the 
+        // these hash buckets are key value pairs, the key is the offset in the string_table and the
         // value is the stream_index
         
         // @note: @cleanup: I do not actually know the hash algorithm, tho llvm has it implemented.
@@ -2178,26 +2761,28 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         out_int(STREAM_link_info, u32);    // stream_index
         
         // for some reason they put a 0 here
-        // @cleanup: find the referance fot that 
-        out_int(0, u32); 
-        // the flags, or version or something 
+        // @cleanup: find the referance fot that
+        out_int(0, u32);
+        // the flags, or version or something
         out_int(20140508, u32);
     }
-    end_counter(pdb_stream);
+    end_counter(timing, pdb_stream);
     
     context->maximal_amount_of_type_indices = max_of(0x1000, globals.compound_types.capacity);
     context->amount_of_type_indices = 0;
-    context->type_index_to_type_info = push_zero_data(scratch, struct pdb_type_info, context->maximal_amount_of_type_indices);
+    context->type_index_to_type_info = push_data(scratch, struct pdb_type_info, context->maximal_amount_of_type_indices);
     
     context->type_stack_size = 0x100;
-    context->type_stack = push_data(scratch, struct ast_type *, context->type_stack_size);
+    context->type_stack = push_uninitialized_data(scratch, struct ast_type *, context->type_stack_size);
     
-#define pdb_init_basic_type_index(type_name){\
-        globals.typedef_##type_name.pdb_type_index = CV_##type_name;\
-        globals.typedef_##type_name.flags |= TYPE_FLAG_pdb_permanent;\
-        context->type_index_to_type_info[CV_##type_name].type = &globals.typedef_##type_name;\
-    }
+#define pdb_init_basic_type_index(type_name)\
+{\
+    globals.typedef_##type_name.pdb_type_index = CV_##type_name;\
+    globals.typedef_##type_name.flags |= TYPE_FLAG_pdb_permanent;\
+    context->type_index_to_type_info[CV_##type_name].type = &globals.typedef_##type_name;\
+}
     pdb_init_basic_type_index(void);
+    pdb_init_basic_type_index(Bool);
     pdb_init_basic_type_index(s8);
     pdb_init_basic_type_index(s16);
     pdb_init_basic_type_index(s32);
@@ -2223,11 +2808,11 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
 #undef pdb_init_basic_type_index
     
     context->index_offset_buffer_size = 0x100;
-    context->index_offset_buffer = push_data(scratch, struct pdb_index_offset_buffer_entry, context->index_offset_buffer_size);
+    context->index_offset_buffer = push_uninitialized_data(scratch, struct pdb_index_offset_buffer_entry, context->index_offset_buffer_size);
     context->index_offset_buffer_at = 0;
     context->index_offset_buffer_boundary = -1; // initialized to -1 so we always allocate one immediately
     
-    begin_counter(tpi_stream);
+    begin_counter(timing, tpi_stream);
     // stream 2: TPI stream
     struct tpi_stream tpi = zero_struct;
     { // :tpi_stream
@@ -2240,27 +2825,33 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         tpi.minimal_type_index = 0x1000;
         
         tpi.hash_aux_stream_index = -1;
-        tpi.hash_stream_index = STREAM_TPI_hash; 
+        tpi.hash_stream_index = STREAM_TPI_hash;
         tpi.hash_key_size = sizeof(u32);
         
         struct pdb_location header_location = stream_allocate_bytes(context, sizeof(tpi));
         struct pdb_location type_record_data_begin = get_current_pdb_location(context);
         context->type_record_data_begin = type_record_data_begin;
         
-        // after the header comes a list of variable sized type records    
+        // after the header comes a list of variable sized type records
         {   // write in all the type records, this has to be done in a topological order.
-
+            
+            //
+            // Register all compounds first! This avoids emitting a lot of unnecessary tpi-predeclarations.
+            // @cleanup: maybe we should fold the type-indices via the hash.
+            //                                                                                12.04.2022
+            
             // register all named compound_types
             for(u64 i = 0; i < globals.compound_types.capacity; i++){
                 struct ast_node *node = globals.compound_types.nodes + i;
-                if(!node->hash) continue;
+                if(!node->token) continue;
                 struct ast_type *initial_type = cast(struct ast_type *)node->ast;
                 tpi_register_type(context, initial_type);
-            } 
+            }
             
             // register types for all declaration, this has to be done, as they might be anonymous types...
             for_ast_list(*initialized_declarations){
                 struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+                
                 tpi_register_type(context, decl->type);
             }
             
@@ -2270,18 +2861,33 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
                 tpi_register_type(context, decl->type);
             }
             
+            // register types for all typedefs, this has to be done, as they might be anonymous types...
+            for_ast_list(*typedefs){
+                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+                tpi_register_type(context, decl->type);
+            }
+            
             // register all function types
-            for_ast_list(*functions){
+            for_ast_list(*functions_with_a_body){
                 struct ast_function *function = cast(struct ast_function *)it->value;
                 tpi_register_type(context, &function->type->base);
             }
             
+            
+            for_ast_list(symbol_context.dll_imports){
+                struct ast_function *function = (struct ast_function *)it->value;
+                tpi_register_type(context, &function->type->base);
+            }
+            
+            
             // register types for all declarations in functions... these should probably be 'scoped'?
-            // @incomplete: 
-            for_ast_list(*functions){
+            // @incomplete:
+            for_ast_list(*functions_with_a_body){
                 struct ast_function *function = cast(struct ast_function *)it->value;
                 tpi_register_all_types_in_ast__recursive(context, function->scope);
             }
+            
+            
             
         } // end of emitting all the types
         
@@ -2291,7 +2897,7 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         tpi.maximal_type_index = context->active_page_list->symbol_at;
         
         tpi.hash_value_buffer_offset = 0;
-#define IMPLEMENT_HASH_VALUE_BUFFER 0
+#define IMPLEMENT_HASH_VALUE_BUFFER 1
 #if IMPLEMENT_HASH_VALUE_BUFFER
         tpi.hash_value_buffer_length = (tpi.maximal_type_index - tpi.minimal_type_index) * tpi.hash_key_size;
 #else
@@ -2304,21 +2910,21 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         tpi.index_offset_buffer_offset = tpi.hash_value_buffer_length;
         
         // @note: This is not correct because a symbol could span the next 8kb boundary, but no symbol would
-        // begin after that boundary. 
+        // begin after that boundary.
         //    u32 entries = 1 + (tpi.amount_of_bytes_of_type_record_data_following_the_header / kilo_bytes(8));
         // but we have the actual number, wo why not use that.
-        tpi.index_offset_buffer_length = context->index_offset_buffer_at * sizeof(context->index_offset_buffer[0]); 
+        tpi.index_offset_buffer_length = context->index_offset_buffer_at * sizeof(context->index_offset_buffer[0]);
         
         // incremental linking not supported
         tpi.incremental_linking_hash_table_offset = tpi.index_offset_buffer_offset + tpi.index_offset_buffer_length;
-        tpi.incremental_linking_hash_table_length = 0; 
+        tpi.incremental_linking_hash_table_length = 0;
         
         
         stream_write_bytes(context, &header_location, &tpi, sizeof(tpi));
     }
-    end_counter(tpi_stream);
+    end_counter(timing, tpi_stream);
     
-    begin_counter(names_stream);
+    begin_counter(timing, names_stream);
     // stream 5: Names
     { // :names_stream /names
         set_current_stream(context, STREAM_names);
@@ -2327,32 +2933,42 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         struct pdb_location string_buffer_size = stream_allocate_bytes(context, sizeof(u32));
         
         struct pdb_location string_buffer_start = get_current_pdb_location(context);
+        
+        smm file_count = 0;
         {
             // first string is the zero_string? referance: DebugStringTableSubsection::commit
             // also this is _invalid_ I think, see PDBLinker in PDB.cpp of llvm
             out_int(0, u8);
             
-            for(struct file_stack_node *node = globals.file_list.first; node; node = node->next){
+            for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
+                struct file *node = globals.file_table.data[file_index];
+                if(!node) continue;
+                
+                file_count++;
                 node->offset_in_names = pdb_current_offset_from_location(context, string_buffer_start);
-                out_string(node->absolute_file_path);
+                out_string(string_from_cstring(node->absolute_file_path));
             }
         }
+        
         struct pdb_location string_buffer_end = get_current_pdb_location(context);
         u32 size = pdb_location_diff(string_buffer_end, string_buffer_start);
         stream_write_bytes(context, &string_buffer_size, &size, sizeof(u32));
         
         // @cleanup: lazy as fuck should probably round to the next power of two
-        smm smm_bucket_count = 2 * globals.file_list.amount;
+        smm smm_bucket_count = 2 * file_count;
         u32 bucket_count = to_u32(smm_bucket_count);
         
-        // after the string buffer we have a serialized hash table 
+        // after the string buffer we have a serialized hash table
         //     string_hash -> offset in the string buffer
         out_int(bucket_count, u32); // bucket count
         
         // write in the buckets
-        u32 *buckets = push_zero_data(scratch, u32, bucket_count);
-        for(struct file_stack_node *node = globals.file_list.first; node; node = node->next){
-            u32 hash = pdb_string_hash(node->absolute_file_path);
+        u32 *buckets = push_data(scratch, u32, bucket_count);
+        for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
+            struct file *node = globals.file_table.data[file_index];
+            if(!node) continue;
+            
+            u32 hash = pdb_string_hash(string_from_cstring(node->absolute_file_path));
             for(u32 i = 0; bucket_count; i++){
                 u32 index = (hash + i) % bucket_count;
                 if(buckets[index] != 0) continue;
@@ -2363,11 +2979,11 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         stream_emit_struct(context, buckets, sizeof(u32) * bucket_count);
         
         // at the end is the amount of strings
-        out_int(globals.file_list.amount, u32);
+        out_int(file_count, u32);
     }
-    end_counter(names_stream);
+    end_counter(timing, names_stream);
     
-    begin_counter(tpi_hash_stream);
+    begin_counter(timing, tpi_hash_stream);
     // stream 7: TPI hash
     { // :tpi_hash_stream
         set_current_stream(context, STREAM_TPI_hash);
@@ -2382,13 +2998,26 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         for(u32 i = 0; i < tpi.hash_value_buffer_length; i+= tpi.hash_key_size){
             // hashing a type_record: (LF_STRUCTURE, LF_UNION, LF_ENUM):
             // if(!forward_ref && !is_anonymous){
-            //    if(!scoped || hash_unique_name){
+            //    if(!scoped || has_unique_name){
             //        return pdb_string_hash(name);
             //    }
             // }
             // return string CRC32(serialized);
-            out_int(0, u32);
-            //out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32); // could make this tpi.hash_key_size
+            
+            assert(i/tpi.hash_key_size + tpi.minimal_type_index < context->maximal_amount_of_type_indices);
+            struct pdb_type_info *info = get_type_info_for_type_index(
+                    context, i/tpi.hash_key_size + tpi.minimal_type_index);
+            
+            if(info->type && (info->type->kind == AST_struct || info->type->kind == TOKEN_union ||
+                    info->type->kind == AST_enum)){
+                struct ast_compound_type *compound = cast(struct ast_compound_type *)info->type;
+                u32 hash = pdb_string_hash(compound->identifier.string);
+                
+                out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32); // could make this tpi.hash_key_size
+            }else{
+                out_int(0, u32);
+            }
+            
         }
 #endif
         
@@ -2397,9 +3026,9 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         // This gives O(log(n)) acccess time. (binary search over this buffer + linear search of 8KB).
         stream_emit_struct(context, context->index_offset_buffer, tpi.index_offset_buffer_length);
     }
-    end_counter(tpi_hash_stream);
+    end_counter(timing, tpi_hash_stream);
     
-    begin_counter(ipi_stream);
+    begin_counter(timing, ipi_stream);
     
     // reset the 'context->index_offset_buffer'
     context->index_offset_buffer_boundary = -1;
@@ -2411,7 +3040,7 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     { // :ipi_stream
         // the IPI Stream describes _id_ information
         
-        // @note: For more detail see the tpi-Stream, which is structured exacly the same, the only differance
+        // @note: For more detail see the tpi-Stream, which is structured exactly the same, the only difference
         //        is what kind of symbols they contain.
         
         set_current_stream(context, STREAM_IPI);
@@ -2433,51 +3062,86 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         // after the header is a list of variable sized type records
         
         // we associate to any function and any type definition a source line
-        // for functions: 
+        // for functions:
         //      LF_FUNC_ID
-        // for types: 
+        // for types:
         //      LF_UDT_MOD_SRC_LINE
         
         // UDT stands for user defined type
         
         
         // LF_STRING_ID for every used source file
-        for(struct file_stack_node *node = globals.file_list.first; node; node = node->next){
+        for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
+            struct file *node = globals.file_table.data[file_index];
+            if(!node) continue;
+            
             node->ipi = begin_symbol(0x1605);{ // LF_STRING_ID
                 out_int(0, u32); // @cleanup: what was this?
-                out_string(node->absolute_file_path);
+                out_string(string_from_cstring(node->absolute_file_path));
             }end_symbol();
         }
         
-        // a LF_UDT_MOD_SRC_LINE for every global compound type @cleanup: typedefs @cleanup: local types
+        // a LF_UDT_MOD_SRC_LINE for every global compound type @cleanup: local types
         for(u64 i = 0; i < globals.compound_types.capacity; i++){
             struct ast_node *node = globals.compound_types.nodes + i;
-            if(!node->hash) continue;
+            if(!node->token) continue;
             struct ast_type *type = cast(struct ast_type *)node->ast;
             assert(type->kind == AST_enum || type->kind == AST_union || type->kind == AST_struct);
             assert(type->pdb_type_index);
+            
+            struct file *file = globals.file_table.data[type->token->file_index];
             begin_symbol(0x1607);{ // LF_UDT_MOD_SRC_LINE
-                out_int(type->pdb_type_index,               u32); // type_index
-                out_int(type->token->file->offset_in_names, u32); // file_name    (offset in /names)
-                out_int(type->token->line,                  u32); // line_number
-                out_int(1,                                  u32); // module_index (@hardcoded one counted)
+                out_int(type->pdb_type_index,  u32); // type_index
+                out_int(file->offset_in_names, u32); // file_name    (offset in /names)
+                out_int(type->token->line,     u32); // line_number
+                out_int(1,                     u16); // module_index (@hardcoded one counted)
+                out_f3f2f1_align(sizeof(u32));
             }end_symbol();
         }
         
-        for_ast_list(*functions){
+        for_ast_list(*typedefs){
+            struct ast_declaration *decl = (struct ast_declaration *)it->value;
+            struct ast_type *type = decl->type;
+            
+            struct file *file = globals.file_table.data[type->token->file_index];
+            begin_symbol(0x1607);{ // LF_UDT_MOD_SRC_LINE
+                out_int(type->pdb_type_index,  u32); // type_index
+                out_int(file->offset_in_names, u32); // file_name    (offset in /names)
+                out_int(type->token->line,     u32); // line_number
+                out_int(1,                     u16); // module_index (@hardcoded one counted)
+                out_f3f2f1_align(sizeof(u32));
+            }end_symbol();
+        }
+        
+        for_ast_list(*functions_with_a_body){
             struct ast_function *function = cast(struct ast_function *)it->value;
             assert(function->type->base.flags & TYPE_FLAG_pdb_permanent);
             begin_symbol(0x1601);{ // LF_FUNC_ID
                 // @cleanup: can functions in C be non-global?
                 out_int(0, u32); // parent scope id or 0 if its global @incomplete: maybe local functions
                 out_int(function->type->base.pdb_type_index, u32); // type index of the type
-                out_string(*function->identifier);
+                out_string(function->identifier->string);
             }end_symbol();
-        } 
+        }
         
+#if 0
+        // @cleanup: should we do this
+        for(struct dll_import_node *import = globals.dll_imports.first; import; import = import->next){
+            for_ast_list(import->functions){
+                struct ast_function *function = cast(struct ast_function *)it->value;
+                assert(function->type->base.flags & TYPE_FLAG_pdb_permanent);
+                begin_symbol(0x1601);{ // LF_FUNC_ID
+                    // @cleanup: can functions in C be non-global?
+                    out_int(0, u32); // parent scope id or 0 if its global @incomplete: maybe local functions
+                    out_int(function->type->base.pdb_type_index, u32); // type index of the type
+                    out_string(function->identifier);
+                }end_symbol();
+            }
+        }
+#endif
         
         // @note: @incomplete: I think this exists for every compilation unit?
-        {// build the BUILDINFO
+        {   // build the BUILDINFO
             u32 working_directiory_symbol = begin_symbol(0x1605);{ // LF_STRING_ID
                 out_int(0, u32); // id to the list of sub string Id's???????
                 out_struct("l:\\l++\\tests");
@@ -2504,11 +3168,11 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
                 out_int(5, u16); // count
                 
                 //  a list of code item id's
-                out_int(working_directiory_symbol,    u32); // current directory
-                out_int(compiler_name_symbol,         u32); // build tool (cl.exe)
-                out_int(globals.file_list.first->ipi, u32); // source file (foo.cpp)
-                out_int(pdb_symbol,                   u32); // pdb file (foo.pdb)
-                out_int(command_line_symbol,          u32); // command arguments (-I etc)
+                out_int(working_directiory_symbol,  u32); // current directory
+                out_int(compiler_name_symbol,       u32); // build tool (cl.exe)
+                out_int(globals.compilation_units.data[0].main_file->ipi, u32); // source file (foo.cpp)
+                out_int(pdb_symbol,                 u32); // pdb file (foo.pdb)
+                out_int(command_line_symbol,        u32); // command arguments (-I etc)
             }end_symbol();
         }
         
@@ -2525,26 +3189,26 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
 #endif
         
         ipi.index_offset_buffer_offset = ipi.hash_value_buffer_length + ipi.hash_value_buffer_offset;
-        ipi.index_offset_buffer_length = context->index_offset_buffer_at * sizeof(context->index_offset_buffer[0]); 
+        ipi.index_offset_buffer_length = context->index_offset_buffer_at * sizeof(context->index_offset_buffer[0]);
         
         ipi.incremental_linking_hash_table_offset = ipi.index_offset_buffer_offset + ipi.index_offset_buffer_length;
         ipi.incremental_linking_hash_table_length = 0;
         
         stream_write_bytes(context, &header_location, &ipi, sizeof(ipi));
     }
-    end_counter(ipi_stream);
+    end_counter(timing, ipi_stream);
     
-    begin_counter(ipi_hash_stream);
+    begin_counter(timing, ipi_hash_stream);
     // stream 8: IPI hash stream
     { // :ipi_hash_stream
         // same as  :ipi_hash_stream
         set_current_stream(context, STREAM_IPI_hash);
         
-        // @cleanup: these are like 
+        // @cleanup: these are like
         //    hash_entry = hash % (hash_buffer_size)
         
         // look at hashTypeRecord
-        // the hashes are computed via a CRC. Do we acutally have to use their hash algorithm?
+        // the hashes are computed via a CRC. Do we actually have to use their hash algorithm?
         // and crc32.h
 #if IMPLEMENT_HASH_VALUE_BUFFER
         for(u32 i = 0; i < ipi.hash_value_buffer_length; i+= ipi.hash_key_size){
@@ -2554,10 +3218,10 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         
         // index_offset_buffer:
         // An array of type_index offset pairs, which are used _chunk_ the type_records into 8KB chunks.
-        // This gives O(log(n)) acccess time. (binary search over this buffer + linear search of 8KB).
+        // This gives O(log(n)) access time. (binary search over this buffer + linear search of 8KB).
         stream_emit_struct(context, context->index_offset_buffer, ipi.index_offset_buffer_length);
     }
-    end_counter(ipi_hash_stream);
+    end_counter(timing, ipi_hash_stream);
     
     // stream 5: Link Info stream
     { // :link_info_stream
@@ -2568,11 +3232,11 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     u32 module_stream_symbol_size;
     u32 module_stream_line_info_size;
     
-    begin_counter(module_stream);
+    begin_counter(timing, module_stream);
     // stream > 12: Module streams
     { // :module_streams
         set_current_stream(context, STREAM_module_zero);
-        // module layout: 
+        // module layout:
         // u32 signature; always 4
         // u8  symbols[symbol_byte_size - 4];
         // u8  line_information[line_info_byte_size]
@@ -2591,11 +3255,11 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             char module_string[] = "l:\\l++\\build\\test.obj";
             out_struct(module_string); // obj name
         }end_symbol();
-
-        begin_symbol(0x113c);{ // S_COMPILE3
         
+        begin_symbol(0x113c);{ // S_COMPILE3
+            
             out_int(0, u32); // flags, the first byte is for the _language index_ 0 means C
-            out_int(0xd0, u16); // mashine
+            out_int(0xd0, u16); // machine
             
             // @note: this is copied from the dump
             out_int(19,    u16); // front end major version
@@ -2609,36 +3273,52 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             char version_string[] = "ccup";
             out_struct(version_string);
         }end_symbol();
-
         
-        begin_counter(module_function_info);
-        for_ast_list(*functions){
+        
+        begin_counter(timing, module_function_info);
+        for_ast_list(*functions_with_a_body){
             struct ast_function *function = cast(struct ast_function *)it->value;
             
             function->debug_symbol_offset = pdb_current_offset_from_location(context, module_stream_begin);
             
             struct pdb_location function_pointer_to_end;
-            u16 GPROC32 = 0x1110;
-            u16 LPROC32 = 0x110f;
-            //  @incomplete: @hack
-            u16 symbol = (function == entry_point) ? GPROC32 : LPROC32;
+            
+            u16 symbol = (function->decl_flags & DECLARATION_FLAGS_is_static) ? /* LPROC32 */ 0x110f: /* GPROC32 */ 0x1110;
             begin_symbol(symbol);{ // GPROC32 (global procdure start)
                 out_int(0, u32); // pointer to parent (what is a pointer ?)
                 function_pointer_to_end = stream_allocate_bytes(context, sizeof(u32)); // pointer to end
-                out_int(0, u32); // pointer to next symbol? why is this allways 0?
+                out_int(0, u32); // pointer to next symbol? why is this always 0?
                 out_int(function->byte_size, u32); // length of the procedure
-                out_int(function->size_of_prolog, u32); // offset in the function where debuging makes sense
+                out_int(function->size_of_prolog, u32); // offset in the function where debugging makes sense
                 out_int(function->byte_size, u32); // end of the section where it makes sense to debug @cleanup
-                out_int(function->type->base.pdb_type_index, u32); // typeindex 
+                out_int(function->type->base.pdb_type_index, u32); // type_index
                 out_int(function->offset_in_text_section, u32); // offset in segment
-                out_int(SECTION_ID_text, u16); // segment
+                out_int(section_id_for_section(exe, text), u16); // segment
                 out_int(0, u8); // flags: Frame pointer, @cleanup: custom calling convention, no_return
                 // these are somehow never present???
-                out_string(*function->identifier);
+                out_string(function->identifier->string);
             }end_symbol();
             
             begin_symbol(0x1012);{ // FRAMEPROC
-                out_int(function->stack_space_needed + 8, u32); // frame size 
+                
+                // dll_return_a_struct:
+                // 0000000180001030: 48 89 4C 24 08     mov         qword ptr [rsp+8],rcx
+                // 0000000180001035: 56                 push        rsi
+                // 0000000180001036: 57                 push        rdi
+                // 0000000180001037: 48 81 EC 88 00 00  sub         rsp,88h
+                
+                // Frame size = 0x00000088 bytes
+                // Pad size = 0x00000000 bytes
+                // Offset of pad in frame = 0x00000000
+                // Size of callee save registers = 0x00000000
+                // Address of exception handler = 0000:00000000
+                // Function info: asynceh invalid_pgo_counts opt_for_speed Local=rsp Param=rsp (0x00114200)
+                
+                // this appearanly is not really the frame size, but only the space used by the function
+                // no pushed registers and return value usw.
+                u32 frame_size = to_u32(function->stack_space_needed);
+                
+                out_int(frame_size, u32); // frame size
                 out_int(0, u32); // pad size @cleanup: search up what this was again
                 out_int(0, u32); // offset of pad
                 out_int(0, u32); // callee saved register byte size (not sure)
@@ -2646,16 +3326,22 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
                 out_int(0, u16); // section id of exception handler
                 
                 u32 flags = 0;
-                flags |= (2 << 16); // local base pointer (2 = rbp) (1 = rsp)
-                flags |= (2 << 14); // param base pointer (2 = rbp) (1 = rsp)
+                flags |= (2 << 14); // local base pointer (3 = r13) (2 = rbp) (1 = rsp) (0 = none)
+                flags |= (2 << 16); // param base pointer (3 = r13) (2 = rbp) (1 = rsp) (0 = none)
+                flags |= (1 << 9);  // asynceh, function compiled with /EHa ?
+                flags |= (1 << 20); // opt_for_speed, always set for some reason
                 out_int(flags, u32); // asynceh invalid_pgo_counts opt_for_speed Local=rsp Param=rsp ???
             }end_symbol();
             
             // @cleanup: we don't have to emit blocks, that do not have variables
-            //           and also we do not have to emit the _initial_ block as it is implicit, 
+            //           and also we do not have to emit the _initial_ block as it is implicit,
             //           but these might be things to do in the part that creates debug_members
+            
+            
             // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+            
             emit_debug_info_for_function(context, function);
+            
             // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
             
             
@@ -2664,26 +3350,38 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             begin_symbol(0x6);{ // S_END
             }end_symbol();
         }
-        end_counter(module_function_info);
+        end_counter(timing, module_function_info);
         
-        begin_symbol(0x114c);{ // S_BUILDINFO 
+        begin_symbol(0x114c);{ // S_BUILDINFO
             out_int(build_info_symbol, u32); // Item Id: type_index of a LF_BUILDINFO in the IPI stream
         }end_symbol();
         
         struct pdb_location symbols_end = get_current_pdb_location(context);
         module_stream_symbol_size = pdb_location_diff(symbols_end, module_stream_begin);
         
-        begin_counter(module_file_info);
-        // here come the md5's
+        begin_counter(timing, module_file_info);
+        // 
+        // Here come the md5's
+        // 
         {
             out_int(0xf4, u32); // DEBUG_S_FILECHKSUM or something like that
             struct pdb_location size_loc = stream_allocate_bytes(context, sizeof(u32));
             struct pdb_location begin_loc = get_current_pdb_location(context);
-            for(struct file_stack_node *node = globals.file_list.first; node; node = node->next){
+            for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
+                struct file *node = globals.file_table.data[file_index];
+                if(!node) continue;
+                
                 node->offset_in_f4 = pdb_current_offset_from_location(context, begin_loc);
                 out_int(node->offset_in_names, u32);   // offset in /names
                 out_int(0x110, u16); // kind of hash function (md5)
-                m128 md5 = node->md5;
+                
+                // :padded_file_size
+                // 
+                // We have padded the file size when allocating for it so we can use 'hash_md5_inplace'
+                // here instead of 'hash_md5' which would have to allocate.
+                // 
+                m128 md5 = hash_md5_inplace(node->file.memory, node->file.size, node->file.size + 128);
+                
                 stream_emit_struct(context, md5._u8, 16);
                 out_align(sizeof(u32)); // align up to 32.. there are two bytes of pad
             }
@@ -2692,11 +3390,11 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             stream_write_bytes(context, &size_loc, &size, sizeof(u32));
         }
         
-        end_counter(module_file_info);
+        end_counter(timing, module_file_info);
         
-        begin_counter(module_line_info);
+        begin_counter(timing, module_line_info);
         // now comes the line info
-        for_ast_list(*functions){
+        for_ast_list(*functions_with_a_body){
             struct ast_function *function = cast(struct ast_function *)it->value;
             
             out_int(0xf2, u32); // DEBUG_S_LINES
@@ -2705,14 +3403,14 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             
             // DEBUG_S_LINES header
             out_int(function->offset_in_text_section, u32);   // offset in the section contribution
-            out_int(SECTION_ID_text, u16);                    // section id (segment ?)
+            out_int(section_id_for_section(exe, text), u16);                    // section id (segment ?)
             out_int(0, u16);                                  // flags (0x1 = have columns)
             out_int(function->byte_size, u32);                // the size of the contribution
             
             struct pdb_location block_begin = get_current_pdb_location(context);
             
             // offset of the file info in the 0xf4 DEBUG_S_SECTION
-            out_int(function->base.token->file->offset_in_f4, u32); 
+            out_int(globals.file_table.data[function->scope->token->file_index]->offset_in_f4, u32);
             struct pdb_location amount_of_lines_loc = stream_allocate_bytes(context, sizeof(u32));
             struct pdb_location block_write = stream_allocate_bytes(context, sizeof(u32));
             
@@ -2727,14 +3425,14 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             smm size = pdb_location_diff(end_loc, begin_loc);
             stream_write_bytes(context, &size_loc, &size, sizeof(u32));
         }
-        end_counter(module_line_info);
+        end_counter(timing, module_line_info);
         
         struct pdb_location module_stream_end = get_current_pdb_location(context);
         module_stream_line_info_size = pdb_location_diff(module_stream_end, symbols_end);
         
-        out_int(0, u32); // amount_of global referances
+        out_int(0, u32); // amount_of global references
     }
-    end_counter(module_stream);
+    end_counter(timing, module_stream);
     
     u32 linker_stream_symbol_size;
     // stream 12: the * Linker * module
@@ -2791,9 +3489,8 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         end_symbol();
         
         
-        for(u32 i = 0; i < SECTION_ID_count; i++){
+        for(u32 i = 0; i < exe->amount_of_sections; i++){
             IMAGE_SECTION_HEADER *header = exe->section_headers[i];
-            if(!header) continue;
             
             begin_symbol(0x1136);                      // SECTION (a section in the PE executable file)
             {
@@ -2809,22 +3506,22 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         }
         
         
-        // @cleanup: are these COFF group things neccesarry?
+        // @cleanup: are these COFF group things necessary?
         // they seem to be a more fine grained section information, i.e .pdata is inside .rdata
         
         struct pdb_location stream_end = get_current_pdb_location(context);
         linker_stream_symbol_size = pdb_location_diff(stream_end, stream_start);
         
-        out_int(0, u32); // amount_of global referances
+        out_int(0, u32); // amount_of global references
     }
     
-    begin_counter(dbi_stream);
+    begin_counter(timing, dbi_stream);
     // Stream 3: Debug Info stream
     { // :dbi_stream
         set_current_stream(context, STREAM_DBI);
         struct dbi_stream dbi = zero_struct;
         dbi.version = 19990903;
-        dbi.version_signiture = (u32)-1;
+        dbi.version_signature = (u32)-1;
         dbi.amount_of_times_the_pdb_has_been_written = 1;
         
         dbi.index_of_the_global_symbol_stream = STREAM_global_symbol_hash;
@@ -2840,7 +3537,7 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         dbi.version_number_of_mspdb = 25506; // I don't know. copied from a pdb
         dbi.PdbDllRbld = 0;
         dbi.flags = 0;
-
+        
         dbi.machine = 0x8664;
         
         struct pdb_location header_location = stream_allocate_bytes(context, sizeof(dbi));
@@ -2850,33 +3547,11 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         { // module info substream
             // @incomplete: these are just _filled in_ for now
             
-            // @cleanup: this should not be invalid, or at least is not in the referance pdb's
+            // @cleanup: this should not be invalid, or at least is not in the reference pdb's
             
             struct dbi_module_info module = zero_struct;
             module.module_symbol_stream_index = STREAM_module_zero;
-            module.amount_of_source_files = (u16)globals.file_list.amount;
-            
-            struct section_contribution_entry text_entry = {
-                .section_id = SECTION_ID_text,
-                .offset = 0,
-                .size = text->Misc.VirtualSize,
-                .module_index = 0,
-                .characteristics = text->Characteristics,
-                .data_crc = 0, // @cleanup:
-                .reloc_crc = 0,
-            };
-            
-            module.first_section_contribution_entry = text_entry;
-            module.byte_size_of_symbol_information = module_stream_symbol_size;
-            module.byte_size_of_c13_line_information = module_stream_line_info_size;
-            out_struct(module);
-            
-            out_struct("l:\\l++\\build\\test.obj");
-            out_struct("l:\\l++\\build\\test.obj");
-            out_align(sizeof(u32));
-            
-            struct dbi_module_info linker_module = zero_struct;
-            linker_module.module_symbol_stream_index = STREAM_linker_module;
+            module.amount_of_source_files = (u16)globals.file_table.size;
             
             const struct section_contribution_entry invalid_section_contribution_entry = {
                 .section_id = -1,
@@ -2887,6 +3562,35 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
                 .data_crc = 0,
                 .reloc_crc = 0,
             };
+            
+            if(text){
+                struct section_contribution_entry text_entry = {
+                    .section_id = section_id_for_section(exe, text),
+                    .offset = 0,
+                    .size = text->Misc.VirtualSize,
+                    .module_index = 0,
+                    .characteristics = text->Characteristics,
+                    .data_crc = 0, // @cleanup:
+                    .reloc_crc = 0,
+                };
+                module.first_section_contribution_entry = text_entry;
+            }else{
+                module.first_section_contribution_entry = invalid_section_contribution_entry;
+            }
+            module.byte_size_of_symbol_information = module_stream_symbol_size;
+            module.byte_size_of_c13_line_information = module_stream_line_info_size;
+            out_struct(module);
+            
+            
+            // @incomplete:
+            out_struct("l:\\l++\\build\\test.obj");
+            out_struct("l:\\l++\\build\\test.obj");
+            out_align(sizeof(u32));
+            
+            struct dbi_module_info linker_module = zero_struct;
+            linker_module.module_symbol_stream_index = STREAM_linker_module;
+            
+            
             linker_module.first_section_contribution_entry = invalid_section_contribution_entry;
             linker_module.byte_size_of_symbol_information = linker_stream_symbol_size;
             out_struct(linker_module);
@@ -2900,13 +3604,12 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         
         {// section contribution substream
             out_int(0xeffe0000 + 19970605, u32);
-            for(s16 i = 0; i < SECTION_ID_count; i++){
+            for(u32 i = 0; i < exe->amount_of_sections; i++){
                 IMAGE_SECTION_HEADER *header = exe->section_headers[i];
-                if(!header) continue;
                 
                 // @cleanup: right now we just make one contribution per section and say it was module 0
                 struct section_contribution_entry entry = {
-                    .section_id = i,
+                    .section_id = (s16)(i + 1),
                     .offset = 0,
                     .size = header->Misc.VirtualSize,
                     .module_index = 0,
@@ -2920,9 +3623,9 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         }
         
         struct pdb_location section_map_begin = get_current_pdb_location(context);
-        {  // section map substream 
+        {  // section map substream
             
-            // @note: I will note that I have no idear why this is here or what it does. 
+            // @note: I will note that I have no idear why this is here or what it does.
             // referance: DbiStreamBuilder::createSectionMap
             
             // write the header @note: these are always the same in llvm
@@ -2931,20 +3634,19 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             
             // write a section map entry for each section.
             u32 frame_index = 1;
-            for(s16 i = 0; i < SECTION_ID_count; i++){
+            for(u32 i = 0; i < exe->amount_of_sections; i++){
                 IMAGE_SECTION_HEADER *header = exe->section_headers[i];
-                if(!header) continue;
                 
                 u32 characteristics = header->Characteristics;
                 u16 flags = (1 << 3) | (1 << 8);
                 if(characteristics & SECTION_read)    flags |= (1 << 0);
                 if(characteristics & SECTION_write)   flags |= (1 << 1);
                 if(characteristics & SECTION_execute) flags |= (1 << 2);
-                // @note: llvm checked reserved flag IMGAE_SCN_MEM_16BIT here 
+                // @note: llvm checked reserved flag IMGAE_SCN_MEM_16BIT here
                 // and only added (1 << 3) if it was not set.. I don't know the flag, so I probably wont set it
                 
                 out_int(flags,         u16);
-                out_int(0,             u16); // Ovl   ?? 
+                out_int(0,             u16); // Ovl   ??
                 out_int(0,             u16); // group ??
                 out_int(frame_index++, u16); // Frame ??
                 out_int(u16_max,       u16); // SecName   (Meaning Unknown)
@@ -2957,12 +3659,12 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             // (1 << 9) is apperantly for IsAbsoluteAddress
             u16 flags = (1 << 3) | (1 << 9);
             out_int(flags, u16);
-            out_int(0, u16);             // Ovl   
-            out_int(0, u16);             // group 
-            out_int(frame_index, u16); // Frame 
-            out_int(u16_max, u16);       // SecName   (Meaning Unknown)
-            out_int(u16_max, u16);       // ClassName (Meaning Unknown)
-            out_int(0, u32);             // offset
+            out_int(0, u16);           // Ovl
+            out_int(0, u16);           // group
+            out_int(frame_index, u16); // Frame
+            out_int(u16_max, u16);     // SecName   (Meaning Unknown)
+            out_int(u16_max, u16);     // ClassName (Meaning Unknown)
+            out_int(0, u32);           // offset
             out_int(u32_max, u32);
             
             // @cleanup: why are these initialized to the same value?
@@ -2976,10 +3678,10 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             
             // the layout is as follows:
             //     u16 amount_of_modules;
-            //     u16 ignored_amount_of_source_files; 
-            //     u16 module_indices[amount_of_modules]; 
+            //     u16 ignored_amount_of_source_files;
+            //     u16 module_indices[amount_of_modules];
             //     u16 module_to_source_file_count_map[amount_of_modules];
-            //     u32 source_file_name_offset_in_the_name_buffer[amount_of_source_files];  
+            //     u32 source_file_name_offset_in_the_name_buffer[amount_of_source_files];
             //     char name_buffer[][NumSourceFiles];
             
             // the "ignored_amount_of_source_files" is ignored as this would limit the amount of source files to max_u16, but we should still try to approximate it the best
@@ -2988,25 +3690,31 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             
             u16 amount_of_modules = 2; // @cleanup: Right now there are only two... not sure
             out_int(amount_of_modules, u16);
-            u16 amount_of_source_files_u16 = (u16)min_of(globals.file_list.amount, u16_max);
+            u16 amount_of_source_files_u16 = (u16)min_of(globals.file_table.size, u16_max);
             out_int(amount_of_source_files_u16, u16);
             
             // @cleanup: right now we know that "amount_of_modules" is 2 so we will just write this stuff out
             //           later we want "module_infos" to be in an array, so we can iterate over them
             
             out_int(0, u16); // index of module 0
-            out_int(1, u16); // index of module 1
+            out_int(globals.file_table.size, u16); // index of module 1
             
-            out_int(globals.file_list.amount, u16); // amount_of_source_files for module 0
+            out_int(globals.file_table.size, u16); // amount_of_source_files for module 0
             out_int(0, u16); // amount_of_source_files for module 1 (* Linker *)
             
             smm at = 0;
-            for(struct file_stack_node *node = globals.file_list.first; node; node = node->next){
+            for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
+                struct file *node = globals.file_table.data[file_index];
+                if(!node) continue;
+                
                 out_int(at, u32); // offset of the one and only source file
-                at += node->absolute_file_path.amount + 1;
+                at += cstring_length(node->absolute_file_path) + 1;
             }
-            for(struct file_stack_node *node = globals.file_list.first; node; node = node->next){
-                out_string(node->absolute_file_path);
+            for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
+                struct file *node = globals.file_table.data[file_index];
+                if(!node) continue;
+                
+                out_string(string_from_cstring(node->absolute_file_path));
             }
             
             out_align(sizeof(u32));
@@ -3022,13 +3730,13 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             // this stream has the same layout as the /names stream, but only has the pdb name in it
             out_int(0xEFFEEFFE, u32); // signature
             out_int(1, u32);          // hash version
-            struct pdb_location string_buffer_size = stream_allocate_bytes(context, sizeof(u32));       
+            struct pdb_location string_buffer_size = stream_allocate_bytes(context, sizeof(u32));
             
             struct pdb_location string_buffer_start = get_current_pdb_location(context);
             {
                 out_int(0, u8);
                 // @incomplete: for source files write them out.
-                // @cleanup: at least make this dependent on the acutal file
+                // @cleanup: at least make this dependent on the actual file
                 out_string(pdb_full_path);
             }
             struct pdb_location string_buffer_end = get_current_pdb_location(context);
@@ -3038,13 +3746,13 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             // @note this whole thing is copy and pastes from the /names string
             // see that string for more information
             out_int(1, u32); // bucket count
-            out_int(1, u32); // offset 
+            out_int(1, u32); // offset
             out_int(1, u32); // amount of strings
         }
         
         struct pdb_location optional_debug_header_begin = get_current_pdb_location(context);
         { // optional debug header substream
-            // @note: I have no idear what any of these are... These meanings are mearly copied
+            // @note: I have no idea what any of these are... These meanings are mearly copied
             out_int(-1, s16); // no FPO data
             out_int(-1, s16); // no Exception data
             out_int(-1, s16); // no Fixup data
@@ -3068,7 +3776,7 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         dbi.section_map_substream_byte_size = pdb_location_diff(source_info_begin, section_map_begin);
         // substream 3
         dbi.source_info_substream_byte_size = pdb_location_diff(edit_and_continue_begin, source_info_begin);
-        // substream 4 
+        // substream 4
         // empty dealt with above
         // substream 5
         dbi.edit_and_continue_substream_byte_size = pdb_location_diff(optional_debug_header_begin, edit_and_continue_begin);
@@ -3079,9 +3787,14 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     }
     
     // :gsi_hash_table
-    struct gsi_hash_bucket **gsi_hash_table = push_zero_data(scratch, struct gsi_hash_bucket *, IPHR_HASH + 1);
+    struct gsi_hash_bucket **gsi_hash_table = push_data(scratch, struct gsi_hash_bucket *, IPHR_HASH + 1);
     smm gsi_amount_of_bucket_offsets = 0;
     smm gsi_amount_of_global_symbols = 0;
+    
+    // :psi_hash_table
+    struct gsi_hash_bucket **psi_hash_table = push_data(scratch, struct gsi_hash_bucket *, IPHR_HASH + 1);
+    smm psi_amount_of_bucket_offsets = 0;
+    smm psi_amount_of_global_symbols = 0;
     
     // stream 9: Symbol record stream
     { // :symbol_records :symbol_stream
@@ -3089,122 +3802,172 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         
         struct pdb_location symbol_record_start = get_current_pdb_location(context);
         
-        // PUB32    < exports imports
-        // LPROCREF < static procedures
-        // PROCREF  < export procedures
-        // CONSTANT < enums, not sure what else
-        // UDT      < typedefs
-        // DATA32   < export globals
-        // LDATA32  < static globals
-        
-        // @cleanup: this should for now be the main symbol and eventually all 'dll_exports'
-        // there are also PUB32 for: (non-static-procedures, __imp_Imports, and maybe float values???)
-        begin_symbol(0x110e);{                              // PUB32
-            out_int(2, u32);                                // flags ?????
-            out_int(entry_point->debug_symbol_offset, u32); // offset
-            out_int(SECTION_ID_text, u16);                  // segment
-            out_string(*entry_point->identifier);           // name
-        }end_symbol();
-        
+        // Members generated by the linker:
+        //     S_PUB32    < associate a name (marker) to specific location (section, offset), does not give any type info
+        //     S_LPROCREF < static procedures, tells you where the LPROC32 is.
+        //     S_PROCREF  < export procedures, tells you where the GPROC32 is.
+        // 
+        // Members coming from codeview:
+        //     S_CONSTANT < For constants, tells you the name, type index, and value
+        //     S_UDT      < typedefs, associates a name to a type index
+        //     S_GDATA32  < export globals, tells you about the location (section, offset), and the type of some data.
+        //     S_LDATA32  < static globals, tells you about the location (section, offset), and the type of some data.
         
         // emit a 'LPROCREF' or 'PROCREF' for each function
-        // @cleanup: does this break for local functions of the same name
-        for_ast_list(*functions){
+        // @cleanup: does this break for local functions of the same name?
+        for_ast_list(*functions_with_a_body){
             struct ast_function *function = cast(struct ast_function *)it->value;
-        
-            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
-            function->ref_offset = ref_offset;
             
-            u16 PROCREF  = 0x1125;
-            u16 LPROCREF = 0x1127;
-            // @hack:
-            u16 symbol = (function == entry_point) ? PROCREF : LPROCREF;
+            assert(!(function->decl_flags & DECLARATION_FLAGS_is_dllimport));
+            
+            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+            
+            u16 symbol = (function->as_decl.flags & DECLARATION_FLAGS_is_static) ? /* LPROCREF */0x1127 : /* PROCREF */0x1125;
             begin_symbol(symbol);{
                 out_int(0, u32);                             // sumName < this appears to always be 0
                 out_int(function->debug_symbol_offset, u32); // offset in the module symbol stream
                 out_int(1, u16);                             // module index of the stream containing the symbol
-                out_string(*function->identifier);           // name (not sure if this is magled or not)
+                out_string(function->identifier->string);            // name (not sure if this is mangled or not)
             }end_symbol();
             
-            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, ref_offset, scratch, *function->identifier);
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, function->relative_virtual_address, function->identifier->string);
             gsi_amount_of_global_symbols += 1;
+            
+            if(!(function->decl_flags & DECLARATION_FLAGS_is_static)){
+                
+                ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+                
+                begin_symbol(0x110e);{                              // PUB32
+                    out_int(2, u32);                                // flags (is_function)
+                    out_int(function->offset_in_text_section, u32); // offset in segment
+                    out_int(section_id_for_section(exe, text), u16);                  // segment
+                    out_string(function->identifier->string);               // name
+                }end_symbol();
+                
+                psi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(psi_hash_table, scratch, ref_offset, function->relative_virtual_address, function->identifier->string);
+                psi_amount_of_global_symbols += 1;
+            }
+        }
+        
+        // emit a 'S_PUB32' for every
+        for_ast_list(symbol_context.dll_imports){
+            struct ast_function *function = (struct ast_function *)it->value;
+            
+            struct string name = push_format_string(scratch, "__imp_%.*s", function->identifier->size, function->identifier->data);
+            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+            
+            smm rva;
+            begin_symbol(0x110e);{                              // PUB32
+                out_int(0, u32);                                // flags
+                if(function->as_decl.flags & DECLARATION_FLAGS_is_dll_import_with_missing_declspec){
+                    // @cleanup: @bigsigh reconstructing the rva of the import address table entry...
+                    u32 relative_from_rva = *(u32 *)(function->memory_location + 2);
+                    u32 import_rva = save_truncate_smm_to_s32(relative_from_rva + function->relative_virtual_address + 6);
+                    out_int(import_rva - rdata->VirtualAddress, u32); // offset in segment
+                    rva = import_rva;
+                }else{
+                    out_int(function->relative_virtual_address - rdata->VirtualAddress, u32); // offset in segment
+                    rva = function->relative_virtual_address;
+                }
+                out_int(section_id_for_section(exe, rdata), u16);                 // segment
+                out_string(name);                               // name
+            }end_symbol();
+            
+            psi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(psi_hash_table, scratch, ref_offset, rva, name);
+            psi_amount_of_global_symbols += 1;
         }
         
         // emit a 'S_CONSTANT' for every enum member @cleanup: dumb loop, but maybe okay
         for(u64 i = 0; i < globals.compound_types.capacity; i++){
             struct ast_node *node = globals.compound_types.nodes + i;
-            if(!node->hash) continue;
+            if(!node->token) continue;
             struct ast_compound_type *ast_enum = cast(struct ast_compound_type *)node->ast;
             if(ast_enum->base.kind != AST_enum) continue;
             
-            for_ast_list(ast_enum->declarations){
-                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+            for(u32 member_index = 0; member_index < ast_enum->amount_of_members; member_index++){
+                struct compound_member *member = &ast_enum->members[member_index];
+                
                 u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
-                s32 value = integer_literal_as_s32(decl->assign_expr);
+                s32 value = (s32)member->enum_value;
                 begin_symbol(0x1107);{ // S_CONSTANT
                     out_int(ast_enum->base.pdb_type_index, u32);
-                    stream_emit_size_and_name(context, value, true, decl->identifier);
+                    stream_emit_size_and_name(context, value, true, member->name->string);
                 }end_symbol();
                 
-                gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, ref_offset, scratch, *decl->identifier);
+                gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, 0, member->name->string);
                 gsi_amount_of_global_symbols += 1;
             }
         }
         
+        // @cleanup: pub32 for non static data definitions.
+        
         // emit 'S_GDATA32' or 'S_LDATA32' for every global
         for_ast_list(*uninitialized_declarations){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-            // @cleanup: should we emit a GDATA if it is not static?
+            
+            u16 symbol_kind = (decl->flags & DECLARATION_FLAGS_is_static) ? /* S_LDATA32 */ 0x110c : /* S_GDATA32 */ 0x110d;
             
             u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
-            begin_symbol(0x110c);{
+            begin_symbol(symbol_kind);{
                 out_int(decl->type->pdb_type_index, u32); // type_index
                 out_int(to_u32(decl->relative_virtual_address - bss->VirtualAddress), u32); // offset in section
-                out_int(SECTION_ID_bss, u16);             // section id
-                out_string(*decl->identifier);
+                out_int(section_id_for_section(exe, bss), u16);             // section id
+                out_string(decl->identifier->string);
             } end_symbol();
             
-            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, ref_offset, scratch, *decl->identifier);
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, decl->relative_virtual_address, decl->identifier->string);
             gsi_amount_of_global_symbols += 1;
         }
         
         for_ast_list(*initialized_declarations){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-            // @cleanup: should we emit a GDATA if it is not static?
-            // @cleanup: const?
+            
+            if(decl->flags & DECLARATION_FLAGS_is_unnamed) continue;
+            
+            u16 symbol_kind = (decl->flags & DECLARATION_FLAGS_is_static) ? /* S_LDATA32 */ 0x110c : /* S_GDATA32 */ 0x110d;
             
             u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
-            begin_symbol(0x110c);{
+            begin_symbol(symbol_kind);{
                 out_int(decl->type->pdb_type_index, u32); // type_index
                 out_int(to_u32(decl->relative_virtual_address - data->VirtualAddress), u32); // offset in section
-                out_int(SECTION_ID_data, u16);             // section id
-                out_string(*decl->identifier);
+                out_int(section_id_for_section(exe, data), u16);             // section id
+                out_string(decl->identifier->string);
             } end_symbol();
             
-            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, ref_offset, scratch, *decl->identifier);
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, decl->relative_virtual_address, decl->identifier->string);
             gsi_amount_of_global_symbols += 1;
         }
         
-        
-        // emit 'UDT' for every typedef
-        
-        // @cleanup: then there are 'PUB32' for __IMPORT_DESCRIPTOR_KERNEL32 and so on 
+        // emit 'S_UDT' for every typedef
+        for_ast_list(*typedefs){
+            struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+            assert(decl->type->pdb_type_index > 0);
+            
+            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+            begin_symbol(0x1108);{ // S_UDT
+                out_int(decl->type->pdb_type_index, u32);
+                out_string(decl->identifier->string);
+            } end_symbol();
+            
+            
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, 0, decl->identifier->string);
+            gsi_amount_of_global_symbols += 1;
+        }
         
     }
-    end_counter(dbi_stream);
+    end_counter(timing, dbi_stream);
     
     // header dump stream
     { // :header_dump
         set_current_stream(context, STREAM_section_header_dump);
-        for(s16 i = 0; i < SECTION_ID_count; i++){
+        for(u32 i = 0; i < exe->amount_of_sections; i++){
             IMAGE_SECTION_HEADER *header = exe->section_headers[i];
-            if(!header) continue;
+            
             out_struct(*header);
         }
     }
     
-    
-    begin_counter(gsi_stream);
+    begin_counter(timing, gsi_stream);
     // global symbol hash stream
     { // :global_symbol_hash_stream
         set_current_stream(context, STREAM_global_symbol_hash);
@@ -3219,14 +3982,14 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         // hash_bucket_offsets[];
         
         // The reader is supposed to reconstruct a hash_table:
-        // pdb_string_hash(symbol_name) -> {offset, referance_count}
+        // pdb_string_hash(symbol_name) -> {offset, reference_count}
         // this hash_table has (IPHR_HASH + 1) buckets and chains collisions.
         // We serialize all non empty buckets in hash table order with the chains being in sorted order.
         // Finally to see the chain order there is a 'hash_bucket_offsets' array, that specifies
         // the offset in bytes of the n'th present bucket.
         
         // :gsi_hash_table
-        // We have constructed this hash table iterativly while adding the symbols to the symbol_stream
+        // We have constructed this hash table iteratively while adding the symbols to the symbol_stream
         
         // gsi header
         out_int(-1, u32); // unclear
@@ -3259,7 +4022,10 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             u32 one = 1;
             for(struct gsi_hash_bucket *it = gsi_hash_table[i]; it; it = it->next){
                 amount_in_bucket++;
-                stream_write_bytes(context, &records, &it->symbol_offset, sizeof(u32));
+                // @note: +1 for some stupid reason
+                // this offset is the offset in the symbol record stream, so no module index.
+                u32 ref_offset = it->symbol_offset + 1;
+                stream_write_bytes(context, &records, &ref_offset, sizeof(u32));
                 stream_write_bytes(context, &records, &one, sizeof(u32));
             }
             
@@ -3273,22 +4039,22 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         assert(offsets.size == 0);
         
     }
-    end_counter(gsi_stream);
+    end_counter(timing, gsi_stream);
     
-    begin_counter(psi_stream);
+    begin_counter(timing, psi_stream);
     // public symbol hash stream
     { // :public_symbol_hash_stream
         set_current_stream(context, STREAM_public_symbol_hash);
         
         // public symbol stream header
         struct pdb_location size = stream_allocate_bytes(context, sizeof(u32));// symbol hash byte size
-        out_int(4, u32);  // address map byte size
-        out_int(0, u32);  // number of thunks
-        out_int(0, u32);  // thunk byte size
-        out_int(0, u16);  // thunk table section index
-        out_int(0, u16);  // pad
-        out_int(0, u32);  // thunk table index
-        out_int(0, u32);  // number of sections
+        out_int(psi_amount_of_global_symbols * sizeof(u32), u32); // address map byte size
+        out_int(0, u32); // number of thunks
+        out_int(0, u32); // thunk byte size
+        out_int(0, u16); // thunk table section index
+        out_int(0, u16); // pad
+        out_int(0, u32); // thunk table index
+        out_int(0, u32); // number of sections
         
         
         struct pdb_location before_gsi = get_current_pdb_location(context);
@@ -3296,38 +4062,164 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         out_int(-1, u32); // unclear
         out_int(0xeffe0000 + 19990810, u32); // signature
         
-        // @incomplete: right now we only have _entry_point_ later look at the gsi case
-        out_int(8, u32); // size of hash records in bytes
+        out_int(psi_amount_of_global_symbols * 2 * sizeof(u32), u32); // size of hash records in bytes
         
         u32 bitmap_size = (IPHR_HASH + 32)/32;
-        out_int(bitmap_size * 4 +  4, u32); // size of buckets and bitmap in bytes
+        out_int(bitmap_size * 4 + psi_amount_of_bucket_offsets * 4, u32); // size of buckets and bitmap in bytes
         
-        out_int(entry_point->ref_offset + 1, u32); // offset of the symbol
-        out_int(1, u32); // referance count (always 1)
+        struct pdb_location records = stream_allocate_bytes(context, psi_amount_of_global_symbols * 2 * sizeof(u32));
+        struct pdb_location bitmap  = stream_allocate_bytes(context, bitmap_size * sizeof(u32));
+        struct pdb_location offsets = stream_allocate_bytes(context, psi_amount_of_bucket_offsets * sizeof(u32));
         
-        // then the bitmap
-        for(u32 i = 0; i < bitmap_size; i++){
-            if(i == 0) {
-                out_int(1, u32);
-            }else{
-                out_int(0, u32);
+        u32 bit = 0;
+        u32 bit_index = 0;
+        u32 offset_at = 0;
+        for(u32 bucket_index = 0; bucket_index < IPHR_HASH + 1; bucket_index++){
+            
+            if(psi_hash_table[bucket_index]) bit |= (1u << bit_index);
+            bit_index += 1;
+            if(bit_index == 32){
+                stream_write_bytes(context, &bitmap, &bit, sizeof(bit));
+                bit = 0;
+                bit_index = 0;
             }
+            if(!psi_hash_table[bucket_index]) continue;
+            
+            u32 amount_in_bucket = 0;
+            u32 one = 1;
+            for(struct gsi_hash_bucket *it = psi_hash_table[bucket_index]; it; it = it->next){
+                amount_in_bucket++;
+                // @note: +1 for some stupid reason
+                // this offset is the offset in the symbol record stream, so no module index.
+                u32 ref_offset = it->symbol_offset + 1;
+                stream_write_bytes(context, &records, &ref_offset, sizeof(u32));
+                stream_write_bytes(context, &records, &one, sizeof(u32));
+            }
+            
+            // 12 is the size of a 'psi_hash_bucket' on a 32-bit system...
+            stream_write_bytes(context, &offsets, &offset_at, sizeof(u32));
+            offset_at += 12 * amount_in_bucket;
         }
-        
-        out_int(0, u32); // bucket offsets (one bucket one offset)
+        stream_write_bytes(context, &bitmap, &bit, sizeof(bit));
+        assert(records.size == 0);
+        assert(bitmap.size == 0);
+        assert(offsets.size == 0);
         
         u32 diff = pdb_current_offset_from_location(context, before_gsi);
         stream_write_bytes(context, &size, &diff, sizeof(u32));
         
         // "The address map is an array of symbol offsets sorted so that it can be binary searched by address."
         // after the gsi stream copy thing there is an address map mapping "addresses" to symbol offsets
-        // @note @hardcoded @hack: right now we only have the entry point so we do not have to sort
-        //                         and the entrypoint has offset 0 in the symbol record stream
-        out_int(0, u32);
+        {
+            u32 *symbol_offsets             = push_uninitialized_data(scratch, u32, psi_amount_of_global_symbols);
+            u32 *relative_virtual_addresses = push_uninitialized_data(scratch, u32, psi_amount_of_global_symbols);
+            
+            smm out = 0;
+            for(u32 bucket_index = 0; bucket_index < IPHR_HASH + 1; bucket_index++){
+                for(struct gsi_hash_bucket *bucket = psi_hash_table[bucket_index]; bucket; bucket = bucket->next){
+                    smm index = out++;
+                    symbol_offsets[index]             = bucket->symbol_offset;
+                    relative_virtual_addresses[index] = bucket->rva;
+                }
+            }
+            assert(out == psi_amount_of_global_symbols);
+            
+            if(psi_amount_of_global_symbols > 1){
+                smm amount = psi_amount_of_global_symbols;
+                
+                //
+                // Quicksort the 'symbol_offsets' by the 'relative_virtual_addresses'.
+                //
+                smm *sort_stack = push_uninitialized_data(scratch, smm, amount);
+                
+                smm left = 0;
+                smm right = amount - 1;
+                
+                smm sort_stack_at = 0;
+                while(true){
+                    
+                    if(left < right){
+                        smm piveot = relative_virtual_addresses[left];
+                        
+                        smm right_it = right;
+                        smm left_it  = left;
+                        
+                        while(left_it < right_it){
+                            while(relative_virtual_addresses[left_it] <= piveot && left_it < right_it) left_it++;
+                            
+                            while(relative_virtual_addresses[right_it] > piveot) right_it--;
+                            
+                            if(left_it < right_it){
+                                {
+                                    //
+                                    // swap the relative_virtual_addresses
+                                    //
+                                    u32 temp = relative_virtual_addresses[left_it];
+                                    relative_virtual_addresses[left_it] = relative_virtual_addresses[right_it];
+                                    relative_virtual_addresses[right_it] = temp;
+                                }
+                                {
+                                    //
+                                    // swap the symbol_offsets
+                                    //
+                                    u32 temp = symbol_offsets[left_it];
+                                    symbol_offsets[left_it] = symbol_offsets[right_it];
+                                    symbol_offsets[right_it] = temp;
+                                }
+                            }
+                        }
+                        
+                        //
+                        // Swap the piveot element to the middle!
+                        //
+                        {
+                            u32 temp = relative_virtual_addresses[left];
+                            relative_virtual_addresses[left] = relative_virtual_addresses[right_it];
+                            relative_virtual_addresses[right_it] = temp;
+                        }
+                        
+                        {
+                            u32 temp = symbol_offsets[left];
+                            symbol_offsets[left] = symbol_offsets[right_it];
+                            symbol_offsets[right_it] = temp;
+                        }
+                        
+                        //
+                        // At this point we know:
+                        //    1) everything after  'right_it' is >  piveot
+                        //    2) everything before 'left_it'  is <= piveot
+                        //    3) relative_virtual_addresses[right_it] == piveot
+                        
+                        // We need to sort:
+                        //    1) [left, left_it - 1]   = [left, right_it]
+                        //    2) [right_it + 1, right] = [left_it, right]
+                        //     3) but actually 'relative_virtual_addresses[right_it]' is known to be correct
+                        
+                        if(left_it < right){
+                            sort_stack[sort_stack_at++] = right;
+                        }
+                        
+                        if(left < right_it - 1){
+                            sort_stack[sort_stack_at++] = right_it - 1;
+                        }else{
+                            left++;
+                        }
+                    }
+                    
+                    if(sort_stack_at == 0) break;
+                    
+                    right = sort_stack[--sort_stack_at];
+                }
+                
+            }
+            
+            stream_emit_struct(context, symbol_offsets, psi_amount_of_global_symbols * sizeof(u32));
+        }
+        
     }
-    end_counter(psi_stream);
+    end_counter(timing, psi_stream);
     
-    begin_counter(directory_stream);
+    begin_counter(timing, directory_stream);
     {// :directory_stream
         // directory stream layout:
         // u32 amount_of_streams;
@@ -3346,7 +4238,7 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         }
         out_int(amount_of_streams, u32);
         
-        u32 *sizes = push_data(scratch, u32, amount_of_streams);
+        u32 *sizes = push_uninitialized_data(scratch, u32, amount_of_streams);
         struct pdb_location stream_sizes = stream_allocate_bytes(context, amount_of_streams * sizeof(u32));
         for(u32 i = 0; i < amount_of_streams; i++){
             smm size = 0;
@@ -3354,7 +4246,7 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             for(struct page_list_node *it = list->first; it; it = it->next){
                 //os_console_print("stream %d page %d\n", i, it->page_index);
                 
-                // @hmm, right now we emit a page on 'set_current_stream' if the stream then turns out to 
+                // @hmm, right now we emit a page on 'set_current_stream' if the stream then turns out to
                 // be empty we would still emit the page, this is why this 'if' is here...
                 
                 if(it->offset) out_int(it->page_index, u32);
@@ -3365,16 +4257,16 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
         }
         stream_write_bytes(context, &stream_sizes, sizes, amount_of_streams * sizeof(u32));
     }
-    end_counter(directory_stream);
+    end_counter(timing, directory_stream);
     
     
     {
-        u8 *directory_page_list_page = push_data(arena, u8, 0x1000);
+        u8 *directory_page_list_page = push_uninitialized_data(arena, u8, 0x1000);
         
         u32 page_number = to_u32((directory_page_list_page - context->pdb_base) >> 12);
         pdb_header->page_number_of_directory_stream_number_list = page_number;
         
-        // :old_directory_hack @note: right now we use old directory to do the current directory 
+        // :old_directory_hack @note: right now we use old directory to do the current directory
         u32 *directory_page_list_entry = (u32 *)directory_page_list_page;
         u32 directory_stream_size = 0;
         u32 i = 0;
@@ -3393,7 +4285,7 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     context->pdb_size = context->pdb_end - context->pdb_base;
     
     // free page maps :free_page_map
-    begin_counter(free_page_map);
+    begin_counter(timing, free_page_map);
     {
         // the free page map has a bit set for every page that is free.
         // @note: every page is used until 'pdb_header->number_of_pages' and all other pages are unused.
@@ -3416,9 +4308,9 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
             page[i / 8] &= ~(1 << (i % 8));
         }
     }
-    end_counter(free_page_map);
+    end_counter(timing, free_page_map);
     
-    end_tempoary_memory(temp);
+    end_temporary_memory(temporary_memory);
     
 #if READ_PDB_AFTER_EMITING_IT
     struct os_file pdb_file = {
@@ -3429,9 +4321,23 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
     read_pdb(scratch, pdb_file);
 #endif
     
-    end_counter(print_pdb);
+    end_counter(timing, print_pdb);
     
-    return ret;
+    if(!globals.dont_print_the_files_because_we_are_in_a_test_suite){
+        begin_counter(context, write_pdb);
+        char *pdb_name = (char *)pdb_full_path.data;
+        smm success = os_write_file(pdb_name, context->pdb_base, context->pdb_size);
+        end_counter(context, write_pdb);
+        
+        if(success){
+            print("Wrote file: '%s'\n", pdb_name);
+        }else{
+            print("Error: Unable to write file '%s'.\n", pdb_name);
+            globals.an_error_has_occurred = true;
+        }
+    }
+    
+    return;
 }
 
 #undef out_struct
@@ -3439,3 +4345,4 @@ func struct coff_context print_coff(struct ast_function *entry_point, struct mem
 #undef out_align
 #undef begin_symbol
 #undef end_symbol
+

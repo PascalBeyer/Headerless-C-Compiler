@@ -1,0 +1,33 @@
+
+#define time_perfomance 0
+
+#define READ_PDB_AFTER_EMITING_IT 0
+#define PRINT_PREPROCESSED_FILE   0
+#define DUMP_OUT_PDB 0
+#define BUILD_PDB_DUMPER 0
+#define DUMP_OBJ 0
+
+#define PRINT_ADDITIONAL_INCLUDE_DIRECTORIES 0
+
+#define print_tokenizer_stats 0
+
+// tokenizer
+#define DEBUGGING_MACRO_EXPANSION 0
+#define DEBUG_DEFINE_ARGUMENT_SUBSTITUTION 0
+#define DEBUGGING_TOKEN_BUCKET_ARRAYS 0
+// #define DEFINE_TO_PRINT "__crt_va_start"
+
+
+#define DONT_WARN_FOR_SYSTEM_FILES 1
+
+#define PRINT_COMMAND_LINE 1
+#define PRINT_PREDEFINED_MACROS 0
+
+#define SKIP_pragmas 1
+
+#define DEBUG_BREAK_ON_ERROR   1
+#define DEBUG_BREAK_ON_WARNING 0
+
+#define LOCAL_ATOM_TABLE 0
+
+// #define PRINT_SYSTEM_INCLUDE_PATHS 1

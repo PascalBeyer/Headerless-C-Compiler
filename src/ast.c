@@ -1,95 +1,119 @@
 
-//@cleanup: make errors take asts, so we can print whole token ranges
+// @cleanup: make errors take asts, so we can print whole token ranges
 enum token_type{
     TOKEN_invalid,
     
-    TOKEN_float_literal,  // 1.0f, 1.0 1e7 1.f
-    TOKEN_character_literal,
-    TOKEN_base10_literal,
-    TOKEN_hex_literal,
-    TOKEN_string_literal,
-    
     // tokens only used during preprocessing
     TOKEN_hash,           // #
-    TOKEN_hashhash,       // ## (for identifier concatination)
-    TOKEN_whitespace,     // one or more ' ' '\v' '\t' '\f' 
+    TOKEN_hashhash,       // ## (for identifier concatenation)
     TOKEN_newline,        // one of '\n', '\r', '\n\r', '\r\n',
+    TOKEN_whitespace,     // one or more ' ' '\v' '\t' '\f' 
+    // TOKEN_comment = TOKEN_whitespace, // this is really possible but there is almost no speed gain.
     TOKEN_comment,        // either of // or /* */
     
-    // single character tokens
-    TOKEN_at_sign,        // @, not used, but apperantly windows has it in its headers @sigh
-    TOKEN_equals,         // =
+    TOKEN_at_sign,  // @ - not used by c, but still printable, hence people might put it in there code (in particular, this is used in windows headers).
+    TOKEN_backtick, // ` - not used by c, but still printable, hence people might put it in there code (this was in a #error as a markdown thing).
+    
+    //
+    // primary expression tokens
+    //
+    TOKEN_float_literal,  // 1.0f, 1.0 1e7 1.f
+    TOKEN_float_hex_literal,
+    TOKEN_character_literal, // has ''
+    TOKEN_base10_literal,
+    TOKEN_hex_literal,
+    TOKEN_binary_literal,
+    TOKEN_string_literal, // has ""
+    
+    TOKEN_identifier,
+    
     TOKEN_open_paren,     // (
     TOKEN_closed_paren,   // )
     TOKEN_open_curly,     // {
     TOKEN_closed_curly,   // }
     TOKEN_open_index,     // [
     TOKEN_closed_index,   // ]
-    //TOKEN_quote,          // " <- this is string literal
     TOKEN_semicolon,      // ;
     TOKEN_colon,          // :
-    TOKEN_comma,          // ,
     TOKEN_dot,            // .
-    TOKEN_smaller,        // <
-    TOKEN_bigger,         // >
     TOKEN_bitwise_not,    // ~
     TOKEN_logical_not,    // !
-    TOKEN_question_mark,  // ?
     
     TOKEN_plus,           // +
     TOKEN_minus,          // -
     TOKEN_and,            // &
-    TOKEN_or,             // |
-    TOKEN_xor,            // ^
-    TOKEN_times,          // *
-    TOKEN_slash,          // /
-    TOKEN_mod,            // %
-    //TOKEN_end_of_file,    // \0
+    TOKEN_increment,        // ++
+    TOKEN_decrement,        // --
+    TOKEN_arrow,            // ->
     
-    // double character tokens
-    TOKEN_logical_equals, // ==
-    TOKEN_logical_unequals,       // !=
-    TOKEN_smaller_equals, // <=
-    TOKEN_bigger_equals,  // >=
-    TOKEN_logical_and,    // &&
-    TOKEN_logical_or,     // ||
-    //TOKEN_power,          // ** this destroys a **ptr... maybe not, normal * works 
-    TOKEN_right_shift,    // >>
-    TOKEN_left_shift,     // <<
-    TOKEN_increment,      // ++
-    TOKEN_decrement,      // --
-    TOKEN_plus_equals,    // +=
-    TOKEN_minus_equals,   // -=
-    TOKEN_div_equals,     // /=
-    TOKEN_mod_equals,     // %=
-    TOKEN_xor_equals,     // ^=
-    TOKEN_and_equals,     // &=
-    TOKEN_or_equals,      // |=
-    TOKEN_times_equals,   // *=
-    TOKEN_arrow,          // ->
-    TOKEN_right_shift_equals,    // >>=
-    TOKEN_left_shift_equals,     // <<=
+    // binary ops, no particular order
+    TOKEN_or,          // |
+    TOKEN_xor,         // ^
+    TOKEN_times,       // *
+    TOKEN_slash,       // /
+    TOKEN_mod,         // %
+    TOKEN_right_shift, // >>
+    TOKEN_left_shift,  // <<
+    
+    // compare tokens same order as the AST_*
+    TOKEN_logical_equals,   // ==
+    TOKEN_logical_unequals, // !=
+    TOKEN_bigger_equals,    // >=
+    TOKEN_smaller_equals,   // <=
+    TOKEN_bigger,           // >
+    TOKEN_smaller,          // <
+    
+    // Assignment tokens, same order as AST_*
+    TOKEN_equals,             // =
+    TOKEN_and_equals,         // &=
+    TOKEN_or_equals,          // |=
+    TOKEN_xor_equals,         // ^=
+    TOKEN_plus_equals,        // +=
+    TOKEN_minus_equals,       // -=
+    TOKEN_left_shift_equals,  // <<=
+    TOKEN_right_shift_equals, // >>=
+    TOKEN_times_equals,       // *=
+    TOKEN_div_equals,         // /=
+    TOKEN_mod_equals,         // %=
+    
+    TOKEN_logical_and,      // &&
+    TOKEN_logical_or,       // ||
+    
+    TOKEN_question_mark,  // ?
+    TOKEN_comma,          // ,
+    
     
     TOKEN_dotdotdot,      // ... (for varargs)
     
-    TOKEN_identifier,
-    
     // keywords
-    TOKEN_typedef,
-    TOKEN_first_keyword = TOKEN_typedef,
     TOKEN_enum,
+    TOKEN_first_keyword = TOKEN_enum,
+    
     TOKEN_struct,
     TOKEN_union, 
-    TOKEN_sizeof,
-    TOKEN_alignof,
-    TOKEN_return,
-    TOKEN_const,
-    TOKEN_volatile,
+    
+    TOKEN_typedef,
     TOKEN_static,
     TOKEN_extern,
+    TOKEN_register,
+    // TOKEN_auto,
+    // TOKEN_constexpr,
+    // TOKEN_thread_local,
+    
+    TOKEN_atomic,
+    TOKEN_unaligned,
+    TOKEN_restrict,
+    TOKEN_const,
+    TOKEN_volatile,
+    TOKEN_noreturn,
+    TOKEN_alignas,
+    
     TOKEN_inline,
-    TOKEN___inline,
-    TOKEN___forceinline,
+    TOKEN_forceinline,
+    
+    TOKEN_sizeof,
+    TOKEN_alignof,
+    
     TOKEN_while,
     TOKEN_if,
     TOKEN_else,
@@ -101,6 +125,7 @@ enum token_type{
     TOKEN_default,
     TOKEN_switch,
     TOKEN_goto,
+    TOKEN_return,
     
     // basic types
     TOKEN_void,
@@ -119,248 +144,312 @@ enum token_type{
     TOKEN_float,
     TOKEN_double,
     
-    TOKEN___FUNCTION__,
+    TOKEN_last_basic_type = TOKEN_double,
     
+    TOKEN___func__,
+    TOKEN_static_assert,
+    TOKEN_declspec,
+    TOKEN_ptr32,
+    TOKEN_ptr64,
+    TOKEN_stdcall,
+    TOKEN_cdecl,
+    
+    TOKEN_asm,
+    TOKEN_embed, // Synthetic token coming from #embed.
     
     TOKEN_count,
     TOKEN_one_past_last_keyword = TOKEN_count,
-    TOKEN_one_past_last_basic_type = TOKEN_count,
 };
 
-#define AMOUNT_OF_KEYWORDS (TOKEN_one_past_last_keyword - TOKEN_first_keyword)
 #define AMOUNT_OF_BASIC_TYPES (TOKEN_one_past_last_basic_type - TOKEN_first_basic_type)
 
-
-static struct string keyword_strings[] = {
+static struct{
+    struct string keyword;
+    enum token_type token_kind;
+} keyword_table_entries[] = {
     // keywords
-    const_string("typedef"),
-    const_string("enum"),
-    const_string("struct"),
-    const_string("union"), 
-    const_string("sizeof"),
-    const_string("_Alignof"),
-    const_string("return"),
-    const_string("const"),
-    const_string("volatile"),
-    const_string("static"),
-    const_string("extern"),
-    const_string("inline"),
-    const_string("__inline"), // @note: this is an MSVC thing because C89 does not have inline
-    const_string("__forceinline"),
-    const_string("while"),
-    const_string("if"),
-    const_string("else"),
-    const_string("for"),
-    const_string("do"),
-    const_string("break"),
-    const_string("continue"),
-    const_string("case"),
-    const_string("default"),
-    const_string("switch"),
-    const_string("goto"),
+    {const_string("typedef"),       TOKEN_typedef},
+    {const_string("enum"),          TOKEN_enum},
+    {const_string("struct"),        TOKEN_struct},
+    {const_string("union"),         TOKEN_union},
+    {const_string("sizeof"),        TOKEN_sizeof},
+    {const_string("_Alignof"),      TOKEN_alignof},
+    {const_string("__alignof"),     TOKEN_alignof},
+    {const_string("return"),        TOKEN_return},
+    {const_string("__unaligned"),   TOKEN_unaligned},
+    {const_string("__restrict"),    TOKEN_restrict},
+    {const_string("const"),         TOKEN_const},
+    {const_string("volatile"),      TOKEN_volatile},
+    {const_string("static"),        TOKEN_static}, 
+    {const_string("extern"),        TOKEN_extern},
+    {const_string("register"),      TOKEN_register},
+    {const_string("inline"),        TOKEN_inline},
+    {const_string("__inline"),      TOKEN_inline},
+    {const_string("__forceinline"), TOKEN_forceinline}, 
+    {const_string("_Noreturn"),     TOKEN_noreturn},
+    {const_string("_Alignas"),      TOKEN_alignas},
+    {const_string("_Atomic"),       TOKEN_atomic},
+    {const_string("while"),         TOKEN_while},
+    {const_string("if"),            TOKEN_if},
+    {const_string("else"),          TOKEN_else},
+    {const_string("for"),           TOKEN_for},
+    {const_string("do"),            TOKEN_do},
+    {const_string("break"),         TOKEN_break},
+    {const_string("continue"),      TOKEN_continue},
+    {const_string("case"),          TOKEN_case},
+    {const_string("default"),       TOKEN_default},
+    {const_string("switch"),        TOKEN_switch},
+    {const_string("goto"),          TOKEN_goto},
+    {const_string("__declspec"),    TOKEN_declspec},
+    {const_string("__ptr32"),       TOKEN_ptr32},
+    {const_string("__ptr64"),       TOKEN_ptr64},
+    {const_string("__stdcall"),     TOKEN_stdcall},
+    {const_string("__cdecl"),       TOKEN_cdecl},
+    
+    {const_string("__asm__"),       TOKEN_asm},
     
     // basic types
-    const_string("void"),
-    const_string("char"),
-    const_string("unsigned"),
-    const_string("signed"),
-    const_string("_Bool"),
-    const_string("short"),
-    const_string("int"), 
-    const_string("long"),
-    const_string("__int8"),
-    const_string("__int16"),
-    const_string("__int32"),
-    const_string("__int64"),
-    const_string("float"),
-    const_string("double"),
+    {const_string("void"),     TOKEN_void},
+    {const_string("char"),     TOKEN_char},
+    {const_string("unsigned"), TOKEN_unsigned},
+    {const_string("signed"),   TOKEN_signed},
+    {const_string("_Bool"),    TOKEN_Bool},
+    {const_string("short"),    TOKEN_short},
+    {const_string("int"),      TOKEN_int},
+    {const_string("long"),     TOKEN_long},
+    {const_string("__int8"),   TOKEN_int8},
+    {const_string("__int16"),  TOKEN_int16},
+    {const_string("__int32"),  TOKEN_int32},
+    {const_string("__int64"),  TOKEN_int64},
+    {const_string("float"),    TOKEN_float},
+    {const_string("double"),   TOKEN_double},
     
+    {const_string("__func__"),     TOKEN___func__}, // c99
+    {const_string("__FUNCTION__"), TOKEN___func__}, // msvc/gcc extension
+    {const_string("__FUNCSIG__"),  TOKEN___func__}, // wrong msvc-extension implementation.
     
-    const_string("__FUNCTION__"),
+    {const_string("_Static_assert"), TOKEN_static_assert},
 };
 
-static_assert(array_count(keyword_strings) == AMOUNT_OF_KEYWORDS);
+enum preprocessor_directive{
+    DIRECTIVE_invalid,
+    
+    DIRECTIVE_define,
+    DIRECTIVE_undef,
+    DIRECTIVE_include,
+    DIRECTIVE_embed,
+    DIRECTIVE_error,
+    DIRECTIVE_pragma,
+    DIRECTIVE_line,
+    
+    DIRECTIVE_if,
+    DIRECTIVE_elif,
+    DIRECTIVE_ifdef,
+    DIRECTIVE_ifndef,
+    DIRECTIVE_else,
+    DIRECTIVE_endif,
+    
+    FIRST_DIRECTIVE_WHICH_SHOULD_BE_STILL_BE_RUN_IN_DISABLED_STATIC_IF = DIRECTIVE_if,
+};
 
-// @cleanup: think about how to make this small
-struct token{
-    enum token_type type;
-    u32 pad;
-    struct file_stack_node *file; // @cleanup: this should be an index instead of the pad above.
+static struct{
+    struct string directive;
+    enum preprocessor_directive kind;
+} directive_table_entries[] = {
+    { const_string("if"), DIRECTIVE_if },
+    { const_string("elif"), DIRECTIVE_elif },
+    { const_string("ifdef"), DIRECTIVE_ifdef },
+    { const_string("ifndef"), DIRECTIVE_ifndef },
+    { const_string("else"), DIRECTIVE_else },
+    { const_string("endif"), DIRECTIVE_endif },
+    
+    { const_string("define"), DIRECTIVE_define },
+    { const_string("undef"), DIRECTIVE_undef },
+    { const_string("include"), DIRECTIVE_include },
+    { const_string("embed"), DIRECTIVE_embed },
+    { const_string("error"), DIRECTIVE_error },
+    { const_string("pragma"), DIRECTIVE_pragma },
+    { const_string("line"), DIRECTIVE_line },
+};
+
+struct atom{
+    u64 string_hash;
     
     union{
-        struct{
-            unique_string value;
-            struct define_argument *is_define_argument;
-        };
-        
-        struct{
-            union{
-                u64 number;
-                f64 _f64;
-            };
-            
-            enum{
-                NUMBER_KIND_int,
-                NUMBER_KIND_unsigned,
-                NUMBER_KIND_unsigned_long,
-                NUMBER_KIND_unsigned_long_long,
-                NUMBER_KIND_long,
-                NUMBER_KIND_long_long,
-                
-                NUMBER_KIND_float32,
-                NUMBER_KIND_float64,
-                
-                STRING_KIND_none,  //   ""
-                STRING_KIND_utf8,  // u8""
-                STRING_KIND_utf16, //  u""
-                STRING_KIND_utf32, //  U""
-            }number_kind;
-        };
-        
-        struct string string; // 'data' is also used to store the begining and end for system include (< and >) have it set 
-        // :smaller_bigger_and_system_includes
-        
-        m128 to_copy;
+        struct string string;
+        struct string;
     };
-    u32 line;
-    u32 column;
 };
 
-func b32 token_match(struct token *t1, struct token *t2){
-    if(t1->type != t2->type) return false;
-    
-    switch(t1->type){
-        case TOKEN_float_literal:
-        case TOKEN_character_literal:
-        case TOKEN_base10_literal:
-        case TOKEN_hex_literal:{
-            return t1->number == t2->number && t1->number_kind == t2->number_kind;
-        }break;
-        case TOKEN_string_literal: // @note: we intern string literals.
-        case TOKEN_identifier:{
-            return t1->value == t2->value;
-        }break;
-        
-        default: return true;
-    }
+struct atom atom_for_string(struct string string){
+    return (struct atom){
+        .data = string.data, 
+        .size = string.size, 
+        .string_hash = string_djb2_hash(string),
+    };
 }
 
-
-struct token_bucket{
-    struct token_bucket *next;
-    struct token_bucket *prev;
-    struct token *tokens;
-    smm amount;
+struct token{
+    enum token_type type;
+    s32 file_index;
+    u32 line;
+    u32 column;
+    
+    union{
+        struct atom;
+        struct atom atom;
+    };
 };
 
-struct token_bucket_array{
-    struct token_bucket *first;
-    struct token_bucket *last;
+static struct string token_get_string(struct token *token){
+    return (struct string){.data = token->atom.data, .size = token->atom.size};
+}
+
+static b32 atoms_match(struct atom a, struct atom b){
+    
+    if(a.string_hash != b.string_hash) return false;
+    if(a.size != b.size) return false;
+    
+    return (memcmp(a.data, b.data, a.size) == 0);
+}
+
+struct token_array{
+    struct token *data;
+    union{
+        smm amount;
+        smm size;
+        smm count;
+    };
+};
+
+struct token_stack_node{
+    struct token_stack_node *next;
+    struct token_array tokens;
+    smm at;
+    
+    struct define_node *define_to_reenable_on_exit;
 };
 
 
 //////////////////////////
 
 enum ast_kind{
-    AST_invalid                 = 0,
-    AST_none                    = AST_invalid,
+    AST_invalid,
+    AST_none = AST_invalid,
     
-    AST_identifier              = 1,
-    AST_string_literal          = 2,
-    AST_integer_literal         = 3,
-    AST_float_literal           = 4,
-    AST_struct_or_array_literal = 5,
-    AST_declaration             = 6,
+    AST_identifier,
+    AST_string_literal,
+    AST_integer_literal,
+    AST_float_literal,
+    AST_compound_literal,
+    AST_declaration,
     
-    AST_void_type               = 7,
-    AST_integer_type            = 8,
-    AST_float_type              = 9,
-    //AST_bitfield_type           = 10,
-    AST_pointer_type            = 11,
-    AST_function_type           = 12,
-    AST_array_type              = 13,
-    AST_struct                  = 14,
-    AST_enum                    = 15,
+    AST_void_type,
+    AST_integer_type,
+    AST_float_type,
+    AST_bitfield_type,
+    AST_pointer_type,
+    AST_function_type,
+    AST_array_type,
+    AST_struct,
+    AST_enum,
     
-    AST_cast                    = 16,
-    AST_function                = 17,
+    AST_cast,
+    AST_function,
     
-    AST_unary_postinc           = 18,
-    AST_unary_preinc            = 19,
-    AST_unary_postdec           = 20,
-    AST_unary_predec            = 21,
-    AST_logical_not             = 22,
-    AST_unary_bitwise_not       = 23,
-    AST_unary_deref             = 24,
-    AST_unary_array_index       = 25,
-    AST_unary_function_call     = 26,
-    AST_unary_minus             = 27,
-    AST_unary_plus              = 28,
-    AST_unary_address           = 29,
+    AST_unary_postinc,
+    AST_unary_preinc,
+    AST_unary_postdec,
+    AST_unary_predec,
+    AST_unary_logical_not,
+    AST_unary_bitwise_not,
+    AST_unary_deref,
+    AST_unary_array_index,
+    AST_unary_function_call,
+    AST_unary_minus,
+    AST_unary_plus,
+    AST_unary_address,
     
-    AST_sizeof                  = 30,
-    AST_alignof                 = 31,
+    AST_sizeof,
+    AST_alignof,
     
-    AST_binary_left_shift       = 32,
-    AST_binary_right_shift      = 33,
-    AST_binary_and              = 34,
-    AST_binary_or               = 35,
-    AST_binary_xor              = 36,
-    AST_binary_times            = 37,
-    AST_binary_divide           = 38,
-    AST_binary_mod              = 39,
-    AST_binary_plus             = 40,
-    AST_binary_minus            = 41,
-    AST_binary_logical_equals   = 42,
-    AST_binary_logical_unequals = 43,
-    AST_binary_bigger_equals    = 44,
-    AST_binary_smaller_equals   = 45,
-    AST_binary_bigger           = 46,
-    AST_binary_smaller          = 47,
-    AST_logical_and             = 48,
-    AST_logical_or              = 49,
+    AST_member,
+    AST_member_deref,
+    AST_pointer_subscript,
+    AST_array_subscript,
     
-    AST_member                  = 50,
-    AST_member_deref            = 51, //now desugared
+    AST_binary_times,
+    AST_binary_divide,
+    AST_binary_mod,
     
-    //AST_array_subscript         = 52, //now desugared
-    AST_conditional_expression  = 53,
-    AST_assignment              = 54,
-    AST_and_assignment          = 55,
-    AST_or_assignment           = 56,
-    AST_xor_assignment          = 57,
-    AST_plus_assignment         = 58,
-    AST_minus_assignment        = 59,
-    AST_left_shift_assignment   = 60,
-    AST_right_shift_assignment  = 61,
-    AST_times_assignment        = 62,
-    AST_divide_assignment       = 63,
-    AST_modulo_assignment       = 64,
+    AST_binary_plus,
+    AST_binary_minus,
     
-    AST_comma_expression        = 65,
+    AST_binary_left_shift,
+    AST_binary_right_shift,
     
-    AST_function_call           = 66,
-    AST_scope                   = 67,
+    AST_binary_and,
+    AST_binary_or,
+    AST_binary_xor,
     
-    AST_empty_statement         = 68, 
-    AST_return                  = 69,
-    AST_if                      = 70,
-    AST_for                     = 71,
-    AST_do_while                = 72,
+    // compare AST_* same order as the tokens
+    AST_binary_logical_equals,
+    AST_binary_logical_unequals,
+    AST_binary_bigger_equals,
+    AST_binary_smaller_equals,
+    AST_binary_bigger,
+    AST_binary_smaller,
     
-    AST_break                   = 73,
-    AST_continue                = 74,
+    AST_logical_and,
+    AST_logical_or,
     
-    AST_switch                  = 75,
-    AST_case                    = 76,
-    AST_label                   = 77,
-    AST_goto                    = 78,
+    AST_conditional_expression,
     
-    AST_typedef                 = 79,
+    // Assignment AST_*, same order as TOKEN_*_equals
+    AST_assignment,
+    AST_and_assignment,
+    AST_or_assignment,
+    AST_xor_assignment,
+    AST_plus_assignment,
+    AST_minus_assignment,
+    AST_left_shift_assignment,
+    AST_right_shift_assignment,
+    AST_times_assignment,
+    AST_divide_assignment,
+    AST_modulo_assignment,
     
-    AST_unresolved_type         = 80,
-    AST_declaration_list        = 81,
-    AST_union                   = 82,
+    AST_comma_expression,
+    
+    AST_function_call,
+    AST_scope,
+    
+    AST_empty_statement, 
+    AST_return,
+    AST_if,
+    AST_for,
+    AST_do_while,
+    
+    AST_break,
+    AST_continue,
+    
+    AST_switch,
+    AST_case,
+    AST_label,
+    AST_goto,
+    
+    AST_typedef,
+    
+    AST_unresolved_type,
+    AST_declaration_list,
+    AST_union,
+    
+    AST_pointer_literal,
+    AST_implicit_address_conversion, // Used if an array or a function is implicitly converted to a pointer.
+    
+    AST_asm_block,
+    AST_embed,
+    
+    AST_panic, 
     
     AST_count,
 };
@@ -379,8 +468,11 @@ struct ast{
 };
 
 enum type_flags{
-    TYPE_FLAG_pdb_tempoary  = 0x1, 
+    TYPE_FLAG_none          = 0x0,
+    TYPE_FLAG_pdb_temporary = 0x1, 
     TYPE_FLAG_pdb_permanent = 0x2, 
+    TYPE_FLAG_ends_in_array_of_unknown_size = 0x4,
+    TYPE_FLAG_is_intrin_type = 0x8,
 };
 
 struct ast_type{
@@ -397,7 +489,7 @@ struct ast_type{
 
 struct ast_list_node{
     struct ast_list_node *next;
-    struct ast* value;
+    struct ast *value;
 };
 
 struct ast_list{
@@ -408,29 +500,49 @@ struct ast_list{
 
 #define for_ast_list(list) for(struct ast_list_node *it = (list).first; it; it = it->next)
 
+
+#define DECLARATION_FLAGS_is_global                                0x1
+#define DECLARATION_FLAGS_is_enum_member                           0x2
+#define DECLARATION_FLAGS_is_big_function_argument                 0x4
+#define DECLARATION_FLAGS_is_local_persist                         0x8
+
+#define DECLARATION_FLAGS_is_dll_import_with_missing_declspec      0x20
+#define DECLARATION_FLAGS_is_function_that_is_reachable_from_entry 0x40
+#define DECLARATION_FLAGS_is_static                                0x80
+
+#define DECLARATION_FLAGS_is_dllimport                             0x200
+#define DECLARATION_FLAGS_is_dllexport                             0x400
+#define DECLARATION_FLAGS_is_selectany                             0x800
+
+#define DECLARATION_FLAGS_is_extern                                0x1000
+#define DECLARATION_FLAGS_is_unnamed                               0x2000 // Used for struct and array literals, to not emit a symbol for them.
+
 struct ast_declaration{
-    // @WARNING: this needs to match the part in function
+    // @WARNING: This needs to match the part in ast_function.
     struct ast base;
     struct ast_type *type;
-    struct ast *defined_type; // either 'AST_enum' or 'AST_typedef' or 'null' :defined_types
-    unique_string identifier;
+    struct ast *defined_type; // Either 'AST_enum' or 'AST_typedef' or 'null' :defined_types
+    struct token *identifier;
     
-    union{
-        smm offset_on_stack; // - stack relative if the declarations  is in a function scope
-        smm offset_in_type;  // - the member offset if the declarations is in a struct
-    };
+    smm offset_on_stack; // - stack relative if the declarations  is in a function scope
     
-    u8 *memory_location; // if it is global a pointer to the evaluated intializer.
-    smm relative_virtual_address; // only used when we emit an exe
-    struct ast *assign_expr; // the rhs of '=' if it exists
+    // :dllimport_loading
+    // memory_location and relative_virtual_address for dllimports, describe the entry in the dllimport table.
     
+    u8 *memory_location; // if it is global a pointer to the evaluated initializer.
+    smm relative_virtual_address;
+    smm symbol_table_index;
+    struct compilation_unit *compilation_unit;
     
-#define DECLARATION_FLAGS_is_global                0x1
-#define DECLARATION_FLAGS_is_enum_member           0x2
-#define DECLARATION_FLAGS_is_big_function_argument 0x4
-#define DECLARATION_FLAGS_is_local_persist         0x8
-#define DECLARATION_FLAGS_is_referanced            0x10
+    struct ast *assign_expr; // the rhs of '=' if it exists, @WARNING: same slot as function->scope
+    
+    s64 overwrite_alignment;
+    
     b64 flags;
+    
+    // used to report 'declaration is not used' and 'declaration is only ever written'
+    u32 times_referenced;
+    u32 times_written;
 };
 
 struct declaration_node{
@@ -440,7 +552,7 @@ struct declaration_node{
 
 struct declaration_list{
     struct ast_type *type_specifier;
-    struct ast *type_specifier_defined_type;
+    struct ast *defined_type_specifier;
     struct declaration_node *first;
     struct declaration_node *last;
 };
@@ -463,12 +575,21 @@ struct ast_pointer_type{
 
 struct ast_unresolved_type{
     struct ast_type base;
-    char *type_prefix; // "union", "struct", "enum" or ""
-    enum sleep_purpose unresolved_sleep_purpose;
+    enum ast_kind kind; // AST_union, AST_struct or AST_enum
+    struct compilation_unit *compilation_unit;
     struct token *sleeping_on;
+    struct ast_scope *containing_scope;
 };
 
-struct ast_array_type{ // :array_sizes
+static struct string type_prefix_for_unresolved_type(struct ast_unresolved_type *unresolved){
+    if(unresolved->kind == AST_union)  return string("union");
+    if(unresolved->kind == AST_struct) return string("struct");
+    if(unresolved->kind == AST_enum)   return string("enum");
+    
+    invalid_code_path;
+}
+
+struct ast_array_type{
     struct ast_type base;
     b32 is_of_unknown_size;
     smm amount_of_elements;
@@ -476,6 +597,14 @@ struct ast_array_type{ // :array_sizes
     struct ast *element_type_defined_type; // :defined_types
 };
 
+struct ast_bitfield_type{
+    struct ast_type base;
+    struct ast_type *base_type;
+    u32 bit_index;
+    u32 width;
+};
+
+// @note: needs to match ast_pointer_literal below
 struct ast_integer_literal{
     struct ast base;
     union{
@@ -493,6 +622,13 @@ struct ast_integer_literal{
     };
 };
 
+// @note: needs to match ast_integer_literal above
+struct ast_pointer_literal{
+    struct ast base;
+    u8 *pointer;
+};
+
+
 struct ast_float_literal{
     struct ast base;
     struct ast_float_literal *next;
@@ -503,21 +639,36 @@ struct ast_float_literal{
 
 struct ast_string_literal{
     struct ast base;
-    unique_string value;
-    // :string_literal_location
-    // @note: this is a unique_string because we change value->data to be the right thing in exe_writer
+    struct ast_string_literal *next;
+    
+    struct string value;
+    enum string_kind string_kind;
+    u32 relative_virtual_address;
+    u32 symbol_table_index; // needed for .obj (this should maybe be named unique_string_index as that is what it realy is)
 };
 
-struct ast_struct_or_array_literal{
+struct ast_compound_literal{
     struct ast base;
     struct ast_declaration *decl;
-    struct ast_list assignment_list; // @cleanup: why is it assignment_list but ast_struct->declarations?
+    struct ast_list assignment_list;
+    
+    smm trailing_array_size;
 };
 
-struct ast_return{
-    struct ast base;
-    struct ast *expr;
-};
+smm get_declaration_alignment(struct ast_declaration *decl){
+    smm alignment = decl->type->alignment;
+    if(decl->overwrite_alignment) alignment = decl->overwrite_alignment;
+    return alignment;
+}
+
+smm get_declaration_size(struct ast_declaration *decl){
+    smm size = decl->type->size;
+    if(decl->assign_expr && decl->assign_expr->kind == AST_compound_literal){
+        struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)decl->assign_expr;
+        size += compound_literal->trailing_array_size;
+    }
+    return size;
+}
 
 struct ast_unary_op{
     struct ast base;
@@ -530,12 +681,33 @@ struct ast_binary_op{
     struct ast *rhs;
 };
 
+struct ast_panic{
+    struct ast base;
+};
+
 struct ast_dot_or_arrow{
     struct ast base;
     struct ast *lhs;
-    struct ast_declaration *member_decl;
+    struct compound_member *member;
 };
 
+struct ast_subscript{
+    struct ast base;
+    struct ast *lhs;
+    struct ast *index;
+};
+
+struct ast_return{
+    struct ast base;
+    struct ast *expr;
+};
+
+enum scope_flags{
+    SCOPE_FLAG_none              = 0x0,
+    SCOPE_FLAG_can_continue      = 0x1,
+    SCOPE_FLAG_can_break         = 0x2,
+    SCOPE_FLAG_is_function_scope = 0x4, // this is the root scope of a functions, this might still have a parent, if the function is local.
+};
 
 struct ast_scope{
     struct ast base;
@@ -543,13 +715,9 @@ struct ast_scope{
     
     struct ast_list statement_list;
     
-    enum scope_flags{
-        SCOPE_FLAG_none            = 0x0,
-        SCOPE_FLAG_can_continue    = 0x1,
-        SCOPE_FLAG_can_break       = 0x2,
-        //SCOPE_FLAG_has_ending_line = 0x4,
-    } flags;
+    enum scope_flags flags;
     
+    // @note: A hash table for the declarations.
     struct ast_declaration **declarations;
     u32 amount_of_declarations;
     u32 current_max_amount_of_declarations;
@@ -558,7 +726,6 @@ struct ast_scope{
     u32 amount_of_compound_types;
     u32 current_max_amount_of_compound_types;
     
-    //u32 scope_end_line;
     u32 scope_end_byte_offset_in_function;
 };
 
@@ -572,24 +739,46 @@ struct ast_break{
     struct ast_scope *scope_to_break;
 };
 
-struct ast_compound_type{
-    struct ast_type base;
-    unique_string identifier;
-    
-    struct ast_list declarations;
+struct compound_member{
+    struct token *name;
+    struct ast_type *type;
+    struct ast *defined_type;
+    union{
+        smm offset_in_type;
+        smm enum_value;
+    };
 };
 
+struct ast_compound_type{
+    struct ast_type base;
+    struct atom identifier;
+    struct compilation_unit *compilation_unit;
+    
+    // A dynamic array for the members.
+    // Contains both the linear members (meaning unnamed members "expanded") 
+    // as well as the nested members. :member_list_contains_both_linear_and_nested
+    struct compound_member *members;
+    u32 amount_of_members;
+    u32 current_max_amount_of_members;
+};
+
+#define FUNCTION_TYPE_FLAGS_is_varargs    0x1
+#define FUNCTION_TYPE_FLAGS_is_intrinsic  0x2
+#define FUNCTION_TYPE_FLAGS_is_printlike  0x4 // this acts, as if it was intrinsic in the front end, but not in the backend
+#define FUNCTION_TYPE_FLAGS_is_inline_asm 0x8
 struct ast_function_type{
     struct ast_type base;
     struct ast_type *return_type;
     struct ast *return_type_defined_type; // :defined_type @cleanup: make sure this is filled 
     
-#define FUNCTION_TYPE_FLAGS_is_varargs   0x1
-#define FUNCTION_TYPE_FLAGS_is_dllimport 0x2
-#define FUNCTION_TYPE_FLAGS_is_intrinsic 0x4
     b64 flags;
     
     struct ast_list argument_list;
+};
+
+struct function_node{
+    struct function_node *next;
+    struct ast_function *function;
 };
 
 struct ast_function{
@@ -597,16 +786,22 @@ struct ast_function{
         struct{
             struct ast base;
             struct ast_function_type *type;
-            struct ast *enum_or_typedef_name; // either 'AST_enum' or 'AST_typedef' or 'null'
-            unique_string identifier;
-            smm unused; // @cleanup: make this offset in text section?
-            u8 *memory_location; // @cleanup: rename? this is where the thing onces emited. here for patching
+            struct ast *defined_type; // either 'AST_enum' or 'AST_typedef' or 'null'
+            struct token *identifier;
+            smm offset_in_text_section;
+            u8 *memory_location; // @cleanup: rename? this is where the thing onces emitted. here for patching
             smm relative_virtual_address; // needs to be 64 bit, as we point to it not knowing its size
+            smm symbol_table_index; // for .obj
+            struct compilation_unit *compilation_unit;
+            struct ast *scope; // @WARNING: We use that this is in the same slot as 'ast_declaration->assign_expr'.
+            smm overwrite_alignment;
+            u64 decl_flags;
+            
+            u32 times_referenced;
+            u32 times_written;
         };
         struct ast_declaration as_decl;
     };
-    
-    struct ast_function *is_defined; // the pointer to the function declaration that has a definition
     
     u8 *base_of_prolog;
     smm size_of_prolog; // these could be smaller
@@ -616,25 +811,32 @@ struct ast_function{
     smm byte_size_without_prolog;
     
     smm rsp_subtract_offset;
-    smm offset_in_text_section;
     smm byte_size;
     
-    struct ast *scope;
-    smm stack_space_needed; 
+    smm stack_space_needed; // after parsing this is what we need for declarations, and then in emit 
+    // it gets adjusted to the full thing (including stack spilling usw)
+    
+    // @hmm: these were on 'context' back when emitted code immediately after parsing.
+    //       now These are here.. We could collect them again in asm emit..
+    struct ast_list goto_list;
+    struct ast_list label_list;
     
     struct ast_list static_variables;
-    struct{
-        struct ast_float_literal *first;
-        struct ast_float_literal *last;
-    }float_literals; // @note we have to save these, as they are actually in '.rdata'.
     
     // debug info:
     smm debug_size;
     u8 *debug_info;
     u32 debug_symbol_offset;
-    u32 ref_offset;
+    u32 pushed_register_mask; // (1 << REGISTER_XXX) is set if we pushed that register in the prolog
     
-    struct dll_import_node *dll_import_node;
+    // dll stuff:
+    struct dll_import_node *dll_import_node; // filled in in 'explain.c'
+    
+    struct {
+        struct function_node *first;
+        struct function_node *last;
+    } called_functions;
+    struct token *token_that_referenced_this_function;
     
 };
 
@@ -665,8 +867,10 @@ struct ast_switch{
 
 struct ast_case{
     struct ast base;
-    struct ast *expression;
-    struct jump_context *jump; // we use this as a label, only used in emit
+    u64 value;
+    struct ast *statement;
+    
+    struct jump_context *jump; // We use this as a label, only used in emit.
 };
 
 struct ast_function_call{
@@ -675,15 +879,10 @@ struct ast_function_call{
     struct ast_list call_arguments;
 };
 
-struct ast_array_subscript{
-    struct ast base;
-    struct ast *index;
-    struct ast *array;
-};
-
 struct ast_label{
     struct ast base;
-    unique_string ident;
+    struct atom ident;
+    struct ast *statement;
     
     // for emitting
     smm byte_offset_in_function;
@@ -692,7 +891,7 @@ struct ast_label{
 struct ast_goto{
     struct ast base;
     struct ast_label *label_to_goto;
-    unique_string ident;
+    struct atom ident;
     
     // for emiting
     struct jump_node *jump_node;
@@ -705,22 +904,22 @@ struct ast_conditional_expression{
     struct ast *condition;
 };
 
+struct ast_asm_block{
+    struct ast base;
+    struct{
+        struct asm_instruction *first;
+        struct asm_instruction *last;
+    }instructions;
+};
+
+struct ast_embed{
+    struct ast base;
+};
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 enum intrinsic_kind{
     INTRINSIC_KIND_va_start,
-    INTRINSIC_KIND_rdtsc,
-    INTRINSIC_KIND_pause,
-
-    INTRINSIC_KIND_scalar_double_op,
-    INTRINSIC_KIND_packed_double_op,
-    
-    INTRINSIC_KIND_set_scalar_double,
-    
-    INTRINSIC_KIND_InterlockedCompareExchange64, 
-    INTRINSIC_KIND_InterlockedCompareExchange128,
-    INTRINSIC_KIND_interlocked_inc_dec_64,
-    INTRINSIC_KIND_interlocked_fetch_op_64,
 };
 
 

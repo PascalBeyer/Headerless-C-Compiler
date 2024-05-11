@@ -1,25 +1,16 @@
+
 @echo off
 
 echo Compiling with msvc
-
-set to_build=src/main.c 
-set out_name=out.exe
+IF NOT EXIST build mkdir build
 
 rem *******************************************WARNINGS*****************************************************
 rem set warning_options= /w
-set warning_options= -Wall -wd4201 -wd4820  -wd4711 -wd4200 -wd4204 -wd4214 -wd4324
+set warning_options= -Wall -wd4201 -wd4820  -wd4711 -wd4200 -wd4204 -wd4214 -wd4324 -wd5045 -wd4061 -wd4221
 rem ********************************************************************************************************
 
-rem *******************************************OPTIONS******************************************************
-set compiler_flags= -Od -nologo -fp:fast -GR- -EHa- -Zo -Oi -D_Debug  %warning_options% -FC -Z7 -GS- -Gs9999999 /Fo:build/
+set compiler_flags= -O2 -nologo -fp:fast -GR- -EHa- -Zo -Oi -D_Debug  %warning_options% -FC -Z7 -GS- -Gs9999999 /diagnostics:column /TC
 
-set linker_flags= -HEAP:0,0 -STACK:0x100000,0x100000 -incremental:no -opt:ref kernel32.lib ucrt.lib /NODEFAULTLIB /ENTRY:_start /SUBSYSTEM:console /DYNAMICBASE:NO /NOLOGO /DEBUG /out:build/%out_name%
-rem ********************************************************************************************************
+set linker_flags= -HEAP:0,0 -STACK:0x100000,0x100000 -incremental:no -opt:ref Advapi32.lib kernel32.lib ucrt.lib /NODEFAULTLIB /ENTRY:_start /SUBSYSTEM:console /NOLOGO /DEBUG 
 
-
-cl /TC /c %compiler_flags% %to_build% 
-
-link %linker_flags% build/main.obj build/asm-functions.obj 
-
-
-
+cl %compiler_flags% src/main.c /Fo:build/hlc.obj /link %linker_flags% /pdb:build/hlc.pdb /out:hlc.exe

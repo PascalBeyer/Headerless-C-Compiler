@@ -1,9 +1,15 @@
+
+#ifdef proc
 #undef proc
+#endif
 
 #if 0
 #include <windows.h>
 #else
 
+#define MAX_PATH 32767
+
+#define func static
 // @cleanup: I should probably get rid of all of these types
 
 typedef unsigned char UBYTE;
@@ -31,13 +37,13 @@ typedef unsigned char UCHAR;
 typedef unsigned short USHORT;
 
 typedef unsigned char BYTE;
-typedef BYTE BOOLEAN; 
+typedef BYTE BOOLEAN;
 
 typedef union _LARGE_INTEGER {
     struct {
         DWORD LowPart;
         LONG HighPart;
-    } ;
+    };
     struct {
         DWORD LowPart;
         LONG HighPart;
@@ -45,9 +51,21 @@ typedef union _LARGE_INTEGER {
     LONGLONG QuadPart;
 } LARGE_INTEGER;
 
+typedef union _ULARGE_INTEGER {
+    struct {
+        DWORD LowPart;
+        DWORD HighPart;
+    };
+    struct {
+        DWORD LowPart;
+        DWORD HighPart;
+    } u;
+    ULONGLONG QuadPart;
+} ULARGE_INTEGER;
+
 
 struct HINSTANCE__{int unused;}; typedef struct HINSTANCE__ *HINSTANCE;
-typedef HINSTANCE HMODULE; 
+typedef HINSTANCE HMODULE;
 /////// GENERAL
 
 __declspec(dllimport) u32 GetCurrentProcessId(void);
@@ -57,9 +75,9 @@ __declspec(dllimport) BOOL __stdcall QueryPerformanceCounter(LARGE_INTEGER * lpP
 __declspec(dllimport) BOOL __stdcall QueryPerformanceFrequency(LARGE_INTEGER * lpFrequency);
 
 // GetCurrentDirectory with 0 returns the size of the buffer including the null terminator
-
 __declspec(dllimport) DWORD __stdcall GetCurrentDirectoryA(DWORD nBufferLength, u8* lpBuffer);
 __declspec(dllimport) HMODULE __stdcall GetModuleHandleA(LPCSTR lpModuleName);
+__declspec(dllimport) DWORD GetModuleFileNameA(HMODULE hModule, char *lpFilename, DWORD nSize);
 
 typedef struct _SYSTEM_INFO {
     union {
@@ -162,14 +180,13 @@ typedef struct _OVERLAPPED {
 __declspec(dllimport) BOOL __stdcall ReadFile(HANDLE hFile,LPVOID lpBuffer,DWORD nNumberOfBytesToRead,LPDWORD lpNumberOfBytesRead,LPOVERLAPPED lpOverlapped);
 
 __declspec(dllimport) BOOL __stdcall WriteFile(HANDLE hFile,LPVOID lpBuffer,DWORD nNumberOfBytesToWrite,
-                                               LPDWORD lpNumberOfBytesWritten,LPOVERLAPPED lpOverlapped);
+        LPDWORD lpNumberOfBytesWritten,LPOVERLAPPED lpOverlapped);
 
 
 typedef struct _FILETIME {
     DWORD dwLowDateTime;
     DWORD dwHighDateTime;
 } FILETIME;
-
 
 typedef struct _WIN32_FIND_DATAA {
     DWORD dwFileAttributes;
@@ -184,10 +201,77 @@ typedef struct _WIN32_FIND_DATAA {
     CHAR cAlternateFileName[ 14 ];
 } WIN32_FIND_DATAA;
 
-__declspec(dllimport) DWORD GetFileAttributesA(char *lpFileName);
 __declspec(dllimport) HANDLE __stdcall FindFirstFileA(char *lpFileName, WIN32_FIND_DATAA *lpFindFileData);
 __declspec(dllimport) BOOL __stdcall FindNextFileA(HANDLE hFindFile, WIN32_FIND_DATAA *lpFindFileData);
 __declspec(dllimport) BOOL __stdcall FindClose(HANDLE hFindFile);
+
+typedef struct _SYSTEMTIME {
+    WORD wYear;
+    WORD wMonth;
+    WORD wDayOfWeek;
+    WORD wDay;
+    WORD wHour;
+    WORD wMinute;
+    WORD wSecond;
+    WORD wMilliseconds;
+} SYSTEMTIME, *PSYSTEMTIME;
+
+
+__declspec(dllimport) void GetSystemTime(PSYSTEMTIME lpSystemTime);
+__declspec(dllimport) ULONGLONG GetTickCount64(void);
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// File iterator (USAGE):  // @cleanup: make sure this code actually compiles
+// for(struct os_file_iterator it = os_file_iterator_initialize("C:/*s");
+//     os_file_iterator_valid(&it); os_file_iterator_next(&it)){
+//     struct string file_name = os_file_iterator_get(&it);
+//     print(".*s\n", file_name.size, file_name.data);
+// }
+
+struct os_file_iterator{
+    WIN32_FIND_DATAA find_data;
+    HANDLE handle;
+};
+
+struct os_file_iterator os_file_iterator_initialize(char *search_string){
+    struct os_file_iterator ret = zero_struct;
+    ret.handle = FindFirstFileA(search_string, &ret.find_data);
+    return ret;
+}
+
+// returns a file_iterator that will return 'false' on 'os_file_iterator_valid'
+// and can later be initialized by just overwriting it
+struct os_file_iterator os_file_iterator_invalid(void){
+    struct os_file_iterator ret = zero_struct;
+    ret.handle = INVALID_HANDLE_VALUE;
+    return ret;
+}
+
+b32 os_file_iterator_valid(struct os_file_iterator *iterator){
+    return (iterator->handle != INVALID_HANDLE_VALUE);
+}
+
+struct string os_file_iterator_get(struct os_file_iterator *iterator){
+    return string_from_cstring(iterator->find_data.cFileName);
+}
+
+void os_file_iterator_free(struct os_file_iterator *iterator){
+    CloseHandle(iterator->handle); // @cleanup: "When the search handle is no longer needed, close it by using the FindClose function, not CloseHandle."
+    iterator->handle = INVALID_HANDLE_VALUE;
+}
+
+// @cleanup: should maybe return an 'os_file' structure not sure
+// returns the file_name, i.e 'file' for 'C:/path/to/file'
+void os_file_iterator_next(struct os_file_iterator *iterator){
+    if(!FindNextFileA(iterator->handle, &iterator->find_data)){
+        os_file_iterator_free(iterator);
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+__declspec(dllimport) DWORD GetFileAttributesA(char *lpFileName);
+
 
 __declspec(dllimport) BOOL __stdcall IsDebuggerPresent(void);
 __declspec(dllimport) void __stdcall DebugBreak(void);
@@ -280,8 +364,6 @@ typedef struct __declspec(align(16)) _XSAVE_FORMAT {
     BYTE Reserved4[96];
     
 } XSAVE_FORMAT, *PXSAVE_FORMAT;
-
-
 
 typedef struct __declspec(align(16)) _CONTEXT {
     
@@ -378,24 +460,24 @@ __declspec(dllimport) LPTOP_LEVEL_EXCEPTION_FILTER __stdcall SetUnhandledExcepti
 #endif // #else of if 0 #include <windows.h>
 
 struct os_thread_info{
-    smm id;
+    smm id; // @cleanup: how is this initialized?
     void *handle;
 };
 
 typedef u32 (__stdcall *os_thread_proc)(void *param);
 
-static_assert(sizeof(u32) == sizeof(unsigned long));
-
-static struct os_thread_info os_create_thread(b32 run_immediatly, os_thread_proc proc, void *data){
-    struct os_thread_info info;
+static struct os_thread_info os_create_thread(os_thread_proc proc, void *data){
+    struct os_thread_info info = zero_struct;
     
-    info.handle = CreateThread(0, 0, cast(LPTHREAD_START_ROUTINE)proc, data, run_immediatly ? 0 : 0x4, (unsigned long *)&info.id);
+    info.handle = CreateThread(0, 0, cast(LPTHREAD_START_ROUTINE)proc, data, 0, (unsigned long *)&info.id);
     return info;
 }
 
+void __debugbreak(void);
+
 static void os_debug_break(void){
     if(IsDebuggerPresent()){
-        DebugBreak();
+        __debugbreak();
     }
 }
 
@@ -422,7 +504,7 @@ static struct os_virtual_buffer os_reserve_memory(void *_desired_base, smm reser
     assert(is_power_of_two(granularity));
     assert(is_power_of_two(page_size));
     
-    DWORD allocation_flags = PAGE_EXECUTE_READWRITE;
+    DWORD allocation_flags = PAGE_READWRITE;
     
     void *mem1 = desired_base;
     if(reserve_size){
@@ -432,11 +514,10 @@ static struct os_virtual_buffer os_reserve_memory(void *_desired_base, smm reser
             reserve_size     = (reserve_size - rest) + (rest ? (smm)page_size : 0);
         }else{
             
-            // If the memory is being reserved, the specified address is rounded down to the nearest multiple of the allocation granularity. 
+            // If the memory is being reserved, the specified address is rounded down to the nearest multiple of the allocation granularity.
             desired_base -=  (granularity - 1) & (umm)desired_base;
         }
         
-        // @cleanup : remove PAGE_EXECUTE
         mem1 = VirtualAlloc(desired_base, (SIZE_T)reserve_size, MEM_RESERVE, allocation_flags);
         if(!mem1){
             struct os_virtual_buffer ret = zero_struct;
@@ -446,7 +527,7 @@ static struct os_virtual_buffer os_reserve_memory(void *_desired_base, smm reser
     
     struct os_virtual_buffer virtual_buffer;
     virtual_buffer.base     = mem1;
-    virtual_buffer.commited = 0;
+    virtual_buffer.committed = 0;
     virtual_buffer.reserved = reserve_size;
     
     return virtual_buffer;
@@ -467,9 +548,8 @@ static struct os_virtual_buffer os_commit_memory(void *_desired_base, smm commit
     assert(is_power_of_two(granularity));
     assert(is_power_of_two(page_size));
     
-    DWORD allocation_flags = PAGE_EXECUTE_READWRITE;
+    DWORD allocation_flags = PAGE_READWRITE;
     
-    // @cleanup : remove PAGE_EXECUTE
     void *mem2 = VirtualAlloc(desired_base, (SIZE_T)commit_size, MEM_COMMIT, allocation_flags);
     if(!mem2){
         struct os_virtual_buffer ret = zero_struct;
@@ -478,8 +558,8 @@ static struct os_virtual_buffer os_commit_memory(void *_desired_base, smm commit
     
     struct os_virtual_buffer virtual_buffer;
     virtual_buffer.base     = mem2;
-    virtual_buffer.commited = commit_size;
-    virtual_buffer.reserved = 0;
+    virtual_buffer.committed = commit_size;
+    virtual_buffer.reserved = 0; // @cleanup: this is kinda terrible
     
     return virtual_buffer;
 }
@@ -490,76 +570,125 @@ static void os_free_memory(void *memory_to_free){
     VirtualFree(memory_to_free, 0, MEM_RELEASE);
 }
 
-#if 0
-static void win32_init_console(void){
-    // @warning:@warning:@warning:@warning:@warning:@warning:@warning:
-    // @note: This whole thing did not seem to work for now. We are now compiling with
-    // the linker switch /SUBSYSTEM:console instead of /SUBSYSTEM:windows
-    // this make us always be passed a console handle (???) but we should eventually make this work
-    // with /SUBSYSTEM:windows as well, if we want to make this into more of a _library_.
-    
-    SetLastError(0); // do we need this?
-    if(!AttachConsole(ATTACH_PARENT_PROCESS)){
-        
-        DWORD error = GetLastError();
-        switch(error){
-            case ERROR_SUCCESS:
-            {
-                // we should never get here
-            }break;
-            
-            case ERROR_ACCESS_DENIED:
-            {
-                // we allready have a console.
-                
-            }break;
-            case ERROR_INVALID_HANDLE:
-            {
-                // the parent process does not have a console
-                AllocConsole();
-            }break;
-            case ERROR_INVALID_PARAMETER:
-            {
-                // parent process does not exist, should never happen
-                AllocConsole();
-            }break;
-            default:
-            {
-                // not sure....
-                AllocConsole();
-            }
-            
-            //invalid_default_case;
-        }
-        
-        SetLastError(0);
-        
-    }
-    
-    HANDLE stdout = GetStdHandle(STD_OUTPUT_HANDLE);
-    if(!stdout || stdout == INVALID_HANDLE_VALUE || GetLastError()){
-        os_panic(GetLastError());
-    }
-    
-    
-    DWORD old_console_mode;
-    if(GetConsoleMode(stdout, &old_console_mode)){
-        // we got the console mode
-        // @Incomplete: we should reset this in the end maybe?
-        DWORD new_console_mode = 0; //old_console_mode | ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT;
-        if(SetConsoleMode(stdout, new_console_mode) == 0){
-            os_panic(GetLastError());
-        }
-    }else{
-        SetLastError(0);
-    }
-}
-#endif
+///////////////////////////////////////////////////////////////////////////
 
+__int64 _InterlockedCompareExchange64(__int64 volatile *_Destination, __int64 Exchange, __int64 Comparand);
+unsigned char _InterlockedCompareExchange128(__int64 volatile * _Destination, __int64 _ExchangeHigh, __int64 _ExchangeLow, __int64 * _ComparandResult);
+__int64 _InterlockedIncrement64(__int64 volatile * _Addend);
+__int64 _InterlockedDecrement64(__int64 volatile * _Addend);
+__int64 _InterlockedIncrement64(__int64 volatile * _Addend);
+__int64 _InterlockedDecrement64(__int64 volatile * _Addend);
+__int64 _InterlockedExchangeAdd64(__int64 volatile * _Addend, __int64 _Value);
+
+// @note: return the initial value
+func s64 atomic_add(s64 *val, s64 to_add){
+    return _InterlockedExchangeAdd64(val, to_add);
+}
+
+//func s64 atomic_subtract(s64 *val, s64 to_add)
+//{
+//return _InterlockedExchangeSub64(val, to_add);
+//}
+
+func void *atomic_compare_and_swap(void *dest, void *source, void *comparand){
+    return (void *)_InterlockedCompareExchange64((s64 *)dest, (s64)source, (s64)comparand);
+}
+
+func smm atomic_compare_and_swap_smm(smm *dest, smm source, smm comparand){
+    return _InterlockedCompareExchange64((s64 *)dest, (s64)source, (s64)comparand);
+}
+
+// returns 1 on success
+// returns 0 on fail and overrides *comparand with *dest
+func b32 atomic_compare_and_swap_128(m128 *dest, m128 source, m128 *comparand){
+    assert(((umm)dest & 15) == 0);
+    return _InterlockedCompareExchange128((__int64 *)dest, source.ptr2, source.ptr1, (__int64 *)comparand);
+}
+
+// implements 'i++;'
+func s64 atomic_postincrement(s64 *val){
+    return _InterlockedIncrement64(cast(long long *)val) - 1;
+}
+
+// implements 'i--;'
+func s64 atomic_postdecrement(s64 *val){
+    return _InterlockedDecrement64(cast(long long *)val) + 1;
+}
+
+// implements '++i;'
+func s64 atomic_preincrement(s64 *val){
+    return _InterlockedIncrement64(cast(long long *)val);
+}
+
+// implements '--i;'
+func s64 atomic_predecrement(s64 *val){
+    return _InterlockedDecrement64(cast(long long *)val);
+}
+
+
+// implements '++i;'
+func u32 u32_atomic_preincrement(u32 *val){
+    return _InterlockedIncrement(cast(long *)val);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+#define FUZZ_ME_BUFFER_SIZE mega_bytes(16)
+
+#ifdef FUZZING
+__declspec(dllexport) u8 fuzz_me_buffer[FUZZ_ME_BUFFER_SIZE];
+
+static struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size){
+    struct os_file result = {.data = buffer, .size = 0};
+    static b32 not_the_first_time;
+    if(not_the_first_time) return result;
+    
+    result.size = FUZZ_ME_BUFFER_SIZE;
+    for(int i = 0; i < FUZZ_ME_BUFFER_SIZE; i++){
+        if(!fuzz_me_buffer[i]){
+            result.size = i;
+            break;
+        }
+    }
+    
+    if(!buffer_size) return result; // just say the file does always exist
+    
+    assert(buffer_size >= result.size);
+    memcpy(buffer, fuzz_me_buffer, result.size);
+    not_the_first_time = true;
+    result.memory = buffer;
+    
+    return result;
+}
+#else
 // @hmm maybe we should have a unified os_memory_range_return, that has error information.
 // filename needs to be zero_terminated
 // you can pass in a zero buffer to find out the size
-static struct os_file os_load_file(char *file_name, void *buffer, umem buffer_size){
+
+typedef struct _BY_HANDLE_FILE_INFORMATION {
+    DWORD    dwFileAttributes;
+    FILETIME ftCreationTime;
+    FILETIME ftLastAccessTime;
+    FILETIME ftLastWriteTime;
+    DWORD    dwVolumeSerialNumber;
+    DWORD    nFileSizeHigh;
+    DWORD    nFileSizeLow;
+    DWORD    nNumberOfLinks;
+    DWORD    nFileIndexHigh;
+    DWORD    nFileIndexLow;
+} BY_HANDLE_FILE_INFORMATION;
+
+__declspec(dllimport)
+BOOL GetFileInformationByHandle(HANDLE hFile, BY_HANDLE_FILE_INFORMATION *lpFileInformation);
+
+u64 file_time_to_percise_unix_time(FILETIME *ft){
+    ULARGE_INTEGER ull;
+    ull.LowPart  = ft->dwLowDateTime;
+    ull.HighPart = ft->dwHighDateTime;
+    return ull.QuadPart - 116444736000000000ULL;
+}
+
+static struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size){
     struct os_file result = zero_struct;
     
     // @cleanup this should do the W-thing
@@ -569,22 +698,31 @@ static struct os_file os_load_file(char *file_name, void *buffer, umem buffer_si
         return result;
     }
     
-    LARGE_INTEGER file_size_return;
-    if(!GetFileSizeEx(file_handle, &file_size_return)){
+    BY_HANDLE_FILE_INFORMATION file_information;
+    if(!GetFileInformationByHandle(file_handle, &file_information)){
         CloseHandle(file_handle);
         // @reserche, when can this happen?
         return result;
     }
-    s64 file_size = file_size_return.QuadPart;
-    result.size   = cast(u64) file_size;
     
-    if((u64)file_size > buffer_size){
+    LARGE_INTEGER _file_size = { 
+        .LowPart = file_information.nFileSizeLow, 
+        .HighPart = file_information.nFileSizeHigh,
+    };
+    
+    s64 file_size = _file_size.QuadPart;
+    result.size   = cast(u64) file_size;
+    result.access_time       = file_time_to_percise_unix_time(&file_information.ftLastAccessTime);
+    result.creation_time     = file_time_to_percise_unix_time(&file_information.ftCreationTime);
+    result.modification_time = file_time_to_percise_unix_time(&file_information.ftLastWriteTime);
+    
+    if(file_size > buffer_size){
         CloseHandle(file_handle);
         return result; // the result.size is set
     }
     
     DWORD bytes_read;
-    if(!ReadFile(file_handle, buffer, cast(DWORD) file_size, &bytes_read, 0) || file_size != bytes_read){
+    if(file_size && (!ReadFile(file_handle, buffer, cast(DWORD) file_size, &bytes_read, 0) || file_size != bytes_read)){
         CloseHandle(file_handle);
         return result;
     }
@@ -596,33 +734,13 @@ static struct os_file os_load_file(char *file_name, void *buffer, umem buffer_si
     
     return result;
 }
+#endif
 
-static struct os_file os_load_stdin(void *buffer, umem buffer_size){
-    struct os_file result = zero_struct;
-    
-    HANDLE file_handle = GetStdHandle(STD_INPUT_HANDLE);
-    // @cleanup this should do the W-thing
-    
-    LARGE_INTEGER file_size_return;
-    if(!GetFileSizeEx(file_handle, &file_size_return)){
-        return result;
-    }
-    s64 file_size = file_size_return.QuadPart;
-    result.size   = cast(u64) file_size;
-    
-    if((u64)file_size > buffer_size){
-        return result; // the result.size is set
-    }
-    
-    DWORD bytes_read;
-    if(!ReadFile(file_handle, buffer, cast(DWORD) file_size, &bytes_read, 0) || file_size != bytes_read){
-        return result;
-    }
-    
-    result.size   = (u64)file_size;
-    result.memory = buffer;
-    
-    return result;
+func b32 path_is_directory(char *path){
+    u32 INVALID_FILE_ATTRIBUTES = u32_max;
+    u32 FILE_ATTRIBUTE_DIRECTORY = 0x10;
+    u32 file_attributes = GetFileAttributesA(path);
+    return (file_attributes != INVALID_FILE_ATTRIBUTES) && (file_attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
 // @cleanup: for now file_name has to be zero terminated maybe we can alloca or something
@@ -645,22 +763,6 @@ static b32 os_write_file(char *file_name, void *buffer, smm buffer_size){
     return result;
 }
 
-
-static b32 os_append_to_file(char *file_name, void *buffer, smm buffer_size){
-    u32 FILE_APPEND_DATA = 4;
-    HANDLE file_handle = CreateFileA(file_name, FILE_APPEND_DATA, 0, 0, OPEN_EXISTING, 0, NULL);
-    if (file_handle == INVALID_HANDLE_VALUE) return false;
-    
-    b32 result = false;
-    DWORD bytes_written;
-    if (WriteFile(file_handle, buffer, save_truncate_smm_to_u32(buffer_size), &bytes_written, 0) && (bytes_written == buffer_size)){
-        result = true;
-    }
-    
-    CloseHandle(file_handle);
-    //SetLastError(0);
-    return result;
-}
 
 static __declspec(noreturn) void os_panic(u32 exit_code){
     ExitProcess(exit_code);
@@ -686,179 +788,153 @@ static u32 os_print_string(char *string, smm length){
 }
 
 
-// @note: credit goes to http://alter.org.ua/docs/win/args/
-#if 0
-PWCHAR* CommandLineToArgvW(PWCHAR CmdLine, int* _argc)
-{
-    PWCHAR* argv;
-    PWCHAR  _argv;
-    ULONG   len;
-    ULONG   argc;
-    WCHAR   a;
-    ULONG   i, j;
-    
-    BOOLEAN  in_QM;
-    BOOLEAN  in_TEXT;
-    BOOLEAN  in_SPACE;
-    
-    len = wcslen(CmdLine);
-    i = ((len+2)/2)*sizeof(PVOID) + sizeof(PVOID);
-    
-    argv = (PWCHAR*)GlobalAlloc(GMEM_FIXED,
-                                i + (len+2)*sizeof(WCHAR));
-    
-    _argv = (PWCHAR)(((PUCHAR)argv)+i);
-    
-    argc = 0;
-    argv[argc] = _argv;
-    in_QM = FALSE;
-    in_TEXT = FALSE;
-    in_SPACE = TRUE;
-    i = 0;
-    j = 0;
-    
-    while( a = CmdLine[i] ) {
-        if(in_QM) {
-            if(a == '\"') {
-                in_QM = FALSE;
-            } else {
-                _argv[j] = a;
-                j++;
-            }
-        } else {
-            switch(a) {
-                case '\"':
-                in_QM = TRUE;
-                in_TEXT = TRUE;
-                if(in_SPACE) {
-                    argv[argc] = _argv+j;
-                    argc++;
-                }
-                in_SPACE = FALSE;
-                break;
-                case ' ':
-                case '\t':
-                case '\n':
-                case '\r':
-                if(in_TEXT) {
-                    _argv[j] = '\0';
-                    j++;
-                }
-                in_TEXT = FALSE;
-                in_SPACE = TRUE;
-                break;
-                default:
-                in_TEXT = TRUE;
-                if(in_SPACE) {
-                    argv[argc] = _argv+j;
-                    argc++;
-                }
-                _argv[j] = a;
-                j++;
-                in_SPACE = FALSE;
-                break;
-            }
-        }
-        i++;
-    }
-    _argv[j] = '\0';
-    argv[argc] = NULL;
-    
-    (*_argc) = argc;
-    return argv;
-}
-#endif
+struct parsed_command_line{
+    int argc;
+    char **argv;
+};
 
-static CHAR** CommandLineToArgvA(CHAR *CmdLine, int* _argc)
-{
-    CHAR** argv;
-    CHAR* _argv;
-    ULONG   len;
-    ULONG   argc;
-    CHAR   a;
-    ULONG   i, j;
+// arguments:
+//    'command_line'      = the unprocessed command line received by calling 'GetCommandLineA'
+//    'command_line_size' = the size of the command line, not including the zero_terminator
+//    'out_buffer'        = a buffer that is at least as long as the command line,
+//                          which will recieve the processed command line as serial zero_terminated strings
+//     the return value is the amount of arguments we got.
+
+func smm windows_parse_command_line__internal(char *command_line, smm command_line_size, char *out_buffer){
     
-    BOOLEAN  in_QM;
-    BOOLEAN  in_TEXT;
-    BOOLEAN  in_SPACE;
+    // According to msdn:
+    //   1) Arguments are delimited by white space, which is either a space or tab.
+    //   2) The first argument must be valid and is the program name. Can be in quotes.
+    //      Everything else does not apply.
+    //   3) Quotes give rise to arguements that conain spaces.
+    //      Double quotes ("") in qotes give rise to a single quote.
+    //      If the command line ends before ending the last argument then all character read so far are
+    //      the last argument
+    //   4) \" is just ".
+    //   5) \ is just \ if it does not precedes a ".
+    //   6) if there are an even number of \ preceeding ", then they get halved and the " is a delimiter
+    //   7) if there are an add number of \ preceeding ", then they get halved and the last \"  is just ".
     
-    len = (ULONG)cstring_length(CmdLine);
-    i = ((len+2)/2)*sizeof(PVOID) + sizeof(PVOID);
     
-    argv = (CHAR **)GlobalAlloc(GMEM_FIXED,
-                                i + (len+2)*sizeof(CHAR) + 0x1000);
+    // Examples:                      argv[1]       argv[2]          argv[3]
+    //   1) "abc"      d       e   ->  abc            d                e
+    //   2) a\\b     d"e f"g   h   ->  a\\b         de fg              h
+    //   3) a\\\"b     c       d   ->  a\"b           c                d
+    //   4) a\\\\"b c"  d          ->  a\\           b c               d
     
-    _argv = (CHAR *)(((UCHAR *) argv)+i);
+    char *at = out_buffer;
     
-    argc = 0;
-    argv[argc] = _argv;
-    in_QM = false;
-    in_TEXT = false;
-    in_SPACE = true;
-    i = 0;
-    j = 0;
+    // if 'in_quotes' we are also 'in_argument'
+    b32 in_quotes     = false;
+    b32 in_argument   = false;
     
-    while(true) {
-        a = CmdLine[i];
-        if(!a) break;
-        if(in_QM) {
-            if(a == '\"') {
-                in_QM = false;
-            } else {
-                _argv[j] = a;
-                j++;
+    smm amount_of_arguments = 0;
+    
+    for(smm i = 0; i < command_line_size; ){
+        // @note: accsessing command_line[i + 1] is save because of zero termination
+        assert(!in_quotes || in_argument);
+        
+        if(command_line[i] == '\\'){
+            if(!in_argument){
+                in_argument = true;
+                amount_of_arguments++;
             }
-        } else {
-            switch(a) {
-                case '\"':
-                in_QM = true;
-                in_TEXT = true;
-                if(in_SPACE) {
-                    argv[argc] = _argv+j;
-                    argc++;
+            
+            smm amount_of_slashes = 0;
+            for(; i < command_line_size; i++){
+                if(command_line[i] != '\\') break;
+                amount_of_slashes += 1;
+            }
+            
+            if(command_line[i] == '"'){
+                // emit one slash for every pair of slashes
+                for(smm s = 0; s < amount_of_slashes/2; s++) *at++ = '\\';
+                
+                if(amount_of_slashes & 1){
+                    *at++ = '"'; // it was escaped
+                    i++; // eat the '"'
+                }else{
+                    continue;
                 }
-                in_SPACE = false;
-                break;
-                case ' ':
-                case '\t':
-                case '\n':
-                case '\r':
-                if(in_TEXT) {
-                    _argv[j] = '\0';
-                    j++;
+            }else{
+                // just emit all the slashes
+                for(smm s = 0; s < amount_of_slashes; s++) *at++ = '\\';
+            }
+        }else if(command_line[i] == '"'){
+            if(!in_quotes){
+                i++; // skip the '"'
+                in_quotes = true;
+                
+                if(!in_argument){
+                    in_argument = true; // if the argument started with quotes ("asd"bcd -> asdbcd)
+                    amount_of_arguments++;
                 }
-                in_TEXT = false;
-                in_SPACE = true;
-                break;
-                default:
-                in_TEXT = true;
-                if(in_SPACE) {
-                    argv[argc] = _argv+j;
-                    argc++;
+            }else{
+                if(command_line[i + 1] == '"'){
+                    i += 2;
+                    *at++ = '"';
+                }else{
+                    i++;
+                    in_quotes = false;
                 }
-                _argv[j] = a;
-                j++;
-                in_SPACE = false;
-                break;
+            }
+        }else if(u8_is_whitespace_or_newline((u8)command_line[i])){
+            if(in_quotes){
+                *at++ = command_line[i];
+            }else if(in_argument){
+                in_argument = false; // end the argument
+                *at++ = 0;
+            }else{
+                // do nothing we are currently in whitespace
+            }
+            i++;
+        }else{
+            *at++ = command_line[i]; // always just output the character
+            i++;
+            if(!in_argument){
+                in_argument = true;
+                amount_of_arguments++;
             }
         }
-        i++;
-        
     }
-    _argv[j] = '\0';
-    argv[argc] = NULL;
+    *at++ = 0; // zero terminate
     
-    (*_argc) = argc;
-    return argv;
+    return amount_of_arguments;
 }
+
+func struct parsed_command_line windows_parse_command_line(char *command_line){
+    smm command_line_size = cstring_length(command_line);
+
+    char *preped_command_line = (char *)GlobalAlloc(GMEM_FIXED, command_line_size + 1);
+    
+    smm amount_of_arguments = windows_parse_command_line__internal(
+                                  command_line, command_line_size, preped_command_line);
+    
+    char **argv = (char **)GlobalAlloc(GMEM_FIXED, (amount_of_arguments + 1) * sizeof(char *));
+
+    
+    char *at = preped_command_line;
+    for(smm i = 0; i < amount_of_arguments; i++){
+        argv[i] = at;
+        while(*at++); // skip to past the next zero_terminator
+    }
+    argv[amount_of_arguments] = 0;
+    
+    struct parsed_command_line ret;
+    ret.argc = (int)amount_of_arguments;
+    ret.argv = argv;
+    return ret;
+}
+
 
 int main(int argument_count, char **argument_values);
+
 __declspec(noreturn) void _start(void) {
     CHAR * command_line = GetCommandLineA();
-    int num_args;
-    char **args = CommandLineToArgvA(command_line, &num_args);
     
-    int exit_code = main(num_args, args);
+    struct parsed_command_line parsed_command_line = windows_parse_command_line(command_line);
+    
+    int exit_code = main(parsed_command_line.argc, parsed_command_line.argv);
     ExitProcess((u32)exit_code);
 }
 
