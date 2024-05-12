@@ -3,7 +3,8 @@
 
 The goal of this project is to write a compiler, which is _compliant enough_ with the C11-specification 
 to compile all relevant source code, while eliminating the need for header files as much as possible.
-This is done by allowing declarations within a compilation unit to come in any order, meaning
+This is done by sharing all types, enums and external declarations between all compilation units and 
+allowing declarations within a compilation unit to come in any order, meaning
 ```c
 void a(){ b(1); }
 void b(int v){ }
@@ -13,7 +14,7 @@ is just as valid of a program as
 void b(int v){ }
 void a(){ b(1); }
 ```
-and sharing all types, enums and external declarations between all compilation units.
+
 Importantly, as in the example above, the converse is not true, meaning some "invalid" C-source code compiles.
 
 Currently, the compiler is designed to replace MSVC for my personal needs. This means it only supported platform is x64-Windows.
