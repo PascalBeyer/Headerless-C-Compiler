@@ -1,3 +1,4 @@
+// broken
 // fail
 
 typedef int int_array[];
