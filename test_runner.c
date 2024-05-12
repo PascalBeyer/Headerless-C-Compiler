@@ -34,13 +34,18 @@ typedef double f64;
 #define false 0
 #define null ((void *)0)
 
-void print(char *format, ...){
+#if __PBC__
+__declspec(printlike)
+#endif
+int print(char *format, ...){
     va_list va;
     va_start(va, format);
-    vprintf(format, va);
+    int ret = vprintf(format, va);
     va_end(va);
     
-    fflush(0);
+    fflush(stdout); // I always want my prints to flush, but you can remove this if you don't :)
+    
+    return ret;
 }
 
 struct memory_arena{
@@ -282,7 +287,7 @@ int string_is_substring(struct string substring, struct string string){
 
 struct string strip_file_name(struct string path){
     u64 one_past_last_slash = 0;
-    for(u64 i = path.amount - 1; i >= 0; i--){
+    for(s64 i = path.amount - 1; i >= 0; i--){
         if(path.data[i] == '/' || path.data[i] == '\\'){
             one_past_last_slash = i + 1;
             break;
@@ -412,7 +417,7 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
     };
     
     if(!CreatePipe(&ReadHandle, &WriteHandle, &SecurityAttributes, /*Size = default*/0)){
-        print("Error: 'CreatePipe' failed with error %d.\n", GetLastError());
+        print("Error: 'CreatePipe' failed with error %u.\n", GetLastError());
         _exit(1);
     }
     
@@ -430,7 +435,7 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
     PROCESS_INFORMATION ProcessInformation;
     
     if(!CreateProcessA(NULL, command_line, /*ProcessAttributes*/NULL, /*ThreadAttributes*/NULL, /*InheritHandles*/TRUE, /*Flags*/0, /*Environment*/NULL, working_directory, &StartupInformation, &ProcessInformation)){
-        print("Error: 'CreateProcess' failed with error %d (%s)\n", GetLastError(), command_line);
+        print("Error: 'CreateProcess' failed with error %u (%s)\n", GetLastError(), command_line);
         _exit(1);
     }
     
@@ -914,7 +919,7 @@ int main(int argument_count, char *argument_values[]){
         }else{
             
             if(amount_of_targets >= array_count(targets)){
-                print("Error: Too many targets specified. Maximally %d allowed.\n", array_count(targets));
+                print("Error: Too many targets specified. Maximally %llu allowed.\n", array_count(targets));
                 return -1;
             }
             
@@ -971,8 +976,12 @@ int main(int argument_count, char *argument_values[]){
             
             struct string target_string = create_string(target, strlen(target));
             struct string path = strip_file_name(target_string);
-            entry->file_name += path.size;
-            entry->directory = push_format_cstring(&arena, "%.*s", path.size, path.data);
+            if(path.size){
+                entry->file_name += path.size;            
+                entry->directory = push_format_cstring(&arena, "%.*s", path.size, path.data);
+            }else{
+                entry->directory = ".";
+            }
             
             entry->next = file_names;
             file_names = entry;
@@ -1102,7 +1111,7 @@ int main(int argument_count, char *argument_values[]){
         
         ThreadHandles[ThreadIndex] = CreateThread(/*SecurityAttributes*/NULL, /*StackSize*/0, test_thread_entry, &work, /*flags*/0, /*optional-out-ThreadId*/NULL);
         if(ThreadHandles[ThreadIndex] == NULL){
-            print("Error: CreateThread failed with error %d\n", GetLastError());
+            print("Error: CreateThread failed with error %u\n", GetLastError());
             return -1;
         }
     }
