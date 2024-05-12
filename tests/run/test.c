@@ -438,10 +438,10 @@ int main(){
         assert(*(u64 *)&a != *(u64 *)&b);
     }
     
-#define pbc_decorate(a) pbc_##a
+#define hlc_decorate(a) hlc_##a
     
-    u32 pbc_decorate(asd) = 12;
-    assert(pbc_asd == 12);
+    u32 hlc_decorate(asd) = 12;
+    assert(hlc_asd == 12);
     
     {
         static struct{
@@ -467,7 +467,7 @@ int main(){
     } enum_variable = MY_ENUM_one;
     assert(enum_variable == 1);
     
-    enum_variable = pbc_asd;
+    enum_variable = hlc_asd;
     assert(enum_variable == MY_ENUM_twelve);
     u64 enum_to_u64 = enum_variable;
     assert(enum_to_u64 == 12);
