@@ -2767,6 +2767,9 @@ void print_obj(struct memory_arena *arena, struct memory_arena *scratch){
             relocation->relocation_type = /*ADDR64*/1;
             relocation->destination_offset_in_section = (u32)(declaration->relative_virtual_address + patch->location_offset_in_dest_declaration);
             
+            // @note: We need the source offset to already be applied to the data.
+            *(u64 *)(declaration->memory_location + patch->location_offset_in_dest_declaration) = patch->location_offset_in_source_declaration;
+            
             enum ast_kind source_kind = patch->source->kind;
             
             if(source_kind == AST_function || source_kind == AST_declaration){
