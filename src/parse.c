@@ -1430,11 +1430,18 @@ func struct ast *handle_pointer_arithmetic(struct context *context, struct ast *
             }
             ret = pointer;
         }else{
-            // @cleanup: upconvert lit here to be s64
+            // Upconvert to s64.
+            lit->_s64 = integer_literal_as_s64(integer);
             
-            // @cleanup: how to handle this with respect to overflow? and signdednes
             if(lit->_s64 != 0){
-                lit->_s64 *= deref_type->size;
+                
+                // @cleanup: Check for compile time overflow?
+                if(type_is_signed(lit->base.resolved_type)){
+                    lit->_s64 *= deref_type->size;
+                }else{
+                    lit->_u64 *= deref_type->size;
+                }
+                
                 set_resolved_type(&lit->base, &globals.typedef_u64, null);
                 op->rhs = &lit->base;
                 ret = &op->base;
