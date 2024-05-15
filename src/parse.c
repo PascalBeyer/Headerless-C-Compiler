@@ -413,7 +413,7 @@ func struct ast *push_cast(struct context *context, struct ast_type *cast_to, st
             cast_what->kind = AST_pointer_literal;
             static_assert(sizeof(struct ast_pointer_literal) == sizeof(struct ast_integer_literal));
             
-#ifndef __PBC__
+#if !defined(__PBC__) && !defined(__clang__)
             // @cleanup: Currently, there is a compiler bug, which makes this not compile.
             static_assert(offset_in_type(struct ast_pointer_literal, pointer) == offset_in_type(struct ast_integer_literal, _s64));
 #endif
