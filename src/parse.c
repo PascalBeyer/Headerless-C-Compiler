@@ -7277,6 +7277,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             set_resolved_type(&function->base, &globals.typedef_void, null);
             
+            if(!context->current_scope) function->as_decl.flags |= DECLARATION_FLAGS_is_global;
+            
             if(specifiers.specifier_flags & SPECIFIER_static)    function->as_decl.flags |= DECLARATION_FLAGS_is_static;
             if(specifiers.specifier_flags & SPECIFIER_selectany) function->as_decl.flags |= DECLARATION_FLAGS_is_selectany;
             
@@ -7492,6 +7494,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(specifiers.specifier_flags & SPECIFIER_dllimport) decl->flags |= DECLARATION_FLAGS_is_dllimport;
             if(specifiers.specifier_flags & SPECIFIER_dllexport) decl->flags |= DECLARATION_FLAGS_is_dllexport;
             
+            if(!context->current_scope) decl->flags |= DECLARATION_FLAGS_is_global;
+            
             decl->compilation_unit = context->current_compilation_unit;
             
             // 
@@ -7589,8 +7593,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 if(context->should_exit_statement) goto end;
             }
         }
-        
-        if(!context->current_scope) decl->flags |= DECLARATION_FLAGS_is_global;
         
         // This is in arena, as we now have 'ast_declaration_list', maybe this is not necessary, 
         // as we dont use 'ast_declaration_list' at global scope. @leak @cleanup: Is this comment still accurate?
