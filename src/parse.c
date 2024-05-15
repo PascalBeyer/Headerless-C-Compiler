@@ -4528,11 +4528,20 @@ case NUMBER_KIND_##type:{ \
                         report_error(context, test, "Cannot subscript a void-pointer");
                         return operand;
                     }
+                    
                     if(pointer->pointer_to->kind == AST_function_type){
                         report_error(context, test, "Cannot subscript a function-pointer.");
                         return operand;
                     }
+                    
+                    // :unresolved_types
+                    //
+                    // If the type we are pointing to is unresolved, like
+                    //     struct unresolved *pointer;
+                    // We have to resolve it, or sleep on it/error on it.
+                    if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer->pointer_to)) return operand;
                 }
+                
                 
                 //
                 // @cleanup: warning or error if the lhs is an array and the index is statically out of bounds?
