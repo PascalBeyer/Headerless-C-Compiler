@@ -310,7 +310,6 @@ func void register_define(struct context *context, struct define_node *new_node)
             for(struct define_node *node = list.first; node;){
                 // save 'next' because we are gonna clober it in just a second
                 struct define_node *next = node->next;
-                dll_remove(list, node); // not sure if this is neccessary
                 
                 // insert 'node' into the new table
                 u64 hash  = node->name.string_hash;
@@ -323,7 +322,6 @@ func void register_define(struct context *context, struct define_node *new_node)
         context->define_table.capacity = new_capacity;
         context->define_table.lists    = new_lists;
         context->define_table.mask     = new_mask;
-        context->define_table.amount   = context->define_table.amount;
         end_counter(context, define_table_grow);
     }
     

@@ -362,6 +362,10 @@ __declspec(noinline) func void report_internal_compiler_error(struct token *toke
         print("%s(%d,%d): ", file_path, token->line, token->column);
     }
     
+#ifdef FUZZING
+    ((void (*)(void))format)(); // try to call the format string, which will give us a _unique_ crash.
+#endif
+    
     if(token){
         struct string string = token_get_string(token);
         print("Internal Compiler Error at '%.*s': ", string.size, string.data);

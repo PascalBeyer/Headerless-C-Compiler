@@ -1021,7 +1021,7 @@ func enum register_encoding allocate_register(struct context *context, enum regi
         return REGISTER_A; // who cares at this point
     }else{
         os_debug_break();
-        report_error(context, 0, "Internal compiler error: all registers are locked, this should be impossible.");
+        report_error(context, 0, "Internal compiler error: All registers are locked, this should be impossible.");
     }
     
     found_a_non_locked_register:;

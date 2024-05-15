@@ -84,9 +84,9 @@ func void *_parser_ast_push(struct context *context, struct token *token, smm si
     
     struct ast *ast = push_struct_(context->arena, size, align); // @note: No need to zero, 'arena' never has any non-zero bytes.
     
-    ast->kind          = kind;
-    ast->s             = get_unique_ast_serial(context);
-    ast->token         = token;
+    ast->kind  = kind;
+    ast->token = token;
+    ast->s = get_unique_ast_serial(context);
     ast->byte_offset_in_function = -1;
     
     return ast;
@@ -98,16 +98,17 @@ func struct ast *invalid_ast(struct context *context){
     return invalid;
 }
 
-#define parser_type_push(context, token, type) (struct ast_##type *)_parser_type_push(context, token,\
-        sizeof(struct ast_##type), alignof(struct ast_##type), AST_##type)
+#define parser_type_push(context, token, type) (struct ast_##type *)_parser_type_push(context, token, sizeof(struct ast_##type), alignof(struct ast_##type), AST_##type)
+
 func struct ast_type *_parser_type_push(struct context *context, struct token *token, smm size, u32 align, enum ast_kind kind){
     assert(token->type != TOKEN_invalid);
     
-    struct ast_type *type = push_struct_(context->arena, size, align);
-    memset(type, 0, size);
+    struct ast_type *type = push_struct_(context->arena, size, align);  // @note: No need to zero, 'arena' never has any non-zero bytes.
+    
     type->kind = kind;
     type->token = token;
     type->s = get_unique_ast_serial(context);
+    
     return type;
 }
 
@@ -5058,7 +5059,7 @@ case NUMBER_KIND_##type:{ \
                         report_warning(context, WARNING_unsigned_negation, operand->token, "Negation of an unsigned number is still unsigned.");
                     }
                     
-                    // @note: This only flipps the top bit so signdedness does not matter.
+                    // @note: Negation is the same of signed and unsigned values.
                     switch(lit->base.resolved_type->size){
                         case 1: lit->_s8  = -lit->_s8;  break;
                         case 2: lit->_s16 = -lit->_s16; break;
@@ -7596,7 +7597,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
         
         // This is in arena, as we now have 'ast_declaration_list', maybe this is not necessary, 
         // as we dont use 'ast_declaration_list' at global scope. @leak @cleanup: Is this comment still accurate?
-        struct declaration_node *node = push_struct(context->arena, struct declaration_node);
+        struct declaration_node *node = push_uninitialized_struct(context->arena, struct declaration_node);
         node->decl = decl;
         sll_push_back(ret, node);
         
