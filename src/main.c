@@ -933,6 +933,7 @@ func void pretty_print_token_array(struct context *context, struct token_array a
 //_____________________________________________________________________________________________________________________
 
 func struct string push_type_string(struct memory_arena *arena, struct memory_arena *scratch, struct ast_type *type);
+
 func void push_type_string__inner(struct string_list *list, struct memory_arena *arena, struct memory_arena *scratch, struct ast_type *type){
     switch(type->kind){
         case AST_void_type:

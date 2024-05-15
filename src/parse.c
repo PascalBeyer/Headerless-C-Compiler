@@ -909,14 +909,14 @@ func struct string report_type_mismatch__internal(struct context *context, char 
             ret = push_format_string(&context->scratch, "%s '%.*s' (aka %.*s)", prefix, decl->identifier->amount, decl->identifier->data, lhs_string.amount, lhs_string.data);
             handled = true;
         }else if(defined_type->kind == AST_enum){
-            struct string lhs_string = push_type_string(&context->scratch, context->arena, cast(struct ast_type *)defined_type);
+            struct string lhs_string = push_type_string(context->arena, &context->scratch, cast(struct ast_type *)defined_type);
             ret = push_format_string(&context->scratch, "%s '%.*s'", prefix, lhs_string.amount, lhs_string.data);
             handled = true;
         }
     }
     
     if(!handled){
-        struct string lhs_string = push_type_string(&context->scratch, context->arena, type);
+        struct string lhs_string = push_type_string(context->arena, &context->scratch, type);
         ret = push_format_string(&context->scratch, "%s '%.*s'", prefix, lhs_string.amount, lhs_string.data);
     }
     return ret;
