@@ -718,6 +718,7 @@ func void arena_reset(struct memory_arena *arena){
 static u8 *global_dynamic_memory_base;
 static smm global_dynamic_memory_reserved;
 static const smm global_dynamic_memory_size = giga_bytes(1024);
+static const smm default_arena_size = giga_bytes(8);
 
 func struct memory_arena create_memory_arena(smm size, f32 exp_grow, u32 constant_grow){
     
@@ -730,6 +731,10 @@ func struct memory_arena create_memory_arena(smm size, f32 exp_grow, u32 constan
     
     u8 *base = global_dynamic_memory_base + atomic_add(&global_dynamic_memory_reserved, size);
     
+    if(base + size > global_dynamic_memory_base + global_dynamic_memory_size){
+        print("Memory error!\n");
+        os_panic(1);
+    }
     
     struct memory_arena ret = zero_struct;
     ret.current = base;
@@ -777,7 +782,7 @@ func u8 *arena_current(struct memory_arena *arena){
         // This arena was not initialized yet. Do that!
         //
         
-        *arena = create_memory_arena(giga_bytes(64), 2.0f, mega_bytes(1));
+        *arena = create_memory_arena(default_arena_size, 2.0f, mega_bytes(1));
     }
     
     return arena->current;
@@ -806,7 +811,7 @@ func u8 *push_align(struct memory_arena *arena, u32 alignment){
         // This arena was not initialized yet. Do that!
         //
         
-        *arena = create_memory_arena(giga_bytes(64), 2.0f, mega_bytes(1));
+        *arena = create_memory_arena(default_arena_size, 2.0f, mega_bytes(1));
     }
     
     
@@ -829,7 +834,7 @@ __declspec(noinline) func void grow_arena(struct memory_arena *arena, smm size){
         // This arena was not initialized yet. Do that!
         //
         
-        *arena = create_memory_arena(giga_bytes(64), 2.0f, mega_bytes(1));
+        *arena = create_memory_arena(default_arena_size, 2.0f, mega_bytes(1));
     }
     
     smm current_arena_size = (smm)(arena->end_of_committed_memory - (u8 *)arena->base);
