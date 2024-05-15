@@ -26,7 +26,7 @@ local functions, slices, etc, but all of these should be considered in the "desi
 
 ## Installing and Usage
 
-See the release page for pre-build binaries. To compile from source invoke the `build_msvc.bat` with `cl.exe`,
+See the [release page](/releases) for pre-build binaries. To compile from source invoke the `build_msvc.bat` with `cl.exe`,
 `link.exe` and `ucrt.lib` in your path (for example, from an [x64 Native Tools Command Prompt](https://learn.microsoft.com/en-us/cpp/build/building-on-the-command-line?view=msvc-170&viewFallbackFrom=vs-2019).
 
 To use standard library functions or Windows library functions, it is necessary to install a version of MSVC (I usually install the "Build Tools for Visual Studio")
