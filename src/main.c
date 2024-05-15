@@ -1511,7 +1511,10 @@ func struct ast_declaration *lookup_typedef(struct context *context, struct comp
         return null;
     }
     
-    if(decl->type->kind == AST_unresolved_type){
+    // @note: Read the type once, as another thread might try to resolve it at the same time.
+    struct ast_type *type = atomic_load(struct ast_type *, decl->type);
+    
+    if(type->kind == AST_unresolved_type){
         // :unresolved_types
         //
         // If we try to lookup a typedef and its an unresolved type, we have to try to resolve its type.
@@ -1521,12 +1524,12 @@ func struct ast_declaration *lookup_typedef(struct context *context, struct comp
         // as we might be defining another typedef or declaring a pointer or something which never 
         // actually needs the type to be resolved.
         //
-        struct ast_type *resolved = lookup_unresolved_type(decl->type);
+        struct ast_type *resolved = lookup_unresolved_type(type);
         
         if(resolved){
             if(resolved->kind == AST_enum){
                 decl->type = &globals.typedef_s32;
-                decl->defined_type = &decl->base;
+                decl->defined_type = (struct ast *)resolved;
             }else{
                 decl->type = resolved;
             }

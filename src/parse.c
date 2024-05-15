@@ -720,7 +720,7 @@ func int maybe_resolve_unresolved_type_or_sleep_or_error(struct context *context
     // @warning: @cleanup: multiple threads could be doing this at the same time...
     //
     
-    struct ast_type *type = *in_out_type;
+    struct ast_type *type = atomic_load(struct ast_type *, *in_out_type);
     
     if(type->kind == AST_unresolved_type){
         struct ast_type *resolved = lookup_unresolved_type(type);
@@ -743,7 +743,7 @@ func int maybe_resolve_unresolved_type_or_sleep_or_error(struct context *context
 
 func int maybe_resolve_unresolved_type(struct ast_type **in_out_type){
     
-    struct ast_type *type = *in_out_type;
+    struct ast_type *type = atomic_load(struct ast_type *, *in_out_type);
     
     if(type->kind == AST_unresolved_type){
         struct ast_type *resolved = lookup_unresolved_type(type);
