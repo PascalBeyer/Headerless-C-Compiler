@@ -200,7 +200,8 @@ struct directive_table_entry{
 enum compile_stage{
     COMPILE_STAGE_none,
     
-    COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries,
+    COMPILE_STAGE_tokenize_files,
+    COMPILE_STAGE_parse_global_scope_entries,
     COMPILE_STAGE_parse_function,
     COMPILE_STAGE_emit_code,
     //COMPILE_STAGE_patch,
@@ -358,9 +359,10 @@ static struct{
     
     // @cleanup: Maybe put cacheline sized pad around these global structures?
     enum compile_stage compile_stage;
-    struct work_queue work_queue_stage_one;
-    struct work_queue work_queue_stage_two;
-    struct work_queue work_queue_stage_three;
+    struct work_queue work_queue_tokenize_files;
+    struct work_queue work_queue_parse_global_scope_entries;
+    struct work_queue work_queue_parse_functions;
+    struct work_queue work_queue_parse_emit_code;
     HANDLE wake_event;
     
     struct sleeper_table sleeper_table;
@@ -368,7 +370,7 @@ static struct{
     struct ast_table global_declarations;
     struct ast_table compound_types;
     // struct ast_table type_defs; this has to be the same as global_declarations because '(asd)expr' would sleep on (asd) as an expression
-    // 
+    
     // constant global stuff
     struct file invalid_file;
     struct atom keyword_cdecl;
@@ -870,7 +872,7 @@ func void emit_patch(struct context *context, enum patch_kind kind, struct ast *
 
 // @WARNING: this has to agree with the entry point queuing 
 func void add_potential_entry_point(struct function_node *node){
-    assert(globals.compile_stage == COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries);
+    assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
     struct function_node *list;
     do{
         list = atomic_load(struct function_node *, globals.functions_that_are_referenced_by_global_scope_entries);
@@ -1077,9 +1079,9 @@ func void work_queue_append_list(struct work_queue *queue, struct work_queue_ent
 }
 
 func void work_queue_add(struct work_queue *queue, struct work_queue_entry *entry){
-    if(queue == &globals.work_queue_stage_one){
-        assert(globals.compile_stage == COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries);
-    }
+    
+    // if(queue == &globals.work_queue_stage_one) assert(globals.compile_stage == COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries);
+    
     entry->next = 0;
     work_queue_append_list(queue, entry, entry, 1);
 }
@@ -1266,8 +1268,8 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
                     if(!list){
                         // @note: first_sleeper == null means that the node has been "deleted".
                         // if we deleted the entry within the time it took to go to sleep, we requeue it
-                        assert(globals.compile_stage == COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries);
-                        work_queue_add(&globals.work_queue_stage_one, entry);
+                        assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
+                        work_queue_add(&globals.work_queue_parse_global_scope_entries, entry);
                         log_print("         allready woke: adding it globally");
                         
                         atomic_predecrement(&table->threads_in_flight);
@@ -1364,7 +1366,7 @@ func void wake_up_sleepers(struct context *context, struct token *sleep_on, enum
     
     log_print("   waking sleepers for: %.*s", sleep_on->amount, sleep_on->data);
     
-    assert(globals.compile_stage == COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries);
+    assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
     
     struct work_queue_entry *first = sleeper_table_delete(sleeper_table, purpose, sleep_on);
     if(first){
@@ -1373,7 +1375,7 @@ func void wake_up_sleepers(struct context *context, struct token *sleep_on, enum
         for(; last->next; last = last->next) amount++;
         
         log_print("   %d sleepers found", amount);
-        work_queue_append_list(&globals.work_queue_stage_one, first, last, amount);
+        work_queue_append_list(&globals.work_queue_parse_global_scope_entries, first, last, amount);
         for(struct work_queue_entry *it = first; it; it = it->next){
             log_print("      sleeper: %p", it);
         }
@@ -2687,7 +2689,7 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
     
     switch(work->description){
         case WORK_tokenize_file:{
-            assert(globals.compile_stage == COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries);
+            assert(globals.compile_stage == COMPILE_STAGE_tokenize_files);
             
             struct work_tokenize_file *work_tokenize_file = cast(struct work_tokenize_file *)work->data;
             context->current_compilation_unit = work_tokenize_file->compilation_unit;
@@ -2989,14 +2991,14 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
                 }
             }
             
-            work_queue_append_list(&globals.work_queue_stage_one, work_queue_entries.first, work_queue_entries.last, work_queue_entries.amount);
+            work_queue_append_list(&globals.work_queue_parse_global_scope_entries, work_queue_entries.first, work_queue_entries.last, work_queue_entries.amount);
             
             assert(!in_current_token_array(context));
         }break;
         case WORK_parse_global_scope_entry:{
             log_print("parsing a global scope entry");
             
-            assert(globals.compile_stage == COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries);
+            assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
             
             struct parse_work *parse_work = (struct parse_work *)work->data;
             context->current_compilation_unit = parse_work->compilation_unit;
@@ -3072,7 +3074,7 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
                 
                 parse_work->function = function;
                 
-                work_queue_push_work(context, &globals.work_queue_stage_two, WORK_parse_function_body, parse_work);
+                work_queue_push_work(context, &globals.work_queue_parse_functions, WORK_parse_function_body, parse_work);
             }else{
                 expect_token(context, TOKEN_semicolon, "Expected ';' after declaration at global scope.");
                 if(context->error) goto handle_sleep_or_error;
@@ -3288,14 +3290,17 @@ func b32 do_one_work(struct context *context){
     struct work_queue *queue;
     
     switch(globals.compile_stage){
-        case COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries:{
-            queue = &globals.work_queue_stage_one;
+        case COMPILE_STAGE_tokenize_files:{
+            queue = &globals.work_queue_tokenize_files;
+        }break;
+        case COMPILE_STAGE_parse_global_scope_entries:{
+            queue = &globals.work_queue_parse_global_scope_entries;
         }break;
         case COMPILE_STAGE_parse_function:{
-            queue = &globals.work_queue_stage_two;
+            queue = &globals.work_queue_parse_functions;
         }break;
         case COMPILE_STAGE_emit_code:{
-            queue = &globals.work_queue_stage_three;
+            queue = &globals.work_queue_parse_emit_code;
         }break;
         invalid_default_case(queue = null);
     }
@@ -4726,7 +4731,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     stage_one_tokenize_and_preprocess_time = os_get_time_in_seconds();
     
     // get it going:
-    globals.compile_stage = COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries;
     
     struct compilation_unit *compilation_units = push_data(arena, struct compilation_unit, files_to_parse.amount);
     globals.compilation_units.data   = compilation_units;
@@ -4752,7 +4756,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         assert(index == files_to_parse.amount);
     }
     
-    work_queue_append_list(&globals.work_queue_stage_one, files_to_parse.first, files_to_parse.last, files_to_parse.amount);
+    work_queue_append_list(&globals.work_queue_tokenize_files, files_to_parse.first, files_to_parse.last, files_to_parse.amount);
     
     // @note: thread '0' is the main thread, so just start all other ones
     for(u32 thread_index = 1; thread_index < thread_count; thread_index++) {
@@ -4761,23 +4765,37 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     end_counter(context, startup);
     
+    
     //
-    // COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries
+    // COMPILE_STAGE_tokenize_files
     //
     
-    // we _just_ pushed all the files into the work 'globals.work_queue_stage_one' and started the 
-    // threads. Each file is a compilation unit. These 'compilation_units' first get tokenized and preprocessed,
+    // we _just_ pushed all the files into the work 'globals.work_queue_tokenize_files' and started the threads. 
+    // Each file is a compilation unit. These 'compilation_units' first get tokenized and preprocessed,
     // then "chopped into pieces", such that we can parse each global scope entry individually.
-    // Finally, these global scope entries get appended to the work queue again and from here a thread
-    // grabs a global scope entry and attempts to parse it. 
+    // Finally, these global scope entries get appended to the `work_queue_parse_global_scope_entries`.
+    
+    globals.compile_stage = COMPILE_STAGE_tokenize_files;
+    
+    while(globals.work_queue_tokenize_files.work_entries_in_flight > 0) do_one_work(context);
+    
+    assert(globals.work_queue_tokenize_files.work_entries_in_flight == 0);
+    if(globals.an_error_has_occurred) goto end;
+    
+    // 
+    // COMPILE_STAGE_parse_global_scope_entries
+    // 
+    
     // If the global scope entry is a function definition the body gets put into the work queue for the next stage.
     // If we encounter an identifier we do not know about yet, we add this global scope entry into the 'sleeper_table'
     // where it waits for the identifier to resolve.
     // In the end of this phase all types and global declarations are known.
     
-    while(globals.work_queue_stage_one.work_entries_in_flight > 0) do_one_work(context);
+    globals.compile_stage = COMPILE_STAGE_parse_global_scope_entries;
     
-    assert(globals.work_queue_stage_one.work_entries_in_flight == 0);
+    while(globals.work_queue_parse_global_scope_entries.work_entries_in_flight > 0) do_one_work(context);
+    
+    assert(globals.work_queue_parse_global_scope_entries.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
     
     //
@@ -4828,11 +4846,11 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     stage_two_parse_functions_time = os_get_time_in_seconds();
     
-    while(globals.work_queue_stage_two.work_entries_in_flight > 0){
+    while(globals.work_queue_parse_functions.work_entries_in_flight > 0){
         do_one_work(context);
         assert(!context->should_sleep);
     }
-    assert(globals.work_queue_stage_two.work_entries_in_flight == 0);
+    assert(globals.work_queue_parse_functions.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
     
     // @cleanup: is there a good way here to assert that nothing is sleeping?
@@ -4902,7 +4920,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                     function->scope = &parser_push_new_scope(context, function->base.token, SCOPE_FLAG_is_function_scope)->base;
                 }
                 
-                work_queue_push_work(context, &globals.work_queue_stage_three, WORK_emit_code, function);
+                work_queue_push_work(context, &globals.work_queue_parse_emit_code, WORK_emit_code, function);
             }
         }
         
@@ -4919,7 +4937,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic) continue;
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
                 
-                work_queue_push_work(context, &globals.work_queue_stage_three, WORK_emit_code, function);
+                work_queue_push_work(context, &globals.work_queue_parse_emit_code, WORK_emit_code, function);
             }
         }
         
@@ -4990,7 +5008,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             }
             
             // queue the entry_point.
-            work_queue_push_work(context, &globals.work_queue_stage_three, WORK_emit_code, initial_function);
+            work_queue_push_work(context, &globals.work_queue_parse_emit_code, WORK_emit_code, initial_function);
             
             struct reachability_stack_node{
                 struct reachability_stack_node *next;
@@ -5029,7 +5047,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                             // Don't queue it, don't recurse into it, but also do not error.
                             
                             if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
-                                work_queue_push_work(context, &globals.work_queue_stage_three, WORK_emit_code, function);
+                                work_queue_push_work(context, &globals.work_queue_parse_emit_code, WORK_emit_code, function);
                             }
                             // note: we only want to recurse once into any given function.
                             struct reachability_stack_node *new_node = push_struct(&context->scratch, struct reachability_stack_node);
@@ -5048,10 +5066,10 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         end_temporary_memory(temp);
     }
     
-    while(globals.work_queue_stage_three.work_entries_in_flight > 0){
+    while(globals.work_queue_parse_emit_code.work_entries_in_flight > 0){
         do_one_work(context);
     }
-    assert(globals.work_queue_stage_three.work_entries_in_flight == 0);
+    assert(globals.work_queue_parse_emit_code.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
     
     

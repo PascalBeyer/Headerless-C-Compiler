@@ -92,7 +92,7 @@ func int error_node_smaller_function(struct error_report_node *it, struct error_
     if(!it->token)     return true;
     
     switch(compile_stage){
-        case COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries:{
+        case COMPILE_STAGE_tokenize_files:{
             // @hmm: we could have an 'error_index' that we increment every time we emit an error.
             //       but adjusting much for preprocessor errors seems wrong.
             
@@ -109,6 +109,8 @@ func int error_node_smaller_function(struct error_report_node *it, struct error_
             // is this impossible?
             return false;
         }break;
+        
+        case COMPILE_STAGE_parse_global_scope_entries:
         case COMPILE_STAGE_parse_function:
         case COMPILE_STAGE_emit_code:{
             // we know the tokens are in the preprocessed token array of the compilation unit.
@@ -171,12 +173,13 @@ func void push_error_node_to_context(struct context *context, struct token *toke
     
     if(token){
         switch(stage){
-            case COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries:{
+            case COMPILE_STAGE_tokenize_files:{
                 // while tokenizing copy the tokens, as they might be tempoary
                 struct token *copied_token = push_struct(context->arena, struct token);
                 *copied_token = *token;
                 node->token = copied_token;
             }break;
+            case COMPILE_STAGE_parse_global_scope_entries:
             case COMPILE_STAGE_emit_code:
             case COMPILE_STAGE_parse_function:{
                 // we don't need to copy the tokens here (and don't want to), as they are the preprocessed tokens!

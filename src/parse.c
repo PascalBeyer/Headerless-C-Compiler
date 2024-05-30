@@ -4276,7 +4276,7 @@ case NUMBER_KIND_##type:{ \
             }else if(lookup->base.kind != AST_declaration && lookup->base.kind != AST_function){
                 assert(lookup->base.kind == AST_typedef);
                 
-                if(globals.compile_stage == COMPILE_STAGE_tokenize_files_and_parse_global_scope_entries){
+                if(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries){
                     //
                     // welcome to the worst hack in the compiler:
                     // 
@@ -7418,7 +7418,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     };
                     
                     struct parse_work *parse_work = push_parse_work(context, array, context->current_compilation_unit, function);
-                    work_queue_push_work(context, &globals.work_queue_stage_two, WORK_parse_function_body, parse_work);
+                    work_queue_push_work(context, &globals.work_queue_parse_functions, WORK_parse_function_body, parse_work);
                     
                     function->as_decl.flags |= DECLARATION_FLAGS_is_local_persist;
                     function->scope = &scope->base;
