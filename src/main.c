@@ -4137,7 +4137,7 @@ int main(int argc, char *argv[]){
         struct string full_library_path = zero_struct;
         
         if(path_is_absolute(library_node->string)){
-            full_library_path = library_node->string;
+            full_library_path = push_zero_terminated_string_copy(arena, library_node->string);
         }else{
             for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
                 struct string file_path = concatenate_file_paths(arena, library_path_node->string, library_node->string);
