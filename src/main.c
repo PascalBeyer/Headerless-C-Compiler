@@ -241,7 +241,6 @@ static struct{
     struct atom entry_point_name;
     struct ast_function *entry_point;
     
-    struct string_list additional_include_directories; // full paths
     struct string_list system_include_directories;     // full paths
     
     // There are a couple of cases for how the output path is determined.
@@ -4570,10 +4569,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     }
     
 #if PRINT_ADDITIONAL_INCLUDE_DIRECTORIES
-    print("Additional include directories:\n");
-    for(struct string_list_node *node = globals.additional_include_directories.list.first; node; node = node->next){
-        print("    %.*s\n", node->string.amount, node->string.data);
-    }
     print("\nSystem include directories:\n");
     for(struct string_list_node *node = globals.system_include_directories.list.first; node; node = node->next){
         print("    %.*s\n", node->string.amount, node->string.data);
