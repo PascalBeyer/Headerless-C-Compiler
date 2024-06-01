@@ -4208,6 +4208,12 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     context->max_amount_of_function_call_arguments = 4;
     context->temporary_stack_high_water_mark = 0;
     
+    context->register_sp = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_SP, 8);
+    context->gpr_allocator.emit_location_map[REGISTER_SP] = null;
+    context->register_bp = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_BP, 8);
+    context->gpr_allocator.emit_location_map[REGISTER_BP] = null;
+    
+    
     // :stack_space_needed. The amount of stack space needed needs to be aligned to 16.
     function->stack_space_needed = align_up(function->stack_space_needed, 0x10);
     

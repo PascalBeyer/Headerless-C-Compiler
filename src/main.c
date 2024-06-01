@@ -3270,10 +3270,6 @@ func void init_context(struct context *context, struct thread_info *info, struct
     context->thread_info = info;
     context->arena = arena;
     context->ast_serializer = (thread_index << 48);
-    context->register_sp = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_SP, 8);
-    context->gpr_allocator.emit_location_map[REGISTER_SP] = null;
-    context->register_bp = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_BP, 8);
-    context->gpr_allocator.emit_location_map[REGISTER_BP] = null;
     
     smm emit_pool_capacity = mega_bytes(100);
     struct os_virtual_buffer emit_pool_buf = os_reserve_memory(0, emit_pool_capacity);
