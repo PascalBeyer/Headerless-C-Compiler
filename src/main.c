@@ -821,7 +821,6 @@ struct context{
     //
     // Patching
     //
-    struct memory_arena patch_arena; // This is just a zero initialized arena.
     struct {
         struct patch_node *first;
         struct patch_node *last;
@@ -852,7 +851,7 @@ struct patch_node{
 };
 
 func void emit_patch(struct context *context, enum patch_kind kind, struct ast *source_decl, smm source_offset, struct ast_declaration *dest_declaration, smm dest_offset, smm rip_at){
-    struct patch_node *patch_node = push_struct(&context->patch_arena, struct patch_node);
+    struct patch_node *patch_node = push_struct(context->arena, struct patch_node);
     patch_node->source = source_decl;
     patch_node->dest_declaration = dest_declaration;
     patch_node->location_offset_in_dest_declaration   = dest_offset;
