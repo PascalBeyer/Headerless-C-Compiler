@@ -152,7 +152,7 @@ int _start(void){
 
 
 // 
-// @cleanup: How to handle these...?a
+// @cleanup: How to handle these...?
 // 
 
 void *memset(void *mem, int val, unsigned __int64 amount){

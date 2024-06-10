@@ -1016,12 +1016,17 @@ enum declaration_specifier_flag{
     SPECIFIER_packed    = 0x80,
     
     // 
-    // function-specifiers
+    // function-specifiers.
     // 
     SPECIFIER_inline     = 0x100,
     SPECIFIER_noreturn   = 0x200,
-    SPECIFIER_inline_asm = 0x400,
-    SPECIFIER_printlike  = 0x800,
+    SPECIFIER_noinline   = 0x400,
+    
+    // 
+    // HLC-specific declspecs.
+    // 
+    SPECIFIER_inline_asm = 0x800,
+    SPECIFIER_printlike  = 0x1000,
     
 };
 
@@ -6376,6 +6381,8 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                     check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_dllexport, directive, "__declspec(dllexport)");
                 }else if(atoms_match(directive_string, globals.keyword_noreturn)){
                     check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_noreturn, directive, "__declspec(noreturn)");
+                }else if(atoms_match(directive_string, globals.keyword_noinline)){
+                    check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_noinline, directive, "__declspec(noinline)");
                 }else if(atoms_match(directive_string, globals.keyword_align)){
                     expect_token(context, TOKEN_open_paren, "Expected '(' to follow 'align'.");
                     
@@ -8320,7 +8327,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         }
         
         if(have_nested_declarator){
-            if(!skip_until_tokens_are_balanced(context, open_paren, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '('")){
+            if(!skip_until_tokens_are_balanced(context, open_paren, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '('.")){
                 return ret;
             }
         }else{

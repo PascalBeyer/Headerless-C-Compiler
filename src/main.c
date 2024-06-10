@@ -129,7 +129,7 @@ struct ast_table{
 struct file{
     struct os_file file;
     char *absolute_file_path;
-    // struct string include_string; // 'asd.h' for 'C:/path/to/file/asd.h'
+    
     s32 file_index;
     int is_system_include;
     
@@ -145,7 +145,6 @@ struct file{
     u32 offset_in_names;
     u32 offset_in_f4;
 };
-
 
 struct dll_import_node{
     struct dll_import_node *next;
@@ -380,6 +379,7 @@ static struct{
     struct atom keyword_dllexport;
     struct atom keyword_align;
     struct atom keyword_noreturn;
+    struct atom keyword_noinline;
     struct atom keyword_selectany;
     struct atom keyword_intrin_type;
     
@@ -4346,6 +4346,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.keyword_dllexport   = atom_for_string(string("dllexport"));
         globals.keyword_align       = atom_for_string(string("align"));
         globals.keyword_noreturn    = atom_for_string(string("noreturn"));
+        globals.keyword_noinline    = atom_for_string(string("noinline"));
         globals.keyword_selectany   = atom_for_string(string("selectany"));
         globals.keyword_intrin_type = atom_for_string(string("intrin_type"));
         
@@ -4365,9 +4366,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.invalid_identifier = atom_for_string(string("<invalid identifier>"));
         
         // :hlc_extension
-        globals.keyword_data      = atom_for_string(string("data"));
-        globals.keyword_size      = atom_for_string(string("size"));
-        globals.keyword_main      = atom_for_string(string("main"));
+        globals.keyword_data = atom_for_string(string("data"));
+        globals.keyword_size = atom_for_string(string("size"));
+        globals.keyword_main = atom_for_string(string("main"));
         
         for(enum memonic memonic = 0; memonic < MEMONIC_count; memonic += 1){
             if(asm_parse_table[memonic].memonic.data){
@@ -4769,7 +4770,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     // COMPILE_STAGE_tokenize_files
     //
     
-    // we _just_ pushed all the files into the work 'globals.work_queue_tokenize_files' and started the threads. 
+    // We _just_ pushed all the files into the work 'globals.work_queue_tokenize_files' and started the threads. 
     // Each file is a compilation unit. These 'compilation_units' first get tokenized and preprocessed,
     // then "chopped into pieces", such that we can parse each global scope entry individually.
     // Finally, these global scope entries get appended to the `work_queue_parse_global_scope_entries`.
@@ -4780,6 +4781,27 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     assert(globals.work_queue_tokenize_files.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
+    
+#if 0
+    for(smm compilation_unit_index = 0; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
+        struct compilation_unit *compilation_unit = &globals.compilation_units.data[compilation_unit_index];
+        
+        print("%s:\n", compilation_unit->main_file->absolute_file_path);
+        for(u32 entry_index = 0; entry_index < compilation_unit->is_token_static_table.capacity; entry_index++){
+            struct token *token = compilation_unit->is_token_static_table.data[entry_index].token;
+            if(token){
+                if(compilation_unit->is_token_static_table.data[entry_index].is_static){
+                    print("    static ");
+                }else{
+                    print("    extern ");
+                }
+                print_token(context, token, /*print_whitespace_and_comments*/0);
+                print("\n");
+            }
+        }
+        print("\n");
+    }
+#endif
     
     // 
     // COMPILE_STAGE_parse_global_scope_entries
