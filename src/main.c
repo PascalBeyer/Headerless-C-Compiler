@@ -2672,6 +2672,27 @@ func u8 *evaluate_static_initializer(struct context *context, struct ast_declara
 #include "obj_dumper.c"
 #endif
 
+
+func void init_context(struct context *context, struct thread_info *info, struct memory_arena *arena){
+    u64 thread_index = cast(u64)info->thread_index;
+    
+    context->low_stack_address = &(u8){0};
+    
+    context->thread_info = info;
+    context->arena = arena;
+    context->ast_serializer = (thread_index << 48);
+    
+    smm emit_pool_capacity = mega_bytes(100);
+    struct os_virtual_buffer emit_pool_buf = os_reserve_memory(0, emit_pool_capacity);
+    if(!emit_pool_buf.memory){ print("memory error!\n"); os_panic(1); }
+    context->emit_pool.base     = emit_pool_buf.memory;
+    context->emit_pool.current  = emit_pool_buf.memory;
+    context->emit_pool.end      = emit_pool_buf.memory;
+    context->emit_pool.reserved = emit_pool_capacity;
+    
+}
+
+
 // @cleanup: rename
 func void parser_do_work(struct context *context, struct work_queue_entry *work){
     // :reset_context :zero_context :clear_context
@@ -2741,7 +2762,7 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
             struct token_array tokenized_file = file_tokenize_and_preprocess(context, work_tokenize_file->absolute_file_path, work_tokenize_file->file_size);
             end_counter(context, tokenize_and_preprocess);
             
-            if(context->should_sleep) goto handle_sleep_or_error;
+            if(context->error) return;
             if(tokenized_file.amount == 0) return; // nothing to do if the file is empty
             
             // :chunk the file
@@ -2937,7 +2958,7 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
                     }
                 }
                 
-                if(context->should_sleep || context->error) goto handle_sleep_or_error;
+                if(context->error) return;
                 
                 smm end_marker = context->token_at;
                 
@@ -3014,13 +3035,29 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
             
             if(peek_token(context, TOKEN_static_assert)){
                 struct token *static_assert_token = next_token(context);
-                parse_static_assert(context, static_assert_token);
-                if(context->error) goto handle_sleep_or_error;
+                parse_static_assert(context, static_assert_token); // @cleanup: static_assert and sleeping.
                 return;
             }
             
             struct declaration_list declaration_list = parse_declaration_list(context, null, null);
-            if(context->should_sleep || context->error) goto handle_sleep_or_error;
+            if(context->error) return;
+            
+            if(context->should_sleep){
+                struct token *sleep_on = context->sleep_on;
+                work->sleeping_on = context->sleep_on;
+                log_print("   sleeping on: %.*s", sleep_on->amount, sleep_on->data);
+                
+                // @note: this logic needs to match wake_up_sleepers
+                struct sleeper_table *sleeper_table = &globals.sleeper_table;
+                
+                if(context->sleep_purpose == SLEEP_on_decl){
+                    b32 is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(context->current_compilation_unit, sleep_on->atom) == IDENTIFIER_is_static;
+                    if(is_static) sleeper_table = &context->current_compilation_unit->static_sleeper_table;
+                }
+                
+                sleeper_table_add(sleeper_table, work, context->sleep_purpose, sleep_on);
+                return;
+            }
             
             // might not be the full type e.g. int (*a)
             struct ast_type *lhs_type = declaration_list.type_specifier;
@@ -3078,7 +3115,7 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
                 work_queue_push_work(context, &globals.work_queue_parse_functions, WORK_parse_function_body, parse_work);
             }else{
                 expect_token(context, TOKEN_semicolon, "Expected ';' after declaration at global scope.");
-                if(context->error) goto handle_sleep_or_error;
+                if(context->error) return;
                 assert(!in_current_token_array(context));
             }
             
@@ -3120,14 +3157,12 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
             //                                                                      07.02.2023
             
             maybe_resolve_unresolved_type_or_sleep_or_error(context, &function->type->return_type);
-            if(context->should_sleep) goto handle_sleep_or_error;
+            if(context->error) return;
             
             for_ast_list(function->type->argument_list){
                 assert(it->value->kind == AST_declaration);
                 struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)){
-                    goto handle_sleep_or_error;
-                }
+                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return;
                 
                 parser_register_declaration(context, decl);
             }
@@ -3159,7 +3194,7 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
                 parse_imperative_scope(context);
             }
             
-            if(context->should_sleep || context->error) goto handle_sleep_or_error;
+            if(context->error) return;
             
             assert(!in_current_token_array(context));
             
@@ -3179,7 +3214,7 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
                 
                 if(!found){
                     report_error(context, ast_goto->base.token, "'goto' to undefined label '%.*s'.", ast_goto->ident.amount, ast_goto->ident.data);
-                    goto handle_sleep_or_error;
+                    return;
                 }
             }
             function->stack_space_needed = context->current_emit_offset_of_rsp;
@@ -3219,35 +3254,6 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
         }break;
         invalid_default_case();
     }
-    
-    return;
-    
-    handle_sleep_or_error:;
-    if(context->error) return;
-    
-    if(globals.an_error_has_occurred) return; // @cleanup: is this what we want? when does this get set?
-    
-    struct token *sleep_on = context->sleep_on;
-    work->sleeping_on = context->sleep_on;
-    log_print("   sleeping on: %.*s", sleep_on->amount, sleep_on->data);
-    
-    // @cleanup: inline this so we don't call sleeper_table_add somewhere else
-    if(work->description == WORK_parse_global_scope_entry){
-        struct parse_work *parse = cast(struct parse_work *)work->data;
-        parse->sleeping_ident = context->sleeping_ident;
-        assert(!parse->sleeping_ident || parse->sleeping_ident->type == TOKEN_identifier);
-        
-    }
-    
-    // @note: this logic needs to match wake_up_sleepers
-    struct sleeper_table *sleeper_table = &globals.sleeper_table;
-    
-    if(context->sleep_purpose == SLEEP_on_decl){
-        b32 is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(context->current_compilation_unit, sleep_on->atom) == IDENTIFIER_is_static;
-        if(is_static) sleeper_table = &context->current_compilation_unit->static_sleeper_table;
-    }
-    
-    sleeper_table_add(sleeper_table, work, context->sleep_purpose, sleep_on);
 }
 
 func struct token *push_dummy_token(struct memory_arena *arena, struct atom token_atom, enum token_type token_type){
@@ -3262,25 +3268,6 @@ func struct token *push_dummy_token(struct memory_arena *arena, struct atom toke
     return token;
 }
 
-
-func void init_context(struct context *context, struct thread_info *info, struct memory_arena *arena){
-    u64 thread_index = cast(u64)info->thread_index;
-    
-    context->low_stack_address = &(u8){0};
-    
-    context->thread_info = info;
-    context->arena = arena;
-    context->ast_serializer = (thread_index << 48);
-    
-    smm emit_pool_capacity = mega_bytes(100);
-    struct os_virtual_buffer emit_pool_buf = os_reserve_memory(0, emit_pool_capacity);
-    if(!emit_pool_buf.memory){ print("memory error!\n"); os_panic(1); }
-    context->emit_pool.base     = emit_pool_buf.memory;
-    context->emit_pool.current  = emit_pool_buf.memory;
-    context->emit_pool.end      = emit_pool_buf.memory;
-    context->emit_pool.reserved = emit_pool_capacity;
-    
-}
 
 // returns whether or not we should continue;
 func b32 do_one_work(struct context *context){
