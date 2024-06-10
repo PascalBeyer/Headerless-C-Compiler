@@ -18,8 +18,6 @@
 // #define DEFINE_TO_PRINT "__crt_va_start"
 
 
-#define DONT_WARN_FOR_SYSTEM_FILES 1
-
 #define PRINT_COMMAND_LINE 1
 #define PRINT_PREDEFINED_MACROS 0
 

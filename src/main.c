@@ -223,6 +223,7 @@ static struct{
     b32 want_debug_information;
     
     b32 should_print_includes;
+    b32 report_warnings_in_system_includes;
     b32 dynamic_base;
     b32 no_entry;
     b32 allow_dot_as_arrow;
@@ -3923,6 +3924,8 @@ int main(int argc, char *argv[]){
             no_intrinsics = 1;
             no_standard_library = 1;
             test_was_specified = 1;
+        }else if(string_match(argument, string("report_warnings_in_system_includes"))){
+            globals.report_warnings_in_system_includes = 1;
         }else if(argument.data[0] == 'D'){ // argument[0] is always valid as there is at least a zero terminator
             char *start = (char *)argument.data + 1;
             char *end = start;

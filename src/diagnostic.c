@@ -243,15 +243,10 @@ __declspec(noinline) func void report_warning(struct context *context, enum warn
     if(context->should_sleep) return;
     if(!warning_enabled[warning]) return;
 
-#if DONT_WARN_FOR_SYSTEM_FILES
-    if(token){
-        if(!context->in_error_report && globals.file_table.data[token->file_index]->is_system_include){
-            return; // @cleanup: maybe this should be an option
-        }
-    }
-#endif
-    
-    if(context->warnings_reported > 100) return;
+    int already_reported_an_error_in_this_error_report = context->in_error_report && (context->errors_in_this_report > 0);
+    if(!globals.report_warnings_in_system_includes && !already_reported_an_error_in_this_error_report && token && globals.file_table.data[token->file_index]->is_system_include) return;
+
+    // if(context->warnings_reported > 100) return;
     context->warnings_reported += 1;
     
     va_list va;
