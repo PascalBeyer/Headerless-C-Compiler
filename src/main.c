@@ -24,17 +24,6 @@ struct parse_work{
     struct ast_function_type *function_type; // @note: we need this, as functions are now 'unique' but their parameters are determined by their type, and the thus can change between declaration and definition
 };
 
-enum work_description{
-    WORK_invalid,
-    
-    WORK_tokenize_file,
-    WORK_parse_global_scope_entry,
-    WORK_parse_function_body,
-    WORK_emit_code,
-    
-    WORK_count,
-};
-
 struct work_tokenize_file{
     struct string absolute_file_path;
     smm file_size;
@@ -43,8 +32,6 @@ struct work_tokenize_file{
 
 struct work_queue_entry{
     struct work_queue_entry *next;
-    enum work_description description;
-    u32 pad;
     struct token *sleeping_on;
     void *data;
 };
@@ -1111,11 +1098,10 @@ func struct work_queue_entry *work_queue_get_work(struct work_queue *queue){
     return read.begin;
 }
 
-func void work_queue_push_work(struct context *context, struct work_queue *queue, enum work_description desc, void *data){
+func void work_queue_push_work(struct context *context, struct work_queue *queue, void *data){
     if(context->should_sleep) return;
     assert(context->arena->temp_count == 0);
     struct work_queue_entry *work = push_struct(context->arena, struct work_queue_entry);
-    work->description = desc;
     work->data = data;
     work_queue_add(queue, work);
 }
@@ -1245,7 +1231,6 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
     assert(token);
     assert(entry);
     
-    assert(entry->description != WORK_invalid && entry->description < WORK_count);
     u64 index = token->string_hash & table->mask;
     assert(index < table->capacity);
     
@@ -2709,9 +2694,8 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
     context->current_compilation_unit   = null;
     context->maybe_in_cast              = null;
     
-    switch(work->description){
-        case WORK_tokenize_file:{
-            assert(globals.compile_stage == COMPILE_STAGE_tokenize_files);
+    switch(globals.compile_stage){
+        case COMPILE_STAGE_tokenize_files:{
             
             struct work_tokenize_file *work_tokenize_file = cast(struct work_tokenize_file *)work->data;
             context->current_compilation_unit = work_tokenize_file->compilation_unit;
@@ -2981,7 +2965,6 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
                 struct parse_work *parse_work = push_parse_work(context, array, work_tokenize_file->compilation_unit, /*function = */ null);
                 
                 struct work_queue_entry *entry = push_struct(context->arena, struct work_queue_entry);
-                entry->description = WORK_parse_global_scope_entry;
                 entry->data = parse_work;
                 
                 sll_push_back(work_queue_entries, entry);
@@ -3017,10 +3000,8 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
             
             assert(!in_current_token_array(context));
         }break;
-        case WORK_parse_global_scope_entry:{
+        case COMPILE_STAGE_parse_global_scope_entries:{
             log_print("parsing a global scope entry");
-            
-            assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
             
             struct parse_work *parse_work = (struct parse_work *)work->data;
             context->current_compilation_unit = parse_work->compilation_unit;
@@ -3112,7 +3093,7 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
                 
                 parse_work->function = function;
                 
-                work_queue_push_work(context, &globals.work_queue_parse_functions, WORK_parse_function_body, parse_work);
+                work_queue_push_work(context, &globals.work_queue_parse_functions, parse_work);
             }else{
                 expect_token(context, TOKEN_semicolon, "Expected ';' after declaration at global scope.");
                 if(context->error) return;
@@ -3121,8 +3102,7 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
             
             return;
         }break;
-        case WORK_parse_function_body:{ // @cleanup: these names should probably agree
-            assert(globals.compile_stage == COMPILE_STAGE_parse_function);
+        case COMPILE_STAGE_parse_function:{
             
             struct parse_work *parse_work = cast(struct parse_work *)work->data;
             context->current_compilation_unit = parse_work->compilation_unit;
@@ -3236,11 +3216,10 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
             
             context->current_function = null;
         }break;
-        case WORK_emit_code:{
+        case COMPILE_STAGE_emit_code:{
             struct ast_function *function = (void *)work->data;
             assert(function->base.kind == AST_function);
             assert(!function->memory_location);
-            assert(globals.compile_stage == COMPILE_STAGE_emit_code);
             
             emit_code_for_function(context, function);
             
@@ -3294,25 +3273,9 @@ func b32 do_one_work(struct context *context){
     if(work){
         struct temporary_memory scratch_temp = begin_temporary_memory(&context->scratch);
         
-        switch(work->description){
-            case WORK_tokenize_file:            begin_counter(context, work_tokenize);           break;
-            case WORK_parse_global_scope_entry: begin_counter(context, work_global_scope_entry); break;
-            case WORK_parse_function_body:      begin_counter(context, work_parse_function);     break;
-            case WORK_emit_code:                begin_counter(context, work_emit_code);          break;
-            invalid_default_case();
-        }
-        
         parser_do_work(context, work);
         assert(&queue->work_entries_in_flight > 0);
         atomic_add(&queue->work_entries_in_flight, -1);
-        
-        switch(work->description){
-            case WORK_tokenize_file:            end_counter(context, work_tokenize);           break;
-            case WORK_parse_global_scope_entry: end_counter(context, work_global_scope_entry); break;
-            case WORK_parse_function_body:      end_counter(context, work_parse_function);     break;
-            case WORK_emit_code:                end_counter(context, work_emit_code);          break;
-            invalid_default_case();
-        }
         
         if(context->error){
             atomic_store(b32, globals.an_error_has_occurred, true);
@@ -3720,7 +3683,6 @@ int main(int argc, char *argv[]){
                             work->file_size = file.size;
                             
                             struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
-                            work_entry->description = WORK_tokenize_file;
                             work_entry->data  = work;
                             
                             sll_push_back(files_to_parse, work_entry);
@@ -3753,7 +3715,6 @@ int main(int argc, char *argv[]){
                 }
                 
                 struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
-                work_entry->description = WORK_tokenize_file;
                 work_entry->data  = work;
                 
                 sll_push_back(files_to_parse, work_entry);
@@ -4075,7 +4036,6 @@ int main(int argc, char *argv[]){
             work->file_size = file.size;
             
             struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
-            work_entry->description = WORK_tokenize_file;
             work_entry->data  = work;
             
             sll_push_back(files_to_parse, work_entry);
@@ -4101,7 +4061,6 @@ int main(int argc, char *argv[]){
             work->file_size = file.size;
             
             struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
-            work_entry->description = WORK_tokenize_file;
             work_entry->data  = work;
             
             sll_push_back(files_to_parse, work_entry);
@@ -4743,13 +4702,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         assert(index == files_to_parse.amount);
     }
     
-    work_queue_append_list(&globals.work_queue_tokenize_files, files_to_parse.first, files_to_parse.last, files_to_parse.amount);
-    
-    // @note: thread '0' is the main thread, so just start all other ones
-    for(u32 thread_index = 1; thread_index < thread_count; thread_index++) {
-        os_create_thread(work_thread_proc, &thread_infos[thread_index]);
-    }
-    
     end_counter(context, startup);
     
     
@@ -4762,7 +4714,14 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     // then "chopped into pieces", such that we can parse each global scope entry individually.
     // Finally, these global scope entries get appended to the `work_queue_parse_global_scope_entries`.
     
-    globals.compile_stage = COMPILE_STAGE_tokenize_files;
+    globals.compile_stage = COMPILE_STAGE_tokenize_files; // Needs to happen before we bring the threads online.
+    
+    work_queue_append_list(&globals.work_queue_tokenize_files, files_to_parse.first, files_to_parse.last, files_to_parse.amount);
+    
+    // @note: thread '0' is the main thread, so just start all other ones
+    for(u32 thread_index = 1; thread_index < thread_count; thread_index++) {
+        os_create_thread(work_thread_proc, &thread_infos[thread_index]);
+    }
     
     while(globals.work_queue_tokenize_files.work_entries_in_flight > 0) do_one_work(context);
     
@@ -4928,7 +4887,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                     function->scope = &parser_push_new_scope(context, function->base.token, SCOPE_FLAG_is_function_scope)->base;
                 }
                 
-                work_queue_push_work(context, &globals.work_queue_parse_emit_code, WORK_emit_code, function);
+                work_queue_push_work(context, &globals.work_queue_parse_emit_code, function);
             }
         }
         
@@ -4945,7 +4904,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic) continue;
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
                 
-                work_queue_push_work(context, &globals.work_queue_parse_emit_code, WORK_emit_code, function);
+                work_queue_push_work(context, &globals.work_queue_parse_emit_code, function);
             }
         }
         
@@ -5016,7 +4975,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             }
             
             // queue the entry_point.
-            work_queue_push_work(context, &globals.work_queue_parse_emit_code, WORK_emit_code, initial_function);
+            work_queue_push_work(context, &globals.work_queue_parse_emit_code, initial_function);
             
             struct reachability_stack_node{
                 struct reachability_stack_node *next;
@@ -5055,7 +5014,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                             // Don't queue it, don't recurse into it, but also do not error.
                             
                             if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
-                                work_queue_push_work(context, &globals.work_queue_parse_emit_code, WORK_emit_code, function);
+                                work_queue_push_work(context, &globals.work_queue_parse_emit_code, function);
                             }
                             // note: we only want to recurse once into any given function.
                             struct reachability_stack_node *new_node = push_struct(&context->scratch, struct reachability_stack_node);

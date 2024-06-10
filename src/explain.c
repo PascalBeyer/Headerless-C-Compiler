@@ -15,6 +15,9 @@ struct explain_node{
 };
 
 func void report_errors_for_unresolved_sleepers(struct context *context, struct sleeper_table *sleeper_table){
+    
+    assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
+    
     context->should_exit_statement = false;
     context->should_sleep = false;
     context->error = false;
@@ -54,27 +57,14 @@ func void report_errors_for_unresolved_sleepers(struct context *context, struct 
             struct token *sleeping_on_token = work->sleeping_on;
             struct compilation_unit *compilation_unit = null;
             
-            switch(work->description){
-                case WORK_parse_global_scope_entry:{
-                    struct parse_work *parse = work->data;
-                    compilation_unit = parse->compilation_unit;
-                    // @cleanup: @incomplete: we right now have it be 0 if its invalid identifier is that right?
-                    if(parse->sleeping_ident){
-                        b32 is_valid = !atoms_match(parse->sleeping_ident->atom, globals.invalid_identifier);
-                        sleeping = is_valid ? parse->sleeping_ident : 0;
-                    }
-                    error = true;
-                }break;
-                case WORK_parse_function_body:{
-                    struct parse_work *parse = work->data;
-                    compilation_unit = parse->compilation_unit;
-                    
-                    struct ast_function *function = parse->function;
-                    sleeping = function->base.token;
-                    error = true;
-                }break;
-                invalid_default_case();
+            struct parse_work *parse = work->data;
+            compilation_unit = parse->compilation_unit;
+            // @cleanup: @incomplete: we right now have it be 0 if its invalid identifier is that right?
+            if(parse->sleeping_ident){
+                b32 is_valid = !atoms_match(parse->sleeping_ident->atom, globals.invalid_identifier);
+                sleeping = is_valid ? parse->sleeping_ident : 0;
             }
+            error = true;
             
             // we could have a type and an identifier of the same name... we don't really have good access to
             // the sleep reason right now. Otherwise we could assert here... @cleanup
