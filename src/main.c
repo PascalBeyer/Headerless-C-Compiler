@@ -1031,14 +1031,15 @@ func struct string push_type_string(struct memory_arena *arena, struct memory_ar
 //_____________________________________________________________________________________________________________________
 
 func void ast_list_append(struct ast_list *list, struct memory_arena *arena, struct ast *ast){
-    struct ast_list_node *new = push_struct(arena, struct ast_list_node);
+    struct ast_list_node *new = push_uninitialized_struct(arena, struct ast_list_node);
     if(list->last){
         list->last->next = new;
     }else{
         list->first = new;
     }
+    
     new->value = ast;
-    new->next = 0; // we could get rid of this
+    new->next = 0;
     list->last = new;
     
     list->count++;
