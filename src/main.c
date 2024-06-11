@@ -3026,7 +3026,11 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
             if(context->should_sleep){
                 struct token *sleep_on = context->sleep_on;
                 work->sleeping_on = context->sleep_on;
-                log_print("   sleeping on: %.*s", sleep_on->amount, sleep_on->data);
+                
+                parse_work->sleeping_ident = context->sleeping_ident;
+                assert(!parse_work->sleeping_ident || parse_work->sleeping_ident->type == TOKEN_identifier);
+                
+                print("   sleeping on: %.*s", sleep_on->amount, sleep_on->data);
                 
                 // @note: this logic needs to match wake_up_sleepers
                 struct sleeper_table *sleeper_table = &globals.sleeper_table;
