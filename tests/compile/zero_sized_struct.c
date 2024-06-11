@@ -3,7 +3,7 @@
 typedef struct {} zero_sized_typedef;
 
 
-#ifdef __PBC__
+#ifdef __HLC__
 #define ZERO_SIZE_STRUCT struct{}
 #else
 #define ZERO_SIZE_STRUCT zero_sized_typedef

@@ -73,6 +73,8 @@ int main(){
     assert(sizeof(0.0) == 8);
     assert(sizeof(0.0f) == 4);
     
+    assert(__HLC__ == 1);
+    
     assert(0b1111 == 15);
     
     assert(ENUM_zero == 0);

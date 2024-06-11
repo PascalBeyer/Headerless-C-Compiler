@@ -34,7 +34,7 @@ typedef double f64;
 #define false 0
 #define null ((void *)0)
 
-#if __PBC__
+#if __HLC__
 __declspec(printlike)
 #endif
 int print(char *format, ...){
