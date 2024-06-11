@@ -150,8 +150,8 @@ func void report_errors_for_unresolved_sleepers(struct context *context, struct 
     
     b32 reported_undeclared_identifiers = false;
     for(struct explain_node *node = nodes.first; node; node = node->next){
-        // if the node does not have an outgoing edge, this means that the node does not sleep on anybody.
-        // Therefor it was not in the sleeper table and is a unresolved identifier.
+        // If the node does not have an outgoing edge, this means that the node does not sleep on anybody.
+        // Therefore, it was not in the sleeper table and is a unresolved identifier.
         // So report everyone that is sleeping on it here.                               14.05.2021
         
         if(!node->outgoing_edge){
