@@ -7133,11 +7133,18 @@ case TOKEN_##type_name:{                                                 \
         }
     }
     
-    if((specifiers.specifier_flags & SPECIFIER_inline) && !(specifiers.specifier_flags & SPECIFIER_extern)){
-        //
-        // If not explicitly extern, inline implies static.
-        //
-        specifiers.specifier_flags |= SPECIFIER_static;
+    if(specifiers.specifier_flags & SPECIFIER_inline){
+        if(specifiers.specifier_flags & SPECIFIER_extern){
+            // 
+            // extern inline acts as select any.
+            // 
+            specifiers.specifier_flags |= SPECIFIER_selectany;
+        }else{
+            //
+            // If not explicitly extern, inline implies static.
+            //
+            specifiers.specifier_flags |= SPECIFIER_static;
+        }   
     }
     
     return specifiers;
