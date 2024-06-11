@@ -4250,13 +4250,13 @@ globals.typedef_##postfix = (struct ast_type){                                  
         {
             if(!no_predefines){
                 struct string hardcoded_predefines = string(
-                        "#define __PBC__ 1\n"            
+                        "#define __HLC__ 1\n"            
                         "#define _M_X64 100\n"
                         "#define _M_AMD64 100\n"
                         "#define _WIN64 1\n"
                         "#define _WIN32 1\n"
                         
-                        // @cleanup:  I feel like these should not be defined
+                        // @cleanup:  I feel like these should not be defined, but then the standard headers pretend we are gcc for some reason.
                         "#define _MSC_BUILD 0\n"
                         "#define _MSC_EXTENSIONS 1\n"
                         "#define _MSC_FUL_VER 192829336\n"

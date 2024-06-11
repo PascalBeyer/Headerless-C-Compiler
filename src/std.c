@@ -30,7 +30,7 @@ typedef intptr_t  smem;
 #define PRINTLIKE 
 #define ALIGNED(n) __attribute__((aligned (n)))
 
-#elif defined(_MSC_VER) || defined(__PBC__)
+#elif defined(_MSC_VER) || defined(__HLC__)
 
 typedef __int8 s8;
 typedef unsigned __int8 u8;
@@ -44,7 +44,7 @@ typedef unsigned __int64 u64;
 typedef unsigned __int64 umm;
 typedef __int64 smm;
 
-#if defined(__PBC__)
+#if defined(__HLC__)
 #define PRINTLIKE __declspec(printlike)
 #else
 #define PRINTLIKE 
@@ -57,7 +57,7 @@ typedef __int64 smm;
 #error unknown compiler
 #endif
 
-#if defined(__clang__) || defined(__PBC__)
+#if defined(__clang__) || defined(__HLC__)
 #define zero_struct {}
 #elif defined(_MSC_VER) || defined(__GNUC__)
 #define zero_struct {0}
@@ -228,7 +228,7 @@ static NO_RETURN void __do_assert(const char *file, int line, const char *expres
 #ifdef __clang__
 #define static_assert(expr) _Static_assert(expr, "")
 
-#elif defined(__PBC__)
+#elif defined(__HLC__)
 
 #define zero_struct {}
 // @cleanup: I guess we should allow the above as well?
@@ -541,7 +541,7 @@ func s64 to_s64(smm number) { assert(s64_min <=  (number) && (number) <= s64_max
 
 ///////////////////////////////////////////////////////////////
 
-#if defined(__clang__) || defined(__PBC__)
+#if defined(__clang__) || defined(__HLC__)
 
 extern __int64 _InterlockedExchangeAdd64(__int64 volatile * _Addend, __int64 _Value);
 extern void _mm_pause();
