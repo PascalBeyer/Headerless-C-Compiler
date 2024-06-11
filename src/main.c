@@ -2676,8 +2676,7 @@ func void init_context(struct context *context, struct thread_info *info, struct
 }
 
 
-// @cleanup: rename
-func void parser_do_work(struct context *context, struct work_queue_entry *work){
+func void reset_context(struct context *context){
     // :reset_context :zero_context :clear_context
     context->current_emit_offset_of_rsp = 0;
     context->current_scope              = null;
@@ -2691,547 +2690,565 @@ func void parser_do_work(struct context *context, struct work_queue_entry *work)
     context->error                      = false;
     context->current_compilation_unit   = null;
     context->maybe_in_cast              = null;
+}
+
+func void worker_tokenize_file(struct context *context, struct work_queue_entry *work){
+    
+    struct work_tokenize_file *work_tokenize_file = cast(struct work_tokenize_file *)work->data;
+    context->current_compilation_unit = work_tokenize_file->compilation_unit;
+    
+    log_print("tokenizing file %.*s", work_tokenize_file->absolute_file_path.amount, work_tokenize_file->absolute_file_path.data);
+    
+    {
+        memset(&context->define_table, 0, sizeof(context->define_table));
+        
+        // 
+        // @WARNING: If you ever change the fact, that these buildin defines have the defined token
+        //           '&globals.invalid_token', you need to update the code which checks that you
+        //           cannot redeclare these.
+        // 
+        
+        struct define_node *defined_builtin = push_struct(&context->scratch, struct define_node);
+        defined_builtin->name = atom_for_string(string("defined"));
+        defined_builtin->is_defined = 1;
+        defined_builtin->is_builtin = 1;
+        defined_builtin->defined_token = &globals.invalid_token;
+        register_define(context, defined_builtin);
+        
+        struct define_node *defined___pragma = push_struct(&context->scratch, struct define_node);
+        defined___pragma->name = atom_for_string(string("__pragma"));
+        defined___pragma->is___pragma = 1;
+        defined___pragma->is_builtin  = 1;
+        defined___pragma->defined_token = &globals.invalid_token;
+        register_define(context, defined___pragma);
+        
+        struct define_node *defined___FILE__ = push_struct(&context->scratch, struct define_node);
+        defined___FILE__->name = atom_for_string(string("__FILE__"));
+        defined___FILE__->is___FILE__ = 1;
+        defined___FILE__->is_builtin  = 1;
+        defined___FILE__->defined_token = &globals.invalid_token;
+        register_define(context, defined___FILE__);
+        
+        struct define_node *defined___LINE__ = push_struct(&context->scratch, struct define_node);
+        defined___LINE__->name = atom_for_string(string("__LINE__"));
+        defined___LINE__->is___LINE__ = 1;
+        defined___LINE__->is_builtin  = 1;
+        defined___LINE__->defined_token = &globals.invalid_token;
+        register_define(context, defined___LINE__);
+        
+    }
+    sll_clear(context->pragma_once_file_list);
+    
+    begin_counter(context, tokenize_and_preprocess);
+    struct token_array tokenized_file = file_tokenize_and_preprocess(context, work_tokenize_file->absolute_file_path, work_tokenize_file->file_size);
+    end_counter(context, tokenize_and_preprocess);
+    
+    if(context->error) return;
+    if(tokenized_file.amount == 0) return; // nothing to do if the file is empty
+    
+    // :chunk the file
+    begin_token_array(context, tokenized_file);
+    
+    // @note: as this just segments the text file into pieces, we require macro expansion to already
+    //        have happened.
+    
+    struct{
+        struct work_queue_entry *first;
+        struct work_queue_entry *last;
+        smm amount;
+    } work_queue_entries = zero_struct;
+    
+    begin_counter(context, chunking);
+    while(in_current_token_array(context)){
+        
+        smm start_marker = context->token_at;
+        
+        b32 is_static = false;
+        b32 is_extern = false;
+        b32 is_inline = false;
+        b32 got_type  = false;
+        
+        struct token *got_identifier = null;
+        
+        // pre-"parse" a global scope entry
+        while(in_current_token_array(context)){
+            struct token *token = next_token(context); // make sure we make progress
+            
+            if(TOKEN_first_basic_type <= token->type && token->type <= TOKEN_last_basic_type){
+                got_type = true;
+            }else if(token->type == TOKEN_enum || token->type == TOKEN_struct || token->type == TOKEN_union){
+                
+                while(peek_token_eat(context, TOKEN_declspec)){
+                    if(peek_token(context, TOKEN_open_paren)){
+                        skip_until_tokens_are_balanced(context, null, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in '__declspec'.");
+                    }
+                }
+                
+                peek_token_eat(context, TOKEN_identifier); // skip the name of the struct/enum/union
+                if(peek_token(context, TOKEN_open_curly)){
+                    skip_until_tokens_are_balanced(context, null, TOKEN_open_curly, TOKEN_closed_curly, "Unmatched '{' in type definition.");
+                }
+                
+                got_type = true;
+                continue;
+            }else if(token->type == TOKEN_declspec){
+                if(peek_token(context, TOKEN_open_paren)){
+                    skip_until_tokens_are_balanced(context, null, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in '__declspec'.");
+                }
+            }else if(token->type == TOKEN_static){ 
+                is_static = true;
+            }else if(token->type == TOKEN_extern){
+                is_extern = true;
+            }else if(token->type == TOKEN_inline || token->type == TOKEN_forceinline){
+                is_inline = true;
+            }else if(token->type == TOKEN_noreturn){
+                
+            }else if(token->type == TOKEN_identifier){
+                if(got_type){
+                    got_identifier = token;
+                    
+                    smm capacity = context->current_compilation_unit->is_token_static_table.capacity;
+                    smm size = context->current_compilation_unit->is_token_static_table.size;
+                    struct is_token_static *is_static_table = context->current_compilation_unit->is_token_static_table.data;
+                    
+                    // Register this token as 'is_static' in the 'token_to_is_static_table'.
+                    if(2 *size + 1  > capacity){
+                        struct is_token_static *new_table = push_data(context->arena, struct is_token_static, capacity * 2);
+                        
+                        // Copy the hash table.
+                        for(smm entry_index = 0; entry_index < capacity; entry_index++){
+                            if(is_static_table[entry_index].token == null) continue;
+                            smm hash = is_static_table[entry_index].token->atom.string_hash;
+                            
+                            for(smm table_index = 0; table_index < 2 * capacity; table_index++){
+                                smm index = (hash + table_index) & (2 * capacity - 1);
+                                
+                                if(!new_table[index].token){
+                                    new_table[index] = is_static_table[entry_index];
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        context->current_compilation_unit->is_token_static_table.data = new_table;
+                        context->current_compilation_unit->is_token_static_table.capacity *= 2;
+                        
+                        capacity *= 2;
+                        is_static_table = new_table;
+                    }
+                    
+                    smm hash = token->string_hash;
+                    for(smm i = 0; i < capacity; i++){
+                        smm index = (hash + i) & (capacity - 1);
+                        
+                        b32 actually_static = is_static || (!is_extern && is_inline);
+                        
+                        if(!is_static_table[index].token){
+                            is_static_table[index].token = token;
+                            is_static_table[index].is_static = actually_static;
+                            context->current_compilation_unit->is_token_static_table.size += 1;
+                            break;
+                        }
+                        
+                        // @cleanup: warn and shit
+                        if(atoms_match(token->atom, is_static_table[index].token->atom)){
+                            is_static_table[index].is_static |= actually_static;
+                            break;
+                        }
+                    }
+                }else{
+                    got_type = true;
+                }
+            }else if(token->type == TOKEN_equals){
+                b32 got_semi = false;
+                while(in_current_token_array(context)){
+                    struct token *test = next_token(context);
+                    
+                    if(test->type == TOKEN_open_paren){
+                        skip_until_tokens_are_balanced(context, test, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in global scope initializer.");
+                        continue;
+                    }
+                    if(test->type == TOKEN_open_curly){
+                        skip_until_tokens_are_balanced(context, test, TOKEN_open_curly, TOKEN_closed_curly, "Unmatched '{' in global scope initializer.");
+                        continue;
+                    }
+                    if(test->type == TOKEN_open_index){
+                        skip_until_tokens_are_balanced(context, test, TOKEN_open_index, TOKEN_closed_index, "Unmatched '[' in global scope initializer.");
+                        continue;
+                    }
+                    
+                    if(test->type == TOKEN_comma) break;
+                    if(test->type == TOKEN_semicolon){
+                        got_semi = true;
+                        break;
+                    }
+                }
+                
+                got_identifier = null;
+                
+                // this is a declaration like 'u32 asd = 1;' (ends in assignment)
+                if(got_semi) break;
+            }else if(token->type == TOKEN_comma){
+                got_identifier = null;
+            }else if(token->type == TOKEN_semicolon){
+                // this is a declaration like 'u32 asd;' (ends in semicolon);
+                break;
+            }else if(token->type == TOKEN_open_curly){
+                // this is a declaration like 'u32 asd(){}'
+                
+                // :__FUNCTION__is_resolved_during_chunking
+                // 
+                // This used to be:
+                //    skip_until_tokens_are_balanced(context, token, TOKEN_open_curly, TOKEN_closed_curly);
+                // But now we try patching __FUNCTION__ here, so we are doing it manually.
+                //                                                                             - 03.10.2021
+                
+                u64 count = 1;
+                while(true){
+                    if(!in_current_token_array(context)){
+                        report_error(context, token, "Unmatched '{' at global scope.");
+                        break;
+                    }else if(peek_token(context, TOKEN_closed_curly)){
+                        if (--count == 0) break;
+                    }else if(peek_token(context, TOKEN_open_curly)){
+                        count++;
+                    }else if(peek_token(context, TOKEN___func__)){
+                        if(got_identifier){
+                            struct token *function = get_current_token(context);
+                            function->type   = TOKEN_string_literal;
+                            struct string function_string = push_format_string(context->arena, "\"%.*s\"", got_identifier->size, got_identifier->data);
+                            function->data = function_string.data;
+                            function->size = (u32)function_string.size;
+                        }else{
+                            report_syntax_error(context, get_current_token(context), "__FUNCTION__ outside of a function");
+                        }
+                    }
+                    next_token(context);
+                }
+                next_token(context);
+                break;
+            }else if(token->type == TOKEN_open_paren){
+                // @note: skip the parens for 'int a(int b);'
+                //        but don't skip the parens for 'int (a);'
+                if(got_identifier){
+                    skip_until_tokens_are_balanced(context, token, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' at global scope.");
+                }
+            }else if(token->type == TOKEN_open_index){
+                // this is a declaration like u32 asd[];
+                skip_until_tokens_are_balanced(context, token, TOKEN_open_index, TOKEN_closed_index, "Unmatched '[' at global scope.");
+            }
+        }
+        
+        if(context->error) return;
+        
+        smm end_marker = context->token_at;
+        
+        struct token_array array = {
+            .data = tokenized_file.data + start_marker,
+            .size = end_marker - start_marker,
+        };
+        
+#if PRINT_PREPROCESSED_FILE
+        {
+            //
+            // @cleanup: if we actually want to make this a user debugging facillity, this 
+            //           should be a nice pretty printer for the code.
+            //
+            print("\n//____________________________________________________________________________\n\n");
+            pretty_print_token_array(context, array);
+        }
+#endif
+        
+        struct parse_work *parse_work = push_parse_work(context, array, work_tokenize_file->compilation_unit, /*function = */ null);
+        
+        struct work_queue_entry *entry = push_struct(context->arena, struct work_queue_entry);
+        entry->data = parse_work;
+        
+        sll_push_back(work_queue_entries, entry);
+        work_queue_entries.amount++;
+    }
+    
+    end_counter(context, chunking);
+    
+    if(globals.seed_to_randomize_order_of_global_scope_entries){
+        struct random_series series =
+                random_series_from_seed(globals.seed_to_randomize_order_of_global_scope_entries);
+        struct{
+            struct work_queue_entry *first;
+            struct work_queue_entry *last;
+        } stacks[0x10] = zero_struct;
+        
+        for(struct work_queue_entry *it = work_queue_entries.first; it;){
+            struct work_queue_entry *next = it->next;
+            
+            smm index = random_u32(&series) & (array_count(stacks) - 1);
+            
+            sll_push_front(stacks[index], it);
+            it = next;
+        }
+        
+        sll_clear(work_queue_entries);                
+        for(smm i = 0; i < array_count(stacks); i++){
+            sll_push_back_list(work_queue_entries, stacks[i]);
+        }
+    }
+    
+    work_queue_append_list(&globals.work_queue_parse_global_scope_entries, work_queue_entries.first, work_queue_entries.last, work_queue_entries.amount);
+    
+    assert(!in_current_token_array(context));
+}
+
+func void worker_parse_global_scope_entry(struct context *context, struct work_queue_entry *work){
+    log_print("parsing a global scope entry");
+    
+    struct parse_work *parse_work = (struct parse_work *)work->data;
+    context->current_compilation_unit = parse_work->compilation_unit;
+    
+    begin_token_array(context, parse_work->tokens);
+    
+    if(peek_token_eat(context, TOKEN_semicolon)){
+        // allow for empty ';' at global scope @speed, we could detect this above
+        assert(!in_current_token_array(context));
+        return;
+    }
+    
+    if(peek_token(context, TOKEN_static_assert)){
+        struct token *static_assert_token = next_token(context);
+        parse_static_assert(context, static_assert_token); // @cleanup: static_assert and sleeping.
+        return;
+    }
+    
+    struct declaration_list declaration_list = parse_declaration_list(context, null, null);
+    if(context->error) return;
+    
+    if(context->should_sleep){
+        struct token *sleep_on = context->sleep_on;
+        work->sleeping_on = context->sleep_on;
+        
+        parse_work->sleeping_ident = context->sleeping_ident;
+        assert(!parse_work->sleeping_ident || parse_work->sleeping_ident->type == TOKEN_identifier);
+        
+        // @note: this logic needs to match wake_up_sleepers
+        struct sleeper_table *sleeper_table = &globals.sleeper_table;
+        
+        if(context->sleep_purpose == SLEEP_on_decl){
+            b32 is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(context->current_compilation_unit, sleep_on->atom) == IDENTIFIER_is_static;
+            if(is_static) sleeper_table = &context->current_compilation_unit->static_sleeper_table;
+        }
+        
+        sleeper_table_add(sleeper_table, work, context->sleep_purpose, sleep_on);
+        return;
+    }
+    
+    // might not be the full type e.g. int (*a)
+    struct ast_type *lhs_type = declaration_list.type_specifier;
+    
+    if(sll_is_empty(declaration_list)){
+        // for struct this might be a struct declaration, in which case  we are done.
+        if(lhs_type->kind == AST_struct || lhs_type->kind == AST_union){
+            struct ast_compound_type *compound = cast(struct ast_compound_type *)lhs_type;
+            if(compound->identifier.size == 0){
+                // @cleanup: does this report the error in the wrong spot, if we have:
+                //     typedef struct {} asd;
+                //     asd;
+                report_warning(context, WARNING_does_not_declare_anything, compound->base.token, "Anonymous %s declaration does not declare anything.", compound->base.kind == AST_union ? "union" : "struct");
+            }
+        }else if(declaration_list.defined_type_specifier && declaration_list.defined_type_specifier->kind == AST_enum){
+            // these are fine. we could exectly check for enum{} I guess
+        }else if(declaration_list.type_specifier->kind == AST_unresolved_type){
+            // these are fine, we got 'struct unresolved;'
+        }else{
+            // we got 'u32;'
+            report_warning(context, WARNING_does_not_declare_anything, get_current_token_for_error_report(context), "Declaration does not define anything.");
+        }
+        expect_token(context, TOKEN_semicolon, "Expected a ';' after a type definition at global scope.");
+        assert(!in_current_token_array(context));
+        
+        return;
+    }
+    
+    for(struct declaration_node *node = declaration_list.first; node; node = node->next){
+        
+        // @bug @incomplete @cleanup: This is apperantly where we evaluate initializers.
+        //                            This is not thread safe.
+        //                            Maybe this should happen in the backend anyway?
+        
+        struct ast_declaration *decl = node->decl;
+        if(decl->base.kind == AST_declaration){
+            //
+            // @note: if we have 'int a = 1;' and then later (or in a different compilation unit) 'int a;'
+            //        we have already evaluated the initializer and should not do it again!
+            //
+            if(decl->assign_expr && !decl->memory_location){
+                decl->memory_location = evaluate_static_initializer(context, decl);
+            }
+        }
+    }
+    
+    if(declaration_list.last->decl->base.kind == AST_function && peek_token_eat(context, TOKEN_open_curly)){
+        struct ast_function *function = cast(struct ast_function *)declaration_list.last->decl;
+        parse_work->tokens.data += context->token_at;
+        parse_work->tokens.size -= context->token_at;
+        assert(parse_work->tokens.size > 0);
+        
+        parse_work->function = function;
+        
+        work_queue_push_work(context, &globals.work_queue_parse_functions, parse_work);
+    }else{
+        expect_token(context, TOKEN_semicolon, "Expected ';' after declaration at global scope.");
+        if(context->error) return;
+        assert(!in_current_token_array(context));
+    }
+}
+
+func void worker_parse_function(struct context *context, struct work_queue_entry *work){
+    
+    struct parse_work *parse_work = cast(struct parse_work *)work->data;
+    context->current_compilation_unit = parse_work->compilation_unit;
+    
+    // @WARNING: 'function->base.token' is not necessarly the token you might expect, because predefines
+    //           might be first when we register the token. @cleanup: maybe we should adjust the token?
+    //           If you want to conditional breakpoint on some line, for now use scope->base.line instead.
+    //           Its token is the '{' that begins the body of the function.      16.05.2021
+    
+    struct ast_function *function = parse_work->function;
+    assert(function->base.kind == AST_function);
+    context->current_function = function;
+    
+    log_print("parsing: %.*s", function->identifier->amount, function->identifier->data);
+    
+    begin_token_array(context, parse_work->tokens);
+    
+    assert(function->scope->kind == AST_scope);
+    struct ast_scope *scope = (struct ast_scope *)function->scope;
+    context->current_scope = scope;
+    
+    // :unresolved_types
+    //
+    // For a function, unresolved arguments and return types are allowed.
+    // For example, if there is just a random function declaration at global scope, like:
+    //     struct unresolved_return unused_function(struct unresolved_argument argument);
+    // This should compile. 
+    // This means that we could also have encountered this version of the _first_ and 
+    // then later 'struct unresolved_return' and 'struct unresolved_argument' were filled in.
+    // Hence, at this point the return type and the arguments might be unresolved and we need to 
+    // resolve them here.
+    //                                                                      07.02.2023
+    
+    maybe_resolve_unresolved_type_or_sleep_or_error(context, &function->type->return_type);
+    if(context->error) return;
+    
+    for_ast_list(function->type->argument_list){
+        assert(it->value->kind == AST_declaration);
+        struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+        if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return;
+        
+        parser_register_declaration(context, decl);
+    }
+    
+    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm){
+        //
+        // Special case for __declspec(inline_asm) in this case we only want a single 'ast_asm_block'
+        //
+        
+        struct ast_asm_block *asm_block = parser_ast_push(context, function->scope->token, asm_block);
+        set_resolved_type(&asm_block->base, &globals.typedef_void, null);
+        
+        context->in_inline_asm_function = function->base.token;
+        parse_asm_block(context, asm_block);
+        context->in_inline_asm_function = null;
+        
+        if(function->type->return_type != &globals.typedef_void){
+            if(asm_block->instructions.last == null || asm_block->instructions.last->memonic != MEMONIC_return_from_inline_asm_function){
+                struct string type_string = push_type_string(&context->scratch, &context->scratch, function->type->return_type);
+                report_error(context, function->base.token, "__declspec(inline_asm)-function has return type '%.*s' but no return statement was found.", type_string.size, type_string.data);
+            }
+        }
+        
+        ast_list_append(&scope->statement_list, context->arena, &asm_block->base);
+    }else{
+        //
+        // Parse the function!
+        //
+        parse_imperative_scope(context);
+    }
+    
+    if(context->error) return;
+    
+    assert(!in_current_token_array(context));
+    
+    parser_scope_pop(context, scope);
+    
+    for(struct ast_list_node *node1 = function->goto_list.first; node1; node1 = node1->next){
+        struct ast_goto *ast_goto = cast(struct ast_goto *)node1->value;
+        b32 found = false;
+        for(struct ast_list_node *node2 = function->label_list.first; node2; node2 = node2->next){
+            struct ast_label *label = cast(struct ast_label *)node2->value;
+            if(atoms_match(label->ident, ast_goto->ident)){
+                ast_goto->label_to_goto = label;
+                found = true;
+                break;
+            }
+        }
+        
+        if(!found){
+            report_error(context, ast_goto->base.token, "'goto' to undefined label '%.*s'.", ast_goto->ident.amount, ast_goto->ident.data);
+            return;
+        }
+    }
+    function->stack_space_needed = context->current_emit_offset_of_rsp;
+    
+    if(atoms_match(function->identifier->atom, globals.keyword_main)){
+        // "If the return type of the 'main' function is a type compatible with int, [...]
+        //  reaching the } that terminates the main function returns a value of 0."
+        if(function->type->return_type == &globals.typedef_s32){
+            
+            // @cleanup: is this the correct token?
+            struct token *end_curly = get_current_token_for_error_report(context);
+            struct ast_return *ast_return = parser_ast_push(context, end_curly, return);
+            ast_return->expr = ast_push_s32_literal(context, end_curly, 0);
+            set_resolved_type(&ast_return->base, &globals.typedef_void, null);
+            
+            ast_list_append(&scope->statement_list, context->arena, &ast_return->base);
+        }
+    }
+    
+    context->current_function = null;
+}
+
+func void worker_emit_code(struct context *context, struct work_queue_entry *work){
+    struct ast_function *function = (void *)work->data;
+    assert(function->base.kind == AST_function);
+    assert(!function->memory_location);
+    
+    emit_code_for_function(context, function);
+    
+    for_ast_list(function->static_variables){
+        struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+        assert(!decl->memory_location);
+        if(decl->assign_expr){
+            decl->memory_location = evaluate_static_initializer(context, decl);
+        }
+    }
+}
+
+// @cleanup: rename
+func void parser_do_work(struct context *context, struct work_queue_entry *work){
+    
+    reset_context(context);
     
     switch(globals.compile_stage){
         case COMPILE_STAGE_tokenize_files:{
-            
-            struct work_tokenize_file *work_tokenize_file = cast(struct work_tokenize_file *)work->data;
-            context->current_compilation_unit = work_tokenize_file->compilation_unit;
-            
-            log_print("tokenizing file %.*s", work_tokenize_file->absolute_file_path.amount, work_tokenize_file->absolute_file_path.data);
-            
-            {
-                memset(&context->define_table, 0, sizeof(context->define_table));
-                
-                // 
-                // @WARNING: If you ever change the fact, that these buildin defines have the defined token
-                //           '&globals.invalid_token', you need to update the code which checks that you
-                //           cannot redeclare these.
-                // 
-                
-                struct define_node *defined_builtin = push_struct(&context->scratch, struct define_node);
-                defined_builtin->name = atom_for_string(string("defined"));
-                defined_builtin->is_defined = 1;
-                defined_builtin->is_builtin = 1;
-                defined_builtin->defined_token = &globals.invalid_token;
-                register_define(context, defined_builtin);
-                
-                struct define_node *defined___pragma = push_struct(&context->scratch, struct define_node);
-                defined___pragma->name = atom_for_string(string("__pragma"));
-                defined___pragma->is___pragma = 1;
-                defined___pragma->is_builtin  = 1;
-                defined___pragma->defined_token = &globals.invalid_token;
-                register_define(context, defined___pragma);
-                
-                struct define_node *defined___FILE__ = push_struct(&context->scratch, struct define_node);
-                defined___FILE__->name = atom_for_string(string("__FILE__"));
-                defined___FILE__->is___FILE__ = 1;
-                defined___FILE__->is_builtin  = 1;
-                defined___FILE__->defined_token = &globals.invalid_token;
-                register_define(context, defined___FILE__);
-                
-                struct define_node *defined___LINE__ = push_struct(&context->scratch, struct define_node);
-                defined___LINE__->name = atom_for_string(string("__LINE__"));
-                defined___LINE__->is___LINE__ = 1;
-                defined___LINE__->is_builtin  = 1;
-                defined___LINE__->defined_token = &globals.invalid_token;
-                register_define(context, defined___LINE__);
-                
-            }
-            sll_clear(context->pragma_once_file_list);
-            
-            begin_counter(context, tokenize_and_preprocess);
-            struct token_array tokenized_file = file_tokenize_and_preprocess(context, work_tokenize_file->absolute_file_path, work_tokenize_file->file_size);
-            end_counter(context, tokenize_and_preprocess);
-            
-            if(context->error) return;
-            if(tokenized_file.amount == 0) return; // nothing to do if the file is empty
-            
-            // :chunk the file
-            begin_token_array(context, tokenized_file);
-            
-            // @note: as this just segments the text file into pieces, we require macro expansion to already
-            //        have happened.
-            
-            struct{
-                struct work_queue_entry *first;
-                struct work_queue_entry *last;
-                smm amount;
-            } work_queue_entries = zero_struct;
-            
-            begin_counter(context, chunking);
-            while(in_current_token_array(context)){
-                
-                smm start_marker = context->token_at;
-                
-                b32 is_static = false;
-                b32 is_extern = false;
-                b32 is_inline = false;
-                b32 got_type  = false;
-                
-                struct token *got_identifier = null;
-                
-                // pre-"parse" a global scope entry
-                while(in_current_token_array(context)){
-                    struct token *token = next_token(context); // make sure we make progress
-                    
-                    if(TOKEN_first_basic_type <= token->type && token->type <= TOKEN_last_basic_type){
-                        got_type = true;
-                    }else if(token->type == TOKEN_enum || token->type == TOKEN_struct || token->type == TOKEN_union){
-                        
-                        while(peek_token_eat(context, TOKEN_declspec)){
-                            if(peek_token(context, TOKEN_open_paren)){
-                                skip_until_tokens_are_balanced(context, null, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in '__declspec'.");
-                            }
-                        }
-                        
-                        peek_token_eat(context, TOKEN_identifier); // skip the name of the struct/enum/union
-                        if(peek_token(context, TOKEN_open_curly)){
-                            skip_until_tokens_are_balanced(context, null, TOKEN_open_curly, TOKEN_closed_curly, "Unmatched '{' in type definition.");
-                        }
-                        
-                        got_type = true;
-                        continue;
-                    }else if(token->type == TOKEN_declspec){
-                        if(peek_token(context, TOKEN_open_paren)){
-                            skip_until_tokens_are_balanced(context, null, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in '__declspec'.");
-                        }
-                    }else if(token->type == TOKEN_static){ 
-                        is_static = true;
-                    }else if(token->type == TOKEN_extern){
-                        is_extern = true;
-                    }else if(token->type == TOKEN_inline || token->type == TOKEN_forceinline){
-                        is_inline = true;
-                    }else if(token->type == TOKEN_noreturn){
-                        
-                    }else if(token->type == TOKEN_identifier){
-                        if(got_type){
-                            got_identifier = token;
-                            
-                            smm capacity = context->current_compilation_unit->is_token_static_table.capacity;
-                            smm size = context->current_compilation_unit->is_token_static_table.size;
-                            struct is_token_static *is_static_table = context->current_compilation_unit->is_token_static_table.data;
-                            
-                            // Register this token as 'is_static' in the 'token_to_is_static_table'.
-                            if(2 *size + 1  > capacity){
-                                struct is_token_static *new_table = push_data(context->arena, struct is_token_static, capacity * 2);
-                                
-                                // Copy the hash table.
-                                for(smm entry_index = 0; entry_index < capacity; entry_index++){
-                                    if(is_static_table[entry_index].token == null) continue;
-                                    smm hash = is_static_table[entry_index].token->atom.string_hash;
-                                    
-                                    for(smm table_index = 0; table_index < 2 * capacity; table_index++){
-                                        smm index = (hash + table_index) & (2 * capacity - 1);
-                                        
-                                        if(!new_table[index].token){
-                                            new_table[index] = is_static_table[entry_index];
-                                            break;
-                                        }
-                                    }
-                                }
-                                
-                                context->current_compilation_unit->is_token_static_table.data = new_table;
-                                context->current_compilation_unit->is_token_static_table.capacity *= 2;
-                                
-                                capacity *= 2;
-                                is_static_table = new_table;
-                            }
-                            
-                            smm hash = token->string_hash;
-                            for(smm i = 0; i < capacity; i++){
-                                smm index = (hash + i) & (capacity - 1);
-                                
-                                b32 actually_static = is_static || (!is_extern && is_inline);
-                                
-                                if(!is_static_table[index].token){
-                                    is_static_table[index].token = token;
-                                    is_static_table[index].is_static = actually_static;
-                                    context->current_compilation_unit->is_token_static_table.size += 1;
-                                    break;
-                                }
-                                
-                                // @cleanup: warn and shit
-                                if(atoms_match(token->atom, is_static_table[index].token->atom)){
-                                    is_static_table[index].is_static |= actually_static;
-                                    break;
-                                }
-                            }
-                        }else{
-                            got_type = true;
-                        }
-                    }else if(token->type == TOKEN_equals){
-                        b32 got_semi = false;
-                        while(in_current_token_array(context)){
-                            struct token *test = next_token(context);
-                            
-                            if(test->type == TOKEN_open_paren){
-                                skip_until_tokens_are_balanced(context, test, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in global scope initializer.");
-                                continue;
-                            }
-                            if(test->type == TOKEN_open_curly){
-                                skip_until_tokens_are_balanced(context, test, TOKEN_open_curly, TOKEN_closed_curly, "Unmatched '{' in global scope initializer.");
-                                continue;
-                            }
-                            if(test->type == TOKEN_open_index){
-                                skip_until_tokens_are_balanced(context, test, TOKEN_open_index, TOKEN_closed_index, "Unmatched '[' in global scope initializer.");
-                                continue;
-                            }
-                            
-                            if(test->type == TOKEN_comma) break;
-                            if(test->type == TOKEN_semicolon){
-                                got_semi = true;
-                                break;
-                            }
-                        }
-                        
-                        got_identifier = null;
-                        
-                        // this is a declaration like 'u32 asd = 1;' (ends in assignment)
-                        if(got_semi) break;
-                    }else if(token->type == TOKEN_comma){
-                        got_identifier = null;
-                    }else if(token->type == TOKEN_semicolon){
-                        // this is a declaration like 'u32 asd;' (ends in semicolon);
-                        break;
-                    }else if(token->type == TOKEN_open_curly){
-                        // this is a declaration like 'u32 asd(){}'
-                        
-                        // :__FUNCTION__is_resolved_during_chunking
-                        // 
-                        // This used to be:
-                        //    skip_until_tokens_are_balanced(context, token, TOKEN_open_curly, TOKEN_closed_curly);
-                        // But now we try patching __FUNCTION__ here, so we are doing it manually.
-                        //                                                                             - 03.10.2021
-                        
-                        u64 count = 1;
-                        while(true){
-                            if(!in_current_token_array(context)){
-                                report_error(context, token, "Unmatched '{' at global scope.");
-                                break;
-                            }else if(peek_token(context, TOKEN_closed_curly)){
-                                if (--count == 0) break;
-                            }else if(peek_token(context, TOKEN_open_curly)){
-                                count++;
-                            }else if(peek_token(context, TOKEN___func__)){
-                                if(got_identifier){
-                                    struct token *function = get_current_token(context);
-                                    function->type   = TOKEN_string_literal;
-                                    struct string function_string = push_format_string(context->arena, "\"%.*s\"", got_identifier->size, got_identifier->data);
-                                    function->data = function_string.data;
-                                    function->size = (u32)function_string.size;
-                                }else{
-                                    report_syntax_error(context, get_current_token(context), "__FUNCTION__ outside of a function");
-                                }
-                            }
-                            next_token(context);
-                        }
-                        next_token(context);
-                        break;
-                    }else if(token->type == TOKEN_open_paren){
-                        // @note: skip the parens for 'int a(int b);'
-                        //        but don't skip the parens for 'int (a);'
-                        if(got_identifier){
-                            skip_until_tokens_are_balanced(context, token, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' at global scope.");
-                        }
-                    }else if(token->type == TOKEN_open_index){
-                        // this is a declaration like u32 asd[];
-                        skip_until_tokens_are_balanced(context, token, TOKEN_open_index, TOKEN_closed_index, "Unmatched '[' at global scope.");
-                    }
-                }
-                
-                if(context->error) return;
-                
-                smm end_marker = context->token_at;
-                
-                struct token_array array = {
-                    .data = tokenized_file.data + start_marker,
-                    .size = end_marker - start_marker,
-                };
-                
-#if PRINT_PREPROCESSED_FILE
-                {
-                    //
-                    // @cleanup: if we actually want to make this a user debugging facillity, this 
-                    //           should be a nice pretty printer for the code.
-                    //
-                    print("\n//____________________________________________________________________________\n\n");
-                    pretty_print_token_array(context, array);
-                }
-#endif
-                
-                struct parse_work *parse_work = push_parse_work(context, array, work_tokenize_file->compilation_unit, /*function = */ null);
-                
-                struct work_queue_entry *entry = push_struct(context->arena, struct work_queue_entry);
-                entry->data = parse_work;
-                
-                sll_push_back(work_queue_entries, entry);
-                work_queue_entries.amount++;
-            }
-            
-            end_counter(context, chunking);
-            
-            if(globals.seed_to_randomize_order_of_global_scope_entries){
-                struct random_series series =
-                        random_series_from_seed(globals.seed_to_randomize_order_of_global_scope_entries);
-                struct{
-                    struct work_queue_entry *first;
-                    struct work_queue_entry *last;
-                } stacks[0x10] = zero_struct;
-                
-                for(struct work_queue_entry *it = work_queue_entries.first; it;){
-                    struct work_queue_entry *next = it->next;
-                    
-                    smm index = random_u32(&series) & (array_count(stacks) - 1);
-                    
-                    sll_push_front(stacks[index], it);
-                    it = next;
-                }
-                
-                sll_clear(work_queue_entries);                
-                for(smm i = 0; i < array_count(stacks); i++){
-                    sll_push_back_list(work_queue_entries, stacks[i]);
-                }
-            }
-            
-            work_queue_append_list(&globals.work_queue_parse_global_scope_entries, work_queue_entries.first, work_queue_entries.last, work_queue_entries.amount);
-            
-            assert(!in_current_token_array(context));
+            worker_tokenize_file(context, work);
         }break;
         case COMPILE_STAGE_parse_global_scope_entries:{
-            log_print("parsing a global scope entry");
-            
-            struct parse_work *parse_work = (struct parse_work *)work->data;
-            context->current_compilation_unit = parse_work->compilation_unit;
-            
-            begin_token_array(context, parse_work->tokens);
-            
-            if(peek_token_eat(context, TOKEN_semicolon)){
-                // allow for empty ';' at global scope @speed, we could detect this above
-                assert(!in_current_token_array(context));
-                return;
-            }
-            
-            if(peek_token(context, TOKEN_static_assert)){
-                struct token *static_assert_token = next_token(context);
-                parse_static_assert(context, static_assert_token); // @cleanup: static_assert and sleeping.
-                return;
-            }
-            
-            struct declaration_list declaration_list = parse_declaration_list(context, null, null);
-            if(context->error) return;
-            
-            if(context->should_sleep){
-                struct token *sleep_on = context->sleep_on;
-                work->sleeping_on = context->sleep_on;
-                
-                parse_work->sleeping_ident = context->sleeping_ident;
-                assert(!parse_work->sleeping_ident || parse_work->sleeping_ident->type == TOKEN_identifier);
-                
-                print("   sleeping on: %.*s", sleep_on->amount, sleep_on->data);
-                
-                // @note: this logic needs to match wake_up_sleepers
-                struct sleeper_table *sleeper_table = &globals.sleeper_table;
-                
-                if(context->sleep_purpose == SLEEP_on_decl){
-                    b32 is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(context->current_compilation_unit, sleep_on->atom) == IDENTIFIER_is_static;
-                    if(is_static) sleeper_table = &context->current_compilation_unit->static_sleeper_table;
-                }
-                
-                sleeper_table_add(sleeper_table, work, context->sleep_purpose, sleep_on);
-                return;
-            }
-            
-            // might not be the full type e.g. int (*a)
-            struct ast_type *lhs_type = declaration_list.type_specifier;
-            
-            if(sll_is_empty(declaration_list)){
-                // for struct this might be a struct declaration, in which case  we are done.
-                if(lhs_type->kind == AST_struct || lhs_type->kind == AST_union){
-                    struct ast_compound_type *compound = cast(struct ast_compound_type *)lhs_type;
-                    if(compound->identifier.size == 0){
-                        // @cleanup: does this report the error in the wrong spot, if we have:
-                        //     typedef struct {} asd;
-                        //     asd;
-                        report_warning(context, WARNING_does_not_declare_anything, compound->base.token, "Anonymous %s declaration does not declare anything.", compound->base.kind == AST_union ? "union" : "struct");
-                    }
-                }else if(declaration_list.defined_type_specifier && declaration_list.defined_type_specifier->kind == AST_enum){
-                    // these are fine. we could exectly check for enum{} I guess
-                }else if(declaration_list.type_specifier->kind == AST_unresolved_type){
-                    // these are fine, we got 'struct unresolved;'
-                }else{
-                    // we got 'u32;'
-                    report_warning(context, WARNING_does_not_declare_anything, get_current_token_for_error_report(context), "Declaration does not define anything.");
-                }
-                expect_token(context, TOKEN_semicolon, "Expected a ';' after a type definition at global scope.");
-                assert(!in_current_token_array(context));
-                
-                return;
-            }
-            
-            for(struct declaration_node *node = declaration_list.first; node; node = node->next){
-                
-                // @bug @incomplete @cleanup: This is apperantly where we evaluate initializers.
-                //                            This is not thread safe.
-                //                            Maybe this should happen in the backend anyway?
-                
-                struct ast_declaration *decl = node->decl;
-                if(decl->base.kind == AST_declaration){
-                    //
-                    // @note: if we have 'int a = 1;' and then later (or in a different compilation unit) 'int a;'
-                    //        we have already evaluated the initializer and should not do it again!
-                    //
-                    if(decl->assign_expr && !decl->memory_location){
-                        decl->memory_location = evaluate_static_initializer(context, decl);
-                    }
-                }
-            }
-            
-            if(declaration_list.last->decl->base.kind == AST_function && peek_token_eat(context, TOKEN_open_curly)){
-                struct ast_function *function = cast(struct ast_function *)declaration_list.last->decl;
-                parse_work->tokens.data += context->token_at;
-                parse_work->tokens.size -= context->token_at;
-                assert(parse_work->tokens.size > 0);
-                
-                parse_work->function = function;
-                
-                work_queue_push_work(context, &globals.work_queue_parse_functions, parse_work);
-            }else{
-                expect_token(context, TOKEN_semicolon, "Expected ';' after declaration at global scope.");
-                if(context->error) return;
-                assert(!in_current_token_array(context));
-            }
-            
-            return;
+            worker_parse_global_scope_entry(context, work);
         }break;
         case COMPILE_STAGE_parse_function:{
-            
-            struct parse_work *parse_work = cast(struct parse_work *)work->data;
-            context->current_compilation_unit = parse_work->compilation_unit;
-            
-            // @WARNING: 'function->base.token' is not necessarly the token you might expect, because predefines
-            //           might be first when we register the token. @cleanup: maybe we should adjust the token?
-            //           If you want to conditional breakpoint on some line, for now use scope->base.line instead.
-            //           Its token is the '{' that begins the body of the function.      16.05.2021
-            
-            struct ast_function *function = parse_work->function;
-            assert(function->base.kind == AST_function);
-            context->current_function = function;
-            
-            log_print("parsing: %.*s", function->identifier->amount, function->identifier->data);
-            
-            begin_token_array(context, parse_work->tokens);
-            
-            assert(function->scope->kind == AST_scope);
-            struct ast_scope *scope = (struct ast_scope *)function->scope;
-            context->current_scope = scope;
-            
-            // :unresolved_types
-            //
-            // For a function, unresolved arguments and return types are allowed.
-            // For example, if there is just a random function declaration at global scope, like:
-            //     struct unresolved_return unused_function(struct unresolved_argument argument);
-            // This should compile. 
-            // This means that we could also have encountered this version of the _first_ and 
-            // then later 'struct unresolved_return' and 'struct unresolved_argument' were filled in.
-            // Hence, at this point the return type and the arguments might be unresolved and we need to 
-            // resolve them here.
-            //                                                                      07.02.2023
-            
-            maybe_resolve_unresolved_type_or_sleep_or_error(context, &function->type->return_type);
-            if(context->error) return;
-            
-            for_ast_list(function->type->argument_list){
-                assert(it->value->kind == AST_declaration);
-                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return;
-                
-                parser_register_declaration(context, decl);
-            }
-            
-            if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm){
-                //
-                // Special case for __declspec(inline_asm) in this case we only want a single 'ast_asm_block'
-                //
-                
-                struct ast_asm_block *asm_block = parser_ast_push(context, function->scope->token, asm_block);
-                set_resolved_type(&asm_block->base, &globals.typedef_void, null);
-                
-                context->in_inline_asm_function = function->base.token;
-                parse_asm_block(context, asm_block);
-                context->in_inline_asm_function = null;
-                
-                if(function->type->return_type != &globals.typedef_void){
-                    if(asm_block->instructions.last == null || asm_block->instructions.last->memonic != MEMONIC_return_from_inline_asm_function){
-                        struct string type_string = push_type_string(&context->scratch, &context->scratch, function->type->return_type);
-                        report_error(context, function->base.token, "__declspec(inline_asm)-function has return type '%.*s' but no return statement was found.", type_string.size, type_string.data);
-                    }
-                }
-                
-                ast_list_append(&scope->statement_list, context->arena, &asm_block->base);
-            }else{
-                //
-                // Parse the function!
-                //
-                parse_imperative_scope(context);
-            }
-            
-            if(context->error) return;
-            
-            assert(!in_current_token_array(context));
-            
-            parser_scope_pop(context, scope);
-            
-            for(struct ast_list_node *node1 = function->goto_list.first; node1; node1 = node1->next){
-                struct ast_goto *ast_goto = cast(struct ast_goto *)node1->value;
-                b32 found = false;
-                for(struct ast_list_node *node2 = function->label_list.first; node2; node2 = node2->next){
-                    struct ast_label *label = cast(struct ast_label *)node2->value;
-                    if(atoms_match(label->ident, ast_goto->ident)){
-                        ast_goto->label_to_goto = label;
-                        found = true;
-                        break;
-                    }
-                }
-                
-                if(!found){
-                    report_error(context, ast_goto->base.token, "'goto' to undefined label '%.*s'.", ast_goto->ident.amount, ast_goto->ident.data);
-                    return;
-                }
-            }
-            function->stack_space_needed = context->current_emit_offset_of_rsp;
-            
-            if(atoms_match(function->identifier->atom, globals.keyword_main)){
-                // "If the return type of the 'main' function is a type compatible with int, [...]
-                //  reaching the } that terminates the main function returns a value of 0."
-                if(function->type->return_type == &globals.typedef_s32){
-                    
-                    // @cleanup: is this the correct token?
-                    struct token *end_curly = get_current_token_for_error_report(context);
-                    struct ast_return *ast_return = parser_ast_push(context, end_curly, return);
-                    ast_return->expr = ast_push_s32_literal(context, end_curly, 0);
-                    set_resolved_type(&ast_return->base, &globals.typedef_void, null);
-                    
-                    ast_list_append(&scope->statement_list, context->arena, &ast_return->base);
-                }
-            }
-            
-            context->current_function = null;
+            worker_parse_function(context, work);
         }break;
         case COMPILE_STAGE_emit_code:{
-            struct ast_function *function = (void *)work->data;
-            assert(function->base.kind == AST_function);
-            assert(!function->memory_location);
-            
-            emit_code_for_function(context, function);
-            
-            for_ast_list(function->static_variables){
-                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                assert(!decl->memory_location);
-                if(decl->assign_expr){
-                    decl->memory_location = evaluate_static_initializer(context, decl);
-                }
-            }
+            worker_emit_code(context, work);
         }break;
         invalid_default_case();
     }
