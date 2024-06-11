@@ -3295,11 +3295,12 @@ func u32 work_thread_proc(void *param){
     
     log_print("starting thread %d", info->thread_index);
     
-    struct memory_arena main_arena = create_memory_arena(giga_bytes(64), 2.0f, mega_bytes(1));
+    struct memory_arena main_arena = create_memory_arena(giga_bytes(8), 2.0f, mega_bytes(1));
     
     struct context *context = push_struct(&main_arena, struct context);
     info->context = context;
     init_context(context, info, &main_arena);
+    
     
     begin_counter(context, thread_total);
     
