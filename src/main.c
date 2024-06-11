@@ -1342,13 +1342,7 @@ func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, 
     invalid_code_path;
 }
 
-func void wake_up_sleepers(struct context *context, struct token *sleep_on, enum sleep_purpose purpose){
-    
-    // @note: this logic needs to match the call to sleeper_table_add.
-    struct sleeper_table *sleeper_table = &globals.sleeper_table;
-    
-    b32 is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(context->current_compilation_unit, sleep_on->atom) == IDENTIFIER_is_static;
-    if(is_static) sleeper_table = &context->current_compilation_unit->static_sleeper_table;
+func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sleep_on, enum sleep_purpose purpose){
     
     log_print("   waking sleepers for: %.*s", sleep_on->amount, sleep_on->data);
     
@@ -1618,7 +1612,10 @@ func struct ast_declaration *parser_register_declaration(struct context *context
     }else{
         // we are at global scope: register it globally
         
-        struct ast_table *table = compilation_unit_get_declaration_table_for_ident(context->current_compilation_unit, decl->identifier->atom);
+        struct compilation_unit *compilation_unit = context->current_compilation_unit;
+        
+        int declaration_is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(compilation_unit, decl->identifier->atom) == IDENTIFIER_is_static;
+        struct ast_table *table = declaration_is_static ? &compilation_unit->static_declaration_table : &globals.global_declarations;
         struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(table, &decl->base, decl->base.token);
         
         // @note: if there is a redeclaration this should always return this redeclaraton (the global one, that we can find in the table)
@@ -1739,7 +1736,9 @@ func struct ast_declaration *parser_register_declaration(struct context *context
             return decl;
         }
         
-        wake_up_sleepers(context, decl->identifier, SLEEP_on_decl);
+        struct sleeper_table *sleeper_table = declaration_is_static ? &compilation_unit->static_sleeper_table : &globals.sleeper_table;
+        
+        wake_up_sleepers(sleeper_table, decl->identifier, SLEEP_on_decl);
     }
     return decl;
 }
@@ -1837,8 +1836,7 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         return;
     }
     
-    wake_up_sleepers(context, ident, SLEEP_on_struct);
-    return;
+    wake_up_sleepers(&globals.sleeper_table, ident, SLEEP_on_struct);
 }
 
 func void parser_emit_memory_location(struct context *context, struct ast_declaration *decl){
