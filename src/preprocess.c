@@ -3196,6 +3196,9 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         // the #if should also be disabled.
                         // 
                         assert(!node->is_true);
+                        
+                        // Skip the condition as we are ignoring it.
+                        while(!peek_token_raw(context, TOKEN_newline)) next_token_raw(context);
                     }
                 }break; 
                 case DIRECTIVE_ifdef:
