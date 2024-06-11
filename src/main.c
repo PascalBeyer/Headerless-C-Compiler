@@ -349,7 +349,7 @@ static struct{
     struct work_queue work_queue_tokenize_files;
     struct work_queue work_queue_parse_global_scope_entries;
     struct work_queue work_queue_parse_functions;
-    struct work_queue work_queue_parse_emit_code;
+    struct work_queue work_queue_emit_code;
     HANDLE wake_event;
     
     struct sleeper_table sleeper_table;
@@ -3232,78 +3232,26 @@ func void worker_emit_code(struct context *context, struct work_queue_entry *wor
     }
 }
 
-// @cleanup: rename
-func void parser_do_work(struct context *context, struct work_queue_entry *work){
+func int worker_work(struct context *context, struct work_queue *queue, void (*worker)(struct context *context, struct work_queue_entry *work)){
+    struct work_queue_entry *work = work_queue_get_work(queue);
+    if(!work) return 0;
+    
+    struct temporary_memory scratch_temp = begin_temporary_memory(&context->scratch);
     
     reset_context(context);
     
-    switch(globals.compile_stage){
-        case COMPILE_STAGE_tokenize_files:{
-            worker_tokenize_file(context, work);
-        }break;
-        case COMPILE_STAGE_parse_global_scope_entries:{
-            worker_parse_global_scope_entry(context, work);
-        }break;
-        case COMPILE_STAGE_parse_function:{
-            worker_parse_function(context, work);
-        }break;
-        case COMPILE_STAGE_emit_code:{
-            worker_emit_code(context, work);
-        }break;
-        invalid_default_case();
-    }
-}
-
-func struct token *push_dummy_token(struct memory_arena *arena, struct atom token_atom, enum token_type token_type){
+    worker(context, work);
     
-    struct token *token = push_struct(arena, struct token);
-    token->type   = token_type;
-    token->atom   = token_atom;
-    token->file_index = -1; // invalid file index.
-    token->line   = 1;
-    token->column = 1;
+    end_temporary_memory(scratch_temp);
     
-    return token;
-}
-
-
-// returns whether or not we should continue;
-func b32 do_one_work(struct context *context){
-    struct work_queue *queue;
     
-    switch(globals.compile_stage){
-        case COMPILE_STAGE_tokenize_files:{
-            queue = &globals.work_queue_tokenize_files;
-        }break;
-        case COMPILE_STAGE_parse_global_scope_entries:{
-            queue = &globals.work_queue_parse_global_scope_entries;
-        }break;
-        case COMPILE_STAGE_parse_function:{
-            queue = &globals.work_queue_parse_functions;
-        }break;
-        case COMPILE_STAGE_emit_code:{
-            queue = &globals.work_queue_parse_emit_code;
-        }break;
-        invalid_default_case(queue = null);
+    if(context->error){
+        atomic_store(b32, globals.an_error_has_occurred, true);
     }
     
-    struct work_queue_entry *work = work_queue_get_work(queue);
     
-    if(work){
-        struct temporary_memory scratch_temp = begin_temporary_memory(&context->scratch);
-        
-        parser_do_work(context, work);
-        assert(&queue->work_entries_in_flight > 0);
-        atomic_add(&queue->work_entries_in_flight, -1);
-        
-        if(context->error){
-            atomic_store(b32, globals.an_error_has_occurred, true);
-        }
-        
-        end_temporary_memory(scratch_temp);
-        return true;
-    }
-    return false;
+    atomic_add(&queue->work_entries_in_flight, -1);
+    return 1;
 }
 
 
@@ -3318,30 +3266,47 @@ func u32 work_thread_proc(void *param){
     info->context = context;
     init_context(context, info, &main_arena);
     
-    
     begin_counter(context, thread_total);
     
-    while(true){
-        b32 should_continue = do_one_work(context);
-        assert(context->arena->temp_count == 0);
+    for(enum compile_stage stage = COMPILE_STAGE_tokenize_files; stage < COMPILE_STAGE_count; stage++){
         
-        if(!should_continue){
-            begin_counter(context, thread_sleep);
+        static struct{
+            struct work_queue *queue;
+            void (*worker)(struct context *context, struct work_queue_entry *work);
+        } stage_data[COMPILE_STAGE_count] = {
+            {.queue = &globals.work_queue_tokenize_files,             .worker = worker_tokenize_file },
+            {.queue = &globals.work_queue_parse_global_scope_entries, .worker = worker_parse_global_scope_entry },
+            {.queue = &globals.work_queue_parse_functions,            .worker = worker_parse_function },
+            {.queue = &globals.work_queue_emit_code,                  .worker = worker_emit_code },
+        };
+        
+        while(globals.compile_stage == stage){
+            int should_continue = worker_work(context, stage_data[stage].queue, stage_data[stage].worker);
             
-            log_print("good night!");
-            WaitForSingleObject(globals.wake_event, INFINITE);
-            log_print("woke up");
-            
-            end_counter(context, thread_sleep);
+            if(!should_continue){
+                WaitForSingleObject(globals.wake_event, INFINITE);
+            }
         }
-        
-        if(globals.threads_should_exit) break;
     }
     
     end_counter(context, thread_total);
     
     return 0;
 }
+
+
+func struct token *push_dummy_token(struct memory_arena *arena, struct atom token_atom, enum token_type token_type){
+    
+    struct token *token = push_struct(arena, struct token);
+    token->type   = token_type;
+    token->atom   = token_atom;
+    token->file_index = -1; // invalid file index.
+    token->line   = 1;
+    token->column = 1;
+    
+    return token;
+}
+
 
 func struct ast_function *get_entry_point_or_error(struct context *context){
     if(globals.an_error_has_occurred) return null;
@@ -4743,7 +4708,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         os_create_thread(work_thread_proc, &thread_infos[thread_index]);
     }
     
-    while(globals.work_queue_tokenize_files.work_entries_in_flight > 0) do_one_work(context);
+    while(globals.work_queue_tokenize_files.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_tokenize_files, worker_tokenize_file);
     
     assert(globals.work_queue_tokenize_files.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
@@ -4780,7 +4745,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     globals.compile_stage = COMPILE_STAGE_parse_global_scope_entries;
     
-    while(globals.work_queue_parse_global_scope_entries.work_entries_in_flight > 0) do_one_work(context);
+    while(globals.work_queue_parse_global_scope_entries.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_parse_global_scope_entries, worker_parse_global_scope_entry);
     
     assert(globals.work_queue_parse_global_scope_entries.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
@@ -4834,9 +4799,10 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     stage_two_parse_functions_time = os_get_time_in_seconds();
     
     while(globals.work_queue_parse_functions.work_entries_in_flight > 0){
-        do_one_work(context);
+        worker_work(context, &globals.work_queue_parse_functions, worker_parse_function);
         assert(!context->should_sleep);
     }
+    
     assert(globals.work_queue_parse_functions.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
     
@@ -4907,7 +4873,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                     function->scope = &parser_push_new_scope(context, function->base.token, SCOPE_FLAG_is_function_scope)->base;
                 }
                 
-                work_queue_push_work(context, &globals.work_queue_parse_emit_code, function);
+                work_queue_push_work(context, &globals.work_queue_emit_code, function);
             }
         }
         
@@ -4924,7 +4890,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic) continue;
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
                 
-                work_queue_push_work(context, &globals.work_queue_parse_emit_code, function);
+                work_queue_push_work(context, &globals.work_queue_emit_code, function);
             }
         }
         
@@ -4995,7 +4961,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             }
             
             // queue the entry_point.
-            work_queue_push_work(context, &globals.work_queue_parse_emit_code, initial_function);
+            work_queue_push_work(context, &globals.work_queue_emit_code, initial_function);
             
             struct reachability_stack_node{
                 struct reachability_stack_node *next;
@@ -5034,7 +5000,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                             // Don't queue it, don't recurse into it, but also do not error.
                             
                             if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
-                                work_queue_push_work(context, &globals.work_queue_parse_emit_code, function);
+                                work_queue_push_work(context, &globals.work_queue_emit_code, function);
                             }
                             // note: we only want to recurse once into any given function.
                             struct reachability_stack_node *new_node = push_struct(&context->scratch, struct reachability_stack_node);
@@ -5053,10 +5019,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         end_temporary_memory(temp);
     }
     
-    while(globals.work_queue_parse_emit_code.work_entries_in_flight > 0){
-        do_one_work(context);
-    }
-    assert(globals.work_queue_parse_emit_code.work_entries_in_flight == 0);
+    while(globals.work_queue_emit_code.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_emit_code, worker_emit_code);
+    assert(globals.work_queue_emit_code.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
     
     
