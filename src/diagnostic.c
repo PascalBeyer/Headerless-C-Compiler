@@ -238,16 +238,17 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_array_of_unknown_size_never_filled_in] = 1,
 };
 
+
+func int should_report_warning_for_token(struct context *context, struct token *token){
+    return globals.report_warnings_in_system_includes || context->in_error_report || !token || !globals.file_table.data[token->file_index]->is_system_include;
+}
+
 __declspec(noinline) func void report_warning(struct context *context, enum warning_type warning, struct token *token, char *format, ...){
     if(context->should_exit_statement) return;
     if(context->should_sleep) return;
     if(!warning_enabled[warning]) return;
     
-    // @cleanup: For now, always report warnings, when we are in an `error_report`, even if its in a system include.
-    if(!globals.report_warnings_in_system_includes && !context->in_error_report && token && globals.file_table.data[token->file_index]->is_system_include){
-        return;
-    }
-    
+    if(!should_report_warning_for_token(context, token)) return;
 
     if(context->warnings_reported > 100) return;
     context->warnings_reported += 1;

@@ -1600,12 +1600,12 @@ func struct ast_declaration *parser_register_declaration(struct context *context
         struct ast_declaration *redecl = lookup_declaration(context, context->current_compilation_unit, decl->identifier->atom);
         
         if(redecl){
-            // :Error
-            begin_error_report(context);
-            report_warning(context, WARNING_shadowing, decl->base.token, "Declaration hides previous declaration.");
-            report_warning(context, WARNING_shadowing, redecl->base.token, "... Here is the previous declaration.");
-            end_error_report(context);
-            //return decl;
+            if(should_report_warning_for_token(context, decl->base.token)){
+                begin_error_report(context);
+                report_warning(context, WARNING_shadowing, decl->base.token, "Declaration hides previous declaration.");
+                report_warning(context, WARNING_shadowing, redecl->base.token, "... Here is the previous declaration.");
+                end_error_report(context);
+            }
         }
         
         parser_register_declaration_in_local_scope_without_checking_for_redeclarations(context, scope, decl);
@@ -1792,12 +1792,15 @@ func void register_compound_type(struct context *context, struct ast_type *type,
             //     return 0;
             // }
             // 
-            begin_error_report(context);
-            report_warning(context, WARNING_shadowing, type->token, "Redeclaration of type.");
-            report_warning(context, WARNING_shadowing, redecl->token, "... Here was the previous declaration.");
-            end_error_report(context);
+            // 
+            
+            if(should_report_warning_for_token(context, type->token)){
+                begin_error_report(context);
+                report_warning(context, WARNING_shadowing, type->token, "Redeclaration of type.");
+                report_warning(context, WARNING_shadowing, redecl->token, "... Here was the previous declaration.");
+                end_error_report(context);
+            }
         }
-        
         
         struct ast_scope *scope = context->current_scope;
         u32 index = scope->amount_of_compound_types++;
