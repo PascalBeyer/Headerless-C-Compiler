@@ -6971,7 +6971,7 @@ case TOKEN_##type_name:{                                                 \
                         decl->offset_on_stack = -1;
                         decl->compilation_unit = context->current_compilation_unit;
                         
-                        decl = parser_register_declaration(context, decl);
+                        decl = register_declaration(context, decl);
                         
                         register_compound_member(context, ast_enum, ident, &ast_enum->base, current_value);
                         
@@ -7444,7 +7444,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             // @note: After this, 'decl' might not be 'function', 
             //        because there might have been a prior declaration.
-            decl = parser_register_declaration(context, &function->as_decl);
+            decl = register_declaration(context, &function->as_decl);
             if(context->should_sleep) goto end; // @cleanup: should_sleep?
             
             if(!context->current_scope && scope){
@@ -7525,7 +7525,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             //    int a = 1;
             // works (we would otherwise not call 'evaluate_initializer' on the right decl).
             // 
-            decl = parser_register_declaration(context, decl);
+            decl = register_declaration(context, decl);
             if(context->should_exit_statement) goto end;
             
             if(peek_token(context, TOKEN_equals)){

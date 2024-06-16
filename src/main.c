@@ -1592,7 +1592,7 @@ func void parser_register_declaration_in_local_scope_without_checking_for_redecl
 
 func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *given);
 
-func struct ast_declaration *parser_register_declaration(struct context *context, struct ast_declaration *decl){
+func struct ast_declaration *register_declaration(struct context *context, struct ast_declaration *decl){
     if(context->should_sleep) return decl;
     struct ast_scope *scope = context->current_scope;
     
@@ -3146,7 +3146,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
         if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return;
         
-        parser_register_declaration(context, decl);
+        register_declaration(context, decl);
     }
     
     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm){
