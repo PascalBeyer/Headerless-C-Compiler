@@ -56,30 +56,20 @@ struct thread_info{
     s64 thread_index;
 };
 
-
-// @cleanup: can we just put enum and union in here and it's free?
-enum sleep_purpose{
-    SLEEP_on_struct, // should be called sleep_on_compound
-    SLEEP_on_decl,
-};
-
 struct sleeper_node{
     union{
         struct{
-            u64 token_and_sleep_purpose;
+            struct token *token;
             struct work_queue_entry *first_sleeper;
         };
         m128 mem;
     };
 };
 
-struct token *sleeper_node__get_token(struct sleeper_node *sleeper_node){
-    return (struct token *)(sleeper_node->token_and_sleep_purpose & ~1);
-}
-
-enum sleep_purpose sleeper_node__get_sleep_purpose(struct sleeper_node *sleeper_node){
-    return (enum sleep_purpose)(sleeper_node->token_and_sleep_purpose & 1);
-}
+enum {
+    SLEEP_on_decl,
+    SLEEP_on_struct,
+};
 
 struct sleeper_table{
     struct sleeper_node *nodes;
@@ -90,6 +80,10 @@ struct sleeper_table{
     s64 is_locked_for_growing;
     s64 threads_in_flight;
 };
+
+
+//_____________________________________________________________________________________________________________________
+// Ast table
 
 struct ast_node{
     union{
@@ -110,6 +104,155 @@ struct ast_table{
     s64 is_locked_for_growing;
     s64 threads_in_flight;
 };
+
+
+func struct ast_table ast_table_create(smm initial_capacity){
+    struct ast_table ret = zero_struct;
+    ret.capacity = initial_capacity;
+    ret.mask = ret.capacity - 1;
+    smm byte_size = ret.capacity * sizeof(struct ast_node);
+    ret.nodes = os_allocate_memory(byte_size);
+    
+    if(!ret.nodes){
+        print("Memory failure in ast table creation\n"); 
+        os_panic(1);
+    }
+    
+    return ret;
+}
+
+func void maybe_grow_ast_table__internal(struct ast_table *table){
+    
+    if(table->amount_of_nodes + 1 > (table->capacity >> 1)){
+        
+        // Lets wait until there are not threads in flight.
+        while(atomic_load(s64, table->threads_in_flight));
+        
+        // print_ast_table(table);
+        log_print("GROWING AST TABLE! %d\n", table->amount_of_nodes);
+        u64 old_capacity = table->capacity;
+        struct ast_node *old_nodes = table->nodes;
+        table->capacity <<= 1;
+        void *memory = os_allocate_memory(table->capacity * sizeof(*table->nodes));
+        if(!memory){
+            print("Memory failure in ast table.\n");
+            os_panic(1);
+        }
+        table->nodes = memory;
+        table->mask = table->capacity - 1;
+        
+        for(u64 i = 0; i < old_capacity; i++){
+            struct ast_node *node = old_nodes + i;
+            if(!node->token) continue;
+            
+            u64 slot = node->token->atom.string_hash & table->mask;
+            for(u64 slot_offset = 0; slot_offset < table->capacity; slot_offset++){
+                struct ast_node *new_node = table->nodes + ((slot + slot_offset) & table->mask);
+                if(new_node->token) continue;
+                *new_node = *node;
+                break;
+            }
+        }
+        os_free_memory(old_nodes);
+        
+        // print_ast_table(table);
+    }
+    
+}
+
+func struct ast *ast_table_add_or_return_previous_entry(struct ast_table *table, struct ast *ast_to_insert, struct token *token){
+    while(true){
+        if(atomic_load(s64, table->is_locked_for_growing)) continue;
+        
+        // @cleanup: maybe these conditions need atomic loads
+        if(table->amount_of_nodes + 1 > (table->capacity >> 1)){
+            
+            // ***
+            
+            //spin until WE set table->is_locked_for_growing
+            void *old_is_locked = atomic_compare_and_swap(&table->is_locked_for_growing, (void *)true, (void *)false);
+            if(old_is_locked) continue;
+            // we are the thread that set 'is_locked_for_growing' to true
+            
+            // we could have set the condition ironiously if the actuall growing thead finished while
+            // we were at ***, so lets check the condition again
+            
+            maybe_grow_ast_table__internal(table);
+            // unlock
+            table->is_locked_for_growing = false;
+        }
+        
+        break;
+    }
+    
+    atomic_preincrement(&table->threads_in_flight);
+    
+    // @WARNING: this portion needs to stay in sync with :c_compat_build_global_definition_table
+    
+    assert(ast_to_insert);
+    u64 index = (token->atom.string_hash & table->mask);
+    assert(index < table->capacity);
+    
+    struct ast_node to_insert;
+    to_insert.token = token;
+    to_insert.ast = ast_to_insert;
+    
+    for(u64 i = 0; i < table->capacity; i++){
+        struct ast_node *node = table->nodes + index;
+        struct ast *ast = node->ast;
+        
+        if(ast){
+            if(node->token == token || atoms_match(node->token->atom, token->atom)){
+                log_print("   allready inserted");
+                
+                atomic_predecrement(&table->threads_in_flight);
+                return ast;
+            }
+            index += 1;
+            index &= table->mask;
+        }else{
+            b32 success = atomic_compare_and_swap_128(&node->mem, to_insert.mem, &(m128)zero_struct);
+            if(success){
+                atomic_add((s64 *)&table->amount_of_nodes, 1);
+                atomic_predecrement(&table->threads_in_flight);
+                return null;
+            }
+            // @note: Don't increment, as someone could have just added _us_ in here and we then
+            //        want to return the redecl.
+        }
+    }
+    
+    invalid_code_path;
+}
+
+func struct ast *ast_table_get(struct ast_table *table, struct atom atom){
+    while(atomic_load(s64, table->is_locked_for_growing));
+    
+    atomic_preincrement(&table->threads_in_flight);
+    
+    u64 index = atom.string_hash & table->mask;
+    assert(index < table->capacity);
+    
+    for(u64 i = 0; i < table->capacity; i++){
+        struct ast_node *node = table->nodes + index;
+        struct ast *ast = node->ast;
+        
+        if(!ast) {
+            atomic_predecrement(&table->threads_in_flight);
+            return null;
+        }
+        if(atoms_match(node->token->atom, atom)){
+            atomic_predecrement(&table->threads_in_flight);
+            return ast;
+        }
+        
+        index += 1;
+        index &= table->mask;
+    }
+    
+    invalid_code_path;
+}
+
 
 //_____________________________________________________________________________________________________________________
 
@@ -170,7 +313,6 @@ struct library_node{
         struct string string;
         struct dll_import_node *import_node;
     } *import_symbol_string_table;
-    
 };
 
 struct keyword_table_entry{
@@ -352,7 +494,8 @@ static struct{
     struct work_queue work_queue_emit_code;
     HANDLE wake_event;
     
-    struct sleeper_table sleeper_table;
+    struct sleeper_table compound_sleeper_table;
+    struct sleeper_table declaration_sleeper_table;
     
     struct ast_table global_declarations;
     struct ast_table compound_types;
@@ -454,155 +597,6 @@ func b32 type_is_array_of_unknown_size(struct ast_type *type){
         if(array->is_of_unknown_size) return true;
     }
     return false;
-}
-
-//_____________________________________________________________________________________________________________________
-
-func struct ast_table ast_table_create(smm initial_capacity){
-    struct ast_table ret = zero_struct;
-    ret.capacity = initial_capacity;
-    ret.mask = ret.capacity - 1;
-    smm byte_size = ret.capacity * sizeof(struct ast_node);
-    ret.nodes = os_allocate_memory(byte_size);
-    
-    if(!ret.nodes){
-        print("Memory failure in ast table creation\n"); 
-        os_panic(1);
-    }
-    
-    return ret;
-}
-
-func void maybe_grow_ast_table__internal(struct ast_table *table){
-    
-    if(table->amount_of_nodes + 1 > (table->capacity >> 1)){
-        
-        // Lets wait until there are not threads in flight.
-        while(atomic_load(s64, table->threads_in_flight));
-        
-        // print_ast_table(table);
-        log_print("GROWING AST TABLE! %d\n", table->amount_of_nodes);
-        u64 old_capacity = table->capacity;
-        struct ast_node *old_nodes = table->nodes;
-        table->capacity <<= 1;
-        void *memory = os_allocate_memory(table->capacity * sizeof(*table->nodes));
-        if(!memory){
-            print("Memory failure in ast table.\n");
-            os_panic(1);
-        }
-        table->nodes = memory;
-        table->mask = table->capacity - 1;
-        
-        for(u64 i = 0; i < old_capacity; i++){
-            struct ast_node *node = old_nodes + i;
-            if(!node->token) continue;
-            
-            u64 slot = node->token->atom.string_hash & table->mask;
-            for(u64 slot_offset = 0; slot_offset < table->capacity; slot_offset++){
-                struct ast_node *new_node = table->nodes + ((slot + slot_offset) & table->mask);
-                if(new_node->token) continue;
-                *new_node = *node;
-                break;
-            }
-        }
-        os_free_memory(old_nodes);
-        
-        // print_ast_table(table);
-    }
-    
-}
-
-func struct ast *ast_table_add_or_return_previous_entry(struct ast_table *table, struct ast *ast_to_insert, struct token *token){
-    while(true){
-        if(atomic_load(s64, table->is_locked_for_growing)) continue;
-        
-        // @cleanup: maybe these conditions need atomic loads
-        if(table->amount_of_nodes + 1 > (table->capacity >> 1)){
-            
-            // ***
-            
-            //spin until WE set table->is_locked_for_growing
-            void *old_is_locked = atomic_compare_and_swap(&table->is_locked_for_growing, (void *)true, (void *)false);
-            if(old_is_locked) continue;
-            // we are the thread that set 'is_locked_for_growing' to true
-            
-            // we could have set the condition ironiously if the actuall growing thead finished while
-            // we were at ***, so lets check the condition again
-            
-            maybe_grow_ast_table__internal(table);
-            // unlock
-            table->is_locked_for_growing = false;
-        }
-        
-        break;
-    }
-    
-    atomic_preincrement(&table->threads_in_flight);
-    
-    // @WARNING: this portion needs to stay in sync with :c_compat_build_global_definition_table
-    
-    assert(ast_to_insert);
-    u64 index = (token->atom.string_hash & table->mask);
-    assert(index < table->capacity);
-    
-    struct ast_node to_insert;
-    to_insert.token = token;
-    to_insert.ast = ast_to_insert;
-    
-    for(u64 i = 0; i < table->capacity; i++){
-        struct ast_node *node = table->nodes + index;
-        struct ast *ast = node->ast;
-        
-        if(ast){
-            if(node->token == token || atoms_match(node->token->atom, token->atom)){
-                log_print("   allready inserted");
-                
-                atomic_predecrement(&table->threads_in_flight);
-                return ast;
-            }
-            index += 1;
-            index &= table->mask;
-        }else{
-            b32 success = atomic_compare_and_swap_128(&node->mem, to_insert.mem, &(m128)zero_struct);
-            if(success){
-                atomic_add((s64 *)&table->amount_of_nodes, 1);
-                atomic_predecrement(&table->threads_in_flight);
-                return null;
-            }
-            // @note: Don't increment, as someone could have just added _us_ in here and we then
-            //        want to return the redecl.
-        }
-    }
-    
-    invalid_code_path;
-}
-
-func struct ast *ast_table_get(struct ast_table *table, struct atom atom){
-    while(atomic_load(s64, table->is_locked_for_growing));
-    
-    atomic_preincrement(&table->threads_in_flight);
-    
-    u64 index = atom.string_hash & table->mask;
-    assert(index < table->capacity);
-    
-    for(u64 i = 0; i < table->capacity; i++){
-        struct ast_node *node = table->nodes + index;
-        struct ast *ast = node->ast;
-        
-        if(!ast) {
-            atomic_predecrement(&table->threads_in_flight);
-            return null;
-        }
-        if(atoms_match(node->token->atom, atom)){
-            atomic_predecrement(&table->threads_in_flight);
-            return ast;
-        }
-        
-        index += 1;
-        index &= table->mask;
-    }
-    
-    invalid_code_path;
 }
 
 //_____________________________________________________________________________________________________________________
@@ -1200,14 +1194,14 @@ func void sleeper_table_maybe_grow(struct sleeper_table *table){
                 
                 for(u64 i = 0; i < old_capacity; i++){
                     struct sleeper_node *node = old_nodes + i;
-                    if(!node->token_and_sleep_purpose) continue;
+                    if(!node->token) continue;
                     
-                    struct token *token = sleeper_node__get_token(node);
+                    struct token *token = node->token;
                     
                     u64 slot = token->string_hash & table->mask;
                     for(u64 slot_offset = 0; slot_offset < table->capacity; slot_offset++){
                         struct sleeper_node *new_node = table->nodes + ((slot + slot_offset) & table->mask);
-                        if(new_node->token_and_sleep_purpose) continue;
+                        if(new_node->token) continue;
                         *new_node = *node;
                         break;
                     }
@@ -1223,7 +1217,7 @@ func void sleeper_table_maybe_grow(struct sleeper_table *table){
     }
 }
 
-func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry *entry, enum sleep_purpose sleep_purpose, struct token *token){
+func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry *entry, struct token *token){
     sleeper_table_maybe_grow(table);
     
     atomic_preincrement(&table->threads_in_flight);
@@ -1235,18 +1229,17 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
     assert(index < table->capacity);
     
     struct sleeper_node to_insert;
-    to_insert.token_and_sleep_purpose = (u64)token | sleep_purpose;
+    to_insert.token = token;
     to_insert.first_sleeper = entry;
     entry->next = null;
     
     for(u32 i = 0; i < table->capacity; i++){
         struct sleeper_node *node = table->nodes + index;
-        if(node->token_and_sleep_purpose){
+        if(node->token){
             
-            struct token *test_token = sleeper_node__get_token(node);
-            enum sleep_purpose test_sleep_purpose = sleeper_node__get_sleep_purpose(node);
+            struct token *test_token = node->token;
             
-            if(atoms_match(test_token->atom, token->atom) && test_sleep_purpose == sleep_purpose){
+            if(atoms_match(test_token->atom, token->atom)){
                 // add entry to the list 'node->first_sleeper' atomically
                 struct work_queue_entry *list;
                 do{
@@ -1287,7 +1280,7 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
     invalid_code_path;
 }
 
-func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, enum sleep_purpose sleep_purpose, struct token *token){
+func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, struct token *token){
     sleeper_table_maybe_grow(table);
     atomic_preincrement(&table->threads_in_flight);
     
@@ -1297,12 +1290,12 @@ func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, 
     assert(index < table->capacity);
     
     struct sleeper_node to_insert;
-    to_insert.token_and_sleep_purpose = (u64)token | sleep_purpose;
+    to_insert.token = token;
     to_insert.first_sleeper = 0;
     
     for(u64 i = 0; i < table->capacity; i++){
         struct sleeper_node *node = table->nodes + index;
-        if(!node->token_and_sleep_purpose){
+        if(!node->token){
             b32 success = atomic_compare_and_swap_128(&node->mem, to_insert.mem, &(m128)zero_struct);
             if(success) {
                 atomic_add((s64 *)&table->amount_of_nodes, 1);
@@ -1314,10 +1307,9 @@ func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, 
             else continue;
         }
         
-        struct token *test_token = sleeper_node__get_token(node);
-        enum sleep_purpose test_purpose = sleeper_node__get_sleep_purpose(node);
+        struct token *test_token = node->token;
         
-        if(atoms_match(test_token->atom, token->atom) && test_purpose == sleep_purpose){
+        if(atoms_match(test_token->atom, token->atom)){
             // @cleanup: do we actually have to do this?
             // @cleanup: can we just put node->queue = 0?
             struct sleeper_node compare = to_insert;
@@ -1342,13 +1334,13 @@ func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, 
     invalid_code_path;
 }
 
-func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sleep_on, enum sleep_purpose purpose){
+func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sleep_on){
     
     log_print("   waking sleepers for: %.*s", sleep_on->amount, sleep_on->data);
     
     assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
     
-    struct work_queue_entry *first = sleeper_table_delete(sleeper_table, purpose, sleep_on);
+    struct work_queue_entry *first = sleeper_table_delete(sleeper_table, sleep_on);
     if(first){
         struct work_queue_entry *last = first;
         smm amount = 1;
@@ -1736,9 +1728,9 @@ func struct ast_declaration *register_declaration(struct context *context, struc
             return decl;
         }
         
-        struct sleeper_table *sleeper_table = declaration_is_static ? &compilation_unit->static_sleeper_table : &globals.sleeper_table;
+        struct sleeper_table *sleeper_table = declaration_is_static ? &compilation_unit->static_sleeper_table : &globals.declaration_sleeper_table;
         
-        wake_up_sleepers(sleeper_table, decl->identifier, SLEEP_on_decl);
+        wake_up_sleepers(sleeper_table, decl->identifier);
     }
     return decl;
 }
@@ -1839,7 +1831,7 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         return;
     }
     
-    wake_up_sleepers(&globals.sleeper_table, ident, SLEEP_on_struct);
+    wake_up_sleepers(&globals.compound_sleeper_table, ident);
 }
 
 func void parser_emit_memory_location(struct context *context, struct ast_declaration *decl){
@@ -3032,14 +3024,14 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
         assert(!parse_work->sleeping_ident || parse_work->sleeping_ident->type == TOKEN_identifier);
         
         // @note: this logic needs to match wake_up_sleepers
-        struct sleeper_table *sleeper_table = &globals.sleeper_table;
+        struct sleeper_table *sleeper_table = (context->sleep_purpose == SLEEP_on_decl) ? &globals.declaration_sleeper_table : &globals.compound_sleeper_table;
         
         if(context->sleep_purpose == SLEEP_on_decl){
             b32 is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(context->current_compilation_unit, sleep_on->atom) == IDENTIFIER_is_static;
             if(is_static) sleeper_table = &context->current_compilation_unit->static_sleeper_table;
         }
         
-        sleeper_table_add(sleeper_table, work, context->sleep_purpose, sleep_on);
+        sleeper_table_add(sleeper_table, work, sleep_on);
         return;
     }
     
@@ -4475,7 +4467,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         globals.wake_event = CreateEventA(0, true, 0, 0);
         
-        globals.sleeper_table = sleeper_table_create(1 << 8);
+        globals.declaration_sleeper_table = sleeper_table_create(1 << 8);
+        globals.compound_sleeper_table = sleeper_table_create(1 << 8);
         
         // :ast_tables
         globals.global_declarations = ast_table_create(1 << 8);
@@ -4766,7 +4759,11 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     // If we found some global thing that sleeps we want to exit before examining the local (static) sleeper tables, 
     // as things in there might sleep on global declarations.
     //
-    report_errors_for_unresolved_sleepers(context, &globals.sleeper_table);
+    
+    report_errors_for_unresolved_sleepers(context, &globals.compound_sleeper_table);
+    if(globals.an_error_has_occurred) goto end;
+    
+    report_errors_for_unresolved_sleepers(context, &globals.declaration_sleeper_table);
     if(globals.an_error_has_occurred) goto end;
     
     for(smm compilation_unit_index = 0; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
