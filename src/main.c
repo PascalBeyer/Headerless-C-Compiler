@@ -20,8 +20,7 @@ struct parse_work{
     struct token *sleeping_ident; // the one who sleeps. can be null if we don't know yet. For error reporting
     struct compilation_unit *compilation_unit;
     
-    struct ast_function *function;
-    struct ast_function_type *function_type; // @note: we need this, as functions are now 'unique' but their parameters are determined by their type, and the thus can change between declaration and definition
+    struct ast_function *function; // This is here to communicate between 'worker_parse_global_scope_entry' and 'worker_parse_function'.
 };
 
 struct work_tokenize_file{
@@ -3015,7 +3014,6 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
     
     struct declaration_list declaration_list = parse_declaration_list(context, null, null);
     if(context->error) return;
-    
     if(context->should_sleep){
         struct token *sleep_on = context->sleep_on;
         work->sleeping_on = context->sleep_on;
