@@ -3623,7 +3623,12 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         if(!defines_are_equivalent){
                             begin_error_report(context);
                             report_error(context, defined_identifier, "Redefinition of macro '%.*s'.", name.amount, name.data);
-                            report_error(context, redecl->defined_token, "... Here is the previous definition.");
+                            if(redecl->defined_token->file_index == -1){
+                                // @error: Print the actual definition.
+                                report_error(context, redecl->defined_token, "The previous definition was the predefined or a commandline argument.");
+                            }else{
+                                report_error(context, redecl->defined_token, "... Here is the previous definition.");
+                            }
                             end_error_report(context);
                             goto end;
                         }

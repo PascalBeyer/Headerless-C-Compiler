@@ -6370,7 +6370,8 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             //
             case TOKEN_declspec:{
                 struct token *open  = expect_token(context, TOKEN_open_paren, "Expected '(' after '__declspec'.");
-                struct token *directive = expect_token(context, TOKEN_identifier, "Expected a directive after '__declspec'.");
+                struct token *directive = peek_token(context, TOKEN_restrict) ? next_token(context) : expect_token(context, TOKEN_identifier, "Expected a directive after '__declspec'.");
+                
                 b32 skip = false;
                 
                 struct atom directive_string = directive->atom;

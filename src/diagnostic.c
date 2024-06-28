@@ -140,7 +140,9 @@ func void print_one_error_node(struct error_report_node *node){
         struct string str = token_get_string(token);
         if(token->type == TOKEN_embed) str = string("<embeded-data>");
         
-        assert(token->file_index < array_count(globals.file_table.data));
+        // @note: -1 is okay as we have a special file there that tells us * predefined token * as absolute file path.
+        assert(token->file_index == -1 || token->file_index < array_count(globals.file_table.data));
+        
         char *path = globals.file_table.data[token->file_index]->absolute_file_path;
         print("%s(%u,%u): %s ", path, token->line, token->column, error_kind_string[node->kind]);
         

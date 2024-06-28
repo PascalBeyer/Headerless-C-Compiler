@@ -178,6 +178,7 @@ static struct{
     {const_string("return"),        TOKEN_return},
     {const_string("__unaligned"),   TOKEN_unaligned},
     {const_string("__restrict"),    TOKEN_restrict},
+    {const_string("restrict"),      TOKEN_restrict},
     {const_string("const"),         TOKEN_const},
     {const_string("volatile"),      TOKEN_volatile},
     {const_string("static"),        TOKEN_static}, 

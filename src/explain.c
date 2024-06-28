@@ -256,6 +256,7 @@ func void report_errors_for_undefined_functions_and_types(struct context *contex
                     
                     if(!import){
                         report_error(context, function->base.token, "Function is not contained in any of the imported dlls.");
+                        report_error(context, function->token_that_referenced_this_function, "... Here the function was referenced.");
                     }
                     
                     function->dll_import_node = import;
