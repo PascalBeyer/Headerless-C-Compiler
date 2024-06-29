@@ -3267,10 +3267,10 @@ func u32 work_thread_proc(void *param){
             struct work_queue *queue;
             void (*worker)(struct context *context, struct work_queue_entry *work);
         } stage_data[COMPILE_STAGE_count] = {
-            {.queue = &globals.work_queue_tokenize_files,             .worker = worker_tokenize_file },
-            {.queue = &globals.work_queue_parse_global_scope_entries, .worker = worker_parse_global_scope_entry },
-            {.queue = &globals.work_queue_parse_functions,            .worker = worker_parse_function },
-            {.queue = &globals.work_queue_emit_code,                  .worker = worker_emit_code },
+            [COMPILE_STAGE_tokenize_files]             = {.queue = &globals.work_queue_tokenize_files,             .worker = worker_tokenize_file },
+            [COMPILE_STAGE_parse_global_scope_entries] = {.queue = &globals.work_queue_parse_global_scope_entries, .worker = worker_parse_global_scope_entry },
+            [COMPILE_STAGE_parse_function]             = {.queue = &globals.work_queue_parse_functions,            .worker = worker_parse_function },
+            [COMPILE_STAGE_emit_code]                  = {.queue = &globals.work_queue_emit_code,                  .worker = worker_emit_code },
         };
         
         while(globals.compile_stage == stage){
