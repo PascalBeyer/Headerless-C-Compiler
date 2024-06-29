@@ -4234,11 +4234,15 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         "#define _WIN64 1\n"
                         "#define _WIN32 1\n"
                         
-                        // @cleanup:  I feel like these should not be defined, but then the standard headers pretend we are gcc for some reason.
+                        // @cleanup: I feel like these should not be defined, but then the standard headers pretend we are gcc for some reason.
                         "#define _MSC_BUILD 0\n"
                         "#define _MSC_EXTENSIONS 1\n"
                         "#define _MSC_FUL_VER 192829336\n"
                         "#define _MSC_VER 1928\n"
+                        
+                        // @cleanup: I feel like I end up having to define this for every project I try to compile,
+                        //           even though really, we should not want to define it (maybe).
+                        "#define _CRT_DECLARE_NONSTDC_NAMES 1\n"
                         
                         "#define __assume(a) (void)0\n"
                         
