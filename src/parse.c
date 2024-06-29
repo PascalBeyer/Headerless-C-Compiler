@@ -7468,6 +7468,11 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 goto end;
             }
             
+            if(specifiers.specifier_flags & SPECIFIER_inline){
+                report_error(context, declarator.ident, "Data declaration cannot be marked 'inline'.");
+                goto end;
+            }
+            
             if(specifiers.specifier_flags & SPECIFIER_static){
                 if(specifiers.specifier_flags & SPECIFIER_dllexport){
                     report_error(context, declarator.ident, "Variable declared '__declspec(dllexport)' cannot also be declared 'static'.");
