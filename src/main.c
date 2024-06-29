@@ -3136,7 +3136,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
         if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return;
         
-        register_declaration(context, decl);
+        // Allow missing argument names.
+        if(decl->identifier != globals.invalid_identifier_token) register_declaration(context, decl);
     }
     
     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm){
