@@ -1546,7 +1546,7 @@ func void emit_pdb_line_info_for_ast__recursive(struct pdb_write_context *contex
             if(!decl->assign_expr) break;
             
             // dont emit lines for declarations that are static
-            if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist)) break;
+            if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)) break;
             
             if(decl->assign_expr->kind == AST_compound_literal){
                 // recurse into struct literals as these can be (and often are) multi line!
