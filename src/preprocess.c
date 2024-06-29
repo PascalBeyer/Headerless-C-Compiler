@@ -1452,7 +1452,9 @@ at     += size;
                     if(at[0] == '\\'){
                         if(at[1] == '\r' && at[2] == '\n'){
                             at += 3;
+                            line += 1;
                         }else{
+                            line += (at[1] == '\n');
                             at += 2; // Skip the escaped character, whatever it is.
                         }
                     }else if(at[0] == '\"'){
