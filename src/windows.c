@@ -218,6 +218,7 @@ typedef struct _SYSTEMTIME {
 
 
 __declspec(dllimport) void GetSystemTime(PSYSTEMTIME lpSystemTime);
+__declspec(dllimport) void GetLocalTime(PSYSTEMTIME lpSystemTime);
 __declspec(dllimport) ULONGLONG GetTickCount64(void);
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 

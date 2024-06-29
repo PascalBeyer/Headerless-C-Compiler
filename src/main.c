@@ -4258,6 +4258,13 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     string_list_postfix(&predefines, arena, string("#define _CRTIMP __declspec(dllimport)\n"));
                 }
                 
+                SYSTEMTIME LocalTime;
+                GetLocalTime(&LocalTime); // @cleanup: local time?
+                
+                const char months[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+                struct string date_define = push_format_string(arena, "#define __DATE__ \"%s %2d %4d\"\n", months[LocalTime.wMonth-1], LocalTime.wDay, LocalTime.wYear);
+                
+                string_list_prefix(&predefines, arena, date_define);
             }
             
             struct string predefines_string = string_list_flatten(predefines, arena);
