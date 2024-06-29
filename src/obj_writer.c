@@ -752,7 +752,7 @@ void print_obj(struct memory_arena *arena, struct memory_arena *scratch){
     struct ast_list defined_variables   = zero_struct;
     
     struct string_list directives = zero_struct;
-    string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\"LIBCMT\" /DEFAULTLIB:\"OLDNAMES\" /STACK:0x100000,0x100000"));
+    string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\"LIBCMT\" /DEFAULTLIB:\"OLDNAMES\" /STACK:0x100000,0x100000 "));
     
     for(smm compilation_unit_index = -1; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
         
