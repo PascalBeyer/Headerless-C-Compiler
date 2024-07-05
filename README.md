@@ -27,7 +27,7 @@ local functions, slices, etc, but all of these should be considered in the "desi
 ## Installing and Usage
 
 See the [release page](https://github.com/PascalBeyer/Headerless-C-Compiler/releases) for pre-build binaries. To compile from source invoke the `build_msvc.bat` with `cl.exe`,
-`link.exe` and `ucrt.lib` in your path (for example, from an [x64 Native Tools Command Prompt](https://learn.microsoft.com/en-us/cpp/build/building-on-the-command-line?view=msvc-170&viewFallbackFrom=vs-2019).
+`link.exe` and `ucrt.lib` in your path (for example, from an [x64 Native Tools Command Prompt](https://learn.microsoft.com/en-us/cpp/build/building-on-the-command-line?view=msvc-170&viewFallbackFrom=vs-2019)).
 
 To use standard library functions or Windows library functions, it is necessary to install a version of MSVC (I usually install the "Build Tools for Visual Studio")
 and the Windows SDK's.
@@ -181,7 +181,7 @@ Compilation runs through various stages. First, each compilation unit is preproc
 and then split up into global scope declarations. To facilitate out-of-order compilation, each of the global declarations
 is put in a work queue and individually passed to the parser (`parse.c`). At this stage, only the declarations are parsed,
 function definitions are parsed in a later stage. The parser differs from a "normal" C-parser in that 
-it does not immediately reports an error if it encounters an unknown identifier. 
+it does not immediately report an error if it encounters an unknown identifier. 
 Instead, the parser tells the containing declaration to "sleep" and only wake up once the unknown identifier is resolved.
 
 After all global declarations are known and parsed, the next stage is to parse function definitions into an abstract syntax tree.

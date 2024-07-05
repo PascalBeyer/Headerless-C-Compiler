@@ -1847,6 +1847,8 @@ func void print_coff(struct memory_arena *arena, struct memory_arena *scratch){
             header->ImageBase = 0x180000000;
         }
         
+        if(globals.image_base) header->ImageBase = globals.image_base;
+        
         header->SectionAlignment = 0x1000;
         header->FileAlignment    = 0x200;
         header->MajorOperatingSystemVersion = 6;

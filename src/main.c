@@ -356,6 +356,7 @@ static struct{
     b32 allow_dot_as_arrow;
     b32 dont_print_the_files_because_we_are_in_a_test_suite;
     smm seed_to_randomize_order_of_global_scope_entries;
+    u64 image_base;
     
     enum pe_subsystem{
         PE_SUBSYSTEM_console = 3,
@@ -3479,7 +3480,7 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
     // 
     // Search for the newest installed version, by iterating the subkeys.
     // 
-    //      Intalled Roots
+    //      Installed Roots
     //         > 10.0.17763.0
     //         > 10.0.18362.0
     //         > 10.0.19041.0
@@ -3496,6 +3497,8 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
         u32 sub_key_length = sizeof(subkey_name);
         u32 enumerate_key_result = RegEnumKeyExA(root_key, sub_key_index, subkey_name, &sub_key_length, null, null, null, null);
         if(enumerate_key_result != /*ERROR_SUCCESS*/0) break;
+        
+        // @cleanup: check if the corresponding directory exists.
         
         struct string version_string = {.data = (u8 *)subkey_name, .size = sub_key_length};
         
@@ -3749,6 +3752,21 @@ int main(int argc, char *argv[]){
             no_discard = true;
         }else if(string_match(argument, string("no_dynamic_base"))){
             globals.dynamic_base = false;
+        }else if(string_match(argument, string("base"))){
+            if(argument_index + 1 == argc){
+                print("Error: Expected argument after '%s'.\n", argv[argument_index]);
+                return 1;
+            }
+            
+            struct string base = cstring_to_string(argv[++argument_index]);
+            b32 success = true;
+            u64 number = string_to_u64(base, &success);
+            globals.image_base = number;
+            
+            if(!success){
+                print("Error: Could not parse image base.\n");
+                return 1;
+            }
         }else if(string_match(argument, string("dont_print_the_files"))){
             globals.dont_print_the_files_because_we_are_in_a_test_suite = true;
         }else if(string_match(argument, string("showIncludes")) || string_match(argument, string("show_includes"))){

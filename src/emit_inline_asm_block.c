@@ -1309,6 +1309,12 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 context->asm_block_return = emit_load(context, operand);
             }break;
             
+            case MEMONIC_bytes:{
+                for(u32 index = 0; index < inst->operands[0].size; index++){
+                    emit(inst->operands[0].data[index]);
+                }
+            }break;
+            
             default:{
                 report_internal_compiler_error(inst->token, "Unimplemented instruction '%.*s'.", inst->token->size, inst->token->data);
                 // os_panic(1337);
