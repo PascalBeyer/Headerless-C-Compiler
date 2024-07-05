@@ -117,6 +117,9 @@ struct asm_operand{
         struct{ // ASM_ARG_immediate
             u64 immediate;
         };
+        struct{
+            u8 *data; // for MEMONIC_bytes
+        };
     };
 };
 
@@ -401,6 +404,7 @@ enum memonic{
     MEMONIC_vpmovmskb,
     
     MEMONIC_return_from_inline_asm_function,
+    MEMONIC_bytes,
     
     MEMONIC_crc32,
     
@@ -463,6 +467,7 @@ static struct{
     // Zero operand memonics @cleanup: allow expicitly specifying implict registers?
     
     [MEMONIC_return_from_inline_asm_function] = {.memonic = const_string("return"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_reg | ASM_OP_KIND_xmm | ASM_OP_KIND_ymm },
+    [MEMONIC_bytes] = {.memonic = const_string("bytes"), .amount_of_operands = 0}, // We handle this manually.
     
     [MEMONIC_lock_prefix] = {.memonic = const_string("lock") },
     [MEMONIC_repe_prefix] = {.memonic = const_string("repe") },
@@ -1533,6 +1538,57 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             
             return push_asm_instruction(context, MEMONIC_movsd, 0, token);
         }
+    }
+    
+    if(memonic == MEMONIC_bytes){
+        struct asm_instruction *wrapper_instruction = push_asm_instruction(context, MEMONIC_bytes, 0, token);
+        
+        expect_token(context, TOKEN_open_curly, "Expected a '{' after 'bytes' in inline asm block.");
+        
+        u8 *data = push_data(&context->scratch, u8, 0x100);
+        u32 amount = 0;
+        u32 max = 0x100;
+        
+        while(in_current_token_array(context) && !peek_token(context, TOKEN_closed_curly)){
+            
+            struct token *byte_token = next_token(context);
+            
+            if(!token){
+                report_error(context, get_current_token_for_error_report(context), "Expected byte in bytes section.");
+                return wrapper_instruction;
+            }
+            
+            struct string lit = byte_token->string;
+            if(lit.size >= 2 && lit.data[0] == '0' && (lit.data[1]|32) == 'x'){
+                lit.size -= 2;
+                lit.data += 2;
+            }
+            
+            if(lit.size != 2){
+                report_error(context, byte_token, "Expected a byte of the form \"cd\" or \"0xcd\" in bytes memonic.");
+                return wrapper_instruction;
+            }
+            
+            u64 value = parse_hex_string_to_u64(&lit, 0);
+            
+            if(amount + 1 > max){
+                u8 *new_data = push_data(&context->scratch, u8, 2 * max);
+                memcpy(new_data, data, amount);
+                max = 2 * max;
+                data = new_data;
+            }
+            
+            data[amount++] = (u8)value;
+            
+            peek_token_eat(context, TOKEN_comma);
+        }
+        
+        wrapper_instruction->operands[0].size = amount;
+        wrapper_instruction->operands[0].data = push_data(context->arena, u8, amount);
+        memcpy(wrapper_instruction->operands[0].data, data, amount);
+        
+        expect_token(context, TOKEN_closed_curly, "Expected a '}' at the end of bytes.");
+        return wrapper_instruction;
     }
     
     u32 amount_of_operands = asm_parse_table[memonic].amount_of_operands;

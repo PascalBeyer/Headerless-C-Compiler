@@ -1040,19 +1040,6 @@ func struct parsed_integer parse_hex_literal(struct context *context, struct tok
     return ret;
 }
 
-func struct parsed_integer parse_integer(struct context *context, struct token *token){
-    if(token->type == TOKEN_base10_literal){
-        return parse_base10_literal(context, token);
-    }else if(token->type == TOKEN_hex_literal){
-        return parse_hex_literal(context, token);
-    }else if(token->type == TOKEN_binary_literal){
-        return parse_binary_literal(context, token);
-    }else{
-        assert(token->type == TOKEN_character_literal);
-        return parse_character_literal(context, token);
-    }
-}
-
 //_____________________________________________________________________________________________________________________
 
 func struct token_array tokenize_raw(struct context *context, struct string string, u32 file_index, b32 is_stupid_hash_hash_hack, smm *lines){
