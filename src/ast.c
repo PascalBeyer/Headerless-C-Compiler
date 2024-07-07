@@ -710,6 +710,7 @@ enum scope_flags{
     SCOPE_FLAG_can_continue      = 0x1,
     SCOPE_FLAG_can_break         = 0x2,
     SCOPE_FLAG_is_function_scope = 0x4, // this is the root scope of a functions, this might still have a parent, if the function is local.
+    SCOPE_FLAG_returns_a_value   = 0x8,
 };
 
 struct ast_scope{

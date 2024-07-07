@@ -3198,6 +3198,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         //  reaching the } that terminates the main function returns a value of 0."
         if(function->type->return_type == &globals.typedef_s32){
             
+            scope->flags |= SCOPE_FLAG_returns_a_value;
+            
             // @cleanup: is this the correct token?
             struct token *end_curly = get_current_token_for_error_report(context);
             struct ast_return *ast_return = parser_ast_push(context, end_curly, return);
@@ -3206,6 +3208,15 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             
             ast_list_append(&scope->statement_list, context->arena, &ast_return->base);
         }
+    }
+    
+    if(function->type->return_type != &globals.typedef_void && !(scope->flags & SCOPE_FLAG_returns_a_value)){
+        // 
+        // We have reached the end of a non-void function, but there was no return.
+        // Report a warning.
+        // 
+        struct string return_type_string = push_type_string(context->arena, &context->scratch, function->type->return_type);
+        report_warning(context, WARNING_missing_return_value, get_current_token_for_error_report(context), "Function of type '%.*s' must return a value.", return_type_string.size, return_type_string.data);
     }
     
     context->current_function = null;
