@@ -7297,6 +7297,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(specifiers.specifier_flags & SPECIFIER_static)    function->as_decl.flags |= DECLARATION_FLAGS_is_static;
             if(specifiers.specifier_flags & SPECIFIER_selectany) function->as_decl.flags |= DECLARATION_FLAGS_is_selectany;
+            if(specifiers.specifier_flags & SPECIFIER_noreturn)  function->as_decl.flags |= DECLARATION_FLAGS_is_noreturn;
             
             if(specifiers.specifier_flags & SPECIFIER_inline_asm){
                 
@@ -7470,6 +7471,11 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(specifiers.specifier_flags & SPECIFIER_inline){
                 report_error(context, declarator.ident, "Data declaration cannot be marked 'inline'.");
+                goto end;
+            }
+            
+            if(specifiers.specifier_flags & SPECIFIER_noreturn){
+                report_error(context, declarator.ident, "Data declaration cannot be marked '_Noreturn'.");
                 goto end;
             }
             

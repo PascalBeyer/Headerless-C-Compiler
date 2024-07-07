@@ -518,6 +518,8 @@ struct ast_list{
 #define DECLARATION_FLAGS_is_extern                                0x1000
 #define DECLARATION_FLAGS_is_unnamed                               0x2000 // Used for struct and array literals, to not emit a symbol for them.
 
+#define DECLARATION_FLAGS_is_noreturn                              0x4000 
+
 struct ast_declaration{
     // @WARNING: This needs to match the part in ast_function.
     struct ast base;
