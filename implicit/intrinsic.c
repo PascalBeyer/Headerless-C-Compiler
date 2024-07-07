@@ -6,7 +6,7 @@ __declspec(inline_asm) void __debugbreak(){
     int3
 }
 
-__declspec(inline_asm) void __fastfail(unsigned int __exit_code){
+__declspec(inline_asm) __declspec(noreturn) void __fastfail(unsigned int __exit_code){
     mov ecx, __exit_code
     int 0x29
 }
