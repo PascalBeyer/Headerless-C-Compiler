@@ -7744,9 +7744,6 @@ func struct ast *parse_statement(struct context *context){
                 if(statement_returns_a_value(ast_if->statement) && statement_returns_a_value(ast_if->else_statement)){
                     context->current_scope->flags |= SCOPE_FLAG_returns_a_value;
                 }
-            }else{
-                // @hack: The return is contained in the 'current_scope', but the if means it is only conditionally executed.
-                if(ast_if->statement->kind == AST_return) context->current_scope->flags &= ~SCOPE_FLAG_returns_a_value;
             }
             
             set_resolved_type(&ast_if->base, &globals.typedef_void, null);
@@ -7754,8 +7751,6 @@ func struct ast *parse_statement(struct context *context){
         }break;
         case TOKEN_for:{
             // @note: the 'comma seperated lists' you see in for loops are actually just the comma operator
-            
-            // @cleanup: Care about 'SCOPE_FLAG_returns_a_value' for infinite-loops.
             
             struct ast_for *ast_for = parser_ast_push(context, initial_token, for);
             expect_token(context, TOKEN_open_paren, "Expected '(' after 'for'.");
@@ -7793,14 +7788,16 @@ func struct ast *parse_statement(struct context *context){
             }
             parser_scope_pop(context, scope);
             
+            if(ast_for->condition->kind == AST_integer_literal && integer_literal_as_u64(ast_for->condition) != 0){
+                // The condition is contant, meaning this is an infinte loop. Set 'returns_a_value' if the scope does not have an alive break.
+                context->current_scope->flags |= (scope->flags & SCOPE_FLAG_found_an_alive_break) ? 0 : SCOPE_FLAG_returns_a_value;
+            }
+            
             needs_semicolon = false;
             set_resolved_type(&ast_for->base, &globals.typedef_void, null);
             ret = &ast_for->base;
         }break;
         case TOKEN_while:{
-            
-            // @cleanup: Care about 'SCOPE_FLAG_returns_a_value' for infinite-loops.
-            
             
             // @note: We desugar 'while' to 'for(;condition;)'.
             struct ast_for *ast_while = parser_ast_push(context, initial_token, for);
@@ -7821,14 +7818,16 @@ func struct ast *parse_statement(struct context *context){
             ast_while->body = parse_statement(context);
             parser_scope_pop(context, scope);
             
+            if(ast_while->condition->kind == AST_integer_literal && integer_literal_as_u64(ast_while->condition) != 0){
+                // The condition is contant, meaining this is an infinte loop. Set 'returns_a_value' if the scope does not have an alive break.
+                context->current_scope->flags |= (scope->flags & SCOPE_FLAG_found_an_alive_break) ? 0 : SCOPE_FLAG_returns_a_value;
+            }
+            
             needs_semicolon = false;
             set_resolved_type(&ast_while->base, &globals.typedef_void, null);
             ret = &ast_while->base;
         }break;
         case TOKEN_do:{
-            
-            // @cleanup: Care about 'SCOPE_FLAG_returns_a_value' for infinite-loops.
-            
             
             // :AST_do_while
             struct ast_for *do_while = parser_ast_push(context, initial_token, for);
@@ -7852,6 +7851,11 @@ func struct ast *parse_statement(struct context *context){
             }
             expect_token(context, TOKEN_closed_paren, "Expected ')' ending 'while'-condition.");
             
+            if(do_while->condition->kind == AST_integer_literal && integer_literal_as_u64(do_while->condition) != 0){
+                // The condition is contant, meaining this is an infinte loop. Set 'returns_a_value' if the scope does not have an alive break.
+                context->current_scope->flags |= (scope->flags & SCOPE_FLAG_found_an_alive_break) ? 0 : SCOPE_FLAG_returns_a_value;
+            }
+            
             set_resolved_type(&do_while->base, &globals.typedef_void, null);
             ret = &do_while->base;
         }break;
@@ -7864,14 +7868,19 @@ func struct ast *parse_statement(struct context *context){
                 if(scope->flags & SCOPE_FLAG_can_break) break;
             }
             
-            // @cleanup: If we care about inifinte loops, this needs to reset 'SCOPE_FLAG_returns_a_value'
-            //           on the 'scope->parent' at this point.
-            
             if(!scope){
                 report_syntax_error(context, initial_token, "'break' is not inside of a breakable scope.");
                 return &ast_break->base;
             }
             ast_break->scope_to_break = scope;
+            
+            if(!(context->current_scope->flags & SCOPE_FLAG_returns_a_value)){
+                // If the scope we are currently in does not return a value and there is a break, 
+                // we can be sure that the breakable scope does not return a value.
+                // Because, we must track this for every case, we cannot simply set reset 'SCOPE_FLAG_returns_a_value',
+                // as another case could set the value again, instead we track "SCOPE_FLAG_found_an_alive_break".
+                scope->flags |= SCOPE_FLAG_found_an_alive_break;
+            }
             
             set_resolved_type(&ast_break->base, &globals.typedef_void, null);
             ret = &ast_break->base;
@@ -7888,6 +7897,9 @@ func struct ast *parse_statement(struct context *context){
                 report_syntax_error(context, initial_token, "'continue' is not inside of a continue-able scope.");
                 return &globals.empty_statement;
             }
+            
+            // We cannot escape infinte loops through a 'continue'.
+            context->current_scope->flags |= SCOPE_FLAG_returns_a_value;
             
             ast_continue->scope_to_continue = scope;
             set_resolved_type(&ast_continue->base, &globals.typedef_void, null);
@@ -7918,7 +7930,11 @@ func struct ast *parse_statement(struct context *context){
             
             context->current_switch = previous_switch;
             
-            context->current_scope->flags |= (scope->flags & SCOPE_FLAG_returns_a_value);
+            if(ast_switch->default_case && (scope->flags & SCOPE_FLAG_returns_a_value) && !(scope->flags & SCOPE_FLAG_found_an_alive_break)){
+                // @cleanup: Currently, we only handle this correctly when there is a default case. 
+                //           In the future, we might want to figure out if a switch is exhaustive and if it is also set the flag.
+                context->current_scope->flags |= SCOPE_FLAG_returns_a_value;
+            }
             
             set_resolved_type(&ast_switch->base, &globals.typedef_void, null);
             needs_semicolon = false;
@@ -7995,7 +8011,7 @@ func struct ast *parse_statement(struct context *context){
             set_resolved_type(&ast_case->base, &globals.typedef_void, null);
             context->current_switch->default_case = ast_case;
             
-            if(!peek_token(context, TOKEN_closed_curly))ast_case->statement = parse_statement(context);
+            if(!peek_token(context, TOKEN_closed_curly)) ast_case->statement = parse_statement(context);
             
             ret = &ast_case->base;
         }break;
@@ -8023,7 +8039,8 @@ func struct ast *parse_statement(struct context *context){
                 ast_return->expr = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_function_type->return_type, current_function_type->return_type_defined_type, ast_return->expr, ast_return->base.token);
             }
             
-            context->current_scope->flags |= SCOPE_FLAG_returns_a_value;
+            // We keep track of 'SCOPE_FLAG_returns_a_value' inside of 'parse_imperative_scope', because we only want to set the flag for root-level returns.
+            // In theory, this is true for any other statement, but for not I think its fine to be wrong in those.
             
             set_resolved_type(&ast_return->base, &globals.typedef_void, null);
             ret = &ast_return->base;
@@ -8047,7 +8064,6 @@ func struct ast *parse_statement(struct context *context){
             ast_goto->ident = ident->atom;
             ast_list_append(&context->current_function->goto_list, context->arena, &ast_goto->base);
             
-            // @cleanup: Check this!
             context->current_scope->flags |= SCOPE_FLAG_returns_a_value;
             
             set_resolved_type(&ast_goto->base, &globals.typedef_void, null);
@@ -8079,7 +8095,13 @@ func struct ast *parse_statement(struct context *context){
                 // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
                 context->current_scope->flags &= ~SCOPE_FLAG_returns_a_value;
                 
-                if(!peek_token(context, TOKEN_closed_curly)) label->statement = parse_statement(context);
+                if(!peek_token(context, TOKEN_closed_curly)){
+                    label->statement = parse_statement(context);
+                    if(label->statement->kind == AST_return){
+                        // @note: Technically wrong for 'if(a) label: return 1;'
+                        context->current_scope->flags |= SCOPE_FLAG_returns_a_value;
+                    }
+                }
                 
                 ret = &label->base;
                 break;
@@ -8181,6 +8203,8 @@ func struct ast *parse_imperative_scope(struct context *context){
         if(peek_token_eat(context, TOKEN_closed_curly) || peek_token(context, TOKEN_invalid)) break;
         
         struct ast *statement = parse_statement(context);
+        
+        if(statement->kind == AST_return) context->current_scope->flags |= SCOPE_FLAG_returns_a_value;
         
         if(statement->kind == AST_assignment){
             // @cleanup: compound assignments?
