@@ -478,7 +478,7 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
         // stdout handle prior to exiting. Wait for it, then get the exit code.
         // 
         
-        WaitForSingleObject(ProcessInformation.hProcess, INFINITE);
+        WaitForSingleObject(ProcessInformation.hProcess, /*.5s*/500);
         if(!GetExitCodeProcess(ProcessInformation.hProcess, &ExitCode)){
             print("Error: Failed to get ExitCode.");
             ExitCode = (DWORD)-1;
@@ -655,10 +655,10 @@ unsigned int test_thread_entry(void *thread_parameter){
                 }else if(string_match(command, string("skip"))){
                     skip = true;
                 }else if(string_match(command, string("dump"))){
-                    push_format_cstring(&log, "Error: @incomplete 'dump' not yet implemented.\n");
+                    push_format_cstring(&log, "%s: Error: @incomplete 'dump' not yet implemented.\n", file_path);
                     error = true;
                 }else{
-                    push_format_cstring(&log, "Error: unhandled command '%.*s'\n", command.size, command.data);
+                    push_format_cstring(&log, "%s: Error: unhandled command '%.*s'\n", file_path, command.size, command.data);
                     error = true;
                 }
                 
