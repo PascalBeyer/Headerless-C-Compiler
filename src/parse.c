@@ -436,12 +436,12 @@ func struct ast *push_cast(struct context *context, struct ast_type *cast_to, st
                 if(type_is_signed(cast_what->resolved_type)){
                     s64 value = integer_literal_as_u64(cast_what);
                     if(!(min_value <= value && value <= max_value)){
-                        report_warning(context, WARNING_compile_time_truncation, cast_what->token, "Integer %lld gets truncated when casted to bitfield of width %d (range is %lld to %lld).", value, bitfield->width, min_value, max_value);
+                        report_warning(context, WARNING_compile_time_truncation, cast_what->token, "Integer %lld gets truncated when casted to bitfield of width %u (range is %lld to %lld).", value, bitfield->width, min_value, max_value);
                     }
                 }else{
                     u64 value = integer_literal_as_u64(cast_what);
                     if(value > 0x7fffffffffffffff || (smm)value > max_value){
-                        report_warning(context, WARNING_compile_time_truncation, cast_what->token, "Integer %llu gets truncated when casted to bitfield of width %d (range is %lld to %lld).", value, bitfield->width, min_value, max_value);
+                        report_warning(context, WARNING_compile_time_truncation, cast_what->token, "Integer %llu gets truncated when casted to bitfield of width %u (range is %lld to %lld).", value, bitfield->width, min_value, max_value);
                     }
                 }
             }else{
@@ -450,12 +450,12 @@ func struct ast *push_cast(struct context *context, struct ast_type *cast_to, st
                 if(type_is_signed(cast_what->resolved_type)){
                     s64 value = integer_literal_as_u64(cast_what);
                     if(value < 0 || (u64)value > max_value){
-                        report_warning(context, WARNING_compile_time_truncation, cast_what->token, "Integer %lld gets truncated when casted to bitfield of width %d (range is %llu to %llu).", value, bitfield->width, 0, max_value);
+                        report_warning(context, WARNING_compile_time_truncation, cast_what->token, "Integer %lld gets truncated when casted to bitfield of width %u (range is %d to %llu).", value, bitfield->width, 0, max_value);
                     }
                 }else{
                     u64 value = integer_literal_as_u64(cast_what);
                     if(value > max_value){
-                        report_warning(context, WARNING_compile_time_truncation, cast_what->token, "Integer %llu gets truncated when casted to bitfield of width %d (range is %llu to %llu).", value, bitfield->width, 0, max_value);
+                        report_warning(context, WARNING_compile_time_truncation, cast_what->token, "Integer %llu gets truncated when casted to bitfield of width %u (range is %d to %llu).", value, bitfield->width, 0, max_value);
                     }
                 }
             }
@@ -1939,7 +1939,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                     expect_token(context, TOKEN_closed_index, "Expected ']' at the end of array designator.");
                     
                     if(!array->is_of_unknown_size && (smm)value >= array->amount_of_elements){
-                        report_error(context, index->token, "Index '%llu' out of bounds. Array has only '%llu' elements.", value, array->amount_of_elements);
+                        report_error(context, index->token, "Index '%llu' out of bounds. Array has only '%lld' elements.", value, array->amount_of_elements);
                         goto error;
                     }
                     
@@ -2105,7 +2105,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                     struct ast_compound_type *compound = (struct ast_compound_type *)type;
                     
                     if(!compound->amount_of_members){
-                        report_error(context, site, "Initializing empty structure or union requires explicit '{}'.");
+                        report_error(context, site, "Initializing empty structure or union requires explicit '%s'.", "{}");
                         goto error;
                     }
                     
@@ -3097,7 +3097,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                 struct ast_type *unpromoted_type = argument->resolved_type;
                 if(conversion_specifier == 'n'){
                     if(argument->resolved_type->kind != AST_pointer_type){
-                        report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%s%c' expects a pointer.", (char *)&length_modifier, conversion_specifier);
+                        report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects a pointer.", (char *)&length_modifier, conversion_specifier);
                     }else{
                         struct ast_pointer_type *pointer = (struct ast_pointer_type *)argument->resolved_type;
                         defined_type    = pointer->pointer_to_defined_type;
@@ -3126,6 +3126,9 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                 switch(conversion_specifier){
                     case 'd': case 'i': case 'u': case 'o': case 'x': case 'X':{
                         
+                        // @cleanup: For now we don't report warnings for things that have precision.
+                        if(precision.size) break;
+                        
                         if(length_modifier == 'j' || length_modifier == 'z' || length_modifier == 't'){
                             
                             char *should_warn = null;
@@ -3153,7 +3156,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                             }
                             
                             if(should_warn){
-                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%s%c' expects %s.", (char *)&length_modifier, conversion_specifier, should_warn);
+                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects %s.", (char *)&length_modifier, conversion_specifier, should_warn);
                             }
                         }else if(length_modifier == 0 || length_modifier == 'hh' || length_modifier == 'h' || length_modifier == 'l' || length_modifier == 'll'){
                             //
@@ -3170,7 +3173,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                                 if(expected_type != unpromoted_type){
                                     struct string expected_type_string = push_type_string(context->arena, &context->scratch, expected_type);
                                     struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
+                                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
                                 }
                             }else if(conversion_specifier == 'u'){
                                 struct ast_type *expected_type = &globals.typedef_u32;
@@ -3182,11 +3185,11 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                                 if(expected_type != unpromoted_type){
                                     struct string expected_type_string = push_type_string(context->arena, &context->scratch, expected_type);
                                     struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
+                                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
                                 }
                             }else{
                                 //
-                                // allow either signed an unsigned for 'o' 'x' 'X'.
+                                // Allow either signed an unsigned for 'o' 'x' 'X'.
                                 //
                                 struct ast_type *expected_signed_type = &globals.typedef_s32;
                                 if(length_modifier == 'hh') expected_signed_type = &globals.typedef_s8;
@@ -3203,7 +3206,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                                 if(expected_signed_type != unpromoted_type && expected_unsigned_type != unpromoted_type){
                                     struct string signed_type_string   = push_type_string(context->arena, &context->scratch, expected_signed_type);
                                     struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%s%c' expects signed or unsigned %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, signed_type_string.size, signed_type_string.data, type_string.size, type_string.data);
+                                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects signed or unsigned %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, signed_type_string.size, signed_type_string.data, type_string.size, type_string.data);
                                 }
                             }
                         }else{
@@ -3215,12 +3218,12 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                         if(length_modifier == 0){
                             if(unpromoted_type != &globals.typedef_u8 && unpromoted_type != &globals.typedef_s8){
                                 struct string type_string = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%c' expects signed or unsigned character, but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
+                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%c' expects signed or unsigned character, but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
                             }
                         }else if(length_modifier == 'l'){
                             if(unpromoted_type != &globals.typedef_u16 && unpromoted_type != &globals.typedef_s16){
                                 struct string type_string = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%c' expects signed or unsigned character, but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
+                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%c' expects signed or unsigned character, but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
                             }
                         }else{
                             report_warning(context, WARNING_incorrect_format_specifier, argument->token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
@@ -3279,7 +3282,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                     }break;
                     
                     default:{
-                        report_warning(context, WARNING_unknown_format_specifier, call->base.token, "Unknown format specifier %c.", conversion_specifier);
+                        report_warning(context, WARNING_unknown_format_specifier, call->base.token, "Unknown format specifier '%%%c'.", conversion_specifier);
                     }break;
                 }
             }
@@ -5390,7 +5393,7 @@ case NUMBER_KIND_##type:{ \
                     // @cleanup: overflow on the right hand side?
                     // we only have to check the u8 part as that is the only thing that gets used.
                     if(value > (u64)op->lhs->resolved_type->size * 8){
-                        report_error(context, op->base.token, "Shift by '%d' but lhs has only '%d' bits.", value, op->lhs->resolved_type->size * 8);
+                        report_error(context, op->base.token, "Shift by '%llu' but lhs has only '%lld' bits.", value, op->lhs->resolved_type->size * 8);
                         return operand;
                     }
                 }
@@ -5861,7 +5864,7 @@ case NUMBER_KIND_##type:{ \
                 if(assignment->rhs->kind == AST_integer_literal){
                     u64 value = integer_literal_as_u64(assignment->rhs);
                     if(value == 0){
-                        report_error(context, assignment->base.token, "Compile time '%=' by 0.");
+                        report_error(context, assignment->base.token, "Compile time '%%=' by 0.");
                         return operand;
                     }
                     
@@ -6740,7 +6743,7 @@ case TOKEN_##type_name:{                                                 \
                                 
                                 if(width > (declarator.type->size * 8)){
                                     struct string type_string = report_type_mismatch__internal(context, "", declarator.type, declarator.defined_type);
-                                    report_error(context, constant->token, "Bitfield width for type '%.*s' must be '<= %d', but is '%lld'.", type_string.size, type_string.data, (declarator.type->size * 8), width);
+                                    report_error(context, constant->token, "Bitfield width for type '%.*s' must be '<= %lld', but is '%lld'.", type_string.size, type_string.data, (declarator.type->size * 8), width);
                                     width = 1;
                                 }
                                 
@@ -6966,7 +6969,7 @@ case TOKEN_##type_name:{                                                 \
                             // @cleanup: report a warning?
                             current_value = (s32)current_value;
                         }else{
-                            report_error(context, token, "Enum members are ints, this member is outside of the range of the enum. Member is %lld range is [%d, %d].", current_value, s32_min, u32_max);
+                            report_error(context, token, "Enum members are ints, this member is outside of the range of the enum. Member is %lld range is [%d, %u].", current_value, s32_min, u32_max);
                         }
                         
                         //
@@ -7960,7 +7963,7 @@ func struct ast *parse_statement(struct context *context){
                 if(ast_case->value == value){
                     begin_error_report(context);
                     if(type_is_signed(switch_on->resolved_type)){
-                        report_error(context, initial_token, "Case '%lld' already handled.", value);
+                        report_error(context, initial_token, "Case '%lld' already handled.", (smm)value);
                     }else{
                         report_error(context, initial_token, "Case '%llu' already.", value);
                     }

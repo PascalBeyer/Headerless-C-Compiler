@@ -1343,7 +1343,7 @@ func struct string strip_quotes(struct string string){
     return string;
 }
 
-func struct string push_format_string(struct memory_arena *arena, char *format, ...){
+PRINTLIKE func struct string push_format_string(struct memory_arena *arena, char *format, ...){
     va_list va;
     va_start(va, format);
     struct string ret = push_format_string_va_list(arena, format, va);

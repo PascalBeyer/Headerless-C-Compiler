@@ -157,7 +157,7 @@ func void report_errors_for_unresolved_sleepers(struct context *context, struct 
         if(!node->outgoing_edge){
             assert(node->amount_of_locations > 0);
             for(u32 location_index = 0; location_index < node->amount_of_locations; location_index++){
-                report_error(context, node->locations[location_index].token, "[%d] Undeclared identifier.", node->locations[location_index].compilation_unit->index);
+                report_error(context, node->locations[location_index].token, "[%lld] Undeclared identifier.", node->locations[location_index].compilation_unit->index);
             }
             reported_undeclared_identifiers = true;
             error = true;

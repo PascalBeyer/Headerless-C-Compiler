@@ -251,7 +251,7 @@ func int should_report_warning_for_token(struct context *context, struct token *
     return globals.report_warnings_in_system_includes || context->in_error_report || !token || !globals.file_table.data[token->file_index]->is_system_include;
 }
 
-__declspec(noinline) func void report_warning(struct context *context, enum warning_type warning, struct token *token, char *format, ...){
+PRINTLIKE __declspec(noinline) func void report_warning(struct context *context, enum warning_type warning, struct token *token, char *format, ...){
     if(context->should_exit_statement) return;
     if(context->should_sleep) return;
     if(!warning_enabled[warning]) return;
@@ -302,7 +302,7 @@ func void end_error_report(struct context *context){
     }
 }
 
-__declspec(noinline) func void report_error(struct context *context, struct token *token, char *format, ...){
+PRINTLIKE __declspec(noinline) func void report_error(struct context *context, struct token *token, char *format, ...){
     if(context->should_sleep) return;
     if(context->should_exit_statement) return;
     
@@ -326,7 +326,7 @@ __declspec(noinline) func void report_error(struct context *context, struct toke
 #endif
 }
 
-__declspec(noinline) func void report_syntax_error(struct context *context, struct token *token, char *format, ...){
+PRINTLIKE __declspec(noinline) func void report_syntax_error(struct context *context, struct token *token, char *format, ...){
     if(context->should_sleep) return;
     if(context->error){
         maybe_set_should_exit_statement(context);
@@ -363,13 +363,13 @@ func b32 maybe_report_error_for_stack_exhaustion(struct context *context, struct
     return false;
 }
 
-__declspec(noinline) func void report_internal_compiler_error(struct token *token, char *format, ...){
+PRINTLIKE __declspec(noinline) func void report_internal_compiler_error(struct token *token, char *format, ...){
     //
     // @note: be careful here, we might use this for asserts eventually.
     //
     if(token && token->file_index < array_count(globals.file_table.data)){
         char *file_path = globals.file_table.data[token->file_index]->absolute_file_path;
-        print("%s(%d,%d): ", file_path, token->line, token->column);
+        print("%s(%u,%u): ", file_path, token->line, token->column);
     }
     
 #ifdef FUZZING

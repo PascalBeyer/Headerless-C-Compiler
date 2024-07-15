@@ -982,7 +982,7 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
                 string_list_postfix(list, scratch, string(")"));
             }
             
-            struct string array_postfix = push_format_string(scratch, "[%d]", arr->amount_of_elements);
+            struct string array_postfix = push_format_string(scratch, "[%lld]", arr->amount_of_elements);
             string_list_postfix(list, scratch, array_postfix);
             
             push_type_string__inner(list, arena, scratch, arr->element_type);
@@ -991,7 +991,7 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
         case AST_bitfield_type:{
             struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)type;
             push_type_string__inner(list, arena, scratch, bitfield->base_type);
-            struct string width = push_format_string(scratch, ": %d", bitfield->width);
+            struct string width = push_format_string(scratch, ": %u", bitfield->width);
             string_list_postfix(list, scratch, width);
             
         }break;
@@ -1666,8 +1666,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                         return redecl; // This is fine, we redefine the literal as it self.
                     }else{
                         begin_error_report(context);
-                        report_error(context, decl->base.token, "[%d] Redeclaration of enum value as '%d'.", decl->compilation_unit->index, decl_lit->_s32);
-                        report_error(context, redecl->base.token, "[%d] ... Here was the previous declaration of value '%d'.", redecl->compilation_unit->index, redecl_lit->_s32);
+                        report_error(context, decl->base.token, "[%lld] Redeclaration of enum value as '%d'.", decl->compilation_unit->index, decl_lit->_s32);
+                        report_error(context, redecl->base.token, "[%lld] ... Here was the previous declaration of value '%d'.", redecl->compilation_unit->index, redecl_lit->_s32);
                         end_error_report(context);
                     }
                 }else if(types_are_equal(redecl->type, decl->type)){
@@ -1696,8 +1696,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     struct string redecl_type = push_type_string(context->arena, &context->scratch, redecl->type);
                     
                     begin_error_report(context);
-                    report_error(context, decl->base.token, "[%d] Redeclaration of typedef with mismatching type (%.*s vs %.*s).", decl->compilation_unit->index, decl_type.size, decl_type.data, redecl_type.size, redecl_type.data);
-                    report_error(context, redecl->base.token, "[%d] ... Here is the previous typedef.", redecl->compilation_unit->index);
+                    report_error(context, decl->base.token, "[%lld] Redeclaration of typedef with mismatching type (%.*s vs %.*s).", decl->compilation_unit->index, decl_type.size, decl_type.data, redecl_type.size, redecl_type.data);
+                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous typedef.", redecl->compilation_unit->index);
                     end_error_report(context);
                     return decl;
                 }
@@ -1708,8 +1708,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 if(!types_are_equal(decl->type, redecl->type)){
                     begin_error_report(context);
                     // :Error maybe print compilation units
-                    report_error(context, decl->base.token, "[%d] Redeclaration of function with different type.", decl->compilation_unit->index);
-                    report_error(context, redecl->base.token, "[%d] ... Here is the previous declaration.", redecl->compilation_unit->index);
+                    report_error(context, decl->base.token, "[%lld] Redeclaration of function with different type.", decl->compilation_unit->index);
+                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration.", redecl->compilation_unit->index);
                     end_error_report(context);
                     return decl;
                 }
@@ -1730,8 +1730,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
             }
             
             begin_error_report(context);
-            report_error(context, decl->base.token, "[%d] Redeclaration.", decl->compilation_unit->index);
-            report_error(context, redecl->base.token, "[%d] ... Here is the previous declaration.", redecl->compilation_unit->index);
+            report_error(context, decl->base.token, "[%lld] Redeclaration.", decl->compilation_unit->index);
+            report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration.", redecl->compilation_unit->index);
             end_error_report(context);
             return decl;
         }
@@ -1758,8 +1758,8 @@ func void parser_register_definition(struct context *context, struct ast_declara
         // 
         if(!(decl->flags & DECLARATION_FLAGS_is_selectany)){
             begin_error_report(context);
-            report_error(context, initializer->token, "[%d] Redefinition of '%.*s'.", context->current_compilation_unit->index, decl->identifier->atom.size, decl->identifier->atom.data);
-            report_error(context, decl->assign_expr->token, "[%d] ... Here is the previous definition.", decl->compilation_unit->index);
+            report_error(context, initializer->token, "[%lld] Redefinition of '%.*s'.", context->current_compilation_unit->index, decl->identifier->atom.size, decl->identifier->atom.data);
+            report_error(context, decl->assign_expr->token, "[%lld] ... Here is the previous definition.", decl->compilation_unit->index);
             end_error_report(context);
         }
     }else{
@@ -1833,8 +1833,8 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         if(types_are_equal((struct ast_type *)redecl, type)) return;
         
         begin_error_report(context);
-        report_error(context, type->token, "[%d] Redeclaration of type.", new->compilation_unit->index);
-        report_error(context, redecl->token, "[%d] ... Here was the previous declaration.", old->compilation_unit->index);
+        report_error(context, type->token, "[%lld] Redeclaration of type.", new->compilation_unit->index);
+        report_error(context, redecl->token, "[%lld] ... Here was the previous declaration.", old->compilation_unit->index);
         end_error_report(context);
         return;
     }
@@ -1851,7 +1851,7 @@ func void parser_emit_memory_location(struct context *context, struct ast_declar
     context->current_emit_offset_of_rsp += size;
     
     if(context->current_emit_offset_of_rsp > max_s32){
-        report_error(context, decl->identifier, "Too many local variables. At most '0x%llx' bytes of stack are allowed.", max_s32);
+        report_error(context, decl->identifier, "Too many local variables. At most '0x%x' bytes of stack are allowed.", max_s32);
     }
     
     // :MemoryLocations We currently emit '[rbp - offset]' so we want to return the offset
@@ -4096,8 +4096,8 @@ int main(int argc, char *argv[]){
     u64 sdk_version[4];
     struct string windows_kits_path = find_windows_kits_root_and_sdk_version(arena, sdk_version);
     
-    struct string um_library_path   = push_format_string(arena, "%.*s\\Lib\\%lld.%lld.%lld.%lld\\um\\x64\\",   windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
-    struct string ucrt_library_path = push_format_string(arena, "%.*s\\Lib\\%lld.%lld.%lld.%lld\\ucrt\\x64\\", windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
+    struct string um_library_path   = push_format_string(arena, "%.*s\\Lib\\%llu.%llu.%llu.%llu\\um\\x64\\",   windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
+    struct string ucrt_library_path = push_format_string(arena, "%.*s\\Lib\\%llu.%llu.%llu.%llu\\ucrt\\x64\\", windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
     
     // @note: For now we always add the library paths, even if 'no_standard_library'.
     // @cleanup: There is no reason for library_paths to be global anymore.
@@ -4161,7 +4161,7 @@ int main(int argc, char *argv[]){
         }
     }
     
-    struct string windows_kits_include_base = push_format_string(arena, "%.*s\\Include\\%lld.%lld.%lld.%lld", windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
+    struct string windows_kits_include_base = push_format_string(arena, "%.*s\\Include\\%llu.%llu.%llu.%llu", windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
     
     // @note: For now always add the windows folders.
     add_system_include_directory(arena, windows_kits_include_base, string("/um"),     false);
@@ -4311,7 +4311,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 GetLocalTime(&LocalTime); // @cleanup: local time?
                 
                 const char months[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-                struct string date_define = push_format_string(arena, "#define __DATE__ \"%s %2d %4d\"\n", months[LocalTime.wMonth-1], LocalTime.wDay, LocalTime.wYear);
+                struct string date_define = push_format_string(arena, "#define __DATE__ \"%s %.2d %.4d\"\n", months[LocalTime.wMonth-1], LocalTime.wDay, LocalTime.wYear);
                 
                 string_list_prefix(&predefines, arena, date_define);
             }

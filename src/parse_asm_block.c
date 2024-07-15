@@ -1615,7 +1615,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                     if(operand.size == 32 && !(ASM_OP_KIND_ymm & desired_operand_flags)) should_error = true;
                     
                     if(should_error){
-                        report_error(context, operand_token, "Operand %d of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
+                        report_error(context, operand_token, "Operand %u of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
                     }
                 }else if(operand.register_kind_when_loaded == REGISTER_KIND_gpr){
                     // gpr
@@ -1626,7 +1626,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                     if(operand.size == 8 && !(ASM_OP_KIND_reg64 & desired_operand_flags)) should_error = true;
                     
                     if(should_error){
-                        report_error(context, operand_token, "Operand %d of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
+                        report_error(context, operand_token, "Operand %u of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
                     }
                 }else{
                     invalid_code_path;
@@ -1650,7 +1650,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                         u32 memory_flags = desired_operand_flags & ASM_OP_KIND_any_mem;
                         
                         if(!memory_flags){
-                            report_error(context, operand_token, "Operand %d of '%.*s' cannot be a memory operand.", operand_index + 1, token->size, token->data);
+                            report_error(context, operand_token, "Operand %u of '%.*s' cannot be a memory operand.", operand_index + 1, token->size, token->data);
                         }
                         
                         if(__popcnt(memory_flags) == 1){
@@ -1674,7 +1674,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                 }
                 
                 if(should_error){
-                    report_error(context, operand_token, "Operand %d of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
+                    report_error(context, operand_token, "Operand %u of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
                 }
             }break;
             case ASM_ARG_declaration_reference:{
@@ -1716,7 +1716,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                 }
                 
                 if(should_error){
-                    report_error(context, operand_token, "Operand %d of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
+                    report_error(context, operand_token, "Operand %u of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
                 }
             }break;
             case ASM_ARG_immediate:{
@@ -1731,7 +1731,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                 }else if(desired_operand_flags & ASM_OP_KIND_imm8){
                     operand.size = 1;
                 }else{
-                    report_error(context, operand_token, "Operand %d cannot be an integer.", operand_index + 1, token->size, token->data);
+                    report_error(context, operand_token, "Operand %u of '%.*s' cannot be an integer.", operand_index + 1, token->size, token->data);
                 }
             }break;
             invalid_default_case();
@@ -1805,7 +1805,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             
             if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
                 // @cleanup: should we try to perform a 'is_inline_asm_function_argument_that_needs_to_be_an_integer'?
-                report_error(context, token, "Operand size mismatch. %d vs %d.", asm_instruction->operands[0].size, asm_instruction->operands[1].size);
+                report_error(context, token, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size);
             }
         }break;
         
@@ -2072,7 +2072,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             }
             
             if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
-                report_error(context, token, "Operand size mismatch. %d vs %d.", asm_instruction->operands[0].size, asm_instruction->operands[1].size);
+                report_error(context, token, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size);
             }
         }break;
         
@@ -2088,7 +2088,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             
             smm size = asm_instruction->operands[0].size;
             if(size != asm_instruction->operands[1].size || size != asm_instruction->operands[2].size){
-                report_error(context, token, "Operand size mismatch. %d vs %d vs %d.", size, asm_instruction->operands[1].size, asm_instruction->operands[2].size);
+                report_error(context, token, "Operand size mismatch. %lld vs %lld vs %lld.", size, asm_instruction->operands[1].size, asm_instruction->operands[2].size);
             }
         }break;
         
@@ -2099,7 +2099,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             }
             
             if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
-                report_error(context, token, "Operand size mismatch. %d vs %d.", asm_instruction->operands[0].size, asm_instruction->operands[1].size);
+                report_error(context, token, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size);
             }
         }break;
         
@@ -2144,7 +2144,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                     //
                     
                 }else{
-                    report_error(context, token, "Returning a value of size %d, but the return type is on size %d.", asm_instruction->operands[0].size, return_type->size);
+                    report_error(context, token, "Returning a value of size %lld, but the return type is on size %lld.", asm_instruction->operands[0].size, return_type->size);
                 }
             }
             

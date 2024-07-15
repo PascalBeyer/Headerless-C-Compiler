@@ -212,7 +212,7 @@ func void print_define(struct context *context, struct define_node *define, char
     (void)(context);
     
     char *file = globals.file_table.data[define->defined_token->file_index]->absolute_file_path;
-    print("%s(%u,%u): [%u] %s %.*s", file, define->defined_token->line, define->defined_token->column, 
+    print("%s(%u,%u): [%lld] %s %.*s", file, define->defined_token->line, define->defined_token->column, 
             context->current_compilation_unit->index, prefix, define->name.size, define->name.data);
     
     if(define->is_function_like){
@@ -483,7 +483,7 @@ static u32 eat_escape_from_string_and_return_codepoint(struct context *context, 
             u64 value = parse_hex_string_to_u64(to_escape, &overflow);
             
             if(overflow){
-                report_error(context, token, "Encountered integer overflow while parsing hex escape sequence '\\%.*s'.", to_escape->data - escape_start, escape_start, value);
+                report_error(context, token, "Encountered integer overflow while parsing hex escape sequence '\\%.*s'.", to_escape->data - escape_start, escape_start);
             }else if(value > maximal_value){
                 report_error(context, token, "Hex escape sequence '\\%.*s' (0x%llx) constant to big for character. Maximal value for character type is 0x%x.", to_escape->data - escape_start, escape_start, value, maximal_value);
             }
@@ -1741,7 +1741,7 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
                 token->string = push_format_string(context->arena, "\"%.*s\"", file_name.size, file_name.data);
             }else{
                 token->type = TOKEN_base10_literal;
-                token->string = push_format_string(context->arena, "%lld", token_to_expand->line);
+                token->string = push_format_string(context->arena, "%u", token_to_expand->line);
             }
             
             return token;
@@ -3119,7 +3119,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     
                     if(node->is_else){
                         begin_error_report(context);
-                        report_error(context, directive, "'#elif' after '#else'.", directive->size, directive->data);
+                        report_error(context, directive, "'#elif' after '#else'.");
                         report_error(context, node->token, "... Here is the previous '#else'.");
                         end_error_report(context);
                         goto end;
