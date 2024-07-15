@@ -1183,7 +1183,7 @@ func void emit_register_relative__internal(struct context *context, struct prefi
     u8 mod = MODRM_REGM;
     if(loc->ast){
         // rip relative
-        //mod = MODRM_REGM;
+        // mod = MODRM_REGM;
         assert(index == -1 && base == REGISTER_BP);
     }else{
         assert(loc->offset <= s32_max && loc->offset >= s32_min);
@@ -2579,13 +2579,29 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 
                 u64 size  = subscript->base.resolved_type->size;
                 u64 index = integer_literal_to_bytes(subscript->index);
+                enum register_kind register_kind = get_register_kind_for_type(subscript->base.resolved_type);
                 
                 struct emit_location *loc = array;
+                loc->register_kind_when_loaded = register_kind;
+                loc->size = size;
                 
-                loc->register_kind_when_loaded = get_register_kind_for_type(subscript->base.resolved_type);
-                
-                loc->size    = size;
-                loc->offset += size * index;
+                // @cleanup: overflow?
+                if(loc->offset + size * index > s32_max){
+                    
+                    struct emit_location *index_register = emit_location_immediate(context, size * index, 8);
+                    
+                    if(loc->ast){
+                        // @cleanup: moveabs?
+                        // 'loc' is rip-relative, we cannot have [rip + rax + 0x1337], hence we need to load rip + 0x1337 first.
+                        enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
+                        loc = emit_load_address(context, loc, reg);
+                        loc = emit_location_register_relative(context, register_kind, loc, index_register, 0, size);
+                    }else{
+                        loc->index = index_register;
+                    }
+                }else{
+                    loc->offset += size * index;
+                }
                 
                 return loc;
             }else{
