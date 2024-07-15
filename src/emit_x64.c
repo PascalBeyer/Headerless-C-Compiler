@@ -2575,15 +2575,16 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             
             assert(array->state == EMIT_LOCATION_register_relative);
             
+            u64 size  = subscript->base.resolved_type->size;
+            enum register_kind register_kind = get_register_kind_for_type(subscript->base.resolved_type);
+            
+            struct emit_location *loc = array;
+            loc->register_kind_when_loaded = register_kind;
+            loc->size = size;
+            
             if(subscript->index->kind == AST_integer_literal){
                 
-                u64 size  = subscript->base.resolved_type->size;
                 u64 index = integer_literal_to_bytes(subscript->index);
-                enum register_kind register_kind = get_register_kind_for_type(subscript->base.resolved_type);
-                
-                struct emit_location *loc = array;
-                loc->register_kind_when_loaded = register_kind;
-                loc->size = size;
                 
                 // @cleanup: overflow?
                 if(loc->offset + size * index > s32_max){
@@ -2601,6 +2602,29 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     }
                 }else{
                     loc->offset += size * index;
+                }
+                
+                return loc;
+            }else if(size == 1 || size == 2 || size == 4 || size == 8){
+                
+                struct emit_location *index_register = emit_code_for_ast(context, subscript->index);
+                
+                if(loc->ast){
+                    // @cleanup: moveabs?
+                    // 'loc' is rip-relative, we cannot have [rip + rax + 0x1337], hence we need to load rip + 0x1337 first.
+                    enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
+                    loc = emit_load_address(context, loc, reg);
+                    loc = emit_location_register_relative(context, register_kind, loc, index_register, 0, size);
+                }else{
+                    loc->index = index_register;
+                }
+                
+                
+                switch(size){
+                    case 1: loc->log_index_scale = 0; break;
+                    case 2: loc->log_index_scale = 1; break;
+                    case 4: loc->log_index_scale = 2; break;
+                    case 8: loc->log_index_scale = 3; break;
                 }
                 
                 return loc;
