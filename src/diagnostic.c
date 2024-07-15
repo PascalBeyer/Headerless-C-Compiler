@@ -50,7 +50,7 @@ enum warning_type{
     WARNING_array_of_unknown_size_never_filled_in,
     
     WARNING_missing_return_value,
-    
+    WARNING_return_in_noreturn_function,
     
     WARNING_count, 
 };
@@ -241,7 +241,9 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_assignment_in_condition] = 1,
     [WARNING_double_specifier] = 1,
     [WARNING_array_of_unknown_size_never_filled_in] = 1,
+    
     [WARNING_missing_return_value] = 1,
+    [WARNING_return_in_noreturn_function] = 1,
 };
 
 

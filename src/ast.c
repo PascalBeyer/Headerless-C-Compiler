@@ -518,8 +518,6 @@ struct ast_list{
 #define DECLARATION_FLAGS_is_extern                                0x1000
 #define DECLARATION_FLAGS_is_unnamed                               0x2000 // Used for struct and array literals, to not emit a symbol for them.
 
-#define DECLARATION_FLAGS_is_noreturn                              0x4000 
-
 struct ast_declaration{
     // @WARNING: This needs to match the part in ast_function.
     struct ast base;
@@ -772,6 +770,7 @@ struct ast_compound_type{
 #define FUNCTION_TYPE_FLAGS_is_intrinsic  0x2
 #define FUNCTION_TYPE_FLAGS_is_printlike  0x4 // this acts, as if it was intrinsic in the front end, but not in the backend
 #define FUNCTION_TYPE_FLAGS_is_inline_asm 0x8
+#define FUNCTION_TYPE_FLAGS_is_noreturn   0x10
 struct ast_function_type{
     struct ast_type base;
     struct ast_type *return_type;

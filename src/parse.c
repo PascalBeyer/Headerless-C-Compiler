@@ -4722,6 +4722,10 @@ case NUMBER_KIND_##type:{ \
                     if(error) return error; // not sure
                 }
                 
+                if(function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn && context->current_scope){
+                    context->current_scope->flags |= SCOPE_FLAG_returns_a_value;
+                }
+                
                 context->in_lhs_expression = false;
             }break;
             default:{
@@ -5738,6 +5742,7 @@ case NUMBER_KIND_##type:{ \
                     operand = &cond->base;
                 }
                 context->in_lhs_expression = false;
+                context->in_conditional_expression -= 1;
             }break;
             
             
@@ -6065,6 +6070,8 @@ case NUMBER_KIND_##type:{ \
                 report_error(context, cond->base.token, "Left hand side of '?' has no implicit conversion to bool.");
                 return operand;
             }
+            
+            context->in_conditional_expression += 1; // :tracking_conditional_expression_depth_for_noreturn_functions
             
             cond->condition = operand;
             struct ast *if_true = parse_expression(context, false);
@@ -7297,7 +7304,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(specifiers.specifier_flags & SPECIFIER_static)    function->as_decl.flags |= DECLARATION_FLAGS_is_static;
             if(specifiers.specifier_flags & SPECIFIER_selectany) function->as_decl.flags |= DECLARATION_FLAGS_is_selectany;
-            if(specifiers.specifier_flags & SPECIFIER_noreturn)  function->as_decl.flags |= DECLARATION_FLAGS_is_noreturn;
             
             if(specifiers.specifier_flags & SPECIFIER_inline_asm){
                 
@@ -7317,6 +7323,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 validate_intrinsic(context, function_is_intrinsic, function);
                 if(context->should_exit_statement) goto end;
             }
+            
+            if(specifiers.specifier_flags & SPECIFIER_noreturn)  function->type->flags |= FUNCTION_TYPE_FLAGS_is_noreturn;
             
             if(specifiers.specifier_flags & SPECIFIER_dllexport){
                 if(specifiers.specifier_flags & SPECIFIER_static){
@@ -7689,21 +7697,6 @@ func b32 statement_returns_a_value(struct ast *ast){
     return (scope->flags & SCOPE_FLAG_returns_a_value) != 0;
 }
 
-func void maybe_set_current_scope_returns_a_value_on_call_to_noreturn_function(struct context *context, struct ast *expression){
-    if(expression->kind == AST_function_call){
-        // 
-        // Check for a call to a noreturn function.
-        // 
-        struct ast_function_call *call = (struct ast_function_call *)expression;
-        if(call->identifier_expression->kind == AST_identifier){
-            struct ast_identifier *ident = (struct ast_identifier *)call->identifier_expression;
-            if(ident->decl->flags & DECLARATION_FLAGS_is_noreturn){
-                context->current_scope->flags |= SCOPE_FLAG_returns_a_value;
-            }
-        }
-    }
-}
-
 func struct ast *parse_statement(struct context *context){
     
     struct ast *ret = null;
@@ -8042,6 +8035,10 @@ func struct ast *parse_statement(struct context *context){
             // We keep track of 'SCOPE_FLAG_returns_a_value' inside of 'parse_imperative_scope', because we only want to set the flag for root-level returns.
             // In theory, this is true for any other statement, but for not I think its fine to be wrong in those.
             
+            if(context->current_function->type->flags & FUNCTION_TYPE_FLAGS_is_noreturn){
+                report_warning(context, WARNING_return_in_noreturn_function, ast_return->base.token, "'return' in function declared as '_Noreturn'.");
+            }
+            
             set_resolved_type(&ast_return->base, &globals.typedef_void, null);
             ret = &ast_return->base;
         }break;
@@ -8115,8 +8112,6 @@ func struct ast *parse_statement(struct context *context){
             
             prev_token(context);
             ret = parse_expression(context, false);
-            
-            maybe_set_current_scope_returns_a_value_on_call_to_noreturn_function(context, ret);
         }break;
         
         // @cleanup: noreturn, inline, ?
@@ -8162,8 +8157,6 @@ func struct ast *parse_statement(struct context *context){
             
             // If it is nothing else; it's gotta be an assignment or expression.
             ret = parse_expression(context, false);
-            
-            maybe_set_current_scope_returns_a_value_on_call_to_noreturn_function(context, ret);
         }break;
         
         case TOKEN_invalid:{

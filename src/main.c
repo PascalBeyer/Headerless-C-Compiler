@@ -700,6 +700,14 @@ struct context{
     b32 in_lhs_expression;
     s64 ast_serializer;
     
+    // :tracking_conditional_expression_depth_for_noreturn_functions
+    // 
+    // We keep track of how deep we are in conditional expressions, to only set 'SCOPE_FLAG_returns_a_value' 
+    // on _Noreturn functions if we are not in a conditional expression.
+    // This value will possibly be wrong if 'parse_expression' returns early, but in that case there was an error,
+    // hence we don't care. But it means we have to reset this value in 'reset_context'.
+    smm in_conditional_expression;
+    
     struct ast *ast_stack[1024];
     smm ast_stack_at;
     
@@ -2685,6 +2693,7 @@ func void reset_context(struct context *context){
     context->error                      = false;
     context->current_compilation_unit   = null;
     context->maybe_in_cast              = null;
+    context->in_conditional_expression  = 0;
 }
 
 func void worker_tokenize_file(struct context *context, struct work_queue_entry *work){
@@ -3210,13 +3219,19 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         }
     }
     
-    if(function->type->return_type != &globals.typedef_void && !(scope->flags & SCOPE_FLAG_returns_a_value)){
-        // 
-        // We have reached the end of a non-void function, but there was no return.
-        // Report a warning.
-        // 
-        struct string return_type_string = push_type_string(context->arena, &context->scratch, function->type->return_type);
-        report_warning(context, WARNING_missing_return_value, get_current_token_for_error_report(context), "Function of type '%.*s' must return a value.", return_type_string.size, return_type_string.data);
+    
+    if(!(scope->flags & SCOPE_FLAG_returns_a_value)){
+        
+        if((function->type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
+            report_warning(context, WARNING_return_in_noreturn_function, get_current_token_for_error_report(context), "Control flow reaching the end of '_Noreturn' function.");
+        }else if(function->type->return_type != &globals.typedef_void){
+            // 
+            // We have reached the end of a non-void function, but there was no return.
+            // Report a warning.
+            // 
+            struct string return_type_string = push_type_string(context->arena, &context->scratch, function->type->return_type);
+            report_warning(context, WARNING_missing_return_value, get_current_token_for_error_report(context), "Function of type '%.*s' must return a value.", return_type_string.size, return_type_string.data);
+        }
     }
     
     context->current_function = null;
