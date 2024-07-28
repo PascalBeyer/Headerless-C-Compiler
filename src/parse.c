@@ -3143,7 +3143,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                             if(length_modifier == 'j'){
                                 if((conversion_specifier == 'd' || conversion_specifier == 'i')){
                                     if(!string_match(type_string, string("intmax_t"))) should_warn = "intmax_t";
-                                }else if((conversion_specifier == 'u')){
+                                }else if(conversion_specifier == 'u'){
                                     if(!string_match(type_string, string("uintmax_t"))) should_warn = "uintmax_t";
                                 }else{
                                     // for the rest (o, x, X) allow either
