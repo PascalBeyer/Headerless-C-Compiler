@@ -3469,7 +3469,7 @@ func void add_system_include_directory(struct memory_arena *arena, struct string
 __declspec(dllimport) u32 RegOpenKeyExA(HANDLE key, char *sub_key, u32 option, u32 desired_access, HANDLE *out_key);
 __declspec(dllimport) u32 RegQueryValueExA(HANDLE key, char *value_name, u32 *reserved, u32 *opt_out_type, u8 *opt_out_data, u32 *opt_out_length);
 __declspec(dllimport) u32 RegEnumKeyExA(HANDLE key, u32 index, char *out_sub_key_name, u32 *in_out_sub_key_name_size, u32 *reserved, char *opt_in_out_class, u32 *opt_in_out_class_size, void *last_write_time);
-
+__declspec(dllimport) u32 RegCloseKey(HANDLE key);
 
 // 
 // https://learn.microsoft.com/en-us/cpp/porting/upgrade-your-code-to-the-universal-crt?view=msvc-170
@@ -3479,6 +3479,10 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
     // Get the Windows 10 SDK root by using the registry.
     // 
     struct string ret = zero_struct;
+    
+    // @note: Why do we specify this KEY_WOW64_32KEY? Seems like we should not?
+    //        It might be that we need this because the microsoft compiler is 32-bit and thus uses 32-bit keys.
+    //        But not sure. (But I tested and I need it, as the 64-bit version of the key does not have the `OptionId.DesktopCPPx64`.
     
     HANDLE root_key;
     u32 open_registy_result = RegOpenKeyExA(/*HKEY_LOCAL_MACHINE*/(HANDLE)0x80000002ull, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots", 0, /*KEY_QUERY_VALUE*/1 | /*KEY_WOW64_32KEY*/0x0200 | /*KEY_ENUMERATE_SUB_KEYS*/8, &root_key);
@@ -3524,8 +3528,6 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
         u32 enumerate_key_result = RegEnumKeyExA(root_key, sub_key_index, subkey_name, &sub_key_length, null, null, null, null);
         if(enumerate_key_result != /*ERROR_SUCCESS*/0) break;
         
-        // @cleanup: check if the corresponding directory exists.
-        
         struct string version_string = {.data = (u8 *)subkey_name, .size = sub_key_length};
         
         u64 subkey_version[4];
@@ -3544,10 +3546,33 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
             }
         }
         
-        if(is_higher){
-            for(u32 index = 0; index < 4; index++) highest_version[index] = subkey_version[index];
-        }
+        if(!is_higher) continue;
+        
+        // 
+        // Check whether or not this sdk installation has `OptionId.DesktopCPPx64`.
+        // 
+        
+        struct string value_string = string("\\Installed Options");
+        
+        if(value_string.size + sub_key_length + 1 >= sizeof(subkey_name)) continue; // This should never happen... Whatever.
+        
+        memcpy(subkey_name + sub_key_length, value_string.data, value_string.size + /*zero-terminator*/1);
+        
+        HANDLE option_key;
+        u32 open_option_key_result = RegOpenKeyExA(root_key, subkey_name, 0, /*KEY_QUERY_VALUE*/1 | /*KEY_WOW64_32KEY*/0x0200, &option_key);
+        if(open_option_key_result != /*ERROR_SUCCESS*/0) continue;
+        
+        u32 x64_option = 0;
+        u32 x64_option_length = sizeof(x64_option);
+        u32 query_x64_option_result = RegQueryValueExA(option_key, "OptionId.DesktopCPPx64", NULL, NULL, (u8 *)&x64_option, &x64_option_length);
+        RegCloseKey(option_key);
+        if(query_x64_option_result != /*ERROR_SUCCESS*/0 || !x64_option) continue;
+        
+        // This version was higher, save it.
+        for(u32 index = 0; index < 4; index++) highest_version[index] = subkey_version[index];
     }
+    
+    RegCloseKey(root_key);
     
     for(u32 index = 0; index < 4; index++) sdk_version[index] = highest_version[index];
     return push_zero_terminated_string_copy(arena, create_string(buffer, length));

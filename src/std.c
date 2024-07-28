@@ -32,6 +32,8 @@ typedef intptr_t  smem;
 
 #elif defined(_MSC_VER) || defined(__HLC__)
 
+#include <intrin.h>
+
 typedef __int8 s8;
 typedef unsigned __int8 u8;
 typedef __int16 s16;
@@ -598,7 +600,7 @@ int _fltused;
 void *memset(void *mem, int val, size_t amount){
     
     if(!amount) return mem;
-    __stosb(mem, val, amount);
+    __stosb(mem, (unsigned char)val, amount);
     return mem;
 }
 
