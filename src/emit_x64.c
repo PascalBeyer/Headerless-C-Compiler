@@ -2578,56 +2578,55 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             u64 size  = subscript->base.resolved_type->size;
             enum register_kind register_kind = get_register_kind_for_type(subscript->base.resolved_type);
             
-            struct emit_location *loc = array;
-            loc->register_kind_when_loaded = register_kind;
-            loc->size = size;
+            array->register_kind_when_loaded = register_kind;
+            array->size = size;
             
             if(subscript->index->kind == AST_integer_literal){
                 
                 u64 index = integer_literal_to_bytes(subscript->index);
                 
                 // @cleanup: overflow?
-                if(loc->offset + size * index > s32_max){
+                if(array->offset + size * index > s32_max){
                     
                     struct emit_location *index_register = emit_location_immediate(context, size * index, 8);
                     
-                    if(loc->ast){
-                        // @cleanup: moveabs?
+                    if(array->ast || array->index){
                         // 'loc' is rip-relative, we cannot have [rip + rax + 0x1337], hence we need to load rip + 0x1337 first.
-                        enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                        loc = emit_load_address(context, loc, reg);
-                        loc = emit_location_register_relative(context, register_kind, loc, index_register, 0, size);
+                        // Similarly, if 'loc' already has an index register, we need to load it so we can add _another_ index register.
+                        struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
+                        free_emit_location(context, array);
+                        array = emit_location_register_relative(context, register_kind, pointer, index_register, 0, size);
                     }else{
-                        loc->index = index_register;
+                        array->index = index_register;
                     }
                 }else{
-                    loc->offset += size * index;
+                    array->offset += size * index;
                 }
                 
-                return loc;
+                return array;
             }else if(size == 1 || size == 2 || size == 4 || size == 8){
                 
                 struct emit_location *index_register = emit_code_for_ast(context, subscript->index);
                 
-                if(loc->ast){
-                    // @cleanup: moveabs?
-                    // 'loc' is rip-relative, we cannot have [rip + rax + 0x1337], hence we need to load rip + 0x1337 first.
-                    enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                    loc = emit_load_address(context, loc, reg);
-                    loc = emit_location_register_relative(context, register_kind, loc, index_register, 0, size);
+                if(array->ast || array->index){
+                    // If 'loc' is rip-relative, we cannot have [rip + rax + 0x1337], hence we need to load rip + 0x1337 first.
+                    // Similarly, if 'loc' already has an index register, we need to load it so we can add _another_ index register.
+                    struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
+                    free_emit_location(context, array);
+                    array = emit_location_register_relative(context, register_kind, pointer, index_register, 0, size);
                 }else{
-                    loc->index = index_register;
+                    array->index = index_register;
                 }
                 
                 
                 switch(size){
-                    case 1: loc->log_index_scale = 0; break;
-                    case 2: loc->log_index_scale = 1; break;
-                    case 4: loc->log_index_scale = 2; break;
-                    case 8: loc->log_index_scale = 3; break;
+                    case 1: array->log_index_scale = 0; break;
+                    case 2: array->log_index_scale = 1; break;
+                    case 4: array->log_index_scale = 2; break;
+                    case 8: array->log_index_scale = 3; break;
                 }
                 
-                return loc;
+                return array;
             }else{
                 struct emit_location *index = emit_code_for_ast(context, subscript->index);
                 
