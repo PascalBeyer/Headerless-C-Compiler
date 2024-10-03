@@ -812,7 +812,7 @@ unsigned int test_thread_entry(void *thread_parameter){
                         output = execute_command_output(&arena, run_command_line, directory, &run_exit_code);
                         
                         push_format_cstring(&log, "%s:\n", run_command_line);
-                        push_format_cstring(&log, "Exited with code 0x%x\n", compile_exit_code);
+                        push_format_cstring(&log, "Exited with code 0x%x\n", run_exit_code);
                         push_format_cstring(&log, "%.*s\n", output.size, output.data);
                         
                         if(run_exit_code != 0){
