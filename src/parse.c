@@ -6872,8 +6872,9 @@ case TOKEN_##type_name:{                                                 \
                                     }
                                     
                                     register_compound_member(context, compound, ident, declarator.type, offset_in_type);
+                                }else if(declarator.type->kind != AST_struct && declarator.type->kind != AST_union){
+                                    report_error(context, ident, "Declaration does not declare anything.");
                                 }else{
-                                    
                                     // :member_list_contains_both_linear_and_nested
                                     // 
                                     // First register the "anonymous" nested member, 
