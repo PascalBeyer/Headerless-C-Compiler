@@ -11,12 +11,6 @@ int main(){
         int array_of_unknown_size[];
     };
     
-    struct has_array{
-        int asd;
-        int asd2;
-        int array[20];
-    };
-    
     
     assert(offset_in_type(struct has_array_of_unknown_size, array_of_unknown_size) == 4);
     assert(*(&((struct has_array_of_unknown_size *)0)->array_of_unknown_size) == (int *)4);

@@ -1,4 +1,3 @@
-// broken
 
 #define offset_in_type(type, member) (unsigned long long)(&((type *)0)->member)
 

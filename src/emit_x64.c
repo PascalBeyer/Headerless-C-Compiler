@@ -2672,6 +2672,15 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             
             return loaded;
         }break;
+        
+        case AST_pointer_literal_deref:{
+            struct ast_pointer_literal *pointer_literal_deref = (struct ast_pointer_literal *)ast;
+            enum register_kind register_kind = get_register_kind_for_type(ast->resolved_type);
+            
+            struct emit_location *loc = emit_location_immediate(context, (u64)pointer_literal_deref->pointer, 8);
+            return emit_location_register_relative(context, register_kind, loc, null, 0, ast->resolved_type->size);
+        }break;
+        
         case AST_unary_deref:{
             struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
             struct emit_location *loc = emit_code_for_ast(context, op->operand);

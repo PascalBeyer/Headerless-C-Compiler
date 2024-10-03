@@ -1195,21 +1195,19 @@ func struct ast *push_dot_or_arrow(struct context *context, struct compound_memb
     if(operand->kind == AST_pointer_literal){
         assert(ast_kind == AST_member_deref); // We cannot use '.' on a pointer.
         
-        // 
-        // Adjust the pointer to be a pointer literal pointing to the member.
-        // 
         struct ast_pointer_literal *pointer = (struct ast_pointer_literal *)operand;
+        pointer->base.kind = AST_pointer_literal_deref;
         pointer->pointer += found->offset_in_type;
+        set_resolved_type(&pointer->base, found->type, found->defined_type);
+        return &pointer->base;
+    }else if(operand->kind == AST_pointer_literal_deref && ast_kind == AST_member){
+        // We are here --------------v
+        // ((struct arst *)0)->member.submember
         
-        struct ast_type *pointer_type = parser_push_pointer_type(context, found->type, found->defined_type, test);
-        set_resolved_type(&pointer->base, pointer_type, null);
-        
-        // 
-        // Push a dereference of of the adjusted pointer-literal.
-        // 
-        struct ast *ret = ast_push_unary_expression(context, AST_unary_deref, test, operand);
-        set_resolved_type(ret, found->type, found->defined_type);
-        return ret;
+        struct ast_pointer_literal *pointer_literal_deref = (struct ast_pointer_literal *)operand;
+        pointer_literal_deref->pointer += found->offset_in_type;
+        set_resolved_type(&pointer_literal_deref->base, found->type, found->defined_type);
+        return &pointer_literal_deref->base;
     }else{
         struct ast_dot_or_arrow *op = (struct ast_dot_or_arrow *)_parser_ast_push(context, test, sizeof(struct ast_dot_or_arrow), alignof(struct ast_dot_or_arrow), ast_kind);
         op->lhs = operand;
@@ -1374,25 +1372,18 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
 func struct ast *maybe_load_address_for_array_or_function(struct context *context, struct ast *ast){
     
     if(ast->resolved_type->kind == AST_array_type){
-        // @hack: constant propergate an edge case needed for 'FIELD_OFFSET(struct s, array[1])';
-        //        or written out: '(smm)&(((struct s *)0)->array[1])'.
-        //        here '((struct s *)0)->array' gets subscripted and  therefore we load the address of it.
-        
-        struct ast *handled = null;
-        
-        if(ast->kind == AST_unary_deref){
-            struct ast_unary_op *deref = cast(struct ast_unary_op *)ast;
-            if(deref->operand->kind == AST_pointer_literal){
-                handled = deref->operand;
-            }
-        }
-        
         struct ast_array_type *array = cast(struct ast_array_type *)ast->resolved_type;
-        if(handled){
-            ast = handled;
+        
+        if(ast->kind == AST_pointer_literal_deref){
+            // @hack: constant propergate an edge case needed for 'FIELD_OFFSET(struct s, array[1])';
+            //        or written out: '(smm)&(((struct s *)0)->array[1])'.
+            //        here '((struct s *)0)->array' gets subscripted and  therefore we load the address of it.
+            
+            ast->kind = AST_pointer_literal;
         }else{
             ast = ast_push_unary_expression(context, AST_implicit_address_conversion, ast->token, ast);
         }
+        
         struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, ast->token);
         set_resolved_type(ast, pointer_type, null);
     }else if(ast->resolved_type->kind == AST_function_type){
@@ -1508,24 +1499,19 @@ func struct ast *push_nodes_for_subscript(struct context *context, struct ast *l
         
         struct ast_array_type *array = (struct ast_array_type *)lhs_type;
         
-        if(lhs->kind == AST_unary_deref && index->kind == AST_integer_literal){
+        if(lhs->kind == AST_pointer_literal_deref && index->kind == AST_integer_literal){
             // Transform
             //    (*((int (*) [])0))[3]
             // Into
             //    *((int *) 12)
             
-            struct ast_unary_op *deref = (struct ast_unary_op *)lhs;
-            if(deref->operand->kind == AST_pointer_literal){
-                struct ast_pointer_literal *literal = (struct ast_pointer_literal *)deref->operand;
-                literal->pointer += array->element_type->size * integer_literal_as_u64(index);
-                
-                struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, token);
-                
-                set_resolved_type(&literal->base, pointer_type, null);
-                set_resolved_type(lhs, array->element_type, array->element_type_defined_type);
-                
-                return lhs;
-            }
+            struct ast_pointer_literal *pointer_literal_deref = (struct ast_pointer_literal *)lhs;
+            pointer_literal_deref->pointer += array->element_type->size * integer_literal_as_u64(index); // @cleanup: overflow?
+            
+            struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, token);
+            set_resolved_type(lhs, pointer_type, null);
+            
+            return lhs;
         }
         
         dereferenced_resolved_type = array->element_type;
@@ -4461,7 +4447,6 @@ case NUMBER_KIND_##type:{ \
                 expect_token(context, TOKEN_closed_index, "Expected ']' at the end of array subscript.");
                 if(context->should_exit_statement) return operand;
                 
-                
                 if(operand->resolved_type->kind == AST_integer_type){
                     //
                     // This is a @hack to work around some cursed stuff c is supporting.
@@ -4469,7 +4454,7 @@ case NUMBER_KIND_##type:{ \
                     // '1[argv]' are legal and evaluate to the same as 'argv[1]'.
                     //                                                            -20.04.2023
                     // 
-                    struct ast *temp = operand;
+                    struct ast *temp = operand; // @cleanup: This is technically wrong as it does not execute in source code order.
                     operand = index;
                     index = temp;
                 }
@@ -4581,7 +4566,6 @@ case NUMBER_KIND_##type:{ \
                     if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer->pointer_to)) return operand;
                 }
                 
-                
                 //
                 // @cleanup: warning or error if the lhs is an array and the index is statically out of bounds?
                 //
@@ -4600,8 +4584,7 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 struct ast_compound_type *compound = cast(struct ast_compound_type *)operand->resolved_type;
-                struct ast *op = handle_dot_or_arrow(context, compound, operand, AST_member, test);
-                operand = cast(struct ast *)op;
+                operand = handle_dot_or_arrow(context, compound, operand, AST_member, test);
                 
                 // 
                 // @note: Dot does not alter the 'is_lhs_expression' flag.
@@ -4638,9 +4621,7 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 struct ast_compound_type *compound = cast(struct ast_compound_type *)pointer->pointer_to;
-                struct ast *op = handle_dot_or_arrow(context, compound, operand, AST_member_deref, test);
-                
-                operand = cast(struct ast *)op;
+                operand = handle_dot_or_arrow(context, compound, operand, AST_member_deref, test);
                 
                 context->in_lhs_expression = true;
             }break;
@@ -5152,7 +5133,13 @@ case NUMBER_KIND_##type:{ \
                     struct ast_unary_op *address = cast(struct ast_unary_op *)operand;
                     assert(address->base.resolved_type->kind == AST_pointer_type);
                     handled = address->operand;
+                }else if(operand->kind == AST_pointer_literal){
                     
+                    operand->kind = AST_pointer_literal_deref;
+                    handled = operand;
+                    
+                    struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)operand->resolved_type;
+                    set_resolved_type(operand, pointer_type->pointer_to, pointer_type->pointer_to_defined_type);
                 }
                 
                 if(handled){
@@ -5188,7 +5175,13 @@ case NUMBER_KIND_##type:{ \
                     struct ast_unary_op *deref = cast(struct ast_unary_op *)operand;
                     prefix = deref->operand;
                     assert(deref->operand->resolved_type->kind == AST_pointer_type);
-                }else{
+                }else if(operand->kind == AST_pointer_literal_deref){
+                    operand->kind = AST_pointer_literal;
+                    prefix = operand;
+                    
+                    struct ast_type *ptr = parser_push_pointer_type(context, operand->resolved_type, operand->defined_type, operand->token);
+                    set_resolved_type(operand, ptr, null);
+                }else {
                     struct ast_type *ptr = parser_push_pointer_type(context, operand->resolved_type, operand->defined_type, operand->token);
                     set_resolved_type(&op->base, ptr, null);
                 }
