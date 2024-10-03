@@ -163,7 +163,13 @@ func struct ast *ast_push_s64_literal(struct context *context, struct token *tok
 func struct ast *ast_push_u64_literal(struct context *context, struct token *token, u64 value){
     struct ast_integer_literal *lit = parser_ast_push(context, token, integer_literal);
     lit->_u64 = value;
-    set_resolved_type(&lit->base, &globals.typedef_u64, null);
+    
+    struct ast *defined_type = null;
+    if(value < max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
+    else if(value < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+    else if(value < max_u32) defined_type = (struct ast *)&globals.typedef_u32;
+    
+    set_resolved_type(&lit->base, &globals.typedef_u64, defined_type);
     return &lit->base;
 }
 
@@ -173,7 +179,12 @@ func struct ast *ast_push_s32_literal(struct context *context, struct token *tok
     assert(value >= s32_min);
     struct ast_integer_literal *lit = parser_ast_push(context, token, integer_literal);
     lit->_s32 = (s32)value;
-    set_resolved_type(&lit->base, &globals.typedef_s32, null);
+    
+    struct ast *defined_type = null;
+    if(value < max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
+    else if(value < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+    
+    set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
     return &lit->base;
 }
 
@@ -570,6 +581,7 @@ func struct ast *maybe_insert_integer_promotion_cast(struct context *context, st
 
 func struct ast_type *perform_usual_arithmetic_conversions(struct ast_type *lhs, struct ast_type *rhs){
     assert(type_is_arithmetic(lhs) && type_is_arithmetic(rhs));
+    
     if(lhs == &globals.typedef_f64) return &globals.typedef_f64;
     if(rhs == &globals.typedef_f64) return &globals.typedef_f64;
     if(lhs == &globals.typedef_f32) return &globals.typedef_f32;
@@ -1622,7 +1634,7 @@ func struct ast *maybe_insert_implicit_assignment_cast_and_check_that_types_matc
         }else if(lhs_type->size > rhs_type->size){
             // this is fine 'double' = 'float'
         }else{
-            assert(false); // should not be here... Their sizes are equal, thus they should be equal.
+            invalid_code_path; // should not be here... Their sizes are equal, thus they should be equal.
         }
     }else if(lhs_type->kind == AST_integer_type && rhs_type->kind == AST_integer_type){
         should_push_cast = true;
@@ -1632,7 +1644,7 @@ func struct ast *maybe_insert_implicit_assignment_cast_and_check_that_types_matc
             if(type_is_signed(lhs_type)){
                 s64 value = integer_literal_as_s64(rhs);
                 switch(lhs_type->size){
-                    case 1: fits = (min_s8 <= value && value <= max_s8); break;
+                    case 1: fits = (min_s8  <= value && value <= max_s8); break;
                     case 2: fits = (min_s16 <= value && value <= max_s16); break;
                     case 4: fits = (min_s32 <= value && value <= max_s32); break;
                     case 8: fits = (min_s64 <= value && value <= max_s64); break;
@@ -1653,28 +1665,16 @@ func struct ast *maybe_insert_implicit_assignment_cast_and_check_that_types_matc
                 report_warning(context, WARNING_compile_time_truncation, assignment, "Compile time truncation of integer.");
             }
         }else{
-            struct ast_type *type = rhs_type;
             // :retain_type_information_through_promotion
-            if(rhs->defined_type){
-                if(rhs->defined_type->kind == AST_integer_type){
-                    type = (struct ast_type *)rhs->defined_type;
-                }else if(rhs->defined_type->kind == AST_typedef){
-                    struct ast_declaration *decl = cast(struct ast_declaration *)rhs->defined_type;
-                    assert(decl->type->kind == AST_integer_type);
-                    type = decl->type;
-                }
-            }
+            
+            struct ast_type *type = rhs->defined_type ? defined_type_to_type(rhs->defined_type) : rhs_type;
             assert(type->size <= rhs_type->size);
             
-            // @incomplete: right now this is kinda annoying. maybe we should propagate min and max values...
-            //              and then check these, i.e get rid of the 'retain_type_information_through_promotion'
-            //              These min and max values could be logged as 'log'.
-#if 0
             if(lhs_type->size > type->size){
                 if(!type_is_signed(type)){
                     // these are always fine 's32' = 'u8'
                 }else if(type_is_signed(lhs_type) == type_is_signed(type)){
-                    // these are fine: 'u32' = 'u16' or '
+                    // these are fine: 'u32' = 'u16' or 's32' = 's16'.
                 }else{
                     should_report_warning = true;
                 }
@@ -1688,7 +1688,6 @@ func struct ast *maybe_insert_implicit_assignment_cast_and_check_that_types_matc
                     should_report_warning  = true;
                 }
             }
-#endif
         }
     }
     
@@ -2360,59 +2359,74 @@ func struct ast *perform_integer_operation(struct context *context, struct ast_b
     
     struct ast_type *promoted_type = perform_usual_arithmetic_conversions(op->lhs->resolved_type, op->rhs->resolved_type);
     
-#define __perform_integer_operation(type)\
-type lhs_val = integer_literal_as_##type(&lhs->base); \
-type rhs_val = integer_literal_as_##type(&rhs->base);\
-switch(op->base.kind){\
-    case AST_binary_times:   lhs->_##type = lhs_val * rhs_val; break;\
-    case AST_binary_divide:{\
-        if(rhs_val == 0){\
-            report_error(context, op->base.token, "Integer division by 0.");\
-            return &lhs->base;\
-        }\
-        lhs->_##type = lhs_val / rhs_val; \
-    }break;\
-    case AST_binary_mod:{\
-        if(rhs_val == 0){\
-            report_error(context, op->base.token, "Integer modulation by 0.");\
-            return &lhs->base;\
-        }\
-        lhs->_##type = lhs_val % rhs_val; \
-    }break;\
-    case AST_binary_plus:    lhs->_##type = lhs_val + rhs_val; break;\
-    case AST_binary_minus:   lhs->_##type = lhs_val - rhs_val; break;\
-    \
-    case AST_binary_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break;\
-    case AST_binary_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break;\
-    case AST_binary_bigger_equals:    lhs->_u64 = (lhs_val >= rhs_val); break;\
-    case AST_binary_smaller_equals:   lhs->_u64 = (lhs_val <= rhs_val); break;\
-    case AST_binary_bigger:           lhs->_u64 = (lhs_val > rhs_val);  break;\
-    case AST_binary_smaller:          lhs->_u64 = (lhs_val < rhs_val);  break;\
-    invalid_default_case();\
-}\
+#define __perform_integer_operation(type)                                      \
+type lhs_val = integer_literal_as_##type(&lhs->base);                          \
+type rhs_val = integer_literal_as_##type(&rhs->base);                          \
+switch(op->base.kind){                                                         \
+    case AST_binary_times:   lhs->_##type = lhs_val * rhs_val; break;          \
+    case AST_binary_divide:{                                                   \
+        if(rhs_val == 0){                                                      \
+            report_error(context, op->base.token, "Integer division by 0.");   \
+            return &lhs->base;                                                 \
+        }                                                                      \
+        lhs->_##type = lhs_val / rhs_val;                                      \
+    }break;                                                                    \
+    case AST_binary_mod:{                                                      \
+        if(rhs_val == 0){                                                      \
+            report_error(context, op->base.token, "Integer modulation by 0."); \
+            return &lhs->base;                                                 \
+        }                                                                      \
+        lhs->_##type = lhs_val % rhs_val;                                      \
+    }break;                                                                    \
+    case AST_binary_plus:    lhs->_##type = lhs_val + rhs_val; break;          \
+    case AST_binary_minus:   lhs->_##type = lhs_val - rhs_val; break;          \
+                                                                               \
+    case AST_binary_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break; \
+    case AST_binary_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break; \
+    case AST_binary_bigger_equals:    lhs->_u64 = (lhs_val >= rhs_val); break; \
+    case AST_binary_smaller_equals:   lhs->_u64 = (lhs_val <= rhs_val); break; \
+    case AST_binary_bigger:           lhs->_u64 = (lhs_val > rhs_val);  break; \
+    case AST_binary_smaller:          lhs->_u64 = (lhs_val < rhs_val);  break; \
+    invalid_default_case();                                                    \
+}                                                                              \
 
-    
+    u64 value;
     
     if(promoted_type->size == 4){
+        
         if(promoted_type == &globals.typedef_u32){
             __perform_integer_operation(u32);
+            
+            value = lhs->_u32;
         }else{
             assert(promoted_type == &globals.typedef_s32);
             __perform_integer_operation(s32);
+            
+            value = (lhs->_s32 < 0) ? -lhs->_s32 : lhs->_s32;
         }
     }else{
         assert(promoted_type->size == 8);
+        
         if(promoted_type == &globals.typedef_u64){
             __perform_integer_operation(u64);
+            
+            value = lhs->_u64;
         }else{
             assert(promoted_type == &globals.typedef_s64);
             __perform_integer_operation(s64);
+            
+            value = (lhs->_s32 < 0) ? -lhs->_s64 : lhs->_s64;
         }
     }
     
 #undef __perform_integer_operation
     
-    set_resolved_type(&lhs->base, promoted_type, null);
+    struct ast *defined_type = null;
+    if(value < max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
+    else if(value < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+    else if(value < max_u32) defined_type = (struct ast *)&globals.typedef_u32;
+    
+    set_resolved_type(&lhs->base, promoted_type, defined_type);
     return &lhs->base;
 }
 
@@ -3746,8 +3760,11 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                     // thread one now parses '(type)' as a cast.
                     
                     
+                    u64 value = is_alignof ? type->alignment : type->size;
+                    
                     // "The [..] type (an unsigned integer type) is 'size_t', defined in <stddef.h>."
-                    operand = ast_push_u64_literal(context, size_or_alignof->token, is_alignof ? type->alignment : type->size);
+                    operand = ast_push_u64_literal(context, size_or_alignof->token, value);
+                    
                     if(is_alignof){
                         expect_token(context, TOKEN_closed_paren, "Expected ')' after 'alignof(type'.");
                     }else{
@@ -4000,8 +4017,13 @@ case NUMBER_KIND_##type:{ \
                 case NUMBER_KIND_long: // @cleanup: if we do long vs int think about this
                 case NUMBER_KIND_int:{
                     if(val <= max_s32){
+                        struct ast *defined_type = 0;
+                        
+                        if(val < max_u8) defined_type = (struct ast *)&globals.typedef_u8;
+                        else if(val < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+                        
                         lit->_s32 = (s32)val;
-                        set_resolved_type(&lit->base, &globals.typedef_s32, null);
+                        set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
                         break;
                     }
                 } // fallthrough
@@ -4033,6 +4055,7 @@ case NUMBER_KIND_##type:{ \
             operand = &lit->base;
             context->in_lhs_expression = false;
         }break;
+        
         case TOKEN_binary_literal:
         case TOKEN_hex_literal:{
             struct token *lit_token = next_token(context);
@@ -4071,9 +4094,15 @@ case NUMBER_KIND_##type:{ \
                 
                 case NUMBER_KIND_long:
                 case NUMBER_KIND_int:{
+                    
                     if(val <= max_s32){
+                        
+                        struct ast *defined_type = 0;
+                        if(val < max_u8) defined_type = (struct ast *)&globals.typedef_u8;
+                        else if(val < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+                        
                         lit->_s32 = (s32)val;
-                        set_resolved_type(&lit->base, &globals.typedef_s32, null);
+                        set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
                     }else if(val <= max_u32){
                         lit->_u32 = (u32)val;
                         set_resolved_type(&lit->base, &globals.typedef_u32, null);
@@ -4113,6 +4142,7 @@ case NUMBER_KIND_##type:{ \
             operand = &lit->base;
             context->in_lhs_expression = false;
         }break;
+        
         case TOKEN_string_literal:{
             struct ast_string_literal *lit = parser_ast_push(context, get_current_token(context), string_literal);
             
@@ -5011,7 +5041,7 @@ case NUMBER_KIND_##type:{ \
                     lit->_u64 = !integer_literal_as_u64(&lit->base);
                     
                     // "The result has type int."
-                    set_resolved_type(&lit->base, &globals.typedef_s32, null);
+                    set_resolved_type(&lit->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                     
                     prefix = &lit->base;
                     break;
@@ -5021,7 +5051,7 @@ case NUMBER_KIND_##type:{ \
                     operand = maybe_insert_integer_promotion_cast(context, operand);
                 }
                 
-                set_resolved_type(&op->base, &globals.typedef_s32, null);
+                set_resolved_type(&op->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 context->in_lhs_expression = false;
                 
                 op->operand = operand;
@@ -5244,7 +5274,12 @@ case NUMBER_KIND_##type:{ \
                             report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
                             return operand;
                         }
-                        set_resolved_type(&op->base, op->lhs->resolved_type, defined_type_for_binary_op(op));
+                        
+                        // @note: For '%', the right hand side defined type "bounds" the lhs type as this is an and.
+                        //        Hence, we simply reuse the defined type of the rhs.
+                        struct ast *defined_type = (ast->kind == AST_binary_mod) ? op->rhs->defined_type : defined_type_for_binary_op(op);
+                        set_resolved_type(&op->base, op->lhs->resolved_type, defined_type);
+                        
                         operand = &op->base;
                     }
                 }
@@ -5291,6 +5326,7 @@ case NUMBER_KIND_##type:{ \
                         }
                     }else if(op->lhs->resolved_type->kind == AST_integer_type && op->rhs->resolved_type->kind == AST_pointer_type){
                         // swap the arguments, as this is what 'handle_pointer_arithmetic' expects
+                        // @cleanup: This is "incorrect", because we want to keep the execution order the same as it in the source code.
                         struct ast *temp = op->rhs;
                         op->rhs = op->lhs;
                         op->lhs = temp;
@@ -5529,13 +5565,17 @@ case NUMBER_KIND_##type:{ \
                     operand = op->lhs;
                 }else{
                     if(!check_binary_for_basic_types(context, op, CHECK_integer)) return operand;
+                    
                     maybe_insert_arithmetic_conversion_casts(context, op);
                     
                     if(op->lhs->resolved_type != op->rhs->resolved_type){
                         report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
                         return operand;
                     }
-                    set_resolved_type(&op->base, op->lhs->resolved_type, defined_type_for_binary_op(op));
+                    
+                    // @note: The right hand side defined type "bounds" the lhs type as this is an and.
+                    //        Hence, we simply reuse the defined type of the rhs.
+                    set_resolved_type(&op->base, op->lhs->resolved_type, op->rhs->defined_type);
                     operand = &op->base;
                     context->in_lhs_expression = false;
                 }
