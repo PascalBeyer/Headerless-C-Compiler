@@ -5481,8 +5481,12 @@ case NUMBER_KIND_##type:{ \
                 
                 struct ast_type *match = types_are_equal(op->lhs->resolved_type, op->rhs->resolved_type);
                 if(!match){
-                    report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
-                    return operand;
+                    if(op->lhs->resolved_type->kind == AST_pointer_type && op->rhs->resolved_type->kind == AST_pointer_type){
+                        report_type_mismatch_warning(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
+                    }else{
+                        report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
+                        return operand;
+                    }
                 }
                 
                 set_resolved_type(&op->base, &globals.typedef_s32, null);
