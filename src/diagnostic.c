@@ -194,7 +194,10 @@ func void push_error_node_to_context(struct context *context, struct token *toke
         }
     }
     
-    node->error.length = vsnprintf(0, 0, format, va);
+    va_list copied_va;
+    va_copy(copied_va, va);
+    node->error.length = vsnprintf(0, 0, format, copied_va);
+    va_end(copied_va);
     
     node->error.data = push_uninitialized_data(context->arena, u8, node->error.length + 1);
     vsnprintf((char *)node->error.data, (int)(node->error.length + 1), format, va);
