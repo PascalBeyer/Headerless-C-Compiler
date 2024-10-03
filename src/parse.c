@@ -2939,10 +2939,10 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
             
             if(format_string.size >= 2 && format_string.data[1] == '%'){
                 //
-                // '%%' inserts one '%' into the string.
+                // '%%' inserts one '%' into the string, but we need to keep both in the format string.
                 //
-                string_eat_front(&format_string, 2); // eat both '%%'
-                start.size += 1;                     // keep one of the '%'
+                string_eat_front(&format_string, 2); // eat both '%%'.
+                start.size += 2;                     // keep both of the '%'.
                 string_list_postfix(&pretty_print_list, &context->scratch, start);
                 continue;
             }else{
