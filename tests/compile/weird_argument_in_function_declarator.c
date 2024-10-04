@@ -1,4 +1,3 @@
-// broken
 
 int i_have_a_bunch_of_werid_arguments(
         int arg1(void),

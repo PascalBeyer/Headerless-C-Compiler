@@ -8450,8 +8450,8 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             // needs to be preceeded by a direct-declarator.
             // 
             have_nested_declarator = true;
-        }else if(declarator_kind_flags == DECLARATOR_type_name){
-            // We only want an abstract-declarator.
+        }else{
+            // If we only want an abstract-declarator.
             // We can check, the next token for '*', '(' and '['.
             if(peek_token(context, TOKEN_times) || peek_token(context, TOKEN_open_paren) || peek_token(context, TOKEN_open_index)){
                 have_nested_declarator = true;
@@ -8461,11 +8461,25 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             if(peek_token(context, TOKEN_cdecl) || peek_token(context, TOKEN_stdcall)){
                 have_nested_declarator = true;
             }
-        }else{
-            assert(declarator_kind_flags == (DECLARATOR_type_name | DECLARATOR_identifier));
-            // We want either, this is the difficult case.
-            // @cleanup: For now we assume it is a nested declarator.
-            have_nested_declarator = true;
+            
+            if(declarator_kind_flags & DECLARATOR_identifier){
+                // If we also allow direct-declarators, we have the special case of an identifier.
+                // For an identifier we have the cases:
+                //     
+                //     int (typename a) = function returning int with argument of type 'typename'.
+                //     int (a)          = integer declaration with name 'a'.
+                // 
+                // Where the first one is not a nested declarator, but the second one is.
+                // 
+                // @cleanup: Currently, this will depend on the order we are compiling stuff in, 
+                //           which is bad.
+                //                                                             -Pascal Beyer 04.10.2024
+                struct token *identifier = peek_token(context, TOKEN_identifier);
+                if(identifier){
+                    struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, identifier, /*silent*/true);
+                    if(!ast_typedef) have_nested_declarator = true;
+                }
+            }
         }
         
         if(have_nested_declarator){
@@ -8484,7 +8498,6 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         // the 'direct-abstract-declarator' case for type-names like:
         // 
         //    int[10]
-        //    int(int)
         // 
         
         if(!(declarator_kind_flags & DECLARATOR_type_name)){
@@ -8493,7 +8506,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             return ret;
         }
         
-        if(!peek_token(context, TOKEN_open_index) && !peek_token(context, TOKEN_open_paren)){
+        if(!peek_token(context, TOKEN_open_index)){
             // 
             // There is no direct-abstract-declarator after the pointer.
             // This is valid, just return what we have got.
