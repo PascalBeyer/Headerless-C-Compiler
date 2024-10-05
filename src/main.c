@@ -3777,7 +3777,7 @@ int main(int argc, char *argv[]){
         if(parse_error) return 1;
     }
     
-    if(globals.output_file_type != OUTPUT_FILE_exe && !no_standard_library){
+    if(globals.output_file_type != OUTPUT_FILE_obj && !no_standard_library){
         int parse_error = ar_parse_file((char *)push_format_string(arena, "%.*s\\ucrt.lib", ucrt_library_path.size, ucrt_library_path.data).data, arena);
         if(parse_error){
             // :Error mention Windows sdk.
@@ -3975,7 +3975,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         
         // pragma directives
-        globals.pragma_once  = atom_for_string(string("once"));
+        globals.pragma_once    = atom_for_string(string("once"));
+        globals.pragma_comment = atom_for_string(string("comment"));
         
         globals.keyword__VA_ARGS__ = atom_for_string(string("__VA_ARGS__"));
         
