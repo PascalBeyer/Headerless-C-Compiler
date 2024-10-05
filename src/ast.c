@@ -444,8 +444,8 @@ enum ast_kind{
     AST_declaration_list,
     AST_union,
     
-    AST_pointer_literal,
-    AST_pointer_literal_deref,
+    AST_pointer_literal,             // (struct s *)1337
+    AST_pointer_literal_deref,       // *(struct s *)1337 or ((struct s *)1337)->member
     AST_implicit_address_conversion, // Used if an array or a function is implicitly converted to a pointer.
     
     AST_asm_block,

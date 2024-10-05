@@ -7741,7 +7741,7 @@ func b32 statement_returns_a_value(struct ast *ast){
 func struct ast *parse_statement(struct context *context){
     
     struct ast *ret = null;
-    if(maybe_report_error_for_stack_exhaustion(context, get_current_token_for_error_report(context), "Scopeing nests to deep.")) return ret;
+    if(maybe_report_error_for_stack_exhaustion(context, get_current_token_for_error_report(context), "Scoping nests to deep.")) return ret;
     
     b32 needs_semicolon = true;
     
@@ -7784,7 +7784,7 @@ func struct ast *parse_statement(struct context *context){
             ret = &ast_if->base;
         }break;
         case TOKEN_for:{
-            // @note: the 'comma seperated lists' you see in for loops are actually just the comma operator
+            // @note: the 'comma separated lists' you see in for loops are actually just the comma operator
             
             struct ast_for *ast_for = parser_ast_push(context, initial_token, for);
             expect_token(context, TOKEN_open_paren, "Expected '(' after 'for'.");

@@ -3165,7 +3165,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         if(function->type->return_type != &globals.typedef_void){
             if(asm_block->instructions.last == null || asm_block->instructions.last->memonic != MEMONIC_return_from_inline_asm_function){
                 struct string type_string = push_type_string(&context->scratch, &context->scratch, function->type->return_type);
-                report_error(context, function->base.token, "__declspec(inline_asm)-function has return type '%.*s' but no return statement was found.", type_string.size, type_string.data);
+                report_error(context, function->base.token, "__declspec(inline_asm)-function has return type '%.*s' but last instruction was not 'return'.", type_string.size, type_string.data);
             }
         }
         
