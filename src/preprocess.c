@@ -3907,10 +3907,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             if(string_literal->type == TOKEN_string_literal){
                                 struct string library = strip_quotes(string_literal->string);
                                 
-                                
-                                print("pragma_comment_directive->string %.*s\n", library.size, library.data);
-                                
-                                
                                 if(!string_match(get_file_extension(library), string(".lib"))){
                                     library = string_concatenate(context->arena, library, string(".lib"));
                                 }

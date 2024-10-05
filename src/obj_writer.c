@@ -757,8 +757,6 @@ void print_obj(struct memory_arena *arena, struct memory_arena *scratch){
     for(struct library_node *library_node = globals.libraries.first; library_node; library_node = library_node->next){
         struct string file_name = strip_file_path(library_node->path);
         
-        print("adding %.*s\n", file_name.size, file_name.data);
-        
         string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\""));
         string_list_postfix(&directives, scratch, file_name);
         string_list_postfix(&directives, scratch, string("\" "));
