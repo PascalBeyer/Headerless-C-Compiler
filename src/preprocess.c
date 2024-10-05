@@ -498,7 +498,7 @@ static u32 eat_escape_from_string_and_return_codepoint(struct context *context, 
                 string_eat_front(to_escape, to_escape->size);
                 return 0;
             }
-                
+            
             struct string hex_chars = string_eat_front(to_escape, size);
             int overflow = 0;
             u64 value = parse_hex_string_to_u64(&hex_chars, &overflow);
@@ -815,7 +815,7 @@ struct string escape_and_convert_string(struct context *context, struct token *t
     
     return escaped_string;
 }
-    
+
 
 
 // return buffer is in 'context->scratch'
@@ -1029,7 +1029,7 @@ func struct parsed_integer parse_hex_literal(struct context *context, struct tok
     if(report_overflow){
         report_warning(context, WARNING_compile_time_overflow, lit_token, "Compile time overflow.");
     }
-        
+    
     ret.number_kind = parse_integer_suffix(literal);
     ret.value = value;
     
@@ -3880,6 +3880,86 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         node->file = globals.file_table.data[pragma_directive->file_index];
                         
                         sll_push_back(context->pragma_once_file_list, node);
+                    }else if(atoms_match(pragma_directive->atom, globals.pragma_comment)){
+                        
+                        // 
+                        // #pragma comment(<directive>, ...)
+                        // 
+                        
+                        eat_whitespace_and_comments(context);
+                        expect_token_raw(context, pragma_directive, TOKEN_open_paren, "Expected a '(' after '#pragma comment'.");
+                        
+                        eat_whitespace_and_comments(context);
+                        struct token *pragma_comment_directive = expect_token_raw(context, pragma_directive, TOKEN_identifier, "Expected a directive after '#pragma comment('.");
+                        if(string_match(pragma_comment_directive->string, string("lib"))){
+                            
+                            // e.g.: #pragma comment(lib, "Shell32.lib")
+                            
+                            eat_whitespace_and_comments(context);
+                            expect_token_raw(context, pragma_comment_directive, TOKEN_comma, "Expected a ',' after '#pragma comment(lib'.");
+                            
+                            eat_whitespace_and_comments(context);
+                            struct token *string_literal = expect_token_raw(context, pragma_comment_directive, TOKEN_string_literal, "Expected a string literal after '#pragma comment(lib, '.");
+                            
+                            eat_whitespace_and_comments(context);
+                            expect_token_raw(context, pragma_comment_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma comment(lib, \"<.lib>\"'.");
+                            
+                            if(string_literal->type == TOKEN_string_literal){
+                                struct string library = strip_quotes(string_literal->string);
+                                
+                                
+                                print("pragma_comment_directive->string %.*s\n", library.size, library.data);
+                                
+                                
+                                if(!string_match(get_file_extension(library), string(".lib"))){
+                                    library = string_concatenate(context->arena, library, string(".lib"));
+                                }
+                                
+                                static struct ticket_spinlock pragma_comment_spinlock = {0};
+                                
+                                int found = 0;
+                                for(struct library_node *library_node = globals.libraries.first; library_node; library_node = library_node->next){
+                                    if(string_match(get_file_name(library_node->path), library)){
+                                        found = 1;
+                                    }
+                                }
+                                
+                                if(!found){
+                                    // 
+                                    // @cleanup: memory allocations.
+                                    // 
+                                    struct string full_library_path = {0};
+                                    
+                                    if(path_is_absolute(library)){
+                                        full_library_path = push_zero_terminated_string_copy(context->arena, library);
+                                    }else{
+                                        for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
+                                            struct string file_path = concatenate_file_paths(context->arena, library_path_node->string, library);
+                                            struct os_file file = os_load_file((char *)file_path.data, 0, 0);
+                                            
+                                            if(!file.file_does_not_exist){
+                                                full_library_path = file_path;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    
+                                    if(!full_library_path.data){
+                                        report_error(context, string_literal, "Could not find library '%.*s'.", library.size, library.data);
+                                    }
+                                    
+                                    // @cleanup: This should not have random prints in this state.
+                                    int parse_error = ar_parse_file((char *)full_library_path.data, context->arena);
+                                    if(parse_error){
+                                        report_error(context, string_literal, "Failed to parse library '%.*s'.", full_library_path.size, full_library_path.data);
+                                    }
+                                }
+                                ticket_spinlock_unlock(&pragma_comment_spinlock);
+                            }
+                            
+                        }else{
+                            report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsupported '#pragma comment(%.*s, ...)' ignored.", pragma_comment_directive->string.size, pragma_comment_directive->string.data);
+                        }
                     }else{
                         while(!peek_token_raw(context, TOKEN_newline)){
                             next_token_raw(context);
