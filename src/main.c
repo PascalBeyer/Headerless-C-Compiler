@@ -3777,7 +3777,7 @@ int main(int argc, char *argv[]){
         if(parse_error) return 1;
     }
     
-    if(!no_standard_library){
+    if(globals.output_file_type != OUTPUT_FILE_exe && !no_standard_library){
         int parse_error = ar_parse_file((char *)push_format_string(arena, "%.*s\\ucrt.lib", ucrt_library_path.size, ucrt_library_path.data).data, arena);
         if(parse_error){
             // :Error mention Windows sdk.
