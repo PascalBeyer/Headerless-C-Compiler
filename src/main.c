@@ -1395,11 +1395,11 @@ func struct ast_type *lookup_compound_type(struct context *context, struct atom 
     return (struct ast_type *)ast_table_get(&globals.compound_types, ident);
 }
 
-func struct ast_declaration *lookup_declaration(struct context *context, struct compilation_unit *compilation_unit, struct atom ident){
+func struct ast_declaration *lookup_declaration(struct ast_scope *root_scope, struct compilation_unit *compilation_unit, struct atom ident){
     
     struct ast_declaration *lookup = null;
     
-    for(struct ast_scope *scope = context->current_scope; scope; scope = scope->parent){
+    for(struct ast_scope *scope = root_scope; scope; scope = scope->parent){
         
         smm hash = ident.string_hash;
         for(smm table_index = 0; table_index < scope->current_max_amount_of_declarations; table_index++){
@@ -1471,7 +1471,7 @@ static struct ast_type *lookup_unresolved_type(struct ast_type *type){
 }
 
 func struct ast_declaration *lookup_typedef(struct context *context, struct compilation_unit *compilation_unit, struct token *type_name, int silent){
-    struct ast_declaration *decl = lookup_declaration(context, compilation_unit, type_name->atom);
+    struct ast_declaration *decl = lookup_declaration(context->current_scope, compilation_unit, type_name->atom);
     if(!decl) return null;
     
     if(decl->base.kind != AST_typedef){
@@ -1557,8 +1557,12 @@ func void register_compound_member(struct context *context, struct ast_compound_
     compound->members[index].offset_in_type = offset_in_type;
 }
 
-func void parser_register_declaration_in_local_scope_without_checking_for_redeclarations(struct context *context, struct ast_scope *scope, struct ast_declaration *decl){
+func void parser_register_declaration_in_scope(struct context *context, struct ast_scope *scope, struct ast_declaration *decl){
     
+    // 
+    // Grow the declaration table if necessary.
+    // Make sure all of the declarations with the same hash stay in the same order.
+    // 
     if(2 * scope->amount_of_declarations++ == scope->current_max_amount_of_declarations){
         u32 new_max = max_of(2 * scope->current_max_amount_of_declarations, 8);
         struct ast_declaration **new_table = push_data(context->arena, struct ast_declaration *, new_max);
@@ -1566,14 +1570,33 @@ func void parser_register_declaration_in_local_scope_without_checking_for_redecl
         for(smm old_index = 0; old_index < scope->current_max_amount_of_declarations; old_index++){
             struct ast_declaration *old_entry = scope->declarations[old_index];
             if(!old_entry) continue;
+            if(old_entry == (struct ast_declaration *)1) continue; // skip over tombstones.
             
-            smm hash = old_entry->identifier->atom.string_hash;
-            for(smm new_index = 0; new_index < new_max; new_index++){
-                smm index = (new_index + hash) & (new_max - 1);
-                if(!new_table[index]){
-                    new_table[index] = old_entry;
-                    break;
+            // Iterate over all entries in the same hash chain as `old_entry`.
+            smm old_hash = old_entry->identifier->atom.string_hash;
+            for(smm hash_chain_index = 0; hash_chain_index < scope->current_max_amount_of_declarations; hash_chain_index++){
+                
+                smm old_hash_index = (hash_chain_index + old_hash) & (scope->current_max_amount_of_declarations - 1);
+                
+                struct ast_declaration *chain_decl = scope->declarations[old_hash_index];
+                if(!chain_decl) break; // We have found the end of the chain.
+                if(chain_decl == (struct ast_declaration *)1) continue; // skip over tombstones.
+                
+                // Check if chain_decl has the same hash.
+                smm hash = chain_decl->identifier->atom.string_hash;
+                if(hash != old_hash) continue;
+                
+                // Insert `chain_decl` into the new table.
+                
+                for(smm new_index = 0; new_index < new_max; new_index++){
+                    smm index = (new_index + hash) & (new_max - 1);
+                    if(!new_table[index]){
+                        new_table[index] = old_entry;
+                        break;
+                    }
                 }
+                
+                scope->declarations[old_hash_index] = (void *)1;
             }
         }
         
@@ -1581,13 +1604,32 @@ func void parser_register_declaration_in_local_scope_without_checking_for_redecl
         scope->declarations = new_table;
     }
     
+    int have_reported_warning = 0;
+    
     smm hash = decl->identifier->atom.string_hash;
     for(smm table_index = 0; table_index < scope->current_max_amount_of_declarations; table_index++){
         smm index = (table_index + hash) & (scope->current_max_amount_of_declarations - 1);
         
-        if(!scope->declarations[index]){
+        struct ast_declaration *redecl = scope->declarations[index];
+        if(!redecl){
             scope->declarations[index] = decl;
             break;
+        }
+        
+        if(atoms_match(decl->identifier->atom, redecl->identifier->atom)){
+            
+            if(!have_reported_warning){
+                begin_error_report(context);
+                report_warning(context, WARNING_shadowing_at_same_level, decl->base.token, "Declaration hides previous declaration in same scope.");
+                report_warning(context, WARNING_shadowing_at_same_level, redecl->base.token, "... Here is the previous declaration.");
+                end_error_report(context);
+            }
+            
+            // From here on, move the redeclaration.
+            // We still have to check the atoms match case, as the declarations of the same name have to stay in order.
+            scope->declarations[index] = decl;
+            decl = redecl;
+            have_reported_warning = 1;
         }
     }
 }
@@ -1599,7 +1641,10 @@ func struct ast_declaration *register_declaration(struct context *context, struc
     struct ast_scope *scope = context->current_scope;
     
     if(scope){
-        struct ast_declaration *redecl = lookup_declaration(context, context->current_compilation_unit, decl->identifier->atom);
+        
+        parser_register_declaration_in_scope(context, scope, decl);
+        
+        struct ast_declaration *redecl = lookup_declaration(scope->parent, context->current_compilation_unit, decl->identifier->atom);
         
         if(redecl){
             if(should_report_warning_for_token(context, decl->base.token)){
@@ -1609,8 +1654,6 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 end_error_report(context);
             }
         }
-        
-        parser_register_declaration_in_local_scope_without_checking_for_redeclarations(context, scope, decl);
     }else{
         // we are at global scope: register it globally
         

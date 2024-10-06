@@ -17,6 +17,8 @@ enum warning_type{
     WARNING_compile_time_multiplication_by_zero,
     
     WARNING_shadowing,
+    WARNING_shadowing_at_same_level,
+    
     WARNING_arithmetic_type_mismatch,
     WARNING_compile_time_truncation,
     WARNING_unsigned_negation,
@@ -54,6 +56,42 @@ enum warning_type{
     
     WARNING_count, 
 };
+
+static u8 warning_enabled[WARNING_count] = {
+    [WARNING_compile_time_overflow]               = 1, 
+    [WARNING_missing_newline_after_backslash]     = 1, 
+    [WARNING_junk_after_directive]                = 1, 
+    [WARNING_shadowing]                           = 1, 
+    [WARNING_shadowing_at_same_level]             = 1,
+    [WARNING_arithmetic_type_mismatch]            = 1, 
+    [WARNING_compile_time_truncation]             = 1, 
+    [WARNING_compile_time_multiplication_by_zero] = 1,
+    [WARNING_unsigned_negation]                   = 1, 
+    [WARNING_unsupported_declspec]                = 1,
+    [WARNING_function_alignment]                  = 1, 
+    [WARNING_ret_in_asm_block]                    = 1, 
+    [WARNING_cannot_distinguish_dll_imports]      = 1,
+    [WARNING_does_not_declare_anything]           = 1,
+    [WARNING_undefined_static_if_operand]         = 1, 
+    [WARNING_undef_on_undefined]                  = 1,
+    [WARNING_unsupported_pragma]                  = 1,
+    [WARNING_unused_local_variable]               = 1,
+    [WARNING_casting_u64_to_float]                = 1,
+    [WARNING_local_variable_only_ever_written]    = 1,
+    [WARNING_atomic_ignored]                      = 1,
+    [WARNING_unusual_entry_point]                 = 1,
+    // [WARNING_function_declared_but_never_defined] = 1,
+    // [WARNING_function_defined_but_unreachable]    = 1,
+    [WARNING_incorrect_format_specifier] = 1,
+    [WARNING_unknown_format_specifier]  = 1,
+    [WARNING_assignment_in_condition] = 1,
+    [WARNING_double_specifier] = 1,
+    [WARNING_array_of_unknown_size_never_filled_in] = 1,
+    
+    [WARNING_missing_return_value] = 1,
+    [WARNING_return_in_noreturn_function] = 1,
+};
+
 
 
 struct error_report_node{
@@ -214,40 +252,6 @@ func void push_error_node_to_context(struct context *context, struct token *toke
         context->current_error_node = node;
     }
 }
-
-static u8 warning_enabled[WARNING_count] = {
-    [WARNING_compile_time_overflow]               = 1, 
-    [WARNING_missing_newline_after_backslash]     = 1, 
-    [WARNING_junk_after_directive]                = 1, 
-    [WARNING_shadowing]                           = 1, 
-    [WARNING_arithmetic_type_mismatch]            = 1, 
-    [WARNING_compile_time_truncation]             = 1, 
-    [WARNING_compile_time_multiplication_by_zero] = 1,
-    [WARNING_unsigned_negation]                   = 1, 
-    [WARNING_unsupported_declspec]                = 1,
-    [WARNING_function_alignment]                  = 1, 
-    [WARNING_ret_in_asm_block]                    = 1, 
-    [WARNING_cannot_distinguish_dll_imports]      = 1,
-    [WARNING_does_not_declare_anything]           = 1,
-    [WARNING_undefined_static_if_operand]         = 1, 
-    [WARNING_undef_on_undefined]                  = 1,
-    [WARNING_unsupported_pragma]                  = 1,
-    [WARNING_unused_local_variable]               = 1,
-    [WARNING_casting_u64_to_float]                = 1,
-    [WARNING_local_variable_only_ever_written]    = 1,
-    [WARNING_atomic_ignored]                      = 1,
-    [WARNING_unusual_entry_point]                 = 1,
-    // [WARNING_function_declared_but_never_defined] = 1,
-    // [WARNING_function_defined_but_unreachable]    = 1,
-    [WARNING_incorrect_format_specifier] = 1,
-    [WARNING_unknown_format_specifier]  = 1,
-    [WARNING_assignment_in_condition] = 1,
-    [WARNING_double_specifier] = 1,
-    [WARNING_array_of_unknown_size_never_filled_in] = 1,
-    
-    [WARNING_missing_return_value] = 1,
-    [WARNING_return_in_noreturn_function] = 1,
-};
 
 
 func int should_report_warning_for_token(struct context *context, struct token *token){

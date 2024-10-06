@@ -3451,7 +3451,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                 //
                 // We found the identifier.
                 //
-                struct ast_declaration *declaration = lookup_declaration(context, context->current_compilation_unit, atom_for_string(identifier));
+                struct ast_declaration *declaration = lookup_declaration(context->current_scope, context->current_compilation_unit, atom_for_string(identifier));
                 
                 if(!declaration && (string_match(identifier, string("s")) || string_match(identifier, string("x")))){
                     // Allow '{s}', '{x}'.
@@ -4285,7 +4285,7 @@ case NUMBER_KIND_##type:{ \
             
             struct ast_identifier *ident = parser_ast_push(context, token, identifier);
             
-            struct ast_declaration *lookup = lookup_declaration(context, context->current_compilation_unit, token->atom);
+            struct ast_declaration *lookup = lookup_declaration(context->current_scope, context->current_compilation_unit, token->atom);
             
             set_resolved_type(&ident->base, &globals.typedef_void, null); // has to be something for error
             
@@ -7324,7 +7324,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             //        }
             //    Should return '1337' and not '0', the 'extern int decl' shadows 'int decl = 0;'.
             //                                                                      - 03.10.2021
-            parser_register_declaration_in_local_scope_without_checking_for_redeclarations(context, context->current_scope, decl);
+            parser_register_declaration_in_scope(context, context->current_scope, decl);
             
         }else if(!(specifiers.specifier_flags & SPECIFIER_typedef) && declarator.type->kind == AST_function_type){
             
