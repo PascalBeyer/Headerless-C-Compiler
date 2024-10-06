@@ -947,7 +947,7 @@ func void report_type_mismatch_warning(struct context *context, struct ast_type 
     struct string lhs_string = report_type_mismatch__internal(context, "Wanted", lhs, lhs_defined_type);
     struct string rhs_string = report_type_mismatch__internal(context, "given", rhs, rhs_defined_type);
     
-    report_warning(context, WARNING_arithmetic_type_mismatch, location, "%.*s %.*s.", lhs_string.amount, lhs_string.data, rhs_string.amount, rhs_string.data);
+    report_warning(context, WARNING_type_mismatch, location, "%.*s %.*s.", lhs_string.amount, lhs_string.data, rhs_string.amount, rhs_string.data);
 }
 
 func b32 casts_implicitly_to_bool(struct ast *ast){
@@ -1797,7 +1797,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             //
             if(!peek_token(context, TOKEN_closed_curly)){
                 begin_error_report(context);
-                report_error(context, get_current_token_for_error_report(context), "Cannot initalize an empty structure with non-empty initializer-list.");
+                report_error(context, get_current_token_for_error_report(context), "Cannot initialize an empty structure with non-empty initializer-list.");
                 report_error(context, ast_struct->base.token, "... Here is the definition of the empty structure.");
                 end_error_report(context);
                 goto error;
@@ -1897,7 +1897,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                     
                     struct ast_array_type *array = (struct ast_array_type *)current_object->resolved_type;
                     
-                    struct ast *index = parse_expression(context, /*should_skip_comma_epression*/false);
+                    struct ast *index = parse_expression(context, /*should_skip_comma_expression*/false);
                     if(index->kind != AST_integer_literal){
                         report_error(context, index->token, "Expected a constant integer expression in array subscript.");
                         goto error;
@@ -2150,7 +2150,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                     
                     // :trailing_arrays
                     // 
-                    // If we are initializing an array of unknown size, we are at the trailling 
+                    // If we are initializing an array of unknown size, we are at the trailing 
                     // array member of the structure, otherwise the parsing code would have rejected
                     // the structure.
                     // 
@@ -3943,7 +3943,7 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                         return invalid_ast(context);
                     }
                     
-                    // @note: Not supprisingly, this one is unsigned.
+                    // @note: Not surprisingly, this one is unsigned.
                     type = &globals.typedef_u32;
                     value = *(u32 *)escaped.string.data;
                 }break;

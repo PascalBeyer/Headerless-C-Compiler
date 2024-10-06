@@ -16,16 +16,16 @@ enum warning_type{
     WARNING_compile_time_overflow,
     WARNING_compile_time_multiplication_by_zero,
     
-    WARNING_shadowing,
-    WARNING_shadowing_at_same_level,
+    WARNING_shadowing_local,
+    WARNING_shadowing_global,
+    WARNING_shadowing_in_same_scope,
     
-    WARNING_arithmetic_type_mismatch,
+    WARNING_type_mismatch,
     WARNING_compile_time_truncation,
     WARNING_unsigned_negation,
     WARNING_unsupported_declspec,
     WARNING_function_alignment,
     WARNING_ret_in_asm_block,
-    WARNING_cannot_distinguish_dll_imports,
     WARNING_does_not_declare_anything,
     WARNING_undefined_static_if_operand,
     WARNING_undef_on_undefined,
@@ -39,7 +39,7 @@ enum warning_type{
     WARNING_casting_u64_to_float,
     WARNING_double_specifier,
     
-    WARNING_incorrect_format_specifier, // @cleanup: add this is main
+    WARNING_incorrect_format_specifier,
     WARNING_unknown_format_specifier,
     
     WARNING_atomic_ignored,
@@ -51,7 +51,7 @@ enum warning_type{
     
     WARNING_array_of_unknown_size_never_filled_in,
     
-    WARNING_missing_return_value,
+    WARNING_missing_return,
     WARNING_return_in_noreturn_function,
     
     WARNING_count, 
@@ -61,16 +61,15 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_compile_time_overflow]               = 1, 
     [WARNING_missing_newline_after_backslash]     = 1, 
     [WARNING_junk_after_directive]                = 1, 
-    [WARNING_shadowing]                           = 1, 
-    [WARNING_shadowing_at_same_level]             = 1,
-    [WARNING_arithmetic_type_mismatch]            = 1, 
+    [WARNING_shadowing_local]                     = 1, 
+    [WARNING_shadowing_in_same_scope]             = 1,
+    [WARNING_type_mismatch]                       = 1, 
     [WARNING_compile_time_truncation]             = 1, 
     [WARNING_compile_time_multiplication_by_zero] = 1,
     [WARNING_unsigned_negation]                   = 1, 
     [WARNING_unsupported_declspec]                = 1,
     [WARNING_function_alignment]                  = 1, 
     [WARNING_ret_in_asm_block]                    = 1, 
-    [WARNING_cannot_distinguish_dll_imports]      = 1,
     [WARNING_does_not_declare_anything]           = 1,
     [WARNING_undefined_static_if_operand]         = 1, 
     [WARNING_undef_on_undefined]                  = 1,
@@ -88,7 +87,7 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_double_specifier] = 1,
     [WARNING_array_of_unknown_size_never_filled_in] = 1,
     
-    [WARNING_missing_return_value] = 1,
+    [WARNING_missing_return] = 1,
     [WARNING_return_in_noreturn_function] = 1,
 };
 

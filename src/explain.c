@@ -216,17 +216,6 @@ func struct dll_import_node *lookup_function_in_dll_imports(struct context *cont
         
         struct dll_import_node *found = ar_lookup_symbol(context->arena, library, identifier);
         if(found) return found;
-        
-#if 0
-        if(found){
-            if(first_dll_import_node){
-                report_warning(context, WARNING_cannot_distinguish_dll_imports, function->base.token, "Function is defined in both '%.*s' and '%.*s'.", first_dll_import_node->path.size, first_dll_import_node->name.data, dll->name.size, dll->name.data);
-                break;
-            }
-            first_dll_import_node = dll;
-            // function->memory_location = location; // @cleanup: right now immediate execution is dead so not sure
-        }
-#endif
     }
     
     

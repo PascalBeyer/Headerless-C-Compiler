@@ -385,13 +385,13 @@ static struct{
     //    2) The user specified a relative file path including a file name.
     //       In this case we prepend the working directory.
     //       The resulting files are:
-    //           C:/the/woring/directory/user/specified.exe
-    //           C:/the/woring/directory/user/specified.pdb
+    //           C:/the/working/directory/user/specified.exe
+    //           C:/the/working/directory/user/specified.pdb
     //       
     //    3) The user specified a relative file path ending in a directory.
     //       In this case we append the first source file again.
     //       
-    //    4) Option 2) and 3) have an analogus version for full paths.
+    //    4) Option 2) and 3) have an analogous version for full paths.
     // 
     struct string output_file_path;
     
@@ -1620,8 +1620,8 @@ func void parser_register_declaration_in_scope(struct context *context, struct a
             
             if(!have_reported_warning){
                 begin_error_report(context);
-                report_warning(context, WARNING_shadowing_at_same_level, decl->base.token, "Declaration hides previous declaration in same scope.");
-                report_warning(context, WARNING_shadowing_at_same_level, redecl->base.token, "... Here is the previous declaration.");
+                report_warning(context, WARNING_shadowing_in_same_scope, decl->base.token, "Declaration hides previous declaration in same scope.");
+                report_warning(context, WARNING_shadowing_in_same_scope, redecl->base.token, "... Here is the previous declaration.");
                 end_error_report(context);
             }
             
@@ -1641,19 +1641,23 @@ func struct ast_declaration *register_declaration(struct context *context, struc
     struct ast_scope *scope = context->current_scope;
     
     if(scope){
-        
         parser_register_declaration_in_scope(context, scope, decl);
         
-        struct ast_declaration *redecl = lookup_declaration(scope->parent, context->current_compilation_unit, decl->identifier->atom);
-        
-        if(redecl){
-            if(should_report_warning_for_token(context, decl->base.token)){
+        if((warning_enabled[WARNING_shadowing_local] || warning_enabled[WARNING_shadowing_global]) && should_report_warning_for_token(context, decl->base.token)){
+            struct ast_declaration *redecl = lookup_declaration(scope->parent, context->current_compilation_unit, decl->identifier->atom);
+            
+            if(redecl){
                 begin_error_report(context);
-                report_warning(context, WARNING_shadowing, decl->base.token, "Declaration hides previous declaration.");
-                report_warning(context, WARNING_shadowing, redecl->base.token, "... Here is the previous declaration.");
+                if(redecl->flags & DECLARATION_FLAGS_is_global){
+                    report_warning(context, WARNING_shadowing_global, decl->base.token, "Declaration hides previous global declaration.");
+                    report_warning(context, WARNING_shadowing_global, redecl->base.token, "... Here is the previous global declaration.");
+                }else{
+                    report_warning(context, WARNING_shadowing_local, decl->base.token, "Declaration hides previous declaration.");
+                    report_warning(context, WARNING_shadowing_local, redecl->base.token, "... Here is the previous declaration.");
+                }
                 end_error_report(context);
             }
-        }
+        } 
     }else{
         // we are at global scope: register it globally
         
@@ -1792,7 +1796,7 @@ func void parser_register_definition(struct context *context, struct ast_declara
     assert(!context->should_sleep);
     
     // @note: Used by functions and declarations as of -03.04.2021, 
-    //        its either the initalizer or the scope.
+    //        its either the initializer or the scope.
     //        
     // assert(!context->current_scope);
     // 
@@ -1841,8 +1845,8 @@ func void register_compound_type(struct context *context, struct ast_type *type,
             
             if(should_report_warning_for_token(context, type->token)){
                 begin_error_report(context);
-                report_warning(context, WARNING_shadowing, type->token, "Redeclaration of type.");
-                report_warning(context, WARNING_shadowing, redecl->token, "... Here was the previous declaration.");
+                report_warning(context, WARNING_shadowing_local, type->token, "Redeclaration of type.");
+                report_warning(context, WARNING_shadowing_local, redecl->token, "... Here was the previous declaration.");
                 end_error_report(context);
             }
         }
@@ -2728,7 +2732,7 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
     
     for(struct declaration_node *node = declaration_list.first; node; node = node->next){
         
-        // @bug @incomplete @cleanup: This is apperantly where we evaluate initializers.
+        // @bug @incomplete @cleanup: This is apparently where we evaluate initializers.
         //                            This is not thread safe.
         //                            Maybe this should happen in the backend anyway?
         
@@ -2886,7 +2890,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             // Report a warning.
             // 
             struct string return_type_string = push_type_string(context->arena, &context->scratch, function->type->return_type);
-            report_warning(context, WARNING_missing_return_value, get_current_token_for_error_report(context), "Function of type '%.*s' must return a value.", return_type_string.size, return_type_string.data);
+            report_warning(context, WARNING_missing_return, get_current_token_for_error_report(context), "Function of type '%.*s' must return a value.", return_type_string.size, return_type_string.data);
         }
     }
     
@@ -3275,7 +3279,6 @@ int main(int argc, char *argv[]){
     GetModuleFileNameA(null, (char *)compiler_path.data, (u32)(compiler_path.size + 1));
     canonicalize_slashes(compiler_path);
 
-    
 #if PRINT_COMMAND_LINE
     print("\n");
     print("command line is: \n    ");
@@ -3529,6 +3532,7 @@ int main(int argc, char *argv[]){
             }
             
             c_entry_point_name = argv[++argument_index];
+            no_premain = 1;
             
         }else if(string_match_case_insensitive(argument, string("no_entry"))){
             globals.no_entry = true;
@@ -3575,7 +3579,9 @@ int main(int argc, char *argv[]){
             no_premain = 1;
             no_intrinsics = 1;
             no_standard_library = 1;
+            
             test_was_specified = 1;
+            c_entry_point_name = "main";
         }else if(string_match(argument, string("report_warnings_in_system_includes"))){
             globals.report_warnings_in_system_includes = 1;
         }else if(argument.data[0] == 'D'){ // argument[0] is always valid as there is at least a zero terminator
@@ -3710,16 +3716,15 @@ int main(int argc, char *argv[]){
     }
     
     if(globals.no_entry && globals.output_file_type == OUTPUT_FILE_exe){
-        print("Error: /NO_ENTRY is invalid when requesting an executable.");
+        print("Error: /no_entry is invalid when requesting an executable.");
         return 1;
     }
     
-    if(c_entry_point_name && globals.no_entry){
-        print("Error: /NO_ENTRY and an entry point name was specified.");
+    if(c_entry_point_name && globals.no_entry && !test_was_specified){
+        print("Error: /no_entry and an entry point name was specified.");
         return 1;
     }
     
-    if(test_was_specified)  c_entry_point_name = "main";
     if(!c_entry_point_name) c_entry_point_name = "_start";
     
     if(!no_premain){
