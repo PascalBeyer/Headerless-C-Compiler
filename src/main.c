@@ -3644,6 +3644,11 @@ int main(int argc, char *argv[]){
                 print("Error: Thread count must be at least one '%s'.\n", arg);
                 return 1;
             }
+        }else if(string_match(argument, string("MT"))){
+            SYSTEM_INFO system_info;
+            GetSystemInfo(&system_info); // this cannot fail apperantly
+            
+            thread_count = system_info.dwNumberOfProcessors;
         }else if(string_match(argument, string("Wall"))){
             for(u32 i = 0; i < WARNING_count; i++){
                 warning_enabled[i] = 1;
