@@ -1,5 +1,6 @@
 
 #include <stdarg.h>
+#include <stddef.h>
 
 #ifdef __GNUC__
 #include <emmintrin.h>
@@ -548,6 +549,7 @@ func s64 to_s64(smm number) { assert(s64_min <=  (number) && (number) <= s64_max
 extern __int64 _InterlockedExchangeAdd64(__int64 volatile * _Addend, __int64 _Value);
 extern void _mm_pause();
 
+#if defined(__clang__)
 void *memset(void *mem, int val, size_t amount){
     u8 *it = mem;
     for(size_t i = 0; i < amount; i++){
@@ -581,7 +583,9 @@ int memcmp(void *_string1, void *_string2, size_t amount){
     return *(unsigned char *)string1 - *(unsigned char *)string2;
 }
 
+
 int _fltused;
+#endif
 
 
 #elif defined(__GNUC__)
@@ -655,7 +659,7 @@ func b32 memory_is_zero(void *_memory, smm size){
 #define count_trailing_zeros32 __builtin_ctz
 #define count_trailing_zeros64 __builtin_ctzll
 
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) || defined(__HLC__)
 
 func u32 count_leading_zeros32(u32 a){
     unsigned long ret;

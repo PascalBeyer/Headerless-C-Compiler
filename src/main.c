@@ -3881,61 +3881,13 @@ int main(int argc, char *argv[]){
     
     if(!no_standard_library) add_system_include_directory(arena, windows_kits_include_base, string("/ucrt"),   false);
     
-#if 1
-    {
-        // 
-        // Here is what I have gathered:
-        //     1) The ucrt depends on the vcruntime. ("visual compiler runtime" I think)
-        //     2) The vcruntime has "all rights reserved" licencing.
-        //     3) The install path of visual studio could be arbitrary, 
-        //        and the only way to maybe find it is using vswhere or COM.
-        //        
-        // So essetially, we have to do a bunch of bullshit to find the install directory,
-        // or rely on people to install it in the default directory.
-        // 
-        // @cleanup: Because I don't want to deal with it right now, I have decided for the latter.
-        //           In the future the plan is to add an implementation of the c standard library anyway.
-        // 
-        
-        struct string VISUAL_STUDIO = hacky_find_newest_system_include_path(arena, "C:/Program Files (x86)/Microsoft Visual Studio/*");
-        
-        if(VISUAL_STUDIO.data){
-            struct string MSVC_path = push_format_string(arena, "%.*s/BuildTools", VISUAL_STUDIO.size, VISUAL_STUDIO.data);
-            if(!path_is_directory((char *)MSVC_path.data)){
-                MSVC_path = push_format_string(arena, "%.*s/Enterprise", VISUAL_STUDIO.size, VISUAL_STUDIO.data);
-                if(!path_is_directory((char *)MSVC_path.data)){
-                    MSVC_path = push_format_string(arena, "%.*s/Professional", VISUAL_STUDIO.size, VISUAL_STUDIO.data);
-                    if(!path_is_directory((char *)MSVC_path.data)){
-                        MSVC_path = push_format_string(arena, "%.*s/Community", VISUAL_STUDIO.size, VISUAL_STUDIO.data);
-                    }
-                }
-            }
-            
-            MSVC_path = push_format_string(arena, "%.*s/VC/Tools/MSVC/*", MSVC_path.size, MSVC_path.data);
-            
-            struct string MSVC = hacky_find_newest_system_include_path(arena, (char *)MSVC_path.data);
-            if(MSVC.data){
-                add_system_include_directory(arena, MSVC, string("/include"), false);
-                // ... It appearantly does not have that...
-                // add_system_include_directory(arena, MSVC, string("/ATLMFC/include"), false); 
-            }
-        }
-        
-#if 0
-        struct string NETFXSDK = hacky_find_newest_system_include_path(arena, "C:/Program Files (x86)/Windows Kits/NETFXSDK/*");
-        if(NETFXSDK.data){
-            add_system_include_directory(arena, NETFXSDK, string("/include/um"), false);
-        }
-#endif
-        
 #ifdef PRINT_SYSTEM_INCLUDE_PATHS
-        print("\nSystem include directories:\n");
-        for(struct string_list_node *include = globals.system_include_directories.list.first; include; include = include->next){
-            print("    %.*s\n", include->string.size, include->string.data);
-        }
-#endif
+    print("\nSystem include directories:\n");
+    for(struct string_list_node *include = globals.system_include_directories.list.first; include; include = include->next){
+        print("    %.*s\n", include->string.size, include->string.data);
     }
 #endif
+    
     
     
     {  // :init_globals :globals init globals
@@ -3990,15 +3942,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         "#define _WIN64 1\n"
                         "#define _WIN32 1\n"
                         
-                        // @cleanup: I feel like these should not be defined, but then the standard headers pretend we are gcc for some reason.
-                        "#define _MSC_BUILD 0\n"
                         "#define _MSC_EXTENSIONS 1\n"
-                        "#define _MSC_FUL_VER 192829336\n"
-                        "#define _MSC_VER 1928\n"
-                        
-                        // @cleanup: I feel like I end up having to define this for every project I try to compile,
-                        //           even though really, we should not want to define it (maybe).
-                        "#define _CRT_DECLARE_NONSTDC_NAMES 1\n"
                         
                         "#define __assume(a) (void)0\n"
                         
@@ -4013,10 +3957,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         );
                 
                 string_list_prefix(&predefines, arena, hardcoded_predefines);
-                
-                if(globals.output_file_type != OUTPUT_FILE_obj){
-                    string_list_postfix(&predefines, arena, string("#define _CRTIMP __declspec(dllimport)\n"));
-                }
                 
                 SYSTEMTIME LocalTime;
                 GetLocalTime(&LocalTime); // @cleanup: local time?

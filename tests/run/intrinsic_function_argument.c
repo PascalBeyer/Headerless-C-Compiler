@@ -1,10 +1,7 @@
-// compile -stdlib -intrinsic
+// compile -intrinsic
 // run
 
-#include <intrin.h>
-#include <stdlib.h>
-
-#define assert(a) (!(a) ? _exit(1) : (void)0)
+#define assert(a) (!(a) ? __fastfail(1) : (void)0)
 
 int one(int a){
     assert(a == 1);
