@@ -28,7 +28,6 @@
 #include <wchar.h>
 #include <wctype.h>
 
-
 // Windows does not support for C11, so these are not found
 //#include <stdatomic.h>
 //#include <stdalign.h> 
@@ -39,34 +38,3 @@ int main(){
     return 1;
 }
 
-// @note: referanced in <string.h>
-void *memset(void *mem, int val, size_t amount){
-    uint8_t *it = mem;
-    for(size_t i = 0; i < amount; i++){
-        *it++ = (uint8_t)val;
-    }
-    
-    return mem;
-}
-
-void *memcpy(void *dest, const void *source, size_t amount){
-    uint8_t *it  = dest;
-    const uint8_t *it2 = source;
-    for(size_t i = 0; i < amount; i++){
-        *it++ = *it2++;
-    }
-    
-    return dest;
-}
-
-// @note: untested
-int memcmp(const void *buf1, const void *buf2, size_t count){
-    int8_t *it1 = buf1;
-    int8_t *it2 = buf2;
-    for(size_t i = 0; i < count; i++, it1++, it2++){
-        if(*it1 != *it2){
-            return (*((uint8_t *)it1) - *((uint8_t *)it2));
-        }
-    }
-    return 0;
-}

@@ -1050,21 +1050,6 @@ int memory_is_zero(void *_memory, u64 size){
 }
 
 
-int memcmp(void *_string1, void *_string2, u64 amount){
-    
-    if(amount == 0) return 0;
-    
-    char *string1 = _string1;
-    char *string2 = _string2;
-    
-    while(--amount && *string1 == *string2){
-        string1 += 1;
-        string2 += 1;
-    }
-    
-    return *(unsigned char *)string1 - *(unsigned char *)string2;
-}
-
 static unsigned int factorial(unsigned int a){
     if(a == 0) return 1;
     return a * factorial(a - 1);

@@ -180,18 +180,3 @@ int main(){
 }
 
 
-int memcmp(void *_string1, void *_string2, size_t amount){
-    
-    if(amount == 0) return 0;
-    
-    char *string1 = _string1;
-    char *string2 = _string2;
-    
-    while(--amount && *string1 == *string2){
-        string1 += 1;
-        string2 += 1;
-    }
-    
-    return *(unsigned char *)string1 - *(unsigned char *)string2;
-}
-

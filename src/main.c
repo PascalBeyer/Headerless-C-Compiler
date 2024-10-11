@@ -3566,7 +3566,7 @@ int main(int argc, char *argv[]){
             char *file_name = argv[++argument_index];
             string_list_postfix(&libraries, arena, string_from_cstring(file_name));
             
-        }else if(string_match(argument, string("DLL")) || string_match(argument, string("dll"))){
+        }else if(string_match(argument, string("DLL")) || string_match(argument, string("dll")) || string_match(argument, string("LD"))){
             globals.output_file_type = OUTPUT_FILE_dll;
             no_premain = 1;
         }else if(string_match(argument, string("obj")) || string_match(argument, string("OBJ")) || string_match(argument, string("c"))){
@@ -3776,6 +3776,31 @@ int main(int argc, char *argv[]){
             files_to_parse.amount += 1;
         }
     }
+    
+    if(!no_standard_library){
+        struct string runtime_path = concatenate_file_paths(arena, strip_file_name(compiler_path), string("implicit/runtime.c"));
+        
+        struct os_file file = os_load_file((char *)runtime_path.data, 0, 0);
+        if(file.file_does_not_exist){
+            print("Error: Implicit 'runtime.c' compilation unit was not found.\n");
+            print("       If this is intended you can use the '-no_stdlib'\n");
+            print("       command line option to squelch this error.\n");
+            print("       This file is usually contained in: ");
+            print("             \"<compiler-path>/implicit/runtime.c\".");
+            return 1;
+        }else{
+            struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
+            work->absolute_file_path = runtime_path;
+            work->file_size = file.size;
+            
+            struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
+            work_entry->data  = work;
+            
+            sll_push_back(files_to_parse, work_entry);
+            files_to_parse.amount += 1;
+        }
+    }
+    
     
     add_system_include_directory(arena, strip_file_name(compiler_path), string("/implicit/include"),  false);
     
@@ -4000,6 +4025,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 struct string date_define = push_format_string(arena, "#define __DATE__ \"%s %.2d %.4d\"\n", months[LocalTime.wMonth-1], LocalTime.wDay, LocalTime.wYear);
                 
                 string_list_prefix(&predefines, arena, date_define);
+                
+                struct string time_define = push_format_string(arena, "#define __TIME__ \"%.2d:%.2d:%.2d\"\n", LocalTime.wHour, LocalTime.wMinute, LocalTime.wSecond); 
+                string_list_prefix(&predefines, arena, time_define);
             }
             
             struct string predefines_string = string_list_flatten(predefines, arena);
