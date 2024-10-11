@@ -2740,7 +2740,14 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
     
     // @cleanup: allow -1 to allow 'print()' just printint a newline?
     if(printlike_function_type->argument_list.count > call->call_arguments.count){
-        report_error(context, call->base.token, "Too few arguments to function.");
+        begin_error_report(context);
+        struct string type_string = push_type_string(&context->scratch, &context->scratch, &printlike_function_type->base);
+        report_error(context, call->base.token, "Too few arguments to function of type '%.*s'.", type_string.size, type_string.data);
+        if(call->identifier_expression->kind == AST_identifier){
+            struct ast_identifier *ident = (struct ast_identifier *)call->identifier_expression;
+            report_error(context, ident->decl->base.token, "... Here is the declaration of the function.");
+        }
+        end_error_report(context);
         return operand;
     }
     
@@ -4725,7 +4732,14 @@ case NUMBER_KIND_##type:{ \
                 
                 if(function_type->argument_list.count > call->call_arguments.count){
                     // :Error
-                    report_error(context, call->base.token, "Too few arguments to function.");
+                    begin_error_report(context);
+                    struct string type_string = push_type_string(&context->scratch, &context->scratch, &function_type->base);
+                    report_error(context, call->base.token, "Too few arguments to function of type '%.*s'.", type_string.size, type_string.data);
+                    if(call->identifier_expression->kind == AST_identifier){
+                        struct ast_identifier *ident = (struct ast_identifier *)call->identifier_expression;
+                        report_error(context, ident->decl->base.token, "... Here is the declaration of the function.");
+                    }
+                    end_error_report(context);
                     return operand;
                 }
                 

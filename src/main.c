@@ -1755,9 +1755,12 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 struct ast_function *function = cast(struct ast_function *)decl;
                 
                 if(!types_are_equal(decl->type, redecl->type)){
+                    struct string   decl_type = push_type_string(context->arena, &context->scratch,   decl->type);
+                    struct string redecl_type = push_type_string(context->arena, &context->scratch, redecl->type);
+                    
                     begin_error_report(context);
                     // :Error maybe print compilation units
-                    report_error(context, decl->base.token, "[%lld] Redeclaration of function with different type.", decl->compilation_unit->index);
+                    report_error(context, decl->base.token, "[%lld] Redeclaration of function with different type (%.*s vs %.*s).", decl->compilation_unit->index, decl_type.size, decl_type.data, redecl_type.size, redecl_type.data);
                     report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration.", redecl->compilation_unit->index);
                     end_error_report(context);
                     return decl;
