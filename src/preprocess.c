@@ -3912,6 +3912,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 }
                                 
                                 static struct ticket_spinlock pragma_comment_spinlock = {0};
+                                ticket_spinlock_lock(&pragma_comment_spinlock);
                                 
                                 int found = 0;
                                 for(struct library_node *library_node = globals.libraries.first; library_node; library_node = library_node->next){
