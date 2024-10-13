@@ -5496,7 +5496,7 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                set_resolved_type(&op->base, &globals.typedef_s32, null);
+                set_resolved_type(&op->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 operand = &op->base;
                 context->in_lhs_expression = false;
             }break;
@@ -5545,7 +5545,7 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                set_resolved_type(&op->base, &globals.typedef_s32, null);
+                set_resolved_type(&op->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 operand = &op->base;
                 context->in_lhs_expression = false;
             }break;
@@ -5691,12 +5691,11 @@ case NUMBER_KIND_##type:{ \
                     }else{
                         lit->_u64 = 0;
                     }
-                    set_resolved_type(&lit->base, &globals.typedef_s32, null);
                     operand = &lit->base;
                 }else{
-                    set_resolved_type(&op->base, &globals.typedef_s32, null);
                     operand = &op->base;
                 }
+                set_resolved_type(operand, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 context->in_lhs_expression = false;
             }break;
             
@@ -5724,12 +5723,11 @@ case NUMBER_KIND_##type:{ \
                     }else{
                         lit->_u64 = 0;
                     }
-                    set_resolved_type(&lit->base, &globals.typedef_s32, null);
                     operand = &lit->base;
                 }else{
-                    set_resolved_type(&op->base, &globals.typedef_s32, null);
                     operand = &op->base;
                 }
+                set_resolved_type(operand, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 context->in_lhs_expression = false;
             }break;
             
