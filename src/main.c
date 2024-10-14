@@ -314,6 +314,27 @@ struct library_node{
     } *import_symbol_string_table;
 };
 
+struct compilation_unit{
+    struct compilation_unit *next;
+    
+    smm index;
+    struct ast_table static_declaration_table;
+    
+    struct sleeper_table static_sleeper_table;
+    
+    struct file *main_file;
+    
+    struct{
+        struct is_token_static{
+            struct token *token;
+            b32 is_static;
+        } *data;
+        smm size;
+        smm capacity;
+    } is_token_static_table;
+    
+};
+
 struct keyword_table_entry{
     struct atom keyword;
     enum token_type type;
@@ -400,24 +421,8 @@ static struct{
     struct string premain_path;
     
     struct{
-        struct compilation_unit{
-            smm index;
-            struct ast_table static_declaration_table;
-            
-            struct sleeper_table static_sleeper_table;
-            
-            struct file *main_file;
-            
-            struct{
-                struct is_token_static{
-                    struct token *token;
-                    b32 is_static;
-                } *data;
-                smm size;
-                smm capacity;
-            } is_token_static_table;
-            
-        } *data;
+        struct compilation_unit *first;
+        struct compilation_unit *last;
         smm amount;
     } compilation_units;
     
@@ -3896,8 +3901,6 @@ int main(int argc, char *argv[]){
     }
 #endif
     
-    
-    
     {  // :init_globals :globals init globals
         
         
@@ -4377,8 +4380,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     // get it going:
     
     struct compilation_unit *compilation_units = push_data(arena, struct compilation_unit, files_to_parse.amount);
-    globals.compilation_units.data   = compilation_units;
-    globals.compilation_units.amount = files_to_parse.amount;
+    globals.compilation_units.first = compilation_units;
+    globals.compilation_units.last  = compilation_units + files_to_parse.amount - 1;
     {
         smm index = 0;
         for(struct work_queue_entry *entry = files_to_parse.first; entry; entry = entry->next){
@@ -4390,6 +4393,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             unit->is_token_static_table.capacity = 0x100;
             unit->is_token_static_table.size = 0;
             unit->is_token_static_table.data = push_data(context->arena, struct is_token_static, 0x100);
+            if(entry->next) unit->next = unit + 1;
             
             struct work_tokenize_file *work = entry->data;
             work->compilation_unit = unit;
@@ -4483,12 +4487,12 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     report_errors_for_unresolved_sleepers(context, &globals.declaration_sleeper_table);
     if(globals.an_error_has_occurred) goto end;
     
-    for(smm compilation_unit_index = 0; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
+    for(struct compilation_unit *compilation_unit = globals.compilation_units.first; compilation_unit; compilation_unit = compilation_unit->next){
         //
         // We report errors for unresolved global static identifiers for all compilation units, 
         // even if one compilation unit already reported an unresolved identifier.
         //
-        report_errors_for_unresolved_sleepers(context, &globals.compilation_units.data[compilation_unit_index].static_sleeper_table);
+        report_errors_for_unresolved_sleepers(context, &compilation_unit->static_sleeper_table);
     }
     if(globals.an_error_has_occurred) goto end;
     
@@ -4559,14 +4563,16 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             if(globals.an_error_has_occurred) goto end;
         }
         
-        for(smm compilation_unit_index = -1; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
+        // :DeclarationTableLoop
+        struct compilation_unit dummy_global_compilation_unit = {
+            .next = globals.compilation_units.first, 
+            .static_declaration_table = globals.global_declarations,
+        };
+        
+        
+        for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
             
-            struct ast_table *table = &globals.global_declarations;
-            
-            if(compilation_unit_index >= 0){
-                struct compilation_unit *unit = globals.compilation_units.data + compilation_unit_index;
-                table = &unit->static_declaration_table;
-            }
+            struct ast_table *table = &compilation_unit->static_declaration_table;
             
             for(u64 table_index = 0; table_index < table->capacity; table_index++){
                 struct ast *ast = table->nodes[table_index].ast;
@@ -4770,9 +4776,9 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         begin_counter(context, report_error_for_undefined_functions_and_types);
         report_errors_for_undefined_functions_and_types(context, &globals.global_declarations);
         
-        for(smm i = 0; i < globals.compilation_units.amount; i++){
+        for(struct compilation_unit *compilation_unit = globals.compilation_units.first; compilation_unit; compilation_unit = compilation_unit->next){
             if(globals.an_error_has_occurred) goto end;
-            report_errors_for_undefined_functions_and_types(context, &globals.compilation_units.data[i].static_declaration_table);
+            report_errors_for_undefined_functions_and_types(context, &compilation_unit->static_declaration_table);
         }
     }
     

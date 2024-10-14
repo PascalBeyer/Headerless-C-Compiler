@@ -762,14 +762,19 @@ void print_obj(struct memory_arena *arena, struct memory_arena *scratch){
         string_list_postfix(&directives, scratch, string("\" "));
     }
     
-    for(smm compilation_unit_index = -1; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
+    // :DeclarationTableLoop
+    // 
+    // @note: This declaration only exist to facilitate loops that want to iterate all declaration tables.
+    //        Both the global one (in this `dummy_global_declaration_unit`) and the local ones in
+    //        compilation_unit->static_declaration_table.
+    struct compilation_unit dummy_global_compilation_unit = {
+        .next = globals.compilation_units.first, 
+        .static_declaration_table = globals.global_declarations,
+    };
+    
+    for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
         
-        struct ast_table *table = &globals.global_declarations;
-        
-        if(compilation_unit_index >= 0){
-            struct compilation_unit *unit = globals.compilation_units.data + compilation_unit_index;
-            table = &unit->static_declaration_table;
-        }
+        struct ast_table *table = &compilation_unit->static_declaration_table;
         
         for(u64 table_index = 0; table_index < table->capacity; table_index++){
             struct ast *ast = table->nodes[table_index].ast;
@@ -1458,15 +1463,8 @@ void print_obj(struct memory_arena *arena, struct memory_arena *scratch){
         // We have to register types for every global variable, 
         // as they might be pointer types or anonymous.
         // 
-        
-        for(smm compilation_unit_index = -1; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
-            
-            struct ast_table *table = &globals.global_declarations;
-            
-            if(compilation_unit_index >= 0){
-                struct compilation_unit *unit = globals.compilation_units.data + compilation_unit_index;
-                table = &unit->static_declaration_table;
-            }
+        for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+            struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
             
             for(u64 table_index = 0; table_index < table->capacity; table_index++){
                 struct ast *ast = table->nodes[table_index].ast;
@@ -2177,14 +2175,10 @@ void print_obj(struct memory_arena *arena, struct memory_arena *scratch){
             *push_struct(arena, u32) = /*DEBUG_S_SYMBOLS*/0xf1;
             u32 *subsection_size = push_struct(arena, u32);
             
-            for(smm compilation_unit_index = -1; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
+            // :DeclarationTableLoop
+            for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
                 
-                struct ast_table *table = &globals.global_declarations;
-                
-                if(compilation_unit_index >= 0){
-                    struct compilation_unit *unit = globals.compilation_units.data + compilation_unit_index;
-                    table = &unit->static_declaration_table;
-                }
+                struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
                 
                 for(u64 table_index = 0; table_index < table->capacity; table_index++){
                     struct ast *ast = table->nodes[table_index].ast;
