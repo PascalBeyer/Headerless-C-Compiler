@@ -725,7 +725,7 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
     
 }
 
-void print_obj(struct memory_arena *arena, struct memory_arena *scratch){
+void print_obj(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
     
     struct memory_arena stack_arena = create_memory_arena(giga_bytes(8), 2.0f, kilo_bytes(10));
     
@@ -1697,7 +1697,7 @@ void print_obj(struct memory_arena *arena, struct memory_arena *scratch){
                 *push_struct(arena, u16) = /*S_OBJNAME*/0x1101;
                 
                 *push_struct(arena, u32) = 0; // signature @cleanup: what is this?
-                push_zero_terminated_string_copy(arena, globals.output_file_path);
+                push_zero_terminated_string_copy(arena, output_file_path);
                 
                 push_f3f2f1_align(arena, sizeof(u32));
                 *objname_length = (u16)(arena_current(arena) - (u8 *)(objname_length + 1));
@@ -2886,7 +2886,6 @@ void print_obj(struct memory_arena *arena, struct memory_arena *scratch){
     
     if(!globals.dont_print_the_files_because_we_are_in_a_test_suite){
         begin_counter(context, write_obj);
-        struct string output_file_path = globals.output_file_path;
         struct string obj_full_path = push_format_string(arena, "%.*s.obj", output_file_path.size, output_file_path.data);
         char *obj_name = (char *)obj_full_path.data;
         smm success = os_write_file(obj_name, obj_base_address, obj_size);

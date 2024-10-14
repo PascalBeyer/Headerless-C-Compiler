@@ -1707,7 +1707,7 @@ func void add_declarations_for_ast_table(struct symbol_context *symbol_context, 
     }
 }
 
-func void print_coff(struct memory_arena *arena, struct memory_arena *scratch){
+func void print_coff(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
     
     begin_counter(&symbol_context, gather_symbols);
     struct symbol_context symbol_context = zero_struct;
@@ -1763,7 +1763,6 @@ func void print_coff(struct memory_arena *arena, struct memory_arena *scratch){
         invalid_default_case();
     }
     
-    struct string output_file_path = globals.output_file_path;
     struct string exe_full_path = push_format_string(arena, "%.*s.%s",  output_file_path.size, output_file_path.data, file_extension);
     struct string pdb_full_path = push_format_string(arena, "%.*s.pdb", output_file_path.size, output_file_path.data);
     replace_characters(pdb_full_path, "/", '\\');
@@ -1860,7 +1859,7 @@ func void print_coff(struct memory_arena *arena, struct memory_arena *scratch){
         // header->SizeOfHeaders = ???;
         // header->CheckSum = ???; // this is left 0 by msvc
         
-        header->Subsystem = (WORD)((globals.pe_subsystem == 0) ? PE_SUBSYSTEM_console : globals.pe_subsystem);
+        header->Subsystem = (WORD)globals.subsystem;
         
         // @cleanup: This should be able to be set specifically, as well as default initialized based on the subsystem.
         //    https://learn.microsoft.com/en-us/cpp/build/reference/subsystem-specify-subsystem?view=msvc-170
