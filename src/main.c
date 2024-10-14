@@ -3284,7 +3284,6 @@ int main(int argc, char *argv[]){
     
     b32 no_standard_library = false;
     b32 no_intrinsics = false;
-    b32 no_premain    = false;
     b32 no_predefines = false;
     b32 no_discard    = false;
     
@@ -3441,9 +3440,7 @@ int main(int argc, char *argv[]){
         }else if(string_match(argument, string("intrinsics")) || string_match(argument, string("intrinsic"))){
             no_intrinsics = false; // Mostly for testing.
         }else if(string_match(argument, string("no_premain"))){
-            no_premain = true;
         }else if(string_match(argument, string("premain"))){
-            no_premain = false; // Mostly for testing.
         }else if(string_match(argument, string("no_predefines"))){
             no_predefines = true;
         }else if(string_match(argument, string("no_pdb"))){
@@ -3528,15 +3525,10 @@ int main(int argc, char *argv[]){
             
         }else if(string_match(argument, string("DLL")) || string_match(argument, string("dll")) || string_match(argument, string("LD"))){
             globals.output_file_type = OUTPUT_FILE_dll;
-            no_premain = 1;
         }else if(string_match(argument, string("obj")) || string_match(argument, string("OBJ")) || string_match(argument, string("c"))){
-            
-            no_premain = 1;
             globals.no_entry = 1;
-            
             globals.output_file_type = OUTPUT_FILE_obj;
         }else if(string_match(argument, string("test"))){
-            no_premain = 1;
             no_intrinsics = 1;
             no_standard_library = 1;
             
@@ -3685,31 +3677,6 @@ int main(int argc, char *argv[]){
     
     if(!c_entry_point_name) c_entry_point_name = "_start";
     
-    if(!no_premain){
-        struct string premain_path = concatenate_file_paths(arena, strip_file_name(compiler_path), string("implicit/premain.c"));
-        globals.premain_path = premain_path;
-        
-        struct os_file file = os_load_file((char *)premain_path.data, 0, 0);
-        if(file.file_does_not_exist){
-            print("Error: Implicit premain compilation unit was not found.\n");
-            print("       If this is intended you can use the '-no_premain'\n");
-            print("       command line option to squelch this warning.\n");
-            print("       This file is usually contained in: ");
-            print("             \"<compiler-path>/implicit/premain.c\".");
-            return 1;
-        }else{
-            struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
-            work->absolute_file_path = premain_path;
-            work->file_size = file.size;
-            
-            struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
-            work_entry->data  = work;
-            
-            sll_push_back(files_to_parse, work_entry);
-            files_to_parse.amount += 1;
-        }
-    }
-    
     if(!no_intrinsics){
         struct string intrinsics_path = concatenate_file_paths(arena, strip_file_name(compiler_path), string("implicit/intrinsic.c"));
         globals.intrinsics_path = intrinsics_path;
@@ -3719,7 +3686,7 @@ int main(int argc, char *argv[]){
             print("Error: Implicit 'intrinsics.c' compilation unit was not found.\n");
             print("       If this is intended you can use the '-no_intrinsics'\n");
             print("       command line option to squelch this error.\n");
-            print("       This file is usually contained in: ");
+            print("       This file is usually contained in: \n");
             print("             \"<compiler-path>/implicit/intrinsics.c\".");
             return 1;
         }else{
@@ -3743,7 +3710,7 @@ int main(int argc, char *argv[]){
             print("Error: Implicit 'runtime.c' compilation unit was not found.\n");
             print("       If this is intended you can use the '-no_stdlib'\n");
             print("       command line option to squelch this error.\n");
-            print("       This file is usually contained in: ");
+            print("       This file is usually contained in: \n");
             print("             \"<compiler-path>/implicit/runtime.c\".");
             return 1;
         }else{
@@ -3813,17 +3780,6 @@ int main(int argc, char *argv[]){
         if(parse_error){
             // :Error mention Windows sdk.
             print("Error: Could not load 'ucrt.lib'. Please check your path.\n");
-            print("       To compile without dynamically linking to the CRT, use \n");
-            print("       the command-line option '-nostdlib'.\n");
-            return 1;
-        }
-    }
-    
-    if(!no_premain){ // @cleanup: Is there another way? Also maybe use #pragma comment(lib, "kernel32.lib").
-        int parse_error = ar_parse_file((char *)push_format_string(arena, "%.*s\\kernel32.lib", um_library_path.size, um_library_path.data).data, arena);
-        if(parse_error){
-            // :Error mention Windows sdk.
-            print("Error: Could not load 'kernel32.lib'. Please check your path.\n");
             print("       To compile without dynamically linking to the CRT, use \n");
             print("       the command-line option '-nostdlib'.\n");
             return 1;
@@ -4324,6 +4280,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     // get it going:
     
+    
+    
     struct compilation_unit *compilation_units = push_data(arena, struct compilation_unit, files_to_parse.amount);
     globals.compilation_units.first = compilation_units;
     globals.compilation_units.last  = compilation_units + files_to_parse.amount - 1;
@@ -4422,13 +4380,14 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             enum output_file_type file_type;
             enum subsystem subsystem;
             struct string entry_point_name;
+            char *pre_main_file;
         } table[] = {
             // Table is in order of preference.
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("_start") },
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main") },
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain") },
-            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("WinMain") },
-            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("wWinMain") },
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("_start"), 0},
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main"), "implicit/pre_main.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain"), "implicit/pre_wmain.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("WinMain"), "implicit/pre_WinMain.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("wWinMain"), "implicit/pre_wWinMain.c"},
             
             { OUTPUT_FILE_dll, SUBSYSTEM_windows, const_string("DllMain") },
             
@@ -4448,9 +4407,57 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             
             if(!cli_options.entry.data){
                 struct ast_declaration *declaration = (struct ast_declaration *)ast_table_get(&globals.global_declarations, atom);
-                if(!declaration) continue;
+                if(!declaration || declaration->type->kind != AST_function_type) continue;
                 
-                // @incomplete: Add premain here!
+                if(table[index].pre_main_file && ((struct ast_function_type *)declaration->type)->argument_list.count){
+                    // 
+                    // We need to load the pre-main file.
+                    // 
+                    struct string premain_path = concatenate_file_paths(arena, strip_file_name(compiler_path), string_from_cstring(table[index].pre_main_file));
+                    
+                    struct os_file file = os_load_file((char *)premain_path.data, 0, 0);
+                    if(file.file_does_not_exist){
+                        print("Error: Implicit premain compilation unit was not found.\n");
+                        print("       If this is intended you can use the '-no_premain'\n");
+                        print("       command line option to squelch this warning.\n");
+                        print("       This file is usually contained in: \n");
+                        print("             \"<compiler-path>/%s\".", table[index].pre_main_file);
+                        return 1;
+                    }
+                    
+                    // 
+                    // Allocate a new compilation unit.
+                    // 
+                    
+                    struct compilation_unit *compilation_unit = push_struct(arena, struct compilation_unit);
+                    compilation_unit->index = globals.compilation_units.last->index + 1; // @cleanup: are we sure 'compilation_unit->last' exists?
+                    compilation_unit->static_declaration_table = ast_table_create(32);
+                    compilation_unit->static_sleeper_table = sleeper_table_create(32);
+                    compilation_unit->is_token_static_table.capacity = 32;
+                    compilation_unit->is_token_static_table.size = 0;
+                    compilation_unit->is_token_static_table.data = push_data(arena, struct is_token_static, 32);
+                    
+                    globals.compilation_units.last->next = compilation_unit;
+                    globals.compilation_units.last = compilation_unit;
+                    
+                    // 
+                    // This feels somewhat dumb.
+                    // 
+                    struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
+                    work->absolute_file_path = premain_path;
+                    work->file_size = file.size;
+                    work->compilation_unit = compilation_unit;
+                    
+                    struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
+                    work_entry->data  = work;
+                    
+                    worker_tokenize_file(context, work_entry); // This preprocesses the file and then adds things into the work_queue below.
+                    
+                    // Parse the new file.
+                    while(globals.work_queue_parse_global_scope_entries.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_parse_global_scope_entries, worker_parse_global_scope_entry);
+                    
+                    atom = atom_for_string(string("_start"));
+                }
             }
             
             globals.output_file_type = table[index].file_type;

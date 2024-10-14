@@ -1,7 +1,8 @@
 
-
 #define true  1
 #define false 0
+
+#pragma comment(lib, "kernel32")
 
 static int character_is_whitespace(char c){
     return (c ==  '\v') || (c ==  '\t') || (c ==  '\f') || (c ==  ' ');
@@ -123,7 +124,7 @@ __declspec(dllimport) __declspec(noreturn) void ExitProcess(unsigned int uExitCo
 int _start(void){
     char *command_line = GetCommandLineA();
     
-    int command_line_size = 0;
+    unsigned __int64 command_line_size = 0;
     for(char *it = command_line; *it; it++) command_line_size++;
     
 #define GMEM_FIXED 0
