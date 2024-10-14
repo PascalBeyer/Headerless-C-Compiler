@@ -314,6 +314,27 @@ struct library_node{
     } *import_symbol_string_table;
 };
 
+struct compilation_unit{
+    struct compilation_unit *next;
+    
+    smm index;
+    struct ast_table static_declaration_table;
+    
+    struct sleeper_table static_sleeper_table;
+    
+    struct file *main_file;
+    
+    struct{
+        struct is_token_static{
+            struct token *token;
+            b32 is_static;
+        } *data;
+        smm size;
+        smm capacity;
+    } is_token_static_table;
+    
+};
+
 struct keyword_table_entry{
     struct atom keyword;
     enum token_type type;
@@ -337,16 +358,17 @@ enum compile_stage{
 };
 
 enum output_file_type{
+    OUTPUT_FILE_unset,
     OUTPUT_FILE_exe,
     OUTPUT_FILE_dll,
     OUTPUT_FILE_obj,
+    OUTPUT_FILE_efi,
 };
 
 // :globals
 static struct{
     
     // :options (don't change after initialization!)
-    enum output_file_type output_file_type;
     b32 want_debug_information;
     
     b32 should_print_includes;
@@ -358,66 +380,27 @@ static struct{
     smm seed_to_randomize_order_of_global_scope_entries;
     u64 image_base;
     
-    enum pe_subsystem{
-        PE_SUBSYSTEM_console = 3,
-        PE_SUBSYSTEM_windows = 2,
-        PE_SUBSYSTEM_efi_application = 10,
-    } pe_subsystem;
-    
     struct thread_info *thread_infos;
     smm thread_count;
     b32 threads_should_exit;
     
+    // These 3 members are highly dependent on each other.
+    enum subsystem subsystem;
+    enum output_file_type output_file_type;
     struct atom entry_point_name;
+    
     struct ast_function *entry_point;
     
     struct string_list system_include_directories;     // full paths
     
-    // There are a couple of cases for how the output path is determined.
-    // 
-    //    1) The user does not specify the output path. 
-    //       In this case the output path is:
-    //           C:/the/working/directory/first_source_file
-    //       The resulting files are:
-    //           C:/the/working/directory/first_source_file.exe
-    //           C:/the/working/directory/first_source_file.pdb
-    //           
-    //    2) The user specified a relative file path including a file name.
-    //       In this case we prepend the working directory.
-    //       The resulting files are:
-    //           C:/the/working/directory/user/specified.exe
-    //           C:/the/working/directory/user/specified.pdb
-    //       
-    //    3) The user specified a relative file path ending in a directory.
-    //       In this case we append the first source file again.
-    //       
-    //    4) Option 2) and 3) have an analogous version for full paths.
-    // 
-    struct string output_file_path;
     
     // Needed to set 'is_system_include' on these files, so we don't report warnings for them.
     struct string intrinsics_path;
     struct string premain_path;
     
     struct{
-        struct compilation_unit{
-            smm index;
-            struct ast_table static_declaration_table;
-            
-            struct sleeper_table static_sleeper_table;
-            
-            struct file *main_file;
-            
-            struct{
-                struct is_token_static{
-                    struct token *token;
-                    b32 is_static;
-                } *data;
-                smm size;
-                smm capacity;
-            } is_token_static_table;
-            
-        } *data;
+        struct compilation_unit *first;
+        struct compilation_unit *last;
         smm amount;
     } compilation_units;
     
@@ -1146,7 +1129,6 @@ func enum identifier_is_static_result{
     }
     invalid_code_path;
 }
-
 
 func struct ast_table *compilation_unit_get_declaration_table_for_ident(struct compilation_unit *compilation_unit, struct atom atom){
     
@@ -3241,6 +3223,8 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
     return push_zero_terminated_string_copy(arena, create_string(buffer, length));
 }
 
+#include "cli.c"
+
 // :main
 int main(int argc, char *argv[]){
     
@@ -3316,6 +3300,9 @@ int main(int argc, char *argv[]){
     u64 thread_count = 1;
     
     // :command_line_options
+    
+    struct cli_options cli_options = cli_parse_options(arena, argc, argv);
+    if(!cli_options.success) return 1;
     
     char *c_entry_point_name = null;
     for(int argument_index = 1; argument_index < argc; argument_index++){
@@ -3488,14 +3475,6 @@ int main(int argc, char *argv[]){
             globals.allow_dot_as_arrow = true;
         }else if(string_front_match_eat(&argument, "subsystem:")){
             
-            if(string_match_case_insensitive(argument, string("console"))){
-                globals.pe_subsystem = PE_SUBSYSTEM_console;
-            }else if(string_match_case_insensitive(argument, string("windows"))){
-                globals.pe_subsystem = PE_SUBSYSTEM_windows;
-            }else if(string_match_case_insensitive(argument, string("efi_application"))){
-                globals.pe_subsystem = PE_SUBSYSTEM_efi_application;
-            }
-            
         }else if(string_match(argument, string("seed"))){
             if(argument_index + 1 == argc){
                 print("Error: Expected argument after '%s'.\n", argv[argument_index]);
@@ -3512,31 +3491,9 @@ int main(int argc, char *argv[]){
             }
             print("random seed used 0x%llx\n", globals.seed_to_randomize_order_of_global_scope_entries);
         }else if(string_match(argument, string("o")) || string_match_case_insensitive(argument, string("out"))){
-            if(argument_index + 1 == argc){
-                print("Error: Expected argument after '%s'.\n", argv[argument_index]);
-                return 1;
-            }
-            
-            if(globals.output_file_path.data){
-                print("Error: Output file specified twice.\n");
-                return 1;
-            }
-            
-            globals.output_file_path = string_from_cstring(argv[++argument_index]);
+            ++argument_index;
         }else if(string_match_case_insensitive(argument, string("entry"))){
-            if(argument_index + 1 == argc){
-                print("Error: Expected argument after '%s'.\n", argv[argument_index]);
-                return 1;
-            }
-            
-            if(c_entry_point_name){
-                print("Error: Entry point specified twice.\n");
-                return 1;
-            }
-            
-            c_entry_point_name = argv[++argument_index];
-            no_premain = 1;
-            
+            ++argument_index;
         }else if(string_match_case_insensitive(argument, string("no_entry"))){
             globals.no_entry = true;
         }else if(string_match(argument, string("I"))){
@@ -3677,7 +3634,7 @@ int main(int argc, char *argv[]){
             }
         }else{
 #if 1
-            print("Warning: Unknown command-line option '%s'.\n", argv[argument_index]);
+            // print("Warning: Unknown command-line option '%s'.\n", argv[argument_index]);
 #else
             os_debug_break();
             print("Error: Unknown command-line option '%s'.\n", argv[argument_index]);
@@ -3693,40 +3650,33 @@ int main(int argc, char *argv[]){
     
     {
         // 
-        // Build the output file path.
+        // Try to determine the `output_file_type` from the options.
         // 
-        // If it is relative, prepend the working directory.
-        // If it is a directory, append the name of the first source file.
-        // 
-        
-        if(path_is_relative(globals.output_file_path)){
-            globals.output_file_path = concatenate_file_paths(arena, working_directory, globals.output_file_path);
+        if(cli_options.dll && cli_options.obj){
+            print("Error: Found both the -DLL and the -OBJ command line options.\n");
+            return 1;
         }
         
-        if(path_is_directory((char *)globals.output_file_path.data)){
-            struct string file_name = strip_file_extension(strip_file_path(((struct work_tokenize_file *)files_to_parse.first->data)->absolute_file_path));
-            globals.output_file_path = concatenate_file_paths(arena, globals.output_file_path, file_name);
+        // Check the arguments that hard-set the file type.
+        if(cli_options.dll) globals.output_file_type = OUTPUT_FILE_dll;
+        if(cli_options.obj) globals.output_file_type = OUTPUT_FILE_obj;
+        
+        // Check the output string.
+        if(globals.output_file_type == OUTPUT_FILE_unset && cli_options.out.data){
+            struct string output_extension = get_file_extension(cli_options.out);
+            if(string_match(output_extension, string(".exe"))) globals.output_file_type = OUTPUT_FILE_exe;
+            if(string_match(output_extension, string(".dll"))) globals.output_file_type = OUTPUT_FILE_dll;
+            if(string_match(output_extension, string(".obj"))) globals.output_file_type = OUTPUT_FILE_obj;
+            if(string_match(output_extension, string(".efi"))) globals.output_file_type = OUTPUT_FILE_efi;
         }
         
-        struct string file_extension = zero_struct;
-        switch(globals.output_file_type){
-            case OUTPUT_FILE_exe: file_extension = string(".exe"); break;
-            case OUTPUT_FILE_dll: file_extension = string(".dll"); break;
-            case OUTPUT_FILE_obj: file_extension = string(".obj"); break;
-            invalid_default_case();
-        }
-        
-        // Attempt to infer the output file type from the out string.
-        struct string output_file_extension = get_file_extension(globals.output_file_path);
-        if(string_match(output_file_extension, file_extension)){
-            globals.output_file_path.size -= file_extension.size;
-        }
+        // A no_entry file ought to be a dll.
+        if(globals.output_file_type == OUTPUT_FILE_unset && cli_options.no_entry) globals.output_file_type = OUTPUT_FILE_dll;
     }
     
-    if(globals.no_entry && globals.output_file_type == OUTPUT_FILE_exe){
-        print("Error: /no_entry is invalid when requesting an executable.");
-        return 1;
-    }
+    // Try to infer the subsystem.
+    globals.subsystem = cli_options.subsystem;
+    if(globals.subsystem == 0 && globals.output_file_type == OUTPUT_FILE_dll) globals.subsystem = SUBSYSTEM_windows;
     
     if(c_entry_point_name && globals.no_entry && !test_was_specified){
         print("Error: /no_entry and an entry point name was specified.");
@@ -3895,8 +3845,6 @@ int main(int argc, char *argv[]){
         print("    %.*s\n", include->string.size, include->string.data);
     }
 #endif
-    
-    
     
     {  // :init_globals :globals init globals
         
@@ -4377,8 +4325,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     // get it going:
     
     struct compilation_unit *compilation_units = push_data(arena, struct compilation_unit, files_to_parse.amount);
-    globals.compilation_units.data   = compilation_units;
-    globals.compilation_units.amount = files_to_parse.amount;
+    globals.compilation_units.first = compilation_units;
+    globals.compilation_units.last  = compilation_units + files_to_parse.amount - 1;
     {
         smm index = 0;
         for(struct work_queue_entry *entry = files_to_parse.first; entry; entry = entry->next){
@@ -4390,6 +4338,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             unit->is_token_static_table.capacity = 0x100;
             unit->is_token_static_table.size = 0;
             unit->is_token_static_table.data = push_data(context->arena, struct is_token_static, 0x100);
+            if(entry->next) unit->next = unit + 1;
             
             struct work_tokenize_file *work = entry->data;
             work->compilation_unit = unit;
@@ -4401,7 +4350,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     }
     
     end_counter(context, startup);
-    
     
     //
     // COMPILE_STAGE_tokenize_files
@@ -4463,6 +4411,79 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     assert(globals.work_queue_parse_global_scope_entries.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
     
+    if(!cli_options.no_entry){
+        // __debugbreak();
+        
+        // 
+        // Try to determine the entry point, output file name and subsystem, 
+        // from the functions that exist in the executable.
+        // 
+        static struct{
+            enum output_file_type file_type;
+            enum subsystem subsystem;
+            struct string entry_point_name;
+        } table[] = {
+            // Table is in order of preference.
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("_start") },
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main") },
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain") },
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("WinMain") },
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("wWinMain") },
+            
+            { OUTPUT_FILE_dll, SUBSYSTEM_windows, const_string("DllMain") },
+            
+            { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("_start") },
+            { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("main") },
+            { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("efi_main") },
+            { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("EfiMain") },
+        };
+        
+        for(u32 index = 0; index < array_count(table); index++){
+            // Only check entry points, we are allowed to.
+            if(globals.output_file_type != OUTPUT_FILE_unset && table[index].file_type != globals.output_file_type) continue;
+            if(globals.subsystem != 0 && table[index].subsystem != globals.subsystem) continue;
+            if(cli_options.entry.data && !string_match(table[index].entry_point_name, cli_options.entry)) continue;
+            
+            struct atom atom = atom_for_string(table[index].entry_point_name);
+            
+            if(!cli_options.entry.data){
+                struct ast_declaration *declaration = (struct ast_declaration *)ast_table_get(&globals.global_declarations, atom);
+                if(!declaration) continue;
+                
+                // @incomplete: Add premain here!
+            }
+            
+            globals.output_file_type = table[index].file_type;
+            globals.subsystem        = table[index].subsystem;
+            globals.entry_point_name = atom;
+            break;
+        }
+        
+        if(!globals.entry_point_name.string.data){
+            if(globals.output_file_type == OUTPUT_FILE_dll){
+                cli_options.no_entry = 1;
+            }else{
+                print("Error: Could not find an entry point.\n"); // :Error we should print a good error message here.
+                return 1;
+            }
+        }
+        
+        // Default to .exe
+        if(globals.output_file_type == OUTPUT_FILE_unset) globals.output_file_type = OUTPUT_FILE_exe;
+    }
+    
+    // Infer the subsystem by the output file type.
+    if(globals.subsystem == 0){
+        switch(globals.output_file_type){
+            case OUTPUT_FILE_obj: break;
+            case OUTPUT_FILE_exe: globals.subsystem = SUBSYSTEM_console; break;
+            case OUTPUT_FILE_dll: globals.subsystem = SUBSYSTEM_windows; break;
+            case OUTPUT_FILE_efi: globals.subsystem = SUBSYSTEM_efi_application; break;
+            default: invalid_code_path;
+        }
+    }
+    
+    
     //
     // At this point no more sleepers will get filled in.
     // So _if_ there are any, report them.
@@ -4483,12 +4504,12 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     report_errors_for_unresolved_sleepers(context, &globals.declaration_sleeper_table);
     if(globals.an_error_has_occurred) goto end;
     
-    for(smm compilation_unit_index = 0; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
+    for(struct compilation_unit *compilation_unit = globals.compilation_units.first; compilation_unit; compilation_unit = compilation_unit->next){
         //
         // We report errors for unresolved global static identifiers for all compilation units, 
         // even if one compilation unit already reported an unresolved identifier.
         //
-        report_errors_for_unresolved_sleepers(context, &globals.compilation_units.data[compilation_unit_index].static_sleeper_table);
+        report_errors_for_unresolved_sleepers(context, &compilation_unit->static_sleeper_table);
     }
     if(globals.an_error_has_occurred) goto end;
     
@@ -4559,14 +4580,16 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             if(globals.an_error_has_occurred) goto end;
         }
         
-        for(smm compilation_unit_index = -1; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
+        // :DeclarationTableLoop
+        struct compilation_unit dummy_global_compilation_unit = {
+            .next = globals.compilation_units.first, 
+            .static_declaration_table = globals.global_declarations,
+        };
+        
+        
+        for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
             
-            struct ast_table *table = &globals.global_declarations;
-            
-            if(compilation_unit_index >= 0){
-                struct compilation_unit *unit = globals.compilation_units.data + compilation_unit_index;
-                table = &unit->static_declaration_table;
-            }
+            struct ast_table *table = &compilation_unit->static_declaration_table;
             
             for(u64 table_index = 0; table_index < table->capacity; table_index++){
                 struct ast *ast = table->nodes[table_index].ast;
@@ -4770,9 +4793,9 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         begin_counter(context, report_error_for_undefined_functions_and_types);
         report_errors_for_undefined_functions_and_types(context, &globals.global_declarations);
         
-        for(smm i = 0; i < globals.compilation_units.amount; i++){
+        for(struct compilation_unit *compilation_unit = globals.compilation_units.first; compilation_unit; compilation_unit = compilation_unit->next){
             if(globals.an_error_has_occurred) goto end;
-            report_errors_for_undefined_functions_and_types(context, &globals.compilation_units.data[i].static_declaration_table);
+            report_errors_for_undefined_functions_and_types(context, &compilation_unit->static_declaration_table);
         }
     }
     
@@ -4837,17 +4860,65 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         // to actually assemble the output files.
         // 
         
+        struct string output_file_path = cli_options.out;
+        {
+            // 
+            // Build the output file path.
+            // 
+            // There are a couple of cases for how the output path is determined.
+            // 
+            //    1) The user does not specify the output path. 
+            //       In this case the output path is:
+            //           C:/the/working/directory/first_source_file
+            //       The resulting files are:
+            //           C:/the/working/directory/first_source_file.exe
+            //           C:/the/working/directory/first_source_file.pdb
+            //           
+            //    2) The user specified a relative file path including a file name.
+            //       In this case we prepend the working directory.
+            //       The resulting files are:
+            //           C:/the/working/directory/user/specified.exe
+            //           C:/the/working/directory/user/specified.pdb
+            //       
+            //    3) The user specified a relative file path ending in a directory.
+            //       In this case we append the first source file again.
+            //       
+            //    4) Option 2) and 3) have an analogous version for full paths.
+            // 
+            
+            if(path_is_relative(output_file_path)){
+                output_file_path = concatenate_file_paths(arena, working_directory, output_file_path);
+            }
+            
+            if(path_is_directory((char *)output_file_path.data)){
+                struct string file_name = strip_file_extension(strip_file_path(((struct work_tokenize_file *)files_to_parse.first->data)->absolute_file_path));
+                output_file_path = concatenate_file_paths(arena, output_file_path, file_name);
+            }
+            
+            struct string file_extension = zero_struct;
+            switch(globals.output_file_type){
+                case OUTPUT_FILE_exe: file_extension = string(".exe"); break;
+                case OUTPUT_FILE_dll: file_extension = string(".dll"); break;
+                case OUTPUT_FILE_obj: file_extension = string(".obj"); break;
+                case OUTPUT_FILE_efi: file_extension = string(".efi"); break;
+                invalid_default_case();
+            }
+            
+            // Attempt to infer the output file type from the out string.
+            struct string output_file_extension = get_file_extension(output_file_path);
+            if(string_match(output_file_extension, file_extension)){
+                output_file_path.size -= file_extension.size;
+            }
+        }
+        
         // The emit arena is fixed size 4 gigs, so we can print an error, if we exceed it.
         struct memory_arena emit_arena = create_memory_arena(giga_bytes(4), 2.0f, mega_bytes(10));
         emit_arena.out_of_memory_string = "Error: Maximum executable file size exceeded. Cannot emit a valid executable file.\n"; // :Error
         
-        
         if(globals.output_file_type == OUTPUT_FILE_obj){
-            print_obj(&emit_arena, arena); 
+            print_obj(output_file_path, &emit_arena, arena); 
         }else{
-            begin_counter(context, print_coff);
-            print_coff(&emit_arena, arena); 
-            end_counter(context, print_coff);
+            print_coff(output_file_path, &emit_arena, arena); 
         }
     }
     

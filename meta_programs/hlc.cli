@@ -1,0 +1,366 @@
+
+# Common
+
+/help [option] | /h [option] | /? [option] - Display this help message or a help message for another option.
+
+The --help command can be used to display information on other command line arguments.
+Usage examples:
+    > hlc.exe --help out
+    > hlc.exe --help subsystem:console
+
+/no_stdlib - Don't link to 'ucrt.lib'.
+
+By default, the compiler adds include paths to ucrt header files and links to ucrt.lib.
+You can disable this behaviour to ensure you are not using any standard library functions,
+or when you want to link to a different standard library.
+
+> hlc.exe test.c -no_stdlib
+>
+> #include <stdio.h> // Error at 'include': 'stdio.h' include file not found.
+>
+> int main(){
+>     printf("Hello, World!\n");
+> }
+
+/no_intrinsics - Disables the 'implicit/intrinsics.c' compilation-unit.
+
+TODO
+
+/no_premain - Disables the 'implicit/premain.c' compilation-unit.
+
+TODO
+
+/no_debug - Disables generation of debugging information.
+
+By default, the compiler generates debug information either in the form of a PDB,
+if an image is requested, or in the for of a .debug$S and .debug$T section, if an
+object file is requested. This option disables this behaviour.
+
+/no_dynamic_base - Generate a non-relocatable image.
+
+This option sets the `IMAGE_FILE_RELOCS_STRIPPED` flag in the `Characteristics` 
+field of the COFF file header and skips setting the 
+`IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE` field in the `DllCharacteristics` of the
+image optional header. Furthermore, no base relocations are produced.
+
+/image_base <u64> - Set the default image base address of the image.
+
+This option sets the `ImageBase` field of the image optional header.
+For executables this defaults to 0x140000000 and for DLLs it defaults to 0x180000000.
+
+/show_includes - Prints all file paths of included files to stdout.
+
+This option allows you to detect include files used by a compilation unit.
+For example:
+
+> // test.c
+> #include <stdio.h>
+> 
+> int main(){
+>     printf("Hello, World!\n");
+> }
+
+> hlc.exe test.c /show_includes
+> 
+> <...>
+> 
+> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/ucrt/stdio.h
+> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/ucrt/corecrt.h
+> C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.37.32822/include/vcruntime.h
+> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/shared/sal.h
+> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/shared/concurrencysal.h
+> C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.37.32822/include/vadefs.h
+> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/ucrt/corecrt_wstdio.h
+> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/ucrt/corecrt_stdio_config.h
+
+Some build tools uses this option to automatically detect which source files a compilation unit depends on.
+
+/subsystem <enum> - Set the 'Subsystem' field of the image optional header.
+
+This option allows you to set the 'Subsystem' field of the image optional header.
+The default subsystem is inferred by the choice of "main" function.
+If main, or wmain is defined, the default subsystem is console.
+If WinMain or wWinMain is specified the default subsystem is windows.
+
+-> console (3) - Sets the Subsystem field to `IMAGE_SUBSYSTEM_WINDOWS_CUI`.
+-> windows (2) - Sets the Subsystem field to `IMAGE_SUBSYSTEM_WINDOWS_GUI`.
+-> efi_application (10) - Sets the Subsystem field to `IMAGE_SUBSYSTEM_EFI_APPLICATION`.
+
+/out <path> | /o <path> | /Fe <path> - Sets the name of the output files.
+
+The default output file name is derived from the first compilation unit.
+For example, for `hlc src/test.c` the resulting files would be `test.exe` and `test.pdb`.
+When /out specifies a directory, the resulting files are put in the directory with their 
+default name. If out does not specify a file extension, the default file extension is appended.
+The default file extension is `.exe` for an executable, `.obj` for an object file and `.dll`
+for a dynamic link library.
+
+/entry <name> - Set the entry point symbol. This option implies the `no_premain` option. 
+
+By default, the entry point is `_start` and unless `no_premain` is specified contained in 
+the premain file.
+
+/no_entry - Indicates that there is no entry point. This option implies /DLL.
+
+This option is useful for building a resource-only DLL.
+For example:
+
+> hlc.exe dll.c /dll /no_entry
+>
+> // dll.c
+> __declspec(dllexport) int export;
+>
+
+/dll | /LD - Produce a Dynamic Link Library.
+
+This option is used to set the output file type to be a DLL.
+If the program is using a DllMain
+
+/obj | /c - Produce an object file instead of an executable.
+
+Using the /obj option allows you to compile in "more classic" c-compiler fashion.
+
+Example:
+> hlc /obj main.c
+> hlc /obj other.c
+> link main.obj other.obj
+> main.exe
+
+/thread_count <u64> - The amount of threads to be used during compilation. Default: 1
+
+The number of threads must be between 1 and 10 times the amount of cores your system has.
+
+/I <dir:list> - Specify an additional include directory.
+
+This makes it possible to use your own headers in <>-includes.
+
+/Wall   - Enable all warnings.
+
+Enable all implemented warnings. To see a list of all warnings use `hlc.exe --help W`.
+
+/Wnone - Disable all warnings.
+
+Disable all implemented warnings. To see a list of all warnings use `hlc.exe --help W`.
+
+/W <warning>   - Enable specific warnings.
+/Wno <warning> | /wd <warning> - Disable specific warnings.
+
+Enables or disables a specific warning. Warnings can be supplied either by their name, or by their number.
+
+-> missing_newline_after_backslash - The preprocessor found a whitespace after a \.
+    
+    Example:
+    > // Whitespace vvvvvv
+    > "This is not \      
+    >  a string literal."
+    
+-> junk_after_directive - The preprocessor skipped tokens after a directive in a line.
+    
+    Example:
+    > #else Else does not have a condition so all of this is junk!
+    
+-> compile_time_overflow - A compile time computation caused an overflow.
+    
+    Example:
+    > int a = 13371337 * 13371337; // Warning: Compile time integer overflow. @cleanup: This is apparently not implemented.
+    
+-> compile_time_multiplication_by_zero - Detected a compile-time multiplication by 0.
+    
+    Example:
+    > a *= 0;
+ 
+-> shadowing_local - A declaration hides a previous local declaration.
+   
+    Example:
+    > int a = 0;
+    > {
+    >     int a = 1; // Warning: Declaration hides previous declaration.
+    > }
+
+-> shadowing_global - A declaration hides a previous global declaration.
+
+    Example:
+    > int a = 0;
+    > int function(){
+    >     int a = 1; // Warning: Declaration hides previous global declaration.
+    > }
+    
+-> shadowing_in_same_scope - A declaration hides a previous declaration in the same scope.
+
+    Example:
+    >
+    > int a = 1;
+    > int a = 2; // Warning: Declaration hides previous declaration in same scope.
+    >
+    
+-> type_mismatch - Potentially erroneous operation between two mismatching types.
+   
+    Example:
+    > int a = 1.0;            // Warning: Expected 'int' got 'double'. 
+    > if(&a == (char *)0){    // Warning: Expected 'int *' got 'char *'.
+    >     floorf(a);          // Warning: Expected 'double' got 'int'.
+    > }
+
+-> compile_time_truncation - An integer was truncated at compile type.
+
+    Example:
+    > char a = 0x1234;
+    > struct { int b : 1; } c = {3};
+    > a &= 1337;
+    > (char)13371337;
+    
+-> unsigned_negation - Applying '-' to an unsigned value results in an unsigned value.
+
+    Example:
+    > unsigned int a = 1;
+    > unsigned int b = -a; // Warning: Negation of an unsigned number is still unsigned.
+    > unsigned int c = -123u; // Warning: Negation of an unsigned number is still unsigned.
+    > unsigned int c = -0xffffffff; // Warning: Negation of an unsigned number is still unsigned.
+
+-> unsupported_declspec - Unsupported or unknown __declspec(<...>) invocations are ignored.
+
+    Example:
+    > __declspec(moose) int a;
+
+-> ret_in_asm_block - A 'ret' opcode was detected in an __asm__-block.
+
+Using the 'ret' instruction inside of an __asm__-block is usually wrong as
+the function frame will not be popped. Furthermore, it is easy to confuse the 
+'ret' instruction with the hlc-specific opcode 'return'.
+
+
+-> does_not_declare_anything - Potentially malformed declaration.
+
+    Example:
+    > struct{ int a; };
+    > int;
+
+-> undefined_static_if_operand - An undefined identifier in a #if expression gets evaluated to 0.
+
+    Example:
+    > #if UNDEFINED // Warning: Undefined identifier in '#if' operand gets evaluated to zero.
+    > // This will never happen because UNDEFINED got evaluated to 0.
+    > #endif
+
+-> undef_on_undefined - Using #undef on an undefined identifier.
+
+    Example:
+    > #undef UNDEFINED
+
+-> unsupported_pragma - Unsupported or unknown #pragma directives are ignored.
+
+    Example:
+    > #pragma moose()
+
+-> function_declared_but_never_defined - A function had a declaration, but was never defined.
+
+-> function_defined_but_unreachable - The function is dead code and is removed from the executable.
+
+   
+-> unused_local_variable - A local variable was never referenced.
+
+   Example:
+   > int function(void){
+   >     int a; // Warning: Local variable is never used.
+   > }
+
+-> local_variable_only_ever_written - A local variable that is only ever written is probably useless.
+
+   Example:
+   > void function(void){
+   >     int a = 1337; // Warning: Local variable is never read, only written.
+   >     a = 1338;
+   > }
+   
+-> casting_u64_to_float - Casting an unsigned 64-bit value to a floating point value is slow on x64.
+
+    The x64 architecture only has instruction to transform signed integers to and from floating point values.
+    Usually, by adding a couple instructions, we can get around this limitation, but converting a u64 to a 
+    floating point value results something like this:
+       
+     
+       mov      rax,  u64  ; load the initial value into rax
+       test     rax,  rax  ; check if the top bit is set and set SF <- MSB(rax)
+       js       msb_set    ; jump if 'SF', i.e MSB(rax) is set, to the slow part
+       
+       cvtsi2sd xmm1, rax  ; Convert the value if MSB(rax) is not set
+       jmp      end        ; jump to end as we are done
+    
+    msb_set:
+       mov      rcx,  rax  ; save the u64 so we can fix up rounding
+       shr      rax,  1    ; shift the u64, such that the sign bit is not set
+       and      rcx,  1    ; get the parity from the original u64
+       or       rax,  rcx  ; fix up the last bit to be set if either of the last two bits of the original value are set
+       cvtsi2sd xmm1, rax  ; Convert the resulting value
+       addsd    xmm1, xmm1 ; Double it to get back to the desired value
+       
+    end:
+
+-> double_specifier - More than one of the same specifier for a declaration.
+
+    Example:
+    > static static int a = 0;
+    
+-> incorrect_format_specifier - Wrong argument passed to a __declspec(printlike) procedure.
+
+    Example:
+    > print("%s", 1);
+    > print("%lli", (char)1);
+    
+-> unknown_format_specifier - Unknown format specifier to __declspec(printlike) procedure.
+
+    Example:
+    > print("%q", 1);
+
+-> atomic_ignored - Currently, the _Atomic keyword is ignored.
+
+-> assignment_in_condition - Using an assignments in a condition is a common mistake.
+
+    Example:
+    > if(a = 1){ // Warning: Assignment withing condition, did you mean '=='?
+    >     // a is one and the condition is always evaluated to true.
+    > }
+
+-> extension_used - A hlc-specific extension was used. This is reported very inconsistently.
+
+This currently only report for something like:
+    > u64 long_character_constant = 'abcdefgh';
+
+-> missing_return - A function forgot to return a value.
+    
+    Example:
+    > int function(void){ // Warning: Function of type 'int' must return a value.
+    > }
+
+-> return_in_noreturn_function - A return statement inside a function declared _Noreturn.
+
+    Example:
+    > __declspec(noreturn) int function(void){
+    >     return 1; // Warning: Control flow reaching the end of '_Noreturn' function.
+    > }
+
+
+
+# Hidden
+
+/no_discard - Emit all functions and declarations.
+
+This option is designed for fuzzing.
+
+/dont_print_the_files - Don't print the files because we are in a test suite.
+
+This option is used by the test-runner for tests that only have to compile, 
+but not run.
+
+/seed <u64> - Specifies a seed used to shuffle around declarations.
+
+This options exists to stress test out of order compilation.
+If -seed 0 is used, the seed is generated by `__rdtsc()`.
+After a bug is found, the resulting seed can be reused to reproduce the issue.
+
+/report_warnings_in_system_includes - Self explanatory.
+
+/test - Equivalent to `-no_premain -no_intrinsic -no_stdlib -entry main`.
+
+This option is used in the test-runner to speed-up the tests.
+
