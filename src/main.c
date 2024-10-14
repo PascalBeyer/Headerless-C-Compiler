@@ -3246,6 +3246,8 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
     return push_zero_terminated_string_copy(arena, create_string(buffer, length));
 }
 
+#include "cli.c"
+
 // :main
 int main(int argc, char *argv[]){
     
@@ -3321,6 +3323,9 @@ int main(int argc, char *argv[]){
     u64 thread_count = 1;
     
     // :command_line_options
+    
+    struct cli_options cli_options = cli_parse_options(arena, argc, argv);
+    if(!cli_options.success) return 1;
     
     char *c_entry_point_name = null;
     for(int argument_index = 1; argument_index < argc; argument_index++){
