@@ -1997,7 +1997,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         exe->header->SizeOfCode = text->SizeOfRawData;
         exe->header->BaseOfCode = text->VirtualAddress;
         
-        if(!globals.no_entry){
+        if(globals.entry_point){
             exe->header->AddressOfEntryPoint = (DWORD)globals.entry_point->relative_virtual_address;
         }
     }

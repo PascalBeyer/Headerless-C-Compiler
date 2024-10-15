@@ -374,7 +374,7 @@ static struct{
     b32 should_print_includes;
     b32 report_warnings_in_system_includes;
     b32 dynamic_base;
-    b32 no_entry;
+    
     b32 allow_dot_as_arrow;
     b32 dont_print_the_files_because_we_are_in_a_test_suite;
     smm seed_to_randomize_order_of_global_scope_entries;
@@ -3303,7 +3303,6 @@ int main(int argc, char *argv[]){
     struct cli_options cli_options = cli_parse_options(arena, argc, argv);
     if(!cli_options.success) return 1;
     
-    char *c_entry_point_name = null;
     for(int argument_index = 1; argument_index < argc; argument_index++){
         struct string argument = cstring_to_string(argv[argument_index]);
         
@@ -3492,7 +3491,7 @@ int main(int argc, char *argv[]){
         }else if(string_match_case_insensitive(argument, string("entry"))){
             ++argument_index;
         }else if(string_match_case_insensitive(argument, string("no_entry"))){
-            globals.no_entry = true;
+            
         }else if(string_match(argument, string("I"))){
             if(argument_index + 1 == argc){
                 print("Error: Expected argument after '%s'.\n", argv[argument_index]);
@@ -3524,16 +3523,14 @@ int main(int argc, char *argv[]){
             string_list_postfix(&libraries, arena, string_from_cstring(file_name));
             
         }else if(string_match(argument, string("DLL")) || string_match(argument, string("dll")) || string_match(argument, string("LD"))){
-            globals.output_file_type = OUTPUT_FILE_dll;
+            // globals.output_file_type = OUTPUT_FILE_dll;
         }else if(string_match(argument, string("obj")) || string_match(argument, string("OBJ")) || string_match(argument, string("c"))){
-            globals.no_entry = 1;
-            globals.output_file_type = OUTPUT_FILE_obj;
+            // globals.output_file_type = OUTPUT_FILE_obj;
         }else if(string_match(argument, string("test"))){
             no_intrinsics = 1;
             no_standard_library = 1;
             
             test_was_specified = 1;
-            c_entry_point_name = "main";
         }else if(string_match(argument, string("report_warnings_in_system_includes"))){
             globals.report_warnings_in_system_includes = 1;
         }else if(argument.data[0] == 'D'){ // argument[0] is always valid as there is at least a zero terminator
@@ -3670,12 +3667,13 @@ int main(int argc, char *argv[]){
     globals.subsystem = cli_options.subsystem;
     if(globals.subsystem == 0 && globals.output_file_type == OUTPUT_FILE_dll) globals.subsystem = SUBSYSTEM_windows;
     
-    if(c_entry_point_name && globals.no_entry && !test_was_specified){
-        print("Error: /no_entry and an entry point name was specified.");
+    if(cli_options.entry.data && cli_options.no_entry && !cli_options.test){
+        print("Error: Found option '/no_entry' and option '/entry %.*s'.\n", cli_options.entry.size, cli_options.entry.data);
         return 1;
     }
     
-    if(!c_entry_point_name) c_entry_point_name = "_start";
+    // @cleanup: Maybe I should have a separate variable?
+    if(globals.output_file_type == OUTPUT_FILE_obj) cli_options.no_entry = 1;
     
     if(!no_intrinsics){
         struct string intrinsics_path = concatenate_file_paths(arena, strip_file_name(compiler_path), string("implicit/intrinsic.c"));
@@ -4260,8 +4258,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     }
 #endif
     
-    globals.entry_point_name = atom_for_string(string_from_cstring(c_entry_point_name));
-    
     // @note: thread '0' is the main thread
     struct thread_info *thread_infos = push_data(arena, struct thread_info, thread_count);
     globals.thread_infos = thread_infos;
@@ -4370,7 +4366,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     if(globals.an_error_has_occurred) goto end;
     
     if(!cli_options.no_entry){
-        // __debugbreak();
         
         // 
         // Try to determine the entry point, output file name and subsystem, 
@@ -4407,7 +4402,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             
             if(!cli_options.entry.data){
                 struct ast_declaration *declaration = (struct ast_declaration *)ast_table_get(&globals.global_declarations, atom);
-                if(!declaration || declaration->type->kind != AST_function_type) continue;
+                if(!declaration || !declaration->assign_expr || declaration->type->kind != AST_function_type) continue;
                 
                 if(table[index].pre_main_file && ((struct ast_function_type *)declaration->type)->argument_list.count){
                     // 
@@ -4467,11 +4462,17 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         }
         
         if(!globals.entry_point_name.string.data){
-            if(globals.output_file_type == OUTPUT_FILE_dll){
+            if(cli_options.entry.data){
+                // The entry point was not a canonical one, but it was specified on the command line.
+                globals.entry_point_name = atom_for_string(cli_options.entry);
+            }else if(globals.output_file_type == OUTPUT_FILE_dll){
+                // For dlls it should be legal to not have an entry point.
                 cli_options.no_entry = 1;
             }else{
-                print("Error: Could not find an entry point.\n"); // :Error we should print a good error message here.
-                return 1;
+                // @cleanup: We cannot immediately report an error here, as we want to report undeclared identifiers and such.
+                //           We are only supposed to print this error after we made sure there are no other errors at global scope.
+                //           Hence, I am currently relying on the old system to produce an error message.
+                globals.entry_point_name = atom_for_string(string("_start"));
             }
         }
         
@@ -4582,7 +4583,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         // We emit code for every function.
         // 
         
-        if(!globals.no_entry){
+        if(!cli_options.no_entry){
             globals.entry_point = get_entry_point_or_error(context);
             if(globals.an_error_has_occurred) goto end;
         }
@@ -4648,7 +4649,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         // what is reachable from 'entry_point'.        
         // 
         
-        if(!globals.no_entry){
+        if(!cli_options.no_entry){
             globals.entry_point = get_entry_point_or_error(context);
             if(globals.an_error_has_occurred) goto end;
             
