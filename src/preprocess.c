@@ -2882,7 +2882,7 @@ func int handle_include_directive(struct context *context, struct token *directi
     }
     
     if(!skip_include){
-        if(globals.should_print_includes){
+        if(globals.cli_options.show_includes){
             print("%s\n", file->absolute_file_path);
         }
         
@@ -2921,7 +2921,7 @@ struct static_if_stack_node{
 func struct token_array file_tokenize_and_preprocess(struct context *context, struct string initial_absolute_file_path, smm file_size){
     
     {
-        if(globals.should_print_includes){
+        if(globals.cli_options.show_includes){
             print("\n%.*s\n", initial_absolute_file_path.size, initial_absolute_file_path.data);
         }
         
@@ -3957,6 +3957,79 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         }else{
                             report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsupported '#pragma comment(%.*s, ...)' ignored.", pragma_comment_directive->string.size, pragma_comment_directive->string.data);
                         }
+                    }else if(atoms_match(pragma_directive->atom, globals.pragma_compilation_unit)){
+                        // 
+                        // #pragma compilation_unit("cfile.c")
+                        // 
+                        
+                        eat_whitespace_and_comments(context);
+                        expect_token_raw(context, pragma_directive, TOKEN_open_paren, "Expected a '(' after '#pragma compilation_unit'.");
+                        
+                        eat_whitespace_and_comments(context);
+                        struct token *string_literal = expect_token_raw(context, pragma_directive, TOKEN_string_literal, "Expected a string literal after '#pragma compilation_unit('.");
+                        
+                        eat_whitespace_and_comments(context);
+                        expect_token_raw(context, pragma_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma compilation_unit(\"<.c>\"'.");
+                        
+                        if(string_literal->type == TOKEN_string_literal){
+                            struct string c_file = strip_quotes(string_literal->string);
+                            
+                            struct file *parent_file = globals.file_table.data[string_literal->file_index];
+                            struct string path = strip_file_name(string_from_cstring(parent_file->absolute_file_path));
+                            struct string absolute_file_path = canonicalize_slashes(concatenate_file_paths(&context->scratch, path, c_file));
+                            
+                            static struct ticket_spinlock pragma_compilation_unit_spinlock = {0};
+                            ticket_spinlock_lock(&pragma_compilation_unit_spinlock);
+                            
+                            int found = 0;
+                            for(struct string_list_node *list_node = globals.pragma_compilation_units.list.first; list_node; list_node = list_node->next){
+                                if(string_match_case_insensitive(list_node->string, absolute_file_path)){
+                                    found = 1;
+                                    break;
+                                }
+                            }
+                            
+                            if(!found){
+                                
+                                struct os_file dummy = os_load_file((char *)absolute_file_path.data, 0, 0);
+                                if(dummy.file_does_not_exist){
+                                    report_error(context, pragma_directive, "File '%.*s' does not exist.", absolute_file_path.size, absolute_file_path.data);
+                                }else{
+                                    string_list_postfix(&globals.pragma_compilation_units, context->arena, absolute_file_path); // @note: This copies.
+                                    
+                                    // 
+                                    // Allocate a new compilation unit.
+                                    // @cleanup: Maybe I should make this a routine at this point...
+                                    // 
+                                    struct compilation_unit *compilation_unit = push_struct(context->arena, struct compilation_unit);
+                                    compilation_unit->index = globals.compilation_units.last->index + 1; // @cleanup: are we sure 'compilation_unit->last' exists?
+                                    compilation_unit->static_declaration_table = ast_table_create(128);
+                                    compilation_unit->static_sleeper_table = sleeper_table_create(1 << 8);
+                                    compilation_unit->is_token_static_table.capacity = 0x100;
+                                    compilation_unit->is_token_static_table.size = 0;
+                                    compilation_unit->is_token_static_table.data = push_data(context->arena, struct is_token_static, 0x100);
+                                    
+                                    globals.compilation_units.last->next = compilation_unit;
+                                    globals.compilation_units.last = compilation_unit;
+                                    
+                                    
+                                    // 
+                                    // This feels somewhat dumb.
+                                    // 
+                                    struct work_tokenize_file *work = push_struct(context->arena, struct work_tokenize_file);
+                                    work->absolute_file_path = push_zero_terminated_string_copy(context->arena, absolute_file_path);
+                                    work->file_size = dummy.size;
+                                    work->compilation_unit = compilation_unit;
+                                    
+                                    struct work_queue_entry *work_entry = push_struct(context->arena, struct work_queue_entry);
+                                    work_entry->data  = work;
+                                    work_queue_add(&globals.work_queue_tokenize_files, work_entry);
+                                }
+                            }
+                            
+                            ticket_spinlock_unlock(&pragma_compilation_unit_spinlock);
+                        }
+                        
                     }else{
                         while(!peek_token_raw(context, TOKEN_newline)){
                             next_token_raw(context);

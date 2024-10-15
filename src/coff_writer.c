@@ -1816,7 +1816,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         WORD IS_DLL               = 0x2000;
         
         coff->Characteristics = EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE;
-        if(!globals.dynamic_base){
+        if(globals.cli_options.no_dynamic_base){
             coff->Characteristics |= RELOCATIONS_STRIPPED;
         }
         
@@ -1845,7 +1845,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             header->ImageBase = 0x180000000;
         }
         
-        if(globals.image_base) header->ImageBase = globals.image_base;
+        // @cleanup: Allow specifying a 0 image base?
+        if(globals.cli_options.image_base_specified) header->ImageBase = globals.cli_options.image_base;
         
         header->SectionAlignment = 0x1000;
         header->FileAlignment    = 0x200;
@@ -1875,7 +1876,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         header->DllCharacteristics = DLL_HIGH_ENTROPY_VA | DLL_NX;
         
         if(!(globals.output_file_type == OUTPUT_FILE_dll))    header->DllCharacteristics |= DLL_TERMINAL_SERVER_AWARE; // not sure what this field means
-        if(globals.dynamic_base) header->DllCharacteristics |= DLL_DYNAMIC_BASE;
+        if(!globals.cli_options.no_dynamic_base) header->DllCharacteristics |= DLL_DYNAMIC_BASE;
         
         header->SizeOfStackReserve = mega_bytes(1);
         header->SizeOfStackCommit  = mega_bytes(1);
@@ -1919,7 +1920,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     }
     
     IMAGE_SECTION_HEADER *reloc = null;
-    if(globals.dynamic_base && globals.have_absolute_patch){ 
+    if(!globals.cli_options.no_dynamic_base && globals.have_absolute_patch){ 
         reloc = write_section_header(exe, arena, ".reloc", SECTION_read | SECTION_initialized_data | SECTION_discardable);
     }
     
@@ -2108,7 +2109,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }
         }
         
-        if(globals.want_debug_information){
+        if(!globals.cli_options.no_debug){
             // setup the 'debug directory' which maps the exe to the pdb
             push_align(arena, 8);
             push_struct(arena, u32); // we want the guid to be 8 byte aligned I think, so we align to mod 8 = 4.
@@ -2444,7 +2445,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 
                 *cast(smm *)memory_location = source_location;
                 
-                if(globals.dynamic_base){
+                if(!globals.cli_options.no_dynamic_base){
                     smm rva = patch->dest_declaration->relative_virtual_address + patch->location_offset_in_dest_declaration;
                     smm page_rva = rva & ~((1ull << 12) - 1);
                     smm offset   = rva &  ((1ull << 12) - 1);
@@ -2547,7 +2548,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     end_counter(timing, print_exe);
     
     
-    if(!globals.dont_print_the_files_because_we_are_in_a_test_suite){
+    if(!globals.cli_options.dont_print_the_files){
         
         // 
         // Write exe file to disk.
@@ -2593,7 +2594,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
     }
     
-    if (!globals.want_debug_information || /*we failed to write the .exe*/globals.an_error_has_occurred) {
+    if (!globals.cli_options.no_debug || /*we failed to write the .exe*/globals.an_error_has_occurred) {
         end_temporary_memory(temporary_memory);
         return;
     }
@@ -4323,7 +4324,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     end_counter(timing, print_pdb);
     
-    if(!globals.dont_print_the_files_because_we_are_in_a_test_suite){
+    if(!globals.cli_options.dont_print_the_files){
         begin_counter(context, write_pdb);
         char *pdb_name = (char *)pdb_full_path.data;
         smm success = os_write_file(pdb_name, context->pdb_base, context->pdb_size);

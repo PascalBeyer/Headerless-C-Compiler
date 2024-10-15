@@ -4581,7 +4581,8 @@ case NUMBER_KIND_##type:{ \
                 context->in_lhs_expression = true;
             }break;
             case TOKEN_dot:{
-                if(globals.allow_dot_as_arrow && operand->resolved_type->kind == AST_pointer_type){
+                if(operand->resolved_type->kind == AST_pointer_type){
+                    // @note: For now I have decided that this is now an unchangable default :)
                     goto treat_dot_as_arrow_because_allow_dot_as_arrow_was_set_and_we_got_a_pointer_type_for_a_dot;
                 }
                 

@@ -14,6 +14,7 @@ enum cli_option_kind{
     CLI_OPTION_no_stdlib,
     CLI_OPTION_no_intrinsics,
     CLI_OPTION_no_premain,
+    CLI_OPTION_no_predefines,
     CLI_OPTION_no_debug,
     CLI_OPTION_no_dynamic_base,
     CLI_OPTION_image_base,
@@ -25,7 +26,9 @@ enum cli_option_kind{
     CLI_OPTION_dll,
     CLI_OPTION_obj,
     CLI_OPTION_thread_count,
+    CLI_OPTION_MT,
     CLI_OPTION_I,
+    CLI_OPTION_D,
     CLI_OPTION_Wall,
     CLI_OPTION_Wnone,
     CLI_OPTION_W,
@@ -48,6 +51,7 @@ enum cli_argument_type{
     CLI_ARGUMENT_TYPE_enum,
     CLI_ARGUMENT_TYPE_directory,
     CLI_ARGUMENT_TYPE_directory_list,
+    CLI_ARGUMENT_TYPE_string_list,
 };
 
 struct cli_option_hash_table_entry{
@@ -62,6 +66,7 @@ struct cli_option_hash_table_entry{
     [37] = {{8, (u8 *)"nostdlib"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_stdlib, -1},
     [40] = {{12, (u8 *)"nointrinsics"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_intrinsics, -1},
     [14] = {{9, (u8 *)"nopremain"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_premain, -1},
+    [7] = {{12, (u8 *)"nopredefines"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_predefines, -1},
     [41] = {{7, (u8 *)"nodebug"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_debug, -1},
     [34] = {{13, (u8 *)"nodynamicbase"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_dynamic_base, -1},
     [35] = {{9, (u8 *)"imagebase"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_image_base, 0},
@@ -77,7 +82,9 @@ struct cli_option_hash_table_entry{
     [32] = {{3, (u8 *)"obj"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
     [8] = {{1, (u8 *)"c"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
     [6] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
+    [9] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
     [15] = {{1, (u8 *)"i"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
+    [10] = {{1, (u8 *)"d"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_D, 0},
     [25] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
     [12] = {{5, (u8 *)"wnone"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wnone, -1},
     [28] = {{1, (u8 *)"w"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_W, 0},
@@ -91,14 +98,15 @@ struct cli_option_hash_table_entry{
 };
 
 struct cli_options{
-    int success;
-
+    
     struct string_list files; // Non-options. These are not checked, as they might contain wild-cards.
     int no_stdlib; // Don't link to 'ucrt.lib'.
     int no_intrinsics; // Disables the 'implicit/intrinsics.c' compilation-unit.
     int no_premain; // Disables the 'implicit/premain.c' compilation-unit.
+    int no_predefines; // Disable all standard predefines.
     int no_debug; // Disables generation of debugging information.
     int no_dynamic_base; // Generate a non-relocatable image.
+    int image_base_specified;
     u64 image_base; // Set the default image base address of the image.
     int show_includes; // Prints all file paths of included files to stdout.
     enum subsystem{
@@ -111,20 +119,23 @@ struct cli_options{
     int no_entry; // Indicates that there is no entry point. This option implies /DLL.
     int dll; // Produce a Dynamic Link Library.
     int obj; // Produce an object file instead of an executable.
+    int thread_count_specified;
     u64 thread_count; // The amount of threads to be used during compilation. Default: 1
+    int MT; // Sets the amout of threads to be used during compilation to the number of processors on the system.
     struct string_list I; // Specify an additional include directory.
+    struct string_list D; // 
     int Wall; // Enable all warnings.
     int Wnone; // Disable all warnings.
     int no_discard; // Emit all functions and declarations.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
+    int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
     int report_warnings_in_system_includes; // Self explanatory.
     int test; // Equivalent to `-no_premain -no_intrinsic -no_stdlib -entry main`.
 };
 
-struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char *argv[]){
-    struct cli_options cli_options = {0};
-
+int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
+    
     for(int option_index = 1; option_index < argc; option_index++){
         char *option_cstring = argv[option_index];
         
@@ -142,7 +153,7 @@ struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char 
         }
         
         if(!is_option){
-            string_list_postfix(&cli_options.files, arena, string_from_cstring(option_cstring));
+            string_list_postfix(&cli_options->files, arena, string_from_cstring(option_cstring));
             continue;
         }
         
@@ -160,7 +171,7 @@ struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char 
             }
             if(canonicalized_option_size == sizeof(canonicalized_option_data)){
                 print("Error: Option '%s' is too long. Command line options can be at most %lld bytes.\n", option_cstring, array_count(canonicalized_option_data));
-                return cli_options;
+                return 0;
             }
             canonicalized_option_data[canonicalized_option_size++] = (*it|32);
         }
@@ -215,6 +226,9 @@ struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char 
             }else if(string_front_match_eat(&option, "I")){
                 option_argument_type = CLI_ARGUMENT_TYPE_directory_list;
                 option_kind          = CLI_OPTION_I;
+            }else if(string_front_match_eat(&option, "D")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
+                option_kind          = CLI_OPTION_D;
             }else if(string_front_match_eat(&option, "W")){
                 option_argument_type = CLI_ARGUMENT_TYPE_warning;
                 option_kind          = CLI_OPTION_W;
@@ -243,7 +257,7 @@ struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char 
             option_argument = argv[++option_index];
             if(!option_argument){ // @note: argv is null-pointer terminated.
                 print("Error: Expected argument after command line option '%s'.\n", option_cstring);
-                return cli_options;
+                return 0;
             }
         }
         
@@ -255,7 +269,9 @@ struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char 
         
         switch(option_argument_type){
             case CLI_ARGUMENT_TYPE_none: break;
+            
             case CLI_ARGUMENT_TYPE_string: break;
+            case CLI_ARGUMENT_TYPE_string_list: break;
             case CLI_ARGUMENT_TYPE_enum: break;
             case CLI_ARGUMENT_TYPE_option: break;
             case CLI_ARGUMENT_TYPE_warning: break;
@@ -263,7 +279,7 @@ struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char 
             case CLI_ARGUMENT_TYPE_directory_list:{
                 if(!path_is_directory(option_argument)){
                     print("Error: Argument '%s' of command line option '%s' must be a directory, but it is not.\n", option_argument, option_cstring);
-                    return cli_options;
+                    return 0;
                 }
             }break;
             case CLI_ARGUMENT_TYPE_u64:{
@@ -271,7 +287,7 @@ struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char 
                 argument_as_u64 = string_to_u64(argument_string, &success);
                 if(!success){
                     print("Error: Could not parse argument '%.*s' of option '%s' as a u64.\n", argument_string.size, argument_string.data, option_cstring);
-                    return cli_options;
+                    return 0;
                 }
             }break;
         }
@@ -284,49 +300,57 @@ struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char 
             case CLI_OPTION_help:{
                 not_implemented;
             }break;
-            case CLI_OPTION_no_stdlib: cli_options.no_stdlib = 1; break;
-            case CLI_OPTION_no_intrinsics: cli_options.no_intrinsics = 1; break;
-            case CLI_OPTION_no_premain: cli_options.no_premain = 1; break;
-            case CLI_OPTION_no_debug: cli_options.no_debug = 1; break;
-            case CLI_OPTION_no_dynamic_base: cli_options.no_dynamic_base = 1; break;
+            case CLI_OPTION_no_stdlib: cli_options->no_stdlib = 1; break;
+            case CLI_OPTION_no_intrinsics: cli_options->no_intrinsics = 1; break;
+            case CLI_OPTION_no_premain: cli_options->no_premain = 1; break;
+            case CLI_OPTION_no_predefines: cli_options->no_predefines = 1; break;
+            case CLI_OPTION_no_debug: cli_options->no_debug = 1; break;
+            case CLI_OPTION_no_dynamic_base: cli_options->no_dynamic_base = 1; break;
             
             case CLI_OPTION_image_base:{
-                cli_options.image_base = argument_as_u64;
+                cli_options->image_base_specified = 1;
+                cli_options->image_base = argument_as_u64;
             }break;
-            case CLI_OPTION_show_includes: cli_options.show_includes = 1; break;
+            case CLI_OPTION_show_includes: cli_options->show_includes = 1; break;
             
             case CLI_OPTION_subsystem:{
                 if(string_match(argument_string, string("console"))){
-                    cli_options.subsystem = SUBSYSTEM_console;
+                    cli_options->subsystem = SUBSYSTEM_console;
                 }else if(string_match(argument_string, string("windows"))){
-                    cli_options.subsystem = SUBSYSTEM_windows;
+                    cli_options->subsystem = SUBSYSTEM_windows;
                 }else if(string_match(argument_string, string("efi_application"))){
-                    cli_options.subsystem = SUBSYSTEM_efi_application;
+                    cli_options->subsystem = SUBSYSTEM_efi_application;
                 }else{
                     print("Error: Unhandled value '%.*s' for command line option '%s'.\n", argument_string.size, argument_string.data, option_cstring);
                 }
             }break;
             
             case CLI_OPTION_out:{
-                cli_options.out = argument_string;
+                cli_options->out = argument_string;
             }break;
             
             case CLI_OPTION_entry:{
-                cli_options.entry = argument_string;
+                cli_options->entry = argument_string;
             }break;
-            case CLI_OPTION_no_entry: cli_options.no_entry = 1; break;
-            case CLI_OPTION_dll: cli_options.dll = 1; break;
-            case CLI_OPTION_obj: cli_options.obj = 1; break;
+            case CLI_OPTION_no_entry: cli_options->no_entry = 1; break;
+            case CLI_OPTION_dll: cli_options->dll = 1; break;
+            case CLI_OPTION_obj: cli_options->obj = 1; break;
             
             case CLI_OPTION_thread_count:{
-                cli_options.thread_count = argument_as_u64;
+                cli_options->thread_count_specified = 1;
+                cli_options->thread_count = argument_as_u64;
             }break;
+            case CLI_OPTION_MT: cli_options->MT = 1; break;
             
             case CLI_OPTION_I:{
-                string_list_postfix(&cli_options.I, arena, argument_string);
+                string_list_postfix(&cli_options->I, arena, argument_string);
             }break;
-            case CLI_OPTION_Wall: cli_options.Wall = 1; break;
-            case CLI_OPTION_Wnone: cli_options.Wnone = 1; break;
+            
+            case CLI_OPTION_D:{
+                string_list_postfix(&cli_options->D, arena, argument_string);
+            }break;
+            case CLI_OPTION_Wall: cli_options->Wall = 1; break;
+            case CLI_OPTION_Wnone: cli_options->Wnone = 1; break;
             
             case CLI_OPTION_W:{
                 not_implemented;
@@ -335,20 +359,20 @@ struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char 
             case CLI_OPTION_Wno:{
                 not_implemented;
             }break;
-            case CLI_OPTION_no_discard: cli_options.no_discard = 1; break;
-            case CLI_OPTION_dont_print_the_files: cli_options.dont_print_the_files = 1; break;
+            case CLI_OPTION_no_discard: cli_options->no_discard = 1; break;
+            case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
             
             case CLI_OPTION_seed:{
-                cli_options.seed = argument_as_u64;
+                cli_options->seed_specified = 1;
+                cli_options->seed = argument_as_u64;
             }break;
-            case CLI_OPTION_report_warnings_in_system_includes: cli_options.report_warnings_in_system_includes = 1; break;
-            case CLI_OPTION_test: cli_options.test = 1; break;
-                case CLI_OPTION_count:
-                case CLI_OPTION_none:
-                    invalid_code_path;
+            case CLI_OPTION_report_warnings_in_system_includes: cli_options->report_warnings_in_system_includes = 1; break;
+            case CLI_OPTION_test: cli_options->test = 1; break;
+            case CLI_OPTION_count:
+            case CLI_OPTION_none:
+                invalid_code_path;
         }
     }
 
-    cli_options.success = 1;
-    return cli_options;
+    return 1;
 }

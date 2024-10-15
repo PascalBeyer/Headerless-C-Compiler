@@ -2884,7 +2884,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     coff_file_header->pointer_to_symbol_table = (u32)((u8 *)symbol_table_base - obj_base_address);
     coff_file_header->amount_of_symbols       = (u32)amount_of_symbols;
     
-    if(!globals.dont_print_the_files_because_we_are_in_a_test_suite){
+    if(!globals.cli_options.dont_print_the_files){
         begin_counter(context, write_obj);
         struct string obj_full_path = push_format_string(arena, "%.*s.obj", output_file_path.size, output_file_path.data);
         char *obj_name = (char *)obj_full_path.data;

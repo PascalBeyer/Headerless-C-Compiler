@@ -1,5 +1,6 @@
-// compile -stdlib
 // run
+
+#include <string.h>
 
 #include "test.h"
 
@@ -300,19 +301,18 @@ int main(){
     
     static u64 varargs_sum_u32(u32 amount, ...){
         va_list va;
-        //((void)(__va_start(&va, amount)));
-        va = (va_list)((u64 *)&amount + 1);
+        va_start(va, amount);
         
         static u64 sum_u32_va_list(u32 amount, va_list va){
             u64 sum = 0;
             for(u32 i = 0; i < amount; i++){
-                sum += *(u32* ) ((va += sizeof(__int64)) - sizeof(__int64));
+                sum += va_arg(va, u32);
             }
             return sum;
         }
         
         u64 sum = sum_u32_va_list(amount, va);
-        ((void)(va = (va_list)0));
+        va_end(va);
         return sum;
     }
     u64 varargs_sum = varargs_sum_u32(7, 1, 2, 3, 4, 5, 6, 7);
@@ -1085,8 +1085,6 @@ u32 global_initialized_u32 = 42;
 struct v2{ int x; int y; };
 struct v3{ int x; int y; int z;};
 struct v3 global_initialized_v3 = {1, 2, 3};
-typedef char *va_list;
-
 
 
 b32 cstring_match(char *a, char *b){

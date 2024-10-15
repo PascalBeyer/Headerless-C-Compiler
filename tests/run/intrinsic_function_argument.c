@@ -1,5 +1,6 @@
-// compile -intrinsic
 // run
+
+#include <intrin.h>
 
 #define assert(a) (!(a) ? __fastfail(1) : (void)0)
 

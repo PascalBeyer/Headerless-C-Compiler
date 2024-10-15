@@ -14,6 +14,7 @@
 
 #include "timing.c"
 #include "ast.c"
+#include "cli.c"
 
 struct parse_work{
     struct token_array tokens;
@@ -369,16 +370,7 @@ enum output_file_type{
 static struct{
     
     // :options (don't change after initialization!)
-    b32 want_debug_information;
-    
-    b32 should_print_includes;
-    b32 report_warnings_in_system_includes;
-    b32 dynamic_base;
-    
-    b32 allow_dot_as_arrow;
-    b32 dont_print_the_files_because_we_are_in_a_test_suite;
-    smm seed_to_randomize_order_of_global_scope_entries;
-    u64 image_base;
+    struct cli_options cli_options;
     
     struct thread_info *thread_infos;
     smm thread_count;
@@ -393,7 +385,6 @@ static struct{
     
     struct string_list system_include_directories;     // full paths
     
-    
     // Needed to set 'is_system_include' on these files, so we don't report warnings for them.
     struct string intrinsics_path;
     struct string premain_path;
@@ -401,7 +392,6 @@ static struct{
     struct{
         struct compilation_unit *first;
         struct compilation_unit *last;
-        smm amount;
     } compilation_units;
     
     struct token_array predefined_tokens;
@@ -419,6 +409,8 @@ static struct{
     } libraries;
     
     struct string_list library_paths;
+    
+    struct string_list pragma_compilation_units;
     
     // A perfect hash table to lookup keywords.
     smm keyword_table_size;
@@ -503,6 +495,7 @@ static struct{
     
     struct atom pragma_once;
     struct atom pragma_comment;
+    struct atom pragma_compilation_unit; // hlc extension
     
     struct atom keyword__VA_ARGS__;
     
@@ -904,7 +897,6 @@ func void pretty_print_token_array(struct context *context, struct token_array a
 
 //_____________________________________________________________________________________________________________________
 #include "ar.c"
-#include "preprocess.c"
 //_____________________________________________________________________________________________________________________
 
 func struct string push_type_string(struct memory_arena *arena, struct memory_arena *scratch, struct ast_type *type);
@@ -1349,7 +1341,8 @@ func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sl
 }
 
 //_____________________________________________________________________________________________________________________
-
+#include "preprocess.c"
+//_____________________________________________________________________________________________________________________
 
 func struct parse_work *push_parse_work(struct context *context, struct token_array tokens, struct compilation_unit *compilation_unit, struct ast_function *function){
     struct parse_work *parse_work = push_struct(context->arena, struct parse_work);
@@ -2619,9 +2612,9 @@ func void worker_tokenize_file(struct context *context, struct work_queue_entry 
     
     end_counter(context, chunking);
     
-    if(globals.seed_to_randomize_order_of_global_scope_entries){
-        struct random_series series =
-                random_series_from_seed(globals.seed_to_randomize_order_of_global_scope_entries);
+    if(globals.cli_options.seed){
+        struct random_series series = random_series_from_seed(globals.cli_options.seed);
+        
         struct{
             struct work_queue_entry *first;
             struct work_queue_entry *last;
@@ -2812,6 +2805,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
                 struct string type_string = push_type_string(&context->scratch, &context->scratch, function->type->return_type);
                 report_error(context, function->base.token, "__declspec(inline_asm)-function has return type '%.*s' but last instruction was not 'return'.", type_string.size, type_string.data);
             }
+            scope->flags |= SCOPE_FLAG_returns_a_value;
         }
         
         ast_list_append(&scope->statement_list, context->arena, &asm_block->base);
@@ -3223,7 +3217,7 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
     return push_zero_terminated_string_copy(arena, create_string(buffer, length));
 }
 
-#include "cli.c"
+
 
 // :main
 int main(int argc, char *argv[]){
@@ -3276,359 +3270,139 @@ int main(int argc, char *argv[]){
     print("\n");
 #endif
     
+    // 
+    // Parse the command line arguments.
+    // 
+    
+    int cli_parse_options_success = cli_parse_options(&globals.cli_options, arena, argc, argv);
+    if(!cli_parse_options_success) return 1;
+    
+    // 
+    // Check some random arguments.
+    // 
+    
+    if(globals.cli_options.seed_specified && globals.cli_options.seed == 0){
+        globals.cli_options.seed = __rdtsc(); // @cleanup: Maybe get some better "random" here?
+    }
+    
+    // 
+    // Deduce the files we have to parse.
+    // The files parsed in are expected to be '.c', '.lib', '.obj', '.dll', '.exe',
+    // with '.obj', '.dll' and '.exe' not yet supported.
+    // 
+    
     struct{
         struct work_queue_entry *first;
         struct work_queue_entry *last;
         smm amount;
     } files_to_parse = zero_struct;
     
-    b32 no_standard_library = false;
-    b32 no_intrinsics = false;
-    b32 no_predefines = false;
-    b32 no_discard    = false;
+    struct string_list libraries    = {0};
+    // struct string_list object_files = {0};
     
-    b32 test_was_specified = false;
-    
-    struct string_list predefines = {0};
-    struct string_list libraries  = {0};
-    
-    globals.dynamic_base = true;
-    globals.want_debug_information = true;
-    
-    // @note: does count the main thread
-    u64 thread_count = 1;
-    
-    // :command_line_options
-    
-    struct cli_options cli_options = cli_parse_options(arena, argc, argv);
-    if(!cli_options.success) return 1;
-    
-    for(int argument_index = 1; argument_index < argc; argument_index++){
-        struct string argument = cstring_to_string(argv[argument_index]);
+    for(struct string_list_node *file_name_node = globals.cli_options.files.list.first; file_name_node; file_name_node = file_name_node->next){
         
-        //
-        // Allow /, -, --, as indicating options.
-        //
-        b32 is_option = false;
-        if(argument.data[0] == '/'){
-            string_eat_front(&argument, 1);
-            is_option = true;
-        }
-        if(argument.data[0] == '-'){
-            is_option = true;
-            string_eat_front(&argument, 1);
-            
-            if(argument.data[0] == '-') string_eat_front(&argument, 1);
+        struct string path = file_name_node->string;
+        
+        struct string extension = get_file_extension(path);
+        
+        // 
+        // If the file is not a source file, we should use the libraries paths to find the library file.
+        // Hence, in this loop we don't want to handle it in any way.
+        // 
+        if(string_match(extension, string(".lib"))){
+            string_list_postfix(&libraries, arena, path);
+            continue;
+        }else if(string_match(extension, string(".obj"))){
+            print("Error: Currently linking to .obj files are not implemented.\n");
+            return 1;
+        }else if(string_match(extension, string(".dll")) || string_match(extension, string(".exe"))){
+            print("Error: Currently linking to %.*s files are not implemented.\n", extension.size, extension.data);
+            return 1;
         }
         
-        if(!is_option){
+        b32 contains_wildcard = path_contains_wildcard(path);
+        
+        // 
+        // Normalize the path to be an absolute file path.
+        // 
+        canonicalize_slashes(path);
+        
+        if(!path_is_absolute(path)){
+            path = concatenate_file_paths(arena, working_directory, path);
+        }
+        
+        if(contains_wildcard){
+            // 
+            // If there is a wildcard, include all files that match the wildcard.
+            // 
             
-            struct string path = argument;
-            canonicalize_slashes(path);
-            b32 contains_wildcard = path_contains_wildcard(path);
-            struct string absolute_file_path;
-            if(path_is_absolute(path)){
-                absolute_file_path = path;
-            }else{
-                absolute_file_path = concatenate_file_paths(arena, working_directory, path);
+            WIN32_FIND_DATAA find_data;
+            HANDLE search_handle = FindFirstFileA((char *)path.data, &find_data);
+            
+            if(search_handle == INVALID_HANDLE_VALUE){
+                print("Error: Specified path '%.*s' does not exist.\n", path.size, path.data);
+                return 1;
             }
             
-            if(contains_wildcard){
-                char *cpath = (char *)absolute_file_path.data;
-                WIN32_FIND_DATAA find_data;
-                HANDLE search_handle = FindFirstFileA(cpath, &find_data);
+            // @note: From my tests, it seems like the wild character needs to be in the filename 
+            //        for FindFirstFileA to succeed.
+            struct string path_without_file = strip_file_name(path);
+            
+            do{
+                struct string file_name = string_from_cstring(find_data.cFileName);
+                struct string file_path = concatenate_file_paths(arena, path_without_file, file_name);
                 
-                // @cleanup: what if the wildcard is in the path and not the filename?
-                //           like 'devices/*/src/main.c'
-                struct string path_without_file = strip_file_name(absolute_file_path);
+                if(path_is_directory((char *)file_path.data)) continue;
                 
-                if(search_handle != INVALID_HANDLE_VALUE){
-                    do{
-                        struct string file_name = string_from_cstring(find_data.cFileName);
-                        struct string file_path = concatenate_file_paths(arena, path_without_file, file_name);
-                        
-                        struct string extension = get_file_extension(file_name);
-                        if(!string_match(extension, string(".c")) && !string_match(extension, string(".h"))){
-                            print("Warning: Input file '%.*s' has uncanonical file extension.\n", file_path.size, file_path.data);
-                        }
-                        
-                        struct os_file file = os_load_file((char *)file_path.data, 0, 0);
-                        
-                        if(file.file_does_not_exist){
-                            print("Error: File '%.*s' could not be loaded.\n", file_path.size, file_path.data);
-                            return 1;
-                        }else{
-                            struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
-                            work->absolute_file_path = file_path;
-                            work->file_size = file.size;
-                            
-                            struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
-                            work_entry->data  = work;
-                            
-                            sll_push_back(files_to_parse, work_entry);
-                            files_to_parse.amount += 1;
-                        }
-                    }while(FindNextFileA(search_handle, &find_data));
-                    
-                    FindClose(search_handle);
-                }else{
-                    print("Error: path '%s' does not exist.\n", cpath);
+                extension = get_file_extension(file_path); // re-get the extension as it might have changed in case of wild-cards.
+                
+                struct os_file file = os_load_file((char *)file_path.data, 0, 0);
+                if(file.file_does_not_exist){
+                    print("Error: File '%.*s' could not be loaded.\n", file_path.size, file_path.data);
                     return 1;
                 }
-            }else{
-                struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
-                work->absolute_file_path = absolute_file_path;
                 
-                struct string extension = get_file_extension(absolute_file_path);
                 if(!string_match(extension, string(".c")) && !string_match(extension, string(".h"))){
-                    // @cleanup: you should be able to disable these!
-                    print("Warning: Input file '%.*s' has uncanonical file extension.\n", absolute_file_path.size, absolute_file_path.data);
+                    print("Warning: Input file '%.*s' has uncanonical file extension. File is treated as c-file.\n", file_path.size, file_path.data);
                 }
                 
-                struct os_file file = os_load_file((char *)work->absolute_file_path.data, 0, 0);
+                struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
+                work->absolute_file_path = file_path;
                 work->file_size = file.size;
-                
-                if(file.file_does_not_exist){
-                    print("Error: Specified input file '%s' does not exist.\n", work->absolute_file_path.data);
-                    os_debug_break();
-                    return 2;
-                }
                 
                 struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
                 work_entry->data  = work;
                 
                 sll_push_back(files_to_parse, work_entry);
                 files_to_parse.amount += 1;
-            }
-            continue;
-        }
-        
-        if(string_match(argument, string("?")) || string_match(argument, string("h")) || string_match(argument, string("help"))){
-            // @cleanup: look at the cl /? that one is really good
-            // @cleanup: what happend to 80 columns?
-            print("usage: %s [option...] filename...\n", argv[0]);
-            static const char help_string[] = ""
-                    "\n"
-                    "Options:\n"
-                    "  -out <filename>     Specify an output path. The file extensions get automatically appended.\n"
-                    "                      Default is derived from the first compilation unit.\n"
-                    "  -entry <name>       Specify the entry point symbol for the program. Default is '_start'.\n"
-                    "  -I <dir>            Specify an additional include directory.\n"
-                    "  -D<name>{=<text>}   Define a macro. Equivalent to '#define <name> <text>'.\n"
-                    "  -L <filename>       Specify a dynamic library (.dll) to link to. Has to end in '.dll'.\n"
-                    "  -no_stdlib          Do not link to 'ucrtbase.dll' and disable system include paths.\n"
-                    "  -j<number>          Specify the amount of threads to use. Default is '1'.\n"
-                    "  -P                  Print preprocessed files.\n"
-                    "  -showIncludes       Print filenames when preprocessing.\n"
-                    "  -no_premain         Do not include the implicit compilation unit for the premain stub.\n"
-                    "  -no_intrinsics      Do not include the implicit compilation unit containing intrinsics.\n"
-                    "  -no_dynamic_base    Do not set the xxx @incomplete PE flag.\n"
-                    "  -no_pdb             Do not emit a .pdb file.\n"
-                    "  -allow_dot_as_arrow Allow the use of the '.' operator instead of the '->' operator\n"
-                    "                      to dereference a pointer.\n"
-                    "\n";
-            
-            os_print_string((char *)help_string, sizeof(help_string) - 1);
-            return 0;
-        }else if(string_match(argument, string("no_stdlib"))){
-            no_standard_library = true;
-        }else if(string_match(argument, string("stdlib"))){
-            no_standard_library = false; // Mostly for testing.
-        }else if(string_match(argument, string("no_intrinsics")) || string_match(argument, string("no_intrinsic"))){
-            no_intrinsics = true;
-        }else if(string_match(argument, string("intrinsics")) || string_match(argument, string("intrinsic"))){
-            no_intrinsics = false; // Mostly for testing.
-        }else if(string_match(argument, string("no_premain"))){
-        }else if(string_match(argument, string("premain"))){
-        }else if(string_match(argument, string("no_predefines"))){
-            no_predefines = true;
-        }else if(string_match(argument, string("no_pdb"))){
-            globals.want_debug_information = false;
-        }else if(string_match(argument, string("no_discard"))){
-            no_discard = true;
-        }else if(string_match(argument, string("no_dynamic_base"))){
-            globals.dynamic_base = false;
-        }else if(string_match(argument, string("base"))){
-            if(argument_index + 1 == argc){
-                print("Error: Expected argument after '%s'.\n", argv[argument_index]);
-                return 1;
-            }
-            
-            struct string base = cstring_to_string(argv[++argument_index]);
-            b32 success = true;
-            u64 number = string_to_u64(base, &success);
-            globals.image_base = number;
-            
-            if(!success){
-                print("Error: Could not parse image base.\n");
-                return 1;
-            }
-        }else if(string_match(argument, string("dont_print_the_files"))){
-            globals.dont_print_the_files_because_we_are_in_a_test_suite = true;
-        }else if(string_match(argument, string("showIncludes")) || string_match(argument, string("show_includes"))){
-            globals.should_print_includes = true;
-        }else if(string_match(argument, string("allow_dot_as_arrow"))){
-            globals.allow_dot_as_arrow = true;
-        }else if(string_front_match_eat(&argument, "subsystem:")){
-            
-        }else if(string_match(argument, string("seed"))){
-            if(argument_index + 1 == argc){
-                print("Error: Expected argument after '%s'.\n", argv[argument_index]);
-                return 1;
-            }
-            
-            struct string seed = cstring_to_string(argv[++argument_index]);
-            b32 success = true;
-            u64 number = string_to_u64(seed, &success);
-            if(number == 0){
-                globals.seed_to_randomize_order_of_global_scope_entries = __rdtsc();
-            }else{
-                globals.seed_to_randomize_order_of_global_scope_entries = number;
-            }
-            print("random seed used 0x%llx\n", globals.seed_to_randomize_order_of_global_scope_entries);
-        }else if(string_match(argument, string("o")) || string_match_case_insensitive(argument, string("out"))){
-            ++argument_index;
-        }else if(string_match_case_insensitive(argument, string("entry"))){
-            ++argument_index;
-        }else if(string_match_case_insensitive(argument, string("no_entry"))){
-            
-        }else if(string_match(argument, string("I"))){
-            if(argument_index + 1 == argc){
-                print("Error: Expected argument after '%s'.\n", argv[argument_index]);
-                return 1;
-            }
-            
-            char *directory = argv[++argument_index];
-            if(!path_is_directory(directory)){
-                print("Error: Specified additional include directory '%s', is not a directory.", directory);
-                return 1;
-            }
-            
-            struct string file_path = string_from_cstring(directory);
-            
-            canonicalize_slashes(file_path);
-            if(path_is_relative(file_path)){
-                file_path = concatenate_file_paths(arena, working_directory, file_path);
-            }
-            
-            add_system_include_directory(arena, file_path, string(""), true);
-            
-        }else if(string_match(argument, string("L"))){
-            if(argument_index + 1 == argc){
-                print("Error: Expected argument after '%s'.\n", argv[argument_index]);
-                return 1;
-            }
-            
-            char *file_name = argv[++argument_index];
-            string_list_postfix(&libraries, arena, string_from_cstring(file_name));
-            
-        }else if(string_match(argument, string("DLL")) || string_match(argument, string("dll")) || string_match(argument, string("LD"))){
-            // globals.output_file_type = OUTPUT_FILE_dll;
-        }else if(string_match(argument, string("obj")) || string_match(argument, string("OBJ")) || string_match(argument, string("c"))){
-            // globals.output_file_type = OUTPUT_FILE_obj;
-        }else if(string_match(argument, string("test"))){
-            no_intrinsics = 1;
-            no_standard_library = 1;
-            
-            test_was_specified = 1;
-        }else if(string_match(argument, string("report_warnings_in_system_includes"))){
-            globals.report_warnings_in_system_includes = 1;
-        }else if(argument.data[0] == 'D'){ // argument[0] is always valid as there is at least a zero terminator
-            char *start = (char *)argument.data + 1;
-            char *end = start;
-            while(u8_is_alpha_numeric((u8)*end)){end++;}
-            struct string to_define = create_string((u8 *)start, end - start);
-            
-            if(to_define.size == 0){
-                print("Error: Expected an identifier to immediately follow '-D', e.g. '-Ddefine=1'.\n");
-                return 1;
-            }
-            
-            struct string define_to;
-            if(end[0] == '='){
-                char *define_to_start = ++end;
-                while(*end) end++;
                 
-                define_to = create_string((u8 *)define_to_start, end - define_to_start);
-            }else{
-                // "By default, the value associated with a symbol is 1."
-                define_to = string("1");
-            }
+            }while(FindNextFileA(search_handle, &find_data));
             
-            if(*end){
-                print("Error: Junk after command-line option -D: '%s'\n", end);
-                return 1;
-            }
-            
-            struct string predefine = push_format_string(arena, "#define %.*s %.*s\n", to_define.size, to_define.data, define_to.size, define_to.data);
-            
-            string_list_postfix(&predefines, arena, predefine);
-            
-        }else if(argument.data[0] == 'j' || string_match(argument, string("thread_count"))){
-            
-            char *arg;
-            if(argument.data[0] == 'j'){
-                arg = (char *)argument.data + 1;
-            }else{
-                if(argument_index + 1 == argc){
-                    print("Error: Expected argument after '%s'.\n", argv[argument_index]);
-                    return 1;
-                }
-                arg = argv[argument_index + 1];
-            }
-            
-            struct string thread_count_string = cstring_to_string(arg);
-            b32 success = 1;
-            thread_count = string_to_u64(thread_count_string, &success);
-            
-            if(!success){
-                print("Error: Could not parse specified thread count '%.*s'.\n", thread_count_string.size, thread_count_string.data);
-                return 1;
-            }
-            
-            if(!thread_count){
-                print("Error: Thread count must be at least one '%s'.\n", arg);
-                return 1;
-            }
-        }else if(string_match(argument, string("MT"))){
-            SYSTEM_INFO system_info;
-            GetSystemInfo(&system_info); // this cannot fail apperantly
-            
-            thread_count = system_info.dwNumberOfProcessors;
-        }else if(string_match(argument, string("Wall"))){
-            for(u32 i = 0; i < WARNING_count; i++){
-                warning_enabled[i] = 1;
-            }
-        }else if(string_match(argument, string("Wnone"))){
-            for(u32 i = 0; i < WARNING_count; i++){
-                warning_enabled[i] = 0;
-            }
-        }else if(argument.data[0] == 'W'){
-            u8 *warning = argument.data + 1;
-            u8 enabled = true;
-            if(argument.data[1] == 'n' && argument.data[2] == 'o'){
-                warning = argument.data + 3;
-                enabled = false;
-            }
-            
-            b32 success = 1;
-            u64 warning_value = string_to_u64(cstring_to_string((char *)warning), &success);
-            
-            if(!success){
-                print("Warning: Could not parse warning option '%s'.\n", argv[argument_index]);
-            }else if(warning_value > WARNING_count){
-                print("Warning: Unknown warning option %llu ('%s').\n", warning_value, argv[argument_index]);
-            }else{
-                warning_enabled[warning_value] = enabled;
-            }
+            FindClose(search_handle);
         }else{
-#if 1
-            // print("Warning: Unknown command-line option '%s'.\n", argv[argument_index]);
-#else
-            os_debug_break();
-            print("Error: Unknown command-line option '%s'.\n", argv[argument_index]);
-            return 1;
-#endif
+            
+            struct os_file file = os_load_file((char *)path.data, 0, 0);
+            
+            if(file.file_does_not_exist){
+                print("Error: Specified input file '%.*s' does not exist.\n", path.size, path.data);
+                os_debug_break();
+                return 2;
+            }
+            
+            if(!string_match(extension, string(".c")) && !string_match(extension, string(".h"))){
+                print("Warning: Input file '%.*s' has uncanonical file extension. File is treated as c-file.\n", path.size, path.data);
+            }
+            
+            struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
+            work->absolute_file_path = path;
+            work->file_size = file.size;
+            
+            struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
+            work_entry->data  = work;
+            
+            sll_push_back(files_to_parse, work_entry);
+            files_to_parse.amount += 1;
         }
     }
     
@@ -3637,22 +3411,37 @@ int main(int argc, char *argv[]){
         return 1;
     }
     
+    for(struct string_list_node *dir = globals.cli_options.I.list.first; dir; dir = dir->next){
+        
+        // 
+        // Add all of the specified system include directories.
+        // 
+        
+        struct string file_path = dir->string;
+        canonicalize_slashes(file_path);
+        if(path_is_relative(file_path)){
+            file_path = concatenate_file_paths(arena, working_directory, file_path);
+        }
+        
+        add_system_include_directory(arena, file_path, string(""), true);
+    }
+    
     {
         // 
         // Try to determine the `output_file_type` from the options.
         // 
-        if(cli_options.dll && cli_options.obj){
+        if(globals.cli_options.dll && globals.cli_options.obj){
             print("Error: Found both the -DLL and the -OBJ command line options.\n");
             return 1;
         }
         
         // Check the arguments that hard-set the file type.
-        if(cli_options.dll) globals.output_file_type = OUTPUT_FILE_dll;
-        if(cli_options.obj) globals.output_file_type = OUTPUT_FILE_obj;
+        if(globals.cli_options.dll) globals.output_file_type = OUTPUT_FILE_dll;
+        if(globals.cli_options.obj) globals.output_file_type = OUTPUT_FILE_obj;
         
         // Check the output string.
-        if(globals.output_file_type == OUTPUT_FILE_unset && cli_options.out.data){
-            struct string output_extension = get_file_extension(cli_options.out);
+        if(globals.output_file_type == OUTPUT_FILE_unset && globals.cli_options.out.data){
+            struct string output_extension = get_file_extension(globals.cli_options.out);
             if(string_match(output_extension, string(".exe"))) globals.output_file_type = OUTPUT_FILE_exe;
             if(string_match(output_extension, string(".dll"))) globals.output_file_type = OUTPUT_FILE_dll;
             if(string_match(output_extension, string(".obj"))) globals.output_file_type = OUTPUT_FILE_obj;
@@ -3660,72 +3449,24 @@ int main(int argc, char *argv[]){
         }
         
         // A no_entry file ought to be a dll.
-        if(globals.output_file_type == OUTPUT_FILE_unset && cli_options.no_entry) globals.output_file_type = OUTPUT_FILE_dll;
+        if(globals.output_file_type == OUTPUT_FILE_unset && globals.cli_options.no_entry) globals.output_file_type = OUTPUT_FILE_dll;
     }
     
     // Try to infer the subsystem.
-    globals.subsystem = cli_options.subsystem;
+    globals.subsystem = globals.cli_options.subsystem;
     if(globals.subsystem == 0 && globals.output_file_type == OUTPUT_FILE_dll) globals.subsystem = SUBSYSTEM_windows;
     
-    if(cli_options.entry.data && cli_options.no_entry && !cli_options.test){
-        print("Error: Found option '/no_entry' and option '/entry %.*s'.\n", cli_options.entry.size, cli_options.entry.data);
+    if(globals.cli_options.entry.data && globals.cli_options.no_entry){
+        print("Error: Found option '/no_entry' and option '/entry %.*s'.\n", globals.cli_options.entry.size, globals.cli_options.entry.data);
         return 1;
     }
     
-    // @cleanup: Maybe I should have a separate variable?
-    if(globals.output_file_type == OUTPUT_FILE_obj) cli_options.no_entry = 1;
-    
-    if(!no_intrinsics){
-        struct string intrinsics_path = concatenate_file_paths(arena, strip_file_name(compiler_path), string("implicit/intrinsic.c"));
-        globals.intrinsics_path = intrinsics_path;
-        
-        struct os_file file = os_load_file((char *)intrinsics_path.data, 0, 0);
-        if(file.file_does_not_exist){
-            print("Error: Implicit 'intrinsics.c' compilation unit was not found.\n");
-            print("       If this is intended you can use the '-no_intrinsics'\n");
-            print("       command line option to squelch this error.\n");
-            print("       This file is usually contained in: \n");
-            print("             \"<compiler-path>/implicit/intrinsics.c\".");
-            return 1;
-        }else{
-            struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
-            work->absolute_file_path = intrinsics_path;
-            work->file_size = file.size;
-            
-            struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
-            work_entry->data  = work;
-            
-            sll_push_back(files_to_parse, work_entry);
-            files_to_parse.amount += 1;
-        }
-    }
-    
-    if(!no_standard_library){
-        struct string runtime_path = concatenate_file_paths(arena, strip_file_name(compiler_path), string("implicit/runtime.c"));
-        
-        struct os_file file = os_load_file((char *)runtime_path.data, 0, 0);
-        if(file.file_does_not_exist){
-            print("Error: Implicit 'runtime.c' compilation unit was not found.\n");
-            print("       If this is intended you can use the '-no_stdlib'\n");
-            print("       command line option to squelch this error.\n");
-            print("       This file is usually contained in: \n");
-            print("             \"<compiler-path>/implicit/runtime.c\".");
-            return 1;
-        }else{
-            struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
-            work->absolute_file_path = runtime_path;
-            work->file_size = file.size;
-            
-            struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
-            work_entry->data  = work;
-            
-            sll_push_back(files_to_parse, work_entry);
-            files_to_parse.amount += 1;
-        }
-    }
+    if(globals.output_file_type == OUTPUT_FILE_obj) globals.cli_options.no_entry = 1;
     
     
-    add_system_include_directory(arena, strip_file_name(compiler_path), string("/implicit/include"),  false);
+    int no_standard_library = globals.cli_options.no_stdlib;
+    
+    add_system_include_directory(arena, strip_file_name(compiler_path), string("/implicit/include"), false);
     
     u64 sdk_version[4];
     struct string windows_kits_path = find_windows_kits_root_and_sdk_version(arena, sdk_version);
@@ -3844,7 +3585,32 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.invalid_file.file_index = -1;
         globals.file_table.invalid_file = &globals.invalid_file;
         {
-            if(!no_predefines){
+            struct string_list predefines = {0};
+            
+            for(struct string_list_node *predefine_node = globals.cli_options.D.list.first; predefine_node; predefine_node = predefine_node->next){
+                struct string root_option = predefine_node->string;
+                
+                struct string define_to = root_option;
+                struct string to_define = string_eat_until_characters_front(&define_to, " #=");
+                
+                if(to_define.size == 0){
+                    print("Error: Expected an identifier to immediately follow '-D', e.g. '-Ddefine=1'. Got: -D%.*s\n", root_option.size, root_option.data);
+                    return 1;
+                }
+                
+                if(define_to.size){
+                    string_eat_front(&define_to, 1); // Eat the delimiter.
+                }else{
+                    // "By default, the value associated with a symbol is 1."
+                    define_to = string("1");
+                }
+                
+                // We cannot simply patch up the value of the predefine node, as it would leave the total string size wrong.
+                struct string define = push_format_string(arena, "#define %.*s %.*s\n", to_define.size, to_define.data, define_to.size, define_to.data);
+                string_list_prefix(&predefines, arena, define);
+            }
+            
+            if(!globals.cli_options.no_predefines){
                 struct string hardcoded_predefines = string(
                         "#define __HLC__ 1\n"            
                         "#define _M_X64 100\n"
@@ -3903,6 +3669,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         // pragma directives
         globals.pragma_once    = atom_for_string(string("once"));
         globals.pragma_comment = atom_for_string(string("comment"));
+        globals.pragma_compilation_unit = atom_for_string(string("compilation_unit"));
         
         globals.keyword__VA_ARGS__ = atom_for_string(string("__VA_ARGS__"));
         
@@ -4258,6 +4025,27 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     }
 #endif
     
+    smm thread_count = 1;
+    if(globals.cli_options.thread_count_specified && globals.cli_options.MT){
+        print("Error: Found both a /MT and a /thread_count %llu option.\n", globals.cli_options.thread_count);
+        return 1;
+    }
+    
+    SYSTEM_INFO system_info;
+    GetSystemInfo(&system_info); // this cannot fail apperantly
+    
+    if(globals.cli_options.thread_count_specified){
+        thread_count = globals.cli_options.thread_count;
+        if(thread_count > 10 * system_info.dwNumberOfProcessors){
+            print("Error: /thread_count option specifies a thread count of more than 10 times the number of processors on the system.\n");
+            return 1;
+        }
+    }
+    
+    if(globals.cli_options.MT){
+        thread_count = system_info.dwNumberOfProcessors;
+    }
+    
     // @note: thread '0' is the main thread
     struct thread_info *thread_infos = push_data(arena, struct thread_info, thread_count);
     globals.thread_infos = thread_infos;
@@ -4274,9 +4062,9 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     stage_one_tokenize_and_preprocess_time = os_get_time_in_seconds();
     
+    // 
     // get it going:
-    
-    
+    // 
     
     struct compilation_unit *compilation_units = push_data(arena, struct compilation_unit, files_to_parse.amount);
     globals.compilation_units.first = compilation_units;
@@ -4365,7 +4153,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     assert(globals.work_queue_parse_global_scope_entries.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
     
-    if(!cli_options.no_entry){
+    if(!globals.cli_options.no_entry){
         
         // 
         // Try to determine the entry point, output file name and subsystem, 
@@ -4396,11 +4184,11 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             // Only check entry points, we are allowed to.
             if(globals.output_file_type != OUTPUT_FILE_unset && table[index].file_type != globals.output_file_type) continue;
             if(globals.subsystem != 0 && table[index].subsystem != globals.subsystem) continue;
-            if(cli_options.entry.data && !string_match(table[index].entry_point_name, cli_options.entry)) continue;
+            if(globals.cli_options.entry.data && !string_match(table[index].entry_point_name, globals.cli_options.entry)) continue;
             
             struct atom atom = atom_for_string(table[index].entry_point_name);
             
-            if(!cli_options.entry.data){
+            if(!globals.cli_options.entry.data){
                 struct ast_declaration *declaration = (struct ast_declaration *)ast_table_get(&globals.global_declarations, atom);
                 if(!declaration || !declaration->assign_expr || declaration->type->kind != AST_function_type) continue;
                 
@@ -4423,7 +4211,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                     // 
                     // Allocate a new compilation unit.
                     // 
-                    
                     struct compilation_unit *compilation_unit = push_struct(arena, struct compilation_unit);
                     compilation_unit->index = globals.compilation_units.last->index + 1; // @cleanup: are we sure 'compilation_unit->last' exists?
                     compilation_unit->static_declaration_table = ast_table_create(32);
@@ -4462,12 +4249,12 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         }
         
         if(!globals.entry_point_name.string.data){
-            if(cli_options.entry.data){
+            if(globals.cli_options.entry.data){
                 // The entry point was not a canonical one, but it was specified on the command line.
-                globals.entry_point_name = atom_for_string(cli_options.entry);
+                globals.entry_point_name = atom_for_string(globals.cli_options.entry);
             }else if(globals.output_file_type == OUTPUT_FILE_dll){
                 // For dlls it should be legal to not have an entry point.
-                cli_options.no_entry = 1;
+                globals.cli_options.no_entry = 1;
             }else{
                 // @cleanup: We cannot immediately report an error here, as we want to report undeclared identifiers and such.
                 //           We are only supposed to print this error after we made sure there are no other errors at global scope.
@@ -4577,13 +4364,13 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     // at this point all parsing is complete and there should not really be any errors anymore.
     
     globals.compile_stage = COMPILE_STAGE_emit_code;
-    if(no_discard){
+    if(globals.cli_options.no_discard){
         // 
         // Only really here for fuzzing...
         // We emit code for every function.
         // 
         
-        if(!cli_options.no_entry){
+        if(!globals.cli_options.no_entry){
             globals.entry_point = get_entry_point_or_error(context);
             if(globals.an_error_has_occurred) goto end;
         }
@@ -4649,7 +4436,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         // what is reachable from 'entry_point'.        
         // 
         
-        if(!cli_options.no_entry){
+        if(!globals.cli_options.no_entry){
             globals.entry_point = get_entry_point_or_error(context);
             if(globals.an_error_has_occurred) goto end;
             
@@ -4858,7 +4645,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         end_counter(context, print_errors_to_the_console);
     }
     
-    
     stage_four_linking = os_get_time_in_seconds();
     
     if(!globals.an_error_has_occurred){
@@ -4868,7 +4654,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         // to actually assemble the output files.
         // 
         
-        struct string output_file_path = cli_options.out;
+        struct string output_file_path = globals.cli_options.out;
         {
             // 
             // Build the output file path.

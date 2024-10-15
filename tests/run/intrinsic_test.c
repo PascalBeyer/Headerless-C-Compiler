@@ -1,5 +1,6 @@
-// compile -intrinsic
 // run
+
+#include <intrin.h>
 
 int main(){
     __int8  s8  = -8;

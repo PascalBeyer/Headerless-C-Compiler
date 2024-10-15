@@ -1,8 +1,8 @@
-// compile -stdlib -intrinsics
 // run
 
 #include <stdarg.h>
 #include <stdlib.h>
+#include <intrin.h>
 
 #define assert(a) (!(a) ? _exit(1) : (void)0)
 

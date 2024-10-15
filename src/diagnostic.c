@@ -254,7 +254,7 @@ func void push_error_node_to_context(struct context *context, struct token *toke
 
 
 func int should_report_warning_for_token(struct context *context, struct token *token){
-    return globals.report_warnings_in_system_includes || context->in_error_report || !token || !globals.file_table.data[token->file_index]->is_system_include;
+    return globals.cli_options.report_warnings_in_system_includes || context->in_error_report || !token || !globals.file_table.data[token->file_index]->is_system_include;
 }
 
 PRINTLIKE __declspec(noinline) func void report_warning(struct context *context, enum warning_type warning, struct token *token, char *format, ...){

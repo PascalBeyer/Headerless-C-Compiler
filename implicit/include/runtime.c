@@ -47,7 +47,7 @@
 // Memory functions.
 
 
-// @cleanup: How to handle types in "implicit" filesB.
+// @cleanup: How to handle types in "implicit" files.
 #define wchar_t unsigned short
 #define size_t  unsigned __int64
 
@@ -205,6 +205,98 @@ wchar_t *wcsrchr(wchar_t *haystack, wchar_t needle){
     return end >= haystack ? end : 0;
 }
 
+#if 0
 //_____________________________________________________________________________________________________________________
 // Setjmp or longjmp.
 
+
+int setjmp(unsigned char environment_buffer[256]){
+    int return_value;
+    unsigned __int32 mxcsr;
+    unsigned __int16 fpu_control_word;
+    
+    __asm__{
+        // Store some special registers.
+        fstcw fpu_control_word
+        stmxcsr mxcsr
+        
+        // Store all of the non-volatile registers.
+        lea rdx, long_jmp_target
+        mov rcx, environment_buffer
+        
+        mov [rcx + 0x00], rbp
+        mov [rcx + 0x08], rbx
+        mov [rcx + 0x10], rsp
+        mov [rcx + 0x18], rsi
+        mov [rcx + 0x20], rdi
+        mov [rcx + 0x28], r12
+        mov [rcx + 0x30], r13
+        mov [rcx + 0x38], r14
+        mov [rcx + 0x40], r15
+        mov [rcx + 0x48], rdx
+        mov [rcx + 0x50], mxcsr
+        mov [rcx + 0x54], fpu_control_word
+        mov [rcx + 0x56], 0
+        movups [rcx + 0x60], xmm6
+        movups [rcx + 0x70], xmm7
+        movups [rcx + 0x80], xmm8
+        movups [rcx + 0x90], xmm9
+        movups [rcx + 0xa0], xmm10
+        movups [rcx + 0xb0], xmm11
+        movups [rcx + 0xc0], xmm12
+        movups [rcx + 0xd0], xmm13
+        movups [rcx + 0xe0], xmm14
+        movups [rcx + 0xf0], xmm15
+        
+        // Return 0 from the initial call.
+        xor eax, eax
+        
+    long_jmp_target:
+        mov return_value, eax
+    }
+    
+    return return_value;
+}
+
+_Noreturn void longjmp(unsigned char environment_buffer environment_buffer[16], int return_value){
+    unsigned __int32 mxcsr;
+    unsigned __int16 fpu_control_word;
+    
+    __asm__{
+        mov rcx, environment_buffer
+        
+        // *first* set mxcsr and fpu_control_word, as later we screw with rsp.
+        mov mxcsr, [rcx + 0x50]
+        mov fpu_control_word, [rcx + 0x54]
+        
+        fldcw fpu_control_word
+        ldmxcsr mxcsr
+        
+        // load the return value already, because it might be on the stack.
+        mov eax, return_value
+        
+        mov rbp, [rcx + 0x00]
+        mov rbx, [rcx + 0x08]
+        mov rsp, [rcx + 0x10]
+        mov rsi, [rcx + 0x18]
+        mov rdi, [rcx + 0x20]
+        mov r12, [rcx + 0x28]
+        mov r13, [rcx + 0x30]
+        mov r14, [rcx + 0x38]
+        mov r15, [rcx + 0x40]
+        
+        mov xmm6,  [rcx + 0x60]
+        mov xmm7,  [rcx + 0x70]
+        mov xmm8,  [rcx + 0x80]
+        mov xmm9,  [rcx + 0x90]
+        mov xmm10, [rcx + 0xa0]
+        mov xmm11, [rcx + 0xb0]
+        mov xmm12, [rcx + 0xc0]
+        mov xmm13, [rcx + 0xd0]
+        mov xmm14, [rcx + 0xe0]
+        mov xmm15, [rcx + 0xf0]
+        
+        jmp [rcx + 0x48] // jump to the saved rip.
+    }
+}
+#endif

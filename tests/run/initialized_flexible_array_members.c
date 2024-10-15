@@ -13,7 +13,7 @@ int simple_flex_array(){
     };
     int post = 1;
     
-    memset(flex.array, 0, 0x1000);
+    zero(flex.array, 0x1000);
     assert(prev == 1);
     assert(post == 1);
     return 0;
@@ -26,7 +26,7 @@ int flex_array_compound(){
     };
     int post = 1;
     
-    memset(flex->array, 0, 0x1000);
+    zero(flex->array, 0x1000);
     assert(prev == 1);
     assert(post == 1);
     return 0;
@@ -40,7 +40,7 @@ int static_simple_flex_array(){
     };
     static int post = 1;
     
-    memset(flex.array, 0, 0x1000);
+    zero(flex.array, 0x1000);
     assert(prev == 1);
     assert(post == 1);
     return 0;
@@ -53,7 +53,7 @@ int static_flex_array_compound(){
     };
     static int post = 1;
     
-    memset(flex->array, 0, 0x1000);
+    zero(flex->array, 0x1000);
     assert(prev == 1);
     assert(post == 1);
     return 0;
@@ -70,10 +70,10 @@ int main(){
 }
 
 
-void *memset(void *mem, int val, unsigned __int64  amount){
+void *zero(void *mem, unsigned __int64  amount){
     char *it = mem;
     for(unsigned __int64 i = 0; i < amount; i++){
-        *it++ = (char)val;
+        *it++ = 0;
     }
     return mem;
 }

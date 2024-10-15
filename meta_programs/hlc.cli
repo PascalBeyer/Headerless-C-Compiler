@@ -22,11 +22,7 @@ or when you want to link to a different standard library.
 >     printf("Hello, World!\n");
 > }
 
-/no_intrinsics - Disables the 'implicit/intrinsics.c' compilation-unit.
-
-TODO
-
-/no_premain - Disables the 'implicit/premain.c' compilation-unit.
+/no_predefines - Disable all standard predefines.
 
 TODO
 
@@ -95,10 +91,9 @@ default name. If out does not specify a file extension, the default file extensi
 The default file extension is `.exe` for an executable, `.obj` for an object file and `.dll`
 for a dynamic link library.
 
-/entry <name> - Set the entry point symbol. This option implies the `no_premain` option. 
+/entry <name> - Explicitly set the entry point symbol.
 
-By default, the entry point is `_start` and unless `no_premain` is specified contained in 
-the premain file.
+TODO
 
 /no_entry - Indicates that there is no entry point. This option implies /DLL.
 
@@ -130,9 +125,15 @@ Example:
 
 The number of threads must be between 1 and 10 times the amount of cores your system has.
 
-/I <dir:list> - Specify an additional include directory.
+/MT - Sets the amout of threads to be used during compilation to the number of processors on the system.
+
+This is the "whatever" throw some cores at it option.
+
+/I <dir_list> - Specify an additional include directory.
 
 This makes it possible to use your own headers in <>-includes.
+
+/D <<name>[=<text>]:string_list> - 
 
 /Wall   - Enable all warnings.
 
@@ -360,7 +361,4 @@ After a bug is found, the resulting seed can be reused to reproduce the issue.
 
 /report_warnings_in_system_includes - Self explanatory.
 
-/test - Equivalent to `-no_premain -no_intrinsic -no_stdlib -entry main`.
-
-This option is used in the test-runner to speed-up the tests.
 

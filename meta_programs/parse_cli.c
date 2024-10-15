@@ -342,7 +342,9 @@ int main(int argc, char *argv[]){
             CLI_ARGUMENT_TYPE_enum,
             CLI_ARGUMENT_TYPE_directory,
             CLI_ARGUMENT_TYPE_directory_list,
+            CLI_ARGUMENT_TYPE_string_list,
         } option_argument_type;
+        
         
         struct string short_description;
         struct string long_description;
@@ -367,6 +369,7 @@ int main(int argc, char *argv[]){
         [CLI_ARGUMENT_TYPE_enum] = "CLI_ARGUMENT_TYPE_enum",
         [CLI_ARGUMENT_TYPE_directory] = "CLI_ARGUMENT_TYPE_directory",
         [CLI_ARGUMENT_TYPE_directory_list] = "CLI_ARGUMENT_TYPE_directory_list",
+        [CLI_ARGUMENT_TYPE_string_list] = "CLI_ARGUMENT_TYPE_string_list",
     };
     
     while(file.size){
@@ -460,15 +463,41 @@ int main(int argc, char *argv[]){
             option_aliases = new_alias;
             
             if(option.size){
-                int is_optional = (option.data[0] == '[');
+                char open_bracket = option.data[0];
+                int is_optional = (open_bracket == '[');
+                char close_bracket = is_optional ? ']' : '>';
+                
                 string_eat_front(&option, 1); // eat the bracket.
                 
-                char close_bracket = is_optional ? ']' : '>';
-                struct string argument = string_eat_until_character(&option, close_bracket, /*eat_separator*/0);
-                if(!option.size){
+                
+                // Allow something like -D <<name>[=<text>]:string-list>, to give -D <name>[=<text>] of type string list.
+                struct string argument_name = {0};
+                struct string argument = {0};
+                
+                int level = 1;
+                for(u32 index = 0; index < option.size; index++){
+                    if(option.data[index] == open_bracket) level += 1;
+                    if(option.data[index] == close_bracket) {
+                        level -= 1;
+                        if(level == 0){
+                            argument = string_eat_front(&option, index);
+                            break;
+                        }
+                    }
+                    
+                    if((level == 1) && option.data[index] == ':'){
+                        argument_name = string_eat_front(&option, index);
+                        string_eat_front(&option, 1); // eat the ':'
+                        index = (u32)-1;
+                    }
+                }
+                
+                if(!argument.size){
                     print("Error after option '/%.*s%.*s', expected closing '%c'.\n", option_name.size, option_name.data, argument.size, argument.data, close_bracket);
                     return 1;
                 }
+                
+                if(!argument_name.size) argument_name = argument;
                 
                 enum option_argument_type type;
                 
@@ -484,10 +513,12 @@ int main(int argc, char *argv[]){
                     type = CLI_ARGUMENT_TYPE_string;
                 }else if(string_match(argument, string("dir"))){
                     type = CLI_ARGUMENT_TYPE_directory;
-                }else if(string_match(argument, string("dir:list"))){
+                }else if(string_match(argument, string("dir_list"))){
                     type = CLI_ARGUMENT_TYPE_directory_list;
+                }else if(string_match(argument, string("string_list"))){
+                    type = CLI_ARGUMENT_TYPE_string_list;
                 }else{
-                    print("Error: Unhandled argument type '%.*s' in option '%.*s'\n", argument.size, argument.data, option.size, option.data);
+                    print("Error: Unhandled argument type '%.*s' in option '%.*s'\n", argument.size, argument.data, option_name.size, option_name.data);
                     return 1;
                 }
                 
@@ -502,7 +533,7 @@ int main(int argc, char *argv[]){
                 
                 is_optional_argument = is_optional; 
                 option_argument_type = type;
-                option_argument = argument;
+                option_argument = argument_name;
             }
         }
         
@@ -721,14 +752,17 @@ int main(int argc, char *argv[]){
     // Generate the structure for the cli_options.
     // 
     print("struct cli_options{\n");
-    print("    int success;\n\n");
+    print("    \n");
     print("    struct string_list files; // Non-options. These are not checked, as they might contain wild-cards.\n");
     for(struct option *option = options; option; option = option->next){
         struct string argument_type = {0};
         
         switch(option->option_argument_type){
             case CLI_ARGUMENT_TYPE_none: argument_type = string("int"); break;
-            case CLI_ARGUMENT_TYPE_u64: argument_type = string("u64"); break;
+            case CLI_ARGUMENT_TYPE_u64:{ 
+                argument_type = string("u64"); 
+                print("    int %.*s_specified;\n", option->option_name.size, option->option_name.data);
+            }break;
             
             case CLI_ARGUMENT_TYPE_option:  continue;
             case CLI_ARGUMENT_TYPE_warning: continue;
@@ -748,7 +782,9 @@ int main(int argc, char *argv[]){
             case CLI_ARGUMENT_TYPE_directory:
             case CLI_ARGUMENT_TYPE_string: argument_type = string("struct string"); break;
             
-            case CLI_ARGUMENT_TYPE_directory_list: argument_type = string("struct string_list"); break;
+            case CLI_ARGUMENT_TYPE_directory_list: 
+            case CLI_ARGUMENT_TYPE_string_list: argument_type = string("struct string_list"); break;
+            
             
             default: assert(0);
         }
@@ -759,8 +795,8 @@ int main(int argc, char *argv[]){
     
     
     puts(
-            "struct cli_options cli_parse_options(struct memory_arena *arena, int argc, char *argv[]){\n"
-            "    struct cli_options cli_options = {0};\n\n"
+            "int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){\n"
+            "    \n"
             "    for(int option_index = 1; option_index < argc; option_index++){\n"
             "        char *option_cstring = argv[option_index];\n"
             "        \n"
@@ -778,7 +814,7 @@ int main(int argc, char *argv[]){
             "        }\n"
             "        \n"
             "        if(!is_option){\n"
-            "            string_list_postfix(&cli_options.files, arena, string_from_cstring(option_cstring));\n"
+            "            string_list_postfix(&cli_options->files, arena, string_from_cstring(option_cstring));\n"
             "            continue;\n"
             "        }\n"
             "        \n"
@@ -796,7 +832,7 @@ int main(int argc, char *argv[]){
             "            }\n"
             "            if(canonicalized_option_size == sizeof(canonicalized_option_data)){\n"
             "                print(\"Error: Option '%s' is too long. Command line options can be at most %lld bytes.\\n\", option_cstring, array_count(canonicalized_option_data));\n"
-            "                return cli_options;\n"
+            "                return 0;\n"
             "            }\n"
             "            canonicalized_option_data[canonicalized_option_size++] = (*it|32);\n"
             "        }\n"
@@ -877,7 +913,7 @@ int main(int argc, char *argv[]){
             "            option_argument = argv[++option_index];\n"
             "            if(!option_argument){ // @note: argv is null-pointer terminated.\n"
             "                print(\"Error: Expected argument after command line option '%s'.\\n\", option_cstring);\n"
-            "                return cli_options;\n"
+            "                return 0;\n"
             "            }\n"
             "        }\n"
             "        \n"
@@ -889,7 +925,9 @@ int main(int argc, char *argv[]){
             "        \n"
             "        switch(option_argument_type){\n"
             "            case CLI_ARGUMENT_TYPE_none: break;\n"
+            "            \n"
             "            case CLI_ARGUMENT_TYPE_string: break;\n"
+            "            case CLI_ARGUMENT_TYPE_string_list: break;\n"
             "            case CLI_ARGUMENT_TYPE_enum: break;\n"
             "            case CLI_ARGUMENT_TYPE_option: break;\n"
             "            case CLI_ARGUMENT_TYPE_warning: break;\n"
@@ -897,7 +935,7 @@ int main(int argc, char *argv[]){
             "            case CLI_ARGUMENT_TYPE_directory_list:{\n"
             "                if(!path_is_directory(option_argument)){\n"
             "                    print(\"Error: Argument '%s' of command line option '%s' must be a directory, but it is not.\\n\", option_argument, option_cstring);\n"
-            "                    return cli_options;\n"
+            "                    return 0;\n"
             "                }\n"
             "            }break;\n"
             "            case CLI_ARGUMENT_TYPE_u64:{\n"
@@ -905,7 +943,7 @@ int main(int argc, char *argv[]){
             "                argument_as_u64 = string_to_u64(argument_string, &success);\n"
             "                if(!success){\n"
             "                    print(\"Error: Could not parse argument '%.*s' of option '%s' as a u64.\\n\", argument_string.size, argument_string.data, option_cstring);\n"
-            "                    return cli_options;\n"
+            "                    return 0;\n"
             "                }\n"
             "            }break;\n"
             "        }\n"
@@ -919,7 +957,7 @@ int main(int argc, char *argv[]){
         
         if(option->option_argument_type == CLI_ARGUMENT_TYPE_none){
             // This was a flag style argument.
-            print("            case CLI_OPTION_%.*s: cli_options.%.*s = 1; break;\n", option->option_name.size, option->option_name.data, option->option_name.size, option->option_name.data);
+            print("            case CLI_OPTION_%.*s: cli_options->%.*s = 1; break;\n", option->option_name.size, option->option_name.data, option->option_name.size, option->option_name.data);
             continue;
         }
         
@@ -945,7 +983,7 @@ int main(int argc, char *argv[]){
                 for(struct enum_member *member = option->enum_members; member; member = member->next){
                     char *else_prefix = (member == option->enum_members) ? "" : "}else ";
                     print("                %sif(string_match(argument_string, string(\"%.*s\"))){\n", else_prefix, member->name.size, member->name.data);
-                    print("                    cli_options.%.*s = %.*s_%.*s;\n", option->option_name.size, option->option_name.data, option->option_name.size, CAPITALIZE(option->option_name), member->name.size, member->name.data);
+                    print("                    cli_options->%.*s = %.*s_%.*s;\n", option->option_name.size, option->option_name.data, option->option_name.size, CAPITALIZE(option->option_name), member->name.size, member->name.data);
                 }
                 print("                }else{\n");
                 puts("                    print(\"Error: Unhandled value '%.*s' for command line option '%s'.\\n\", argument_string.size, argument_string.data, option_cstring);");
@@ -954,25 +992,26 @@ int main(int argc, char *argv[]){
             
             case CLI_ARGUMENT_TYPE_directory:
             case CLI_ARGUMENT_TYPE_string:{
-                print("                cli_options.%.*s = argument_string;\n", option->option_name.size, option->option_name.data);
+                print("                cli_options->%.*s = argument_string;\n", option->option_name.size, option->option_name.data);
             }break;
             case CLI_ARGUMENT_TYPE_u64:{
-                print("                cli_options.%.*s = argument_as_u64;\n", option->option_name.size, option->option_name.data);
+                print("                cli_options->%.*s_specified = 1;\n", option->option_name.size, option->option_name.data);
+                print("                cli_options->%.*s = argument_as_u64;\n", option->option_name.size, option->option_name.data);
             }break;
             
+            case CLI_ARGUMENT_TYPE_string_list:
             case CLI_ARGUMENT_TYPE_directory_list:{
-                print("                string_list_postfix(&cli_options.%.*s, arena, argument_string);\n", option->option_name.size, option->option_name.data);
+                print("                string_list_postfix(&cli_options->%.*s, arena, argument_string);\n", option->option_name.size, option->option_name.data);
             }break;
         }
         print("            }break;\n");
     }
-    print("                case CLI_OPTION_count:\n");
-    print("                case CLI_OPTION_none:\n");
-    print("                    invalid_code_path;\n");
+    print("            case CLI_OPTION_count:\n");
+    print("            case CLI_OPTION_none:\n");
+    print("                invalid_code_path;\n");
     print("        }\n"); // switch terminator.
     
     print("    }\n\n"); // for loop terminator
-    print("    cli_options.success = 1;\n");
-    print("    return cli_options;\n");
+    print("    return 1;\n");
     print("}\n");
 }

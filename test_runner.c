@@ -6,6 +6,8 @@
 #include <stdarg.h>
 #include <assert.h>
 
+#include <intrin.h>
+
 #define VC_EXTRALEAN
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -734,20 +736,11 @@ unsigned int test_thread_entry(void *thread_parameter){
             // First execute the compile command:
             // 
             //    There are default options to minimize the amount of work necessary.
-            //    These are:
-            //        -no_premain   (part of -test)
-            //        -no_intrinsic (part of -test)
-            //        -no_stdlib    (part of -test)
             //        -dont_print_the_files (if !needs_executable)
-            //        
-            //    If the tests needs one (or multiple) of these, it can reverse the option, 
-            //    by using:
-            //        -premain
-            //        -intrinsic
-            //        -stdlib
             // 
+            // This used to be longer :)
             
-            char *default_command = "hlc -test";
+            char *default_command = "hlc";
             char *output_file = needs_executable ? out_command : "-dont_print_the_files";
             
             struct string test_compile_options = string("");
