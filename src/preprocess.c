@@ -2925,11 +2925,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
             print("\n%.*s\n", initial_absolute_file_path.size, initial_absolute_file_path.data);
         }
         
-        b32 is_system_include = false;
-        if(string_match(initial_absolute_file_path, globals.intrinsics_path)) is_system_include = true;
-        if(string_match(initial_absolute_file_path, globals.premain_path))    is_system_include = true;
-        
-        struct file *main_file = load_or_get_source_file_by_absolute_path(context, (char *)initial_absolute_file_path.data, file_size, is_system_include);
+        struct file *main_file = load_or_get_source_file_by_absolute_path(context, (char *)initial_absolute_file_path.data, file_size, false);
         context->current_compilation_unit->main_file = main_file;
         
         struct token_array array = main_file->tokens;

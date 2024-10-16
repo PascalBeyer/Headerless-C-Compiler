@@ -385,10 +385,6 @@ static struct{
     
     struct string_list system_include_directories;     // full paths
     
-    // Needed to set 'is_system_include' on these files, so we don't report warnings for them.
-    struct string intrinsics_path;
-    struct string premain_path;
-    
     struct{
         struct compilation_unit *first;
         struct compilation_unit *last;
