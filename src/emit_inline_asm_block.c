@@ -504,6 +504,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                     }
                 }else{
                     assert(lhs->state == EMIT_LOCATION_register_relative);
+                    if(rhs->state == EMIT_LOCATION_immediate) rhs->size = lhs->size; // @clenaup: This was not true. I dunno, this whole stuff should be redone.
                     emit_store(context, lhs, rhs);
                 }
             }break;
