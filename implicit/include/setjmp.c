@@ -96,5 +96,9 @@ _Noreturn void longjmp(jmp_buf environment_buffer, int return_value){
         // jump to the saved rip.
         bytes {ff 61 48} // jmp QWORD PTR [rcx+0x48]
     }
+    
+    // squelch the noreturn function returning waring please!
+    __declspec(inline_asm) _Noreturn void do_not_warn_for_noreturn_please(){ }
+    do_not_warn_for_noreturn_please();
 }
 
