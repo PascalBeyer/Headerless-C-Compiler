@@ -2594,7 +2594,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
     }
     
-    if (!globals.cli_options.no_debug || /*we failed to write the .exe*/globals.an_error_has_occurred) {
+    if (globals.cli_options.no_debug || /*we failed to write the .exe*/globals.an_error_has_occurred) {
         end_temporary_memory(temporary_memory);
         return;
     }
