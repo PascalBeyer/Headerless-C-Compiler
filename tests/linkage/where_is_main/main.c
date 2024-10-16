@@ -1,5 +1,7 @@
 // compile other.c
 
+#pragma comment(lib, "kernel32")
+
 #define true  1
 #define false 0
 
