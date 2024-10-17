@@ -159,7 +159,7 @@ char *strstr(char *haystack, char *needle){
 }
 
 char *strchr(char *haystack, int needle){
-    while(*haystack != needle) haystack++;
+    while(*haystack && *haystack != needle) haystack++;
     return *haystack ? haystack : 0;
 }
 
@@ -194,7 +194,7 @@ wchar_t *wcsstr(wchar_t *haystack, wchar_t *needle){
 }
 
 wchar_t *wcschr(wchar_t *haystack, wchar_t needle){
-    while(*haystack != needle) haystack++;
+    while(*haystack && *haystack != needle) haystack++;
     return *haystack ? haystack : 0;
 }
 
