@@ -133,7 +133,7 @@ This is the "whatever" throw some cores at it option.
 
 This makes it possible to use your own headers in <>-includes.
 
-/D <<name>[=<text>]:string_list> - 
+/D <<name>[=<text>]:string_list> - Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
 
 /Wall   - Enable all warnings.
 

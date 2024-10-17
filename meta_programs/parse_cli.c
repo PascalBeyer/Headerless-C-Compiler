@@ -121,9 +121,10 @@ struct string string_eat_front(struct string *string, u64 amount_to_eat){
 }
 
 struct string string_eat_line(struct string *string){
+    if(!string->size) return *string;
     
     u64 index = 0;
-    for(; index < (string->size - 1); index++){
+    for(; index < string->size-1; index++){
         if(string->data[index] == '\n') break;
     }
     
@@ -396,7 +397,7 @@ int main(int argc, char *argv[]){
         do{
             long_description = string_eat_line(&file);
             string_eat_characters_front(&long_description, "\r\n");
-        }while(!long_description.size);
+        }while(!long_description.size && file.size);
         
         if(long_description.data[0] == '/'){
             // There is no "long_description".
@@ -827,7 +828,7 @@ int main(int argc, char *argv[]){
             "        for(char *it = option_cstring; *it; it++){\n"
             "            if(*it == '-' || *it == '_') continue;\n"
             "            if(*it == '=' || *it == ':' || *it == ' '){\n"
-            "                if(!option_argument) option_argument = it;\n"
+            "                if(!option_argument) option_argument = it + 1;\n"
             "                break;\n"
             "            }\n"
             "            if(canonicalized_option_size == sizeof(canonicalized_option_data)){\n"
@@ -977,7 +978,7 @@ int main(int argc, char *argv[]){
             }break;
             
             case CLI_ARGUMENT_TYPE_warning:{
-                print("                not_implemented;\n");
+                // print("                not_implemented;\n"); @incomplete
             }break;
             case CLI_ARGUMENT_TYPE_enum:{
                 for(struct enum_member *member = option->enum_members; member; member = member->next){
@@ -987,6 +988,7 @@ int main(int argc, char *argv[]){
                 }
                 print("                }else{\n");
                 puts("                    print(\"Error: Unhandled value '%.*s' for command line option '%s'.\\n\", argument_string.size, argument_string.data, option_cstring);");
+                puts("                    return 0;");
                 print("                }\n");
             }break;
             

@@ -12,8 +12,6 @@ enum cli_option_kind{
 
     CLI_OPTION_help,
     CLI_OPTION_no_stdlib,
-    CLI_OPTION_no_intrinsics,
-    CLI_OPTION_no_premain,
     CLI_OPTION_no_predefines,
     CLI_OPTION_no_debug,
     CLI_OPTION_no_dynamic_base,
@@ -37,7 +35,6 @@ enum cli_option_kind{
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
     CLI_OPTION_report_warnings_in_system_includes,
-    CLI_OPTION_test,
 
     CLI_OPTION_count,
 };
@@ -64,8 +61,6 @@ struct cli_option_hash_table_entry{
     [13] = {{1, (u8 *)"h"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
     [36] = {{1, (u8 *)"?"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
     [37] = {{8, (u8 *)"nostdlib"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_stdlib, -1},
-    [40] = {{12, (u8 *)"nointrinsics"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_intrinsics, -1},
-    [14] = {{9, (u8 *)"nopremain"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_premain, -1},
     [7] = {{12, (u8 *)"nopredefines"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_predefines, -1},
     [41] = {{7, (u8 *)"nodebug"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_debug, -1},
     [34] = {{13, (u8 *)"nodynamicbase"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_dynamic_base, -1},
@@ -83,7 +78,7 @@ struct cli_option_hash_table_entry{
     [8] = {{1, (u8 *)"c"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
     [6] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
     [9] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
-    [15] = {{1, (u8 *)"i"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
+    [14] = {{1, (u8 *)"i"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [10] = {{1, (u8 *)"d"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_D, 0},
     [25] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
     [12] = {{5, (u8 *)"wnone"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wnone, -1},
@@ -94,15 +89,12 @@ struct cli_option_hash_table_entry{
     [27] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [61] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
-    [39] = {{4, (u8 *)"test"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_test, -1},
 };
 
 struct cli_options{
     
     struct string_list files; // Non-options. These are not checked, as they might contain wild-cards.
     int no_stdlib; // Don't link to 'ucrt.lib'.
-    int no_intrinsics; // Disables the 'implicit/intrinsics.c' compilation-unit.
-    int no_premain; // Disables the 'implicit/premain.c' compilation-unit.
     int no_predefines; // Disable all standard predefines.
     int no_debug; // Disables generation of debugging information.
     int no_dynamic_base; // Generate a non-relocatable image.
@@ -115,7 +107,7 @@ struct cli_options{
         SUBSYSTEM_efi_application = 10, // Sets the Subsystem field to `IMAGE_SUBSYSTEM_EFI_APPLICATION`.
     } subsystem; // Set the 'Subsystem' field of the image optional header.
     struct string out; // Sets the name of the output files.
-    struct string entry; // Set the entry point symbol. This option implies the `no_premain` option.
+    struct string entry; // Explicitly set the entry point symbol.
     int no_entry; // Indicates that there is no entry point. This option implies /DLL.
     int dll; // Produce a Dynamic Link Library.
     int obj; // Produce an object file instead of an executable.
@@ -123,7 +115,7 @@ struct cli_options{
     u64 thread_count; // The amount of threads to be used during compilation. Default: 1
     int MT; // Sets the amout of threads to be used during compilation to the number of processors on the system.
     struct string_list I; // Specify an additional include directory.
-    struct string_list D; // 
+    struct string_list D; // Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
     int Wall; // Enable all warnings.
     int Wnone; // Disable all warnings.
     int no_discard; // Emit all functions and declarations.
@@ -131,7 +123,6 @@ struct cli_options{
     int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
     int report_warnings_in_system_includes; // Self explanatory.
-    int test; // Equivalent to `-no_premain -no_intrinsic -no_stdlib -entry main`.
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -166,7 +157,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
         for(char *it = option_cstring; *it; it++){
             if(*it == '-' || *it == '_') continue;
             if(*it == '=' || *it == ':' || *it == ' '){
-                if(!option_argument) option_argument = it;
+                if(!option_argument) option_argument = it + 1;
                 break;
             }
             if(canonicalized_option_size == sizeof(canonicalized_option_data)){
@@ -301,8 +292,6 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 not_implemented;
             }break;
             case CLI_OPTION_no_stdlib: cli_options->no_stdlib = 1; break;
-            case CLI_OPTION_no_intrinsics: cli_options->no_intrinsics = 1; break;
-            case CLI_OPTION_no_premain: cli_options->no_premain = 1; break;
             case CLI_OPTION_no_predefines: cli_options->no_predefines = 1; break;
             case CLI_OPTION_no_debug: cli_options->no_debug = 1; break;
             case CLI_OPTION_no_dynamic_base: cli_options->no_dynamic_base = 1; break;
@@ -322,6 +311,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                     cli_options->subsystem = SUBSYSTEM_efi_application;
                 }else{
                     print("Error: Unhandled value '%.*s' for command line option '%s'.\n", argument_string.size, argument_string.data, option_cstring);
+                    return 0;
                 }
             }break;
             
@@ -353,11 +343,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_Wnone: cli_options->Wnone = 1; break;
             
             case CLI_OPTION_W:{
-                not_implemented;
             }break;
             
             case CLI_OPTION_Wno:{
-                not_implemented;
             }break;
             case CLI_OPTION_no_discard: cli_options->no_discard = 1; break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
@@ -367,7 +355,6 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 cli_options->seed = argument_as_u64;
             }break;
             case CLI_OPTION_report_warnings_in_system_includes: cli_options->report_warnings_in_system_includes = 1; break;
-            case CLI_OPTION_test: cli_options->test = 1; break;
             case CLI_OPTION_count:
             case CLI_OPTION_none:
                 invalid_code_path;
