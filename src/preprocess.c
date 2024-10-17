@@ -2723,6 +2723,8 @@ struct file *load_or_get_source_file_by_absolute_path(struct context *context, c
                 solidify_temporary_memory(temp);
                 break;
             }
+            other = globals.file_table.data[index];
+            assert(other);
         }
         
         if(cstring_match(absolute_file_path, other->absolute_file_path)){
