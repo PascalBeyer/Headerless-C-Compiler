@@ -3302,19 +3302,24 @@ int main(int argc, char *argv[]){
         
         struct string extension = get_file_extension(path);
         
-        // 
-        // If the file is not a source file, we should use the libraries paths to find the library file.
-        // Hence, in this loop we don't want to handle it in any way.
-        // 
-        if(string_match(extension, string(".lib"))){
-            string_list_postfix(&libraries, arena, path);
-            continue;
-        }else if(string_match(extension, string(".obj"))){
-            print("Error: Currently linking to .obj files are not implemented.\n");
-            return 1;
-        }else if(string_match(extension, string(".dll")) || string_match(extension, string(".exe"))){
-            print("Error: Currently linking to %.*s files are not implemented.\n", extension.size, extension.data);
-            return 1;
+        if(extension.size > 2){ // Fast-path for .c and .h, not that it matters.
+            // 
+            // If the file is not a source file, we should use the libraries paths to find the library file.
+            // Hence, in this loop we don't want to handle it in any way.
+            // 
+            if(string_match(extension, string(".lib"))){
+                string_list_postfix(&libraries, arena, path);
+                continue;
+            }else if(string_match(extension, string(".obj"))){
+                print("Error: Currently linking to .obj files are not implemented.\n");
+                return 1;
+            }else if(string_match(extension, string(".dll")) || string_match(extension, string(".exe"))){
+                print("Error: Currently linking to %.*s files are not implemented.\n", extension.size, extension.data);
+                return 1;
+            }else if(string_match(extension, string(".res"))){
+                print("Warning: Ignoring resource file '%.*s'.\n", path.size, path.data);
+                continue;
+            }
         }
         
         b32 contains_wildcard = path_contains_wildcard(path);
