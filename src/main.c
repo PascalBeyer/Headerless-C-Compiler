@@ -821,7 +821,7 @@ func void emit_patch(struct context *context, enum patch_kind kind, struct ast *
     patch_node->rip_at = rip_at;
     
     if(kind == PATCH_absolute){
-        assert(patch_node->location_offset_in_dest_declaration + 8 <= dest_declaration->type->size);
+        assert(patch_node->location_offset_in_dest_declaration + 8 <= get_declaration_size(dest_declaration));
     }
     
     if(!globals.have_absolute_patch && kind == PATCH_absolute){
