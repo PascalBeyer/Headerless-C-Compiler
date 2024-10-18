@@ -4694,7 +4694,7 @@ case NUMBER_KIND_##type:{ \
                 
                 struct ast_list_node* function_argument_iterator = function_type->argument_list.first;
                 if(!peek_token_eat(context, TOKEN_closed_paren)){
-                    do{
+                    while(1){
                         struct ast *expr = parse_expression(context, true);
                         if(context->should_exit_statement) return expr;
                         
@@ -4728,7 +4728,9 @@ case NUMBER_KIND_##type:{ \
                         
                         ast_list_append(&call->call_arguments, context->arena, expr);
                         
-                    }while(peek_token_eat(context, TOKEN_comma));
+                        if(!peek_token_eat(context, TOKEN_comma)) break;
+                        if(peek_token(context, TOKEN_closed_paren)) break; // Allow trailling ',' in function calls.
+                    }
                     expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of parameter list.");
                 }
                 
