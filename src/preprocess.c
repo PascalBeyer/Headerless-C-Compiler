@@ -1731,27 +1731,20 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
         
         if(define->is___FILE__ || define->is___LINE__){
             struct token *token = push_uninitialized_struct(&context->scratch, struct token);
-            *token = *token_to_expand;
+            *token = *macro_expansion_site;
             
             if(define->is___FILE__){
                 // @cleanup: This seems very slow.
-                struct string file_name = strip_file_path(string_from_cstring(globals.file_table.data[token_to_expand->file_index]->absolute_file_path));
+                struct string file_name = strip_file_path(string_from_cstring(globals.file_table.data[token->file_index]->absolute_file_path));
                 
                 token->type = TOKEN_string_literal;
                 token->string = push_format_string(context->arena, "\"%.*s\"", file_name.size, file_name.data);
             }else{
                 token->type = TOKEN_base10_literal;
-                token->string = push_format_string(context->arena, "%u", token_to_expand->line);
+                token->string = push_format_string(context->arena, "%u", token->line);
             }
             
             return token;
-#if 0
-            struct token_array token_array = {.data = token, .size = 1 };
-            struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-            node->tokens = token_array;
-            
-            sll_push_front(context->token_stack, node);
-#endif
         }
     }
     
