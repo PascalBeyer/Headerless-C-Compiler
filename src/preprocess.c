@@ -1704,6 +1704,8 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
         }
         
         if(define->is_defined){
+            if(!context->in_static_if_condition) return token_to_expand;
+            
             //
             // defined() macro. We first parse the invokation, it should be 'defined <macro>' or 'defined (<macro>)'.
             // if it is, disable '<macro>', push a token stack node with the '<macro>' or '(<macro>)' 
@@ -3101,6 +3103,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         postponed_directive.directive = directive;
                         postponed_directive.saved_emitted_token_count = emitted_tokens;
                         postponed_directive.directive_kind = directive_kind;
+                        context->in_static_if_condition = 1;
                         
                         end_counter(context, handle_directive);
                         continue;
@@ -3199,6 +3202,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             postponed_directive.directive = directive;
                             postponed_directive.saved_emitted_token_count = emitted_tokens;
                             postponed_directive.directive_kind = directive_kind;
+                            context->in_static_if_condition = 1;
                             
                             end_counter(context, handle_directive);
                             continue;
@@ -4189,6 +4193,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     //
                     have_postponed_directive = false;
                     emitted_tokens = postponed_directive.saved_emitted_token_count;
+                    context->in_static_if_condition = 0;
                 }
                 
                 continue;

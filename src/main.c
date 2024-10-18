@@ -656,9 +656,8 @@ struct context{
     struct token *macro_expansion_token;
     smm define_depth;
     
-    
-    // used to not report errors for example for '#if defined(_MSC_VER) && _MSC_VER > 1337'
-    b32 static_if_evaluate_should_skip_undefined_identifier;
+    b32 static_if_evaluate_should_skip_undefined_identifier; // used to not report errors for example for '#if defined(_MSC_VER) && _MSC_VER > 1337'
+    b32 in_static_if_condition; // used to not process defined as a macro outside of a #if condition.
     
     //
     // parsing
@@ -2328,6 +2327,7 @@ func void reset_context(struct context *context){
     context->current_compilation_unit   = null;
     context->maybe_in_cast              = null;
     context->in_conditional_expression  = 0;
+    context->in_static_if_condition     = 0;
 }
 
 func void worker_tokenize_file(struct context *context, struct work_queue_entry *work){
