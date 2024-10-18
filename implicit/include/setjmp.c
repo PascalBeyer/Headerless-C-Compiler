@@ -6,7 +6,7 @@ int setjmp(jmp_buf environment_buffer){
     
     // The return address in Windows x64 calling convension is 8 bytes after (in stack order) the first argument.
     // Hence we can calculate it here. This is really aweful.
-    __int64 *pointer_to_return_address = (__int64 *)&environment_buffer - 1; 
+    volatile __int64 *pointer_to_return_address = (__int64 *)&environment_buffer - 1; 
     __int64 return_address = *pointer_to_return_address;
     
     __asm__{
@@ -54,6 +54,9 @@ int setjmp(jmp_buf environment_buffer){
         mov return_value, eax
     }
     
+    // @note: The original pointer_to_return_address is not valid anymore.
+    //        We have to reload it.
+    pointer_to_return_address = (__int64 *)&environment_buffer - 1; 
     *pointer_to_return_address = return_address;
     
     return return_value;
