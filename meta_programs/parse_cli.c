@@ -210,7 +210,6 @@ int string_front_match(struct string a, char *c_string){
     return (*it == 0);
 }
 
-
 u8 u8_parse_hex_to_binary(u8 hex){
     if('9' >= hex && hex >= '0') return hex - '0';
     if('f' >= hex && hex >= 'a') return hex - 'a' + 10;
@@ -510,7 +509,7 @@ int main(int argc, char *argv[]){
                     type = CLI_ARGUMENT_TYPE_warning;
                 }else if(string_match(argument, string("enum"))){
                     type = CLI_ARGUMENT_TYPE_enum;
-                }else if(string_match(argument, string("path")) || string_match(argument, string("name"))){
+                }else if(string_match(argument, string("path")) || string_match(argument, string("name")) || string_match(argument, string("string"))){
                     type = CLI_ARGUMENT_TYPE_string;
                 }else if(string_match(argument, string("dir"))){
                     type = CLI_ARGUMENT_TYPE_directory;
@@ -983,7 +982,7 @@ int main(int argc, char *argv[]){
             case CLI_ARGUMENT_TYPE_enum:{
                 for(struct enum_member *member = option->enum_members; member; member = member->next){
                     char *else_prefix = (member == option->enum_members) ? "" : "}else ";
-                    print("                %sif(string_match(argument_string, string(\"%.*s\"))){\n", else_prefix, member->name.size, member->name.data);
+                    print("                %sif(string_match_case_insensitive(argument_string, string(\"%.*s\"))){\n", else_prefix, member->name.size, member->name.data);
                     print("                    cli_options->%.*s = %.*s_%.*s;\n", option->option_name.size, option->option_name.data, option->option_name.size, CAPITALIZE(option->option_name), member->name.size, member->name.data);
                 }
                 print("                }else{\n");

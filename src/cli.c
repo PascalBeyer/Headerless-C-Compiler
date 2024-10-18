@@ -31,6 +31,8 @@ enum cli_option_kind{
     CLI_OPTION_Wnone,
     CLI_OPTION_W,
     CLI_OPTION_Wno,
+    CLI_OPTION_incremental,
+    CLI_OPTION_MF,
     CLI_OPTION_no_discard,
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
@@ -85,6 +87,8 @@ struct cli_option_hash_table_entry{
     [28] = {{1, (u8 *)"w"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_W, 0},
     [57] = {{3, (u8 *)"wno"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_Wno, 0},
     [0] = {{2, (u8 *)"wd"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_Wno, 0},
+    [55] = {{11, (u8 *)"incremental"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_incremental, 0},
+    [56] = {{2, (u8 *)"mf"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_MF, 0},
     [60] = {{9, (u8 *)"nodiscard"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_discard, -1},
     [27] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
@@ -118,6 +122,11 @@ struct cli_options{
     struct string_list D; // Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
     int Wall; // Enable all warnings.
     int Wnone; // Disable all warnings.
+    enum incremental{
+        INCREMENTAL_yes = 1, // Does nothing, we do not support incremental linking.
+        INCREMENTAL_no = 2, // This is what we do anyway :)
+    } incremental; // Does nothing, here for MSVC cli-compatibility.
+    struct string MF; // Currently ignored, is supposed to produce a .dep file?
     int no_discard; // Emit all functions and declarations.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
@@ -229,6 +238,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }else if(string_front_match_eat(&option, "wd")){
                 option_argument_type = CLI_ARGUMENT_TYPE_warning;
                 option_kind          = CLI_OPTION_Wno;
+            }else if(string_front_match_eat(&option, "MF")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_MF;
             }
             
             if(option_kind == CLI_OPTION_none){
@@ -303,11 +315,11 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_show_includes: cli_options->show_includes = 1; break;
             
             case CLI_OPTION_subsystem:{
-                if(string_match(argument_string, string("console"))){
+                if(string_match_case_insensitive(argument_string, string("console"))){
                     cli_options->subsystem = SUBSYSTEM_console;
-                }else if(string_match(argument_string, string("windows"))){
+                }else if(string_match_case_insensitive(argument_string, string("windows"))){
                     cli_options->subsystem = SUBSYSTEM_windows;
-                }else if(string_match(argument_string, string("efi_application"))){
+                }else if(string_match_case_insensitive(argument_string, string("efi_application"))){
                     cli_options->subsystem = SUBSYSTEM_efi_application;
                 }else{
                     print("Error: Unhandled value '%.*s' for command line option '%s'.\n", argument_string.size, argument_string.data, option_cstring);
@@ -346,6 +358,21 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             
             case CLI_OPTION_Wno:{
+            }break;
+            
+            case CLI_OPTION_incremental:{
+                if(string_match_case_insensitive(argument_string, string("yes"))){
+                    cli_options->incremental = INCREMENTAL_yes;
+                }else if(string_match_case_insensitive(argument_string, string("no"))){
+                    cli_options->incremental = INCREMENTAL_no;
+                }else{
+                    print("Error: Unhandled value '%.*s' for command line option '%s'.\n", argument_string.size, argument_string.data, option_cstring);
+                    return 0;
+                }
+            }break;
+            
+            case CLI_OPTION_MF:{
+                cli_options->MF = argument_string;
             }break;
             case CLI_OPTION_no_discard: cli_options->no_discard = 1; break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;

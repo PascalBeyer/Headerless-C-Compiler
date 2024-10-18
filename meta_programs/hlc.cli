@@ -341,6 +341,17 @@ This currently only report for something like:
     > }
 
 
+/incremental <enum> - Does nothing, here for MSVC cli-compatibility.
+
+Otherwise, -INCREMENTAL:no would be interpreted as -I NCREMENTAL:no, but "NCREMENTAL:no" is not a directory.
+
+-> yes - Does nothing, we do not support incremental linking.
+
+-> no - This is what we do anyway :)
+
+/MF <file:string> - Currently ignored, is supposed to produce a .dep file?
+
+@incomplete
 
 # Hidden
 
