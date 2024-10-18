@@ -3807,6 +3807,7 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                         
                         // Set the new type.
                         ident->decl->type = &array_type->base;
+                        set_resolved_type(&compound_literal->base, &array_type->base, null);
                         
                         // Reset the trailing array size, to not overallocate later on.
                         compound_literal->trailing_array_size = 0;
