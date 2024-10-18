@@ -126,7 +126,7 @@ __declspec(dllimport) __declspec(noreturn) void ExitProcess(unsigned int uExitCo
 int wmain(int argc, wchar_t *argv[]);
 
 int _start(void){
-    wchar_t *command_line = GetCommandLineA();
+    wchar_t *command_line = GetCommandLineW();
     
     unsigned __int64 command_line_size = 0;
     for(wchar_t *it = command_line; *it; it++) command_line_size++;
