@@ -1529,49 +1529,58 @@ func b32 path_contains_wildcard(struct string path){
     return false;
 }
 
-func struct string pop_one_directory(struct string path){
-    if(path.size < 2) return string("");
-    
-    smm one_past_last_slash = 0;
-    for(smm i = path.size - 2; i >= 0; i--){
-        if(path.data[i] == '/' || path.data[i] == '\\'){
-            one_past_last_slash = i + 1;
-            break;
-        }
-    }
-    
-    path.amount = one_past_last_slash;
-    return path;
-}
-
 // @incomplete: care about all of the file path things: https://docs.microsoft.com/en-us/dotnet/standard/io/file-path-formats
 // @incomplete: this should care about all of these different kinds. also maybe this is platform specific?
 // maybe this should be os_file_path
 
-// always zero_terminated
+// always zero_terminated, this routine assumes that both 'absolute' and 'relative' have been canonicalized to only contain forward slashes.
 func struct string concatenate_file_paths(struct memory_arena *arena, struct string absolute, struct string relative){
     
-    if(string_front_match(relative, "./")){
+    int directories_to_pop = 0;
+    
+    while(relative.size){
+        if(string_front_match(relative, "/")){
+            string_eat_front(&relative, 1);
+        }else if(string_front_match(relative, "./")){
+            string_eat_front(&relative, 2);
+        }else if(string_front_match(relative, "../")){
+            string_eat_front(&relative, 3);
+            directories_to_pop += 1;
+        }else{
+            break;
+        }
+    }
+    
+    if(string_match(relative, string("."))){
+        string_eat_front(&relative, 1);
+    }else if(string_match(relative, string(".."))){
         string_eat_front(&relative, 2);
+        directories_to_pop += 1;
     }
     
-    while(string_front_match(relative, "../")){
-        string_eat_front(&relative, 3);
-        absolute = pop_one_directory(absolute);
+    while(directories_to_pop-- && absolute.amount){
+        
+        // Eat a potential initial slashes of 'absolute'.
+        while(absolute.amount > 2 && absolute.data[absolute.amount - 1] == '/'){
+            string_eat_back(&absolute, 1);
+        }
+        
+        // -2 = -1 for indexing the last and -1 because the last cannot be a '/'
+        // If this loop fails to find, it does not do anything, this means 'C:/..' results in 'C:/'.
+        for(smm i = absolute.size - 2; i >= 0; i--){
+            if(absolute.data[i] == '/'){
+                absolute.size = i + 1;
+                break;
+            }
+        }
     }
     
-    if(string_match(relative, string(".."))){
-        relative = string("");
-        absolute = pop_one_directory(absolute);
-    }
-    
-    if(absolute.amount && absolute.data[absolute.amount - 1] == '/'){
+    // Eat a potential initial slashes of 'absolute'.
+    while(absolute.amount > 2 && absolute.data[absolute.amount - 1] == '/'){
         string_eat_back(&absolute, 1);
     }
     
-    if(relative.size && relative.data[0] == '/'){
-        return string_concatenate(arena, absolute, relative);
-    }
+    if(!relative.size) return push_zero_terminated_string_copy(arena, absolute);
     
     struct string ret;
     ret.amount = absolute.amount + relative.amount + 1;
