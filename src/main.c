@@ -3647,6 +3647,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         "#define __STDC_NO_COMPLEX__ 1\n"
                         "#define __STDC_NO_THREADS__ 1\n"
                         "#define __STDC_NO_VLA__ 1\n"
+                        "#define __STDC_NO_ATOMICS__ 1\n"
                         );
                 
                 string_list_prefix(&predefines, arena, hardcoded_predefines);
