@@ -21,3 +21,5 @@
 #define _CRT_WIDE(a) _CRT_WIDE_INTERNAL(a)
 
 #define _CRT_DECLARE_NONSTDC_NAMES 1
+
+#define __crt_countof(array) (sizeof(array) / sizeof((array)[0]))
