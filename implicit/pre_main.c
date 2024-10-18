@@ -121,6 +121,8 @@ __declspec(dllimport) void* GlobalAlloc(unsigned int uFlags, unsigned __int64 dw
 __declspec(dllimport) char* GetCommandLineA(void);
 __declspec(dllimport) __declspec(noreturn) void ExitProcess(unsigned int uExitCode);
 
+int main(int argc, char *argv[]);
+
 int _start(void){
     char *command_line = GetCommandLineA();
     
@@ -139,14 +141,7 @@ int _start(void){
     }
     argv[argc] = 0;
     
-    //
-    // main can be either 'int main()' or 'int main(int argc, char *argv[])'
-    // we only check which one it is after parsing the files, but either work with the latter variant.
-    // Thus we just insert a hacky cast here.
-    //                                                                                    02.12.2021
-    int (*_main)(int argc, char *argv[]) = (void *)main;
-    
-    int exit_code = (*_main)(argc, argv);
+    int exit_code = main(argc, argv);
 
     ExitProcess((unsigned int)exit_code);
 }
