@@ -2360,6 +2360,13 @@ func void worker_tokenize_file(struct context *context, struct work_queue_entry 
         defined___pragma->defined_token = &globals.invalid_token;
         register_define(context, defined___pragma);
         
+        struct define_node *defined__Pragma = push_struct(&context->scratch, struct define_node);
+        defined__Pragma->name = atom_for_string(string("_Pragma"));
+        defined__Pragma->is___pragma = 1;
+        defined__Pragma->is_builtin  = 1;
+        defined__Pragma->defined_token = &globals.invalid_token;
+        register_define(context, defined__Pragma);
+        
         struct define_node *defined___FILE__ = push_struct(&context->scratch, struct define_node);
         defined___FILE__->name = atom_for_string(string("__FILE__"));
         defined___FILE__->is___FILE__ = 1;
