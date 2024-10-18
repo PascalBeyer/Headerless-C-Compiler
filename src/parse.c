@@ -979,10 +979,11 @@ enum type_qualifiers{
     QUALIFIER_const     = 0x1,
     QUALIFIER_volatile  = 0x2,
     QUALIFIER_restrict  = 0x4,
-    QUALIFIER_unaligned = 0x8,
+    QUALIFIER_atomic    = 0x8,
     
-    QUALIFIER_ptr32     = 0x10,
-    QUALIFIER_ptr64     = 0x20,
+    QUALIFIER_unaligned = 0x10,
+    QUALIFIER_ptr32     = 0x20,
+    QUALIFIER_ptr64     = 0x40,
 };
 
 struct declarator_return{
@@ -6378,6 +6379,25 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             //
             case TOKEN_atomic:{
                 report_warning(context, WARNING_atomic_ignored, token, "'_Atomic' is ignored for now.");
+                type_qualifiers |= QUALIFIER_atomic;
+                
+                if(peek_token_eat(context, TOKEN_open_paren)){
+                    struct type_info_return type_info = maybe_parse_type_for_cast_or_sizeof(context);
+                    
+                    if(!type_info.type){
+                        report_error(context, get_current_token_for_error_report(context), "Expected a type after '_Atomic('.");
+                        break;
+                    }
+                    
+                    expect_token(context, TOKEN_closed_paren, "Expected a ')' after '_Atomic(<...>'");
+                    
+                    if(specifiers.type_specifier || c_type != C_TYPE_none){
+                        report_error(context, token, "Declaration specifies more than one data type.");
+                    }
+                    
+                    specifiers.type_specifier = type_info.type;
+                    specifiers.defined_type_specifier = type_info.defined_type;
+                }
             }break;
             
             case TOKEN_restrict:  type_qualifiers |= QUALIFIER_restrict;  break;
