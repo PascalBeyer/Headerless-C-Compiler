@@ -913,6 +913,7 @@ func struct parsed_integer parse_base10_literal(struct context *context, struct 
     
     u64 val = 0;
     for(smm i = 0; i < lit_token->size; i++){
+        if(lit_token->data[i] == '\'') continue;
         
         u32 number = (lit_token->data[i] - '0');
         if(number > 9){
@@ -984,6 +985,8 @@ func struct parsed_integer parse_binary_literal(struct context *context, struct 
     
     u64 val = 0;
     for(smm i = 2; i < lit_token->size; i++){
+        if(lit_token->data[i] == '\'') continue;
+        
         u32 bin = lit_token->data[i] - '0';
         if(bin > 1) {
             suffix_start = i;
@@ -1024,7 +1027,35 @@ func struct parsed_integer parse_hex_literal(struct context *context, struct tok
     string_eat_front(&literal, 2);
     
     b32 report_overflow = false;
-    u64 value = parse_hex_string_to_u64(&literal, &report_overflow);
+    
+    smm length = literal.size;
+    
+    u64 value = 0;
+    for(smm index = 0; index < literal.size; index++){
+        u32 hex = literal.data[index];
+        if(hex == '\'') continue;
+        
+        u32 number = 0;
+        if('9' >= hex && hex >= '0'){
+            number = hex - '0';
+        }else if('f' >= hex && hex >= 'a'){
+            number = hex - 'a' + 10;
+        }else if('F' >= hex && hex >= 'A'){
+            number = hex - 'A' + 10;
+        }else{
+            length = index;
+            break;
+        }
+        
+        if(value & (15ui64 << 60)) report_overflow = true;
+        value <<= 4; // multiply by 16
+        u64 new_val = value + number;
+        if(new_val < value) report_overflow = true;
+        value = new_val;
+    }
+    
+    string_eat_front(&literal, length);
+    
     
     if(report_overflow){
         report_warning(context, WARNING_compile_time_overflow, lit_token, "Compile time overflow.");
@@ -1496,13 +1527,13 @@ at     += size;
                 if((at[1]|32) == 'x'){
                     at += 2;
                     
-                    while(u8_is_hex_number(*at)) at++;
+                    while(u8_is_hex_number(*at) || *at == '\'') at++;
                     
                     if(*at == '.'){
                         
                         at += 1;
                         
-                        while(u8_is_hex_number(*at)) at++;
+                        while(u8_is_hex_number(*at) || *at == '\'') at++;
                         
                         if((*at | 32) == 'p'){
                             at++;
@@ -1531,6 +1562,8 @@ at     += size;
                 }else if((at[1]|32) == 'b'){
                     at += 2;
                     
+                    while(*at == '0' || *at == '1' || *at == '\'') at++;
+                    
                     while(u8_is_valid_in_c_ident(*at)) at++; // suffix
                     
                     next_token__internal(TOKEN_binary_literal, at - start);
@@ -1544,14 +1577,14 @@ at     += size;
                 enum token_type token_type = TOKEN_base10_literal;
                 
                 // handle all numbers before the dot
-                while(u8_is_number(*at)) at++;
+                while(u8_is_number(*at) || *at == '\'') at++;
                 
                 if(*at == '.'){
                     token_type = TOKEN_float_literal;
                     at++;
                     
                     // eat all the numbers after the dot
-                    while(u8_is_number(*at)) at++;
+                    while(u8_is_number(*at) || *at == '\'') at++;
                 }
                 
                 if((*at | 32) == 'e'){
@@ -1562,7 +1595,7 @@ at     += size;
                         at++;
                     }
                     
-                    while(u8_is_number(*at)) at++;
+                    while(u8_is_number(*at) || *at == '\'') at++;
                 }
                 
                 // suffix
