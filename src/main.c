@@ -2488,9 +2488,25 @@ func void worker_tokenize_file(struct context *context, struct work_queue_entry 
                             break;
                         }
                         
-                        // @cleanup: warn and shit
                         if(atoms_match(token->atom, is_static_table[index].token->atom)){
-                            is_static_table[index].is_static |= actually_static;
+                            
+                            if(is_static_table[index].is_static){
+                                // We are fine, the whatever the declaration was, it is supposed to be static.
+                                // @cleanup: What happens with 'inline' exactly?
+                            }else if(is_static){
+                                // @cleanup: We should probably report all of these, hence we should have a big 'begin_error_report' thing.
+                                begin_error_report(context);
+                                report_warning(context, WARNING_redefining_declaration_from_extern_to_static, token, "Redefining declaration from external to static.");
+                                report_warning(context, WARNING_redefining_declaration_from_extern_to_static, is_static_table[index].token, "... Here is the previous non-static declaration.");
+                                end_error_report(context);
+                                
+                                is_static_table[index].is_static = 1;
+                            }else if(is_inline && !is_extern){
+                                begin_error_report(context);
+                                report_warning(context, WARNING_inline_function_is_implicitly_external, token, "Function declared 'inline' but not 'extern' is implicitly 'extern', because of previous external declaration.");
+                                report_warning(context, WARNING_inline_function_is_implicitly_external, is_static_table[index].token, "... Here is the previous declaration.");
+                                end_error_report(context);
+                            }
                             break;
                         }
                     }
