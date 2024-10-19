@@ -423,8 +423,8 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
     };
     
     if(!CreatePipe(&ReadHandle, &WriteHandle, &SecurityAttributes, /*Size = default*/0)){
-        print("Error: 'CreatePipe' failed with error %u.\n", GetLastError());
-        _exit(1);
+        *exit_code = GetLastError();
+        return string("CreatePipe failed\n");
     }
     
     // 
@@ -442,7 +442,10 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
     
     if(!CreateProcessA(NULL, command_line, /*ProcessAttributes*/NULL, /*ThreadAttributes*/NULL, /*InheritHandles*/TRUE, /*Flags*/0, /*Environment*/NULL, working_directory, &StartupInformation, &ProcessInformation)){
         print("Error: 'CreateProcess' failed with error %u (%s)\n", GetLastError(), command_line);
-        _exit(1);
+        *exit_code = GetLastError();
+        CloseHandle(WriteHandle);
+        CloseHandle(ReadHandle);
+        return string("CreateProcess failed\n");
     }
     
     // 
