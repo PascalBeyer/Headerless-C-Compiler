@@ -3541,11 +3541,22 @@ int main(int argc, char *argv[]){
     }
     
     if(globals.output_file_type != OUTPUT_FILE_obj && !no_standard_library){
-        int parse_error = ar_parse_file((char *)push_format_string(arena, "%.*s\\ucrt.lib", ucrt_library_path.size, ucrt_library_path.data).data, arena);
-        if(parse_error){
+        struct string ucrt_lib_path = push_format_string(arena, "%.*s\\ucrt.lib", ucrt_library_path.size, ucrt_library_path.data);
+        int ucrt_parse_error = ar_parse_file((char *)ucrt_lib_path.data, arena);
+        if(ucrt_parse_error){
             // :Error mention Windows sdk.
-            print("Error: Could not load 'ucrt.lib'. Please check your path.\n");
+            print("Error: Could not load '%.*s'.\n", ucrt_lib_path.size, ucrt_lib_path.data);
             print("       To compile without dynamically linking to the CRT, use \n");
+            print("       the command-line option '-nostdlib'.\n");
+            return 1;
+        }
+        
+        struct string kernel32_lib_path = push_format_string(arena, "%.*s\\kernel32.lib", um_library_path.size, um_library_path.data);
+        int kernel32_parse_error = ar_parse_file((char *)kernel32_lib_path.data, arena);
+        if(kernel32_parse_error){
+            // :Error mention Windows sdk.
+            print("Error: Could not load '%.*s'.\n", kernel32_lib_path.size, kernel32_lib_path.data);
+            print("       To compile without dynamically linking to kernel32.lib, use \n");
             print("       the command-line option '-nostdlib'.\n");
             return 1;
         }
