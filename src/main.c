@@ -679,6 +679,7 @@ struct context{
     // This value will possibly be wrong if 'parse_expression' returns early, but in that case there was an error,
     // hence we don't care. But it means we have to reset this value in 'reset_context'.
     smm in_conditional_expression;
+    int current_statement_returns_a_value;
     
     struct ast *ast_stack[1024];
     smm ast_stack_at;
@@ -2328,6 +2329,7 @@ func void reset_context(struct context *context){
     context->maybe_in_cast              = null;
     context->in_conditional_expression  = 0;
     context->in_static_if_condition     = 0;
+    context->current_statement_returns_a_value = 0;
 }
 
 func void worker_tokenize_file(struct context *context, struct work_queue_entry *work){
@@ -2824,7 +2826,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
                 struct string type_string = push_type_string(&context->scratch, &context->scratch, function->type->return_type);
                 report_error(context, function->base.token, "__declspec(inline_asm)-function has return type '%.*s' but last instruction was not 'return'.", type_string.size, type_string.data);
             }
-            scope->flags |= SCOPE_FLAG_returns_a_value;
+            context->current_statement_returns_a_value = 1;
         }
         
         ast_list_append(&scope->statement_list, context->arena, &asm_block->base);
@@ -2865,7 +2867,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         //  reaching the } that terminates the main function returns a value of 0."
         if(function->type->return_type == &globals.typedef_s32){
             
-            scope->flags |= SCOPE_FLAG_returns_a_value;
+            context->current_statement_returns_a_value = 1;
             
             // @cleanup: is this the correct token?
             struct token *end_curly = get_current_token_for_error_report(context);
@@ -2878,7 +2880,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     }
     
     
-    if(!(scope->flags & SCOPE_FLAG_returns_a_value)){
+    if(!context->current_statement_returns_a_value){
         
         if((function->type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
             report_warning(context, WARNING_return_in_noreturn_function, get_current_token_for_error_report(context), "Control flow reaching the end of '_Noreturn' function.");
