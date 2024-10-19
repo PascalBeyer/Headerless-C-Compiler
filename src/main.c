@@ -1782,7 +1782,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
     return decl;
 }
 
-func void parser_register_definition(struct context *context, struct ast_declaration *decl, struct ast *initializer, struct ast_type *type){
+func int parser_register_definition(struct context *context, struct ast_declaration *decl, struct ast *initializer, struct ast_type *type){
     assert(!context->should_sleep);
     
     // @note: Used by functions and declarations as of -03.04.2021, 
@@ -1801,11 +1801,13 @@ func void parser_register_definition(struct context *context, struct ast_declara
             report_error(context, decl->assign_expr->token, "[%lld] ... Here is the previous definition.", decl->compilation_unit->index);
             end_error_report(context);
         }
+        return 0;
     }else{
         // @note: Hard set the type here, we know that this is the definition, this is necessary for functions
         //        e.g: replace 'int _start(int some_wrong_name)' by 'int _start(int the_right_name)'.
         //        We also use this for arrays of unknown size.
         decl->type = type; 
+        return 1;
     }
 }
 

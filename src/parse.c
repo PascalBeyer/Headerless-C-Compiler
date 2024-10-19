@@ -7529,10 +7529,17 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(!context->current_scope && scope){
                 // This is a global declaration and we define it!
                 
-                parser_register_definition(context, decl, &scope->base, declarator.type);
-                assert(get_current_token(context)->type == TOKEN_open_curly);
+                int we_have_defined_the_function = parser_register_definition(context, decl, &scope->base, declarator.type);
                 
-                if(specifiers.specifier_flags & SPECIFIER_dllexport){
+                if(!we_have_defined_the_function){
+                    // If we have not defined the function, we are either `__declspec(selectany) or there was an error. 
+                    // In either case, we return the old 'function' instead of the global 'decl' that we got back.
+                    // The other option here would be to set a flag and not even parse the function, 
+                    // but for now I am will parse both copies.
+                    //                                                                              - 19.10.2024
+                    function->scope = &scope->base;
+                    decl = &function->as_decl;
+                }else if(specifiers.specifier_flags & SPECIFIER_dllexport){
                     add_global_reference_for_declaration(context->arena, &function->as_decl);
                 }
             }
