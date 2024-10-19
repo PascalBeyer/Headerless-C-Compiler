@@ -190,7 +190,7 @@ char *push_format_cstring(struct memory_arena *arena, char *format, ...){
     
     char *data = push_array(arena, char, string_size + 1);
     
-    vsnprintf(data, string_size + 1, format, va);
+    vsnprintf(data, (size_t)string_size + 1, format, va);
     
     return data;
 }
@@ -311,18 +311,22 @@ struct string load_file(struct memory_arena *arena, char *file_name){
     }
     
     fseek(handle, 0, SEEK_END);
-    size_t size = ftell(handle);
+    int size = ftell(handle);
+    if(size < 0){
+        print("could not ftell '%s'\n", file_name);
+        return ret;
+    }
     fseek(handle, 0, SEEK_SET);
     
-    char *memory = push_array(arena, char, size + 1);
+    char *memory = push_array(arena, char, (size_t)size + 1);
     memory[size] = 0;
     
-    fread(memory, 1, size, handle);
+    fread(memory, 1, (size_t)size, handle);
     
     fclose(handle);
     
     ret.memory = memory;
-    ret.size   = size;
+    ret.size   = (size_t)size;
     
     return ret;
 }
