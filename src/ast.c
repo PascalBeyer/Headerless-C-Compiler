@@ -509,7 +509,7 @@ struct ast_list{
 #define DECLARATION_FLAGS_is_local_persist                         0x8
 
 #define DECLARATION_FLAGS_is_dll_import_with_missing_declspec      0x20
-#define DECLARATION_FLAGS_is_function_that_is_reachable_from_entry 0x40
+#define DECLARATION_FLAGS_is_reachable_from_entry                  0x40
 #define DECLARATION_FLAGS_is_static                                0x80
 
 #define DECLARATION_FLAGS_is_dllimport                             0x200
@@ -518,6 +518,11 @@ struct ast_list{
 
 #define DECLARATION_FLAGS_is_extern                                0x1000
 #define DECLARATION_FLAGS_is_unnamed                               0x2000 // Used for struct and array literals, to not emit a symbol for them.
+
+struct declaration_node{
+    struct declaration_node *next;
+    struct ast_declaration *decl;
+};
 
 struct ast_declaration{
     // @WARNING: This needs to match the part in ast_function.
@@ -542,14 +547,14 @@ struct ast_declaration{
     
     b64 flags;
     
-    // used to report 'declaration is not used' and 'declaration is only ever written'
-    u32 times_referenced;
-    u32 times_written;
-};
-
-struct declaration_node{
-    struct declaration_node *next;
-    struct ast_declaration *decl;
+    // Used to report 'declaration is not used' and 'declaration is only ever written' for local declarations.
+    u32 _times_referenced;
+    u32 _times_written;
+    
+    struct {
+        struct declaration_reference_node *first;
+        struct declaration_reference_node *last;
+    } referenced_declarations;
 };
 
 struct declaration_list{
@@ -782,11 +787,6 @@ struct ast_function_type{
     struct ast_list argument_list;
 };
 
-struct function_node{
-    struct function_node *next;
-    struct ast_function *function;
-};
-
 struct ast_function{
     union{
         struct{
@@ -805,6 +805,11 @@ struct ast_function{
             
             u32 times_referenced;
             u32 times_written;
+            
+            struct {
+                struct declaration_reference_node *first;
+                struct declaration_reference_node *last;
+            } referenced_declarations;
         };
         struct ast_declaration as_decl;
     };

@@ -784,12 +784,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 struct ast_declaration *decl = (struct ast_declaration *)ast;
                 
                 if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
+                if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
                 
                 assert(!(decl->flags & DECLARATION_FLAGS_is_local_persist));
                 
                 if(decl->flags & DECLARATION_FLAGS_is_static){
-                    if(decl->times_referenced == 0) continue;
-                    
                     if(decl->assign_expr){
                         ast_list_append(&defined_variables, scratch, &decl->base);
                     }else{
@@ -807,6 +806,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 if(decl->assign_expr){
                     if(decl->flags & DECLARATION_FLAGS_is_selectany){
+                        // @cleanup: report warning?
                         print("WARNING: Variable '%.*s' is declarated __declspec(selectany). This is currently unsupported for .obj-files. Ignoring it...\n", decl->identifier->size, decl->identifier->data);
                     }
                     
@@ -815,15 +815,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 }
                 
                 if(decl->flags & DECLARATION_FLAGS_is_extern){
-                    if(decl->times_referenced == 0) continue;
-                    
                     ast_list_append(&external_variables, scratch, &decl->base);
                     continue;
                 }
                 
                 if(decl->flags & DECLARATION_FLAGS_is_dllimport){
-                    if(decl->times_referenced == 0) continue;
-                    
                     ast_list_append(&external_variables, scratch, &decl->base);
                     continue;
                 }
@@ -833,7 +829,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             }else if(ast->kind == AST_function){
                 struct ast_function *function = (struct ast_function *)ast;
                 
-                if(!(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry)) continue;
+                if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
                 
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic)  continue;
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
@@ -1485,11 +1481,12 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 if(ast->kind == AST_declaration){
                     
+                    // For dllimports, the defining dll has the declaration and type information.
                     if(decl->flags & DECLARATION_FLAGS_is_dllimport) continue;
                     
-                    if(decl->times_referenced == 0){
+                    if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)){
                         if(decl->flags & DECLARATION_FLAGS_is_static) continue;
-                        if(decl->flags & DECLARATION_FLAGS_is_extern) continue;
+                        if(decl->flags & DECLARATION_FLAGS_is_extern) continue; // @cleanup: Don't we care about defined externs?
                     }
                     
                     register_type(&type_index_allocator, arena, scratch, decl->type);
@@ -2227,9 +2224,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         // @note: dllimports do not have debug symbols.
                         if(decl->flags & DECLARATION_FLAGS_is_dllimport) continue;
                         
-                        if(decl->times_referenced == 0){
+                        if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)){
                             if(decl->flags & DECLARATION_FLAGS_is_static) continue;
-                            if(decl->flags & DECLARATION_FLAGS_is_extern) continue;
+                            if(decl->flags & DECLARATION_FLAGS_is_extern) continue; // @cleanup: Don't we care about defined externs?
                         }
                         
                         assert(decl->type->pdb_type_index);
@@ -2640,6 +2637,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             struct patch_node *next = patch->next;
             
             struct ast_declaration *dest_declaration = patch->dest_declaration;
+            if(!(dest_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
             
             if(dest_declaration->base.kind == AST_function){
                 patch->next = text_patches;

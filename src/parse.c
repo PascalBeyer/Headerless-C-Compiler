@@ -4337,39 +4337,31 @@ case NUMBER_KIND_##type:{ \
                 return &ident->base;
             }
             
-            lookup->times_referenced++; // @cleanup: this should be atomic
-            
             if(context->current_scope){
-                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &lookup->type)){
+                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &lookup->type)){ // @cleanup: Can we ever get here?
                     return &ident->base;
                 }
             }
             
-            if(lookup->base.kind == AST_function){
-                struct ast_function *function = (struct ast_function *)lookup;
+            if(lookup->base.kind == AST_function || (lookup->base.kind == AST_declaration && (lookup->flags & DECLARATION_FLAGS_is_global))){
+                struct ast_declaration *outer_declaration = context->current_function ? &context->current_function->as_decl : context->current_declaration;
                 
-                struct function_node *node = push_struct(context->arena, struct function_node);
-                node->function = function;
-                if(context->current_function){
-                    sll_push_front(context->current_function->called_functions, node);
-                }else{
-                    assert(!context->current_scope); // we are at global scope. Queue this one to be a
-                    // sort of entry point to the program
-                    // @speed: this should probably not be done atomically, but rather just loaded from the
-                    //         main thread when we are done with phase 2.
-                    //         So we could just keep these lists local and then collect them.
-                    add_potential_entry_point(node);
-                }
+                struct declaration_reference_node *new_reference = push_struct(context->arena, struct declaration_reference_node);
+                new_reference->declaration = lookup;
+                new_reference->token = token;
                 
-                
-                if(!function->token_that_referenced_this_function){
-                    function->token_that_referenced_this_function = ident->base.token;
-                }else{
-                    // @cleanup: I feel like there should be a better solution.
-                    if(!globals.file_table.data[ident->base.token->file_index]->is_system_include && globals.file_table.data[function->token_that_referenced_this_function->file_index]->is_system_include){
-                        function->token_that_referenced_this_function = ident->base.token;
-                    }
-                }
+                // :DeclarationReferenceThreadingBug
+                // 
+                // @cleanup: This should probably be atomic, as we might be parsing an initializer of a declaration
+                //           in two different threads at the same time.
+                //           This happens if there are two initializers in the code (a bug), because we `register_declaration` and then
+                //           reassign the declaration in `parse_declaration_list`.
+                //           In the future, there should probably be a guard in `parse_declaration_list` against parsing an initializer
+                //           twice at the same time.
+                //                                                                                            - 19.10.2024
+                sll_push_back(outer_declaration->referenced_declarations, new_reference);
+            }else{
+                lookup->_times_referenced++;
             }
             
             if(lookup->flags & DECLARATION_FLAGS_is_enum_member){
@@ -7416,14 +7408,10 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     report_error(context, function->base.token, "Cannot export intrinsic function.");
                     goto end;
                 }
-                function->as_decl.flags |= DECLARATION_FLAGS_is_dllexport;
                 
-                //
-                // Exported functions are potential entry points!
-                //
-                struct function_node *node = push_struct(context->arena, struct function_node);
-                node->function = function;
-                add_potential_entry_point(node);
+                // @cleanup: dllexport function in another function? And dllexport declaration, but not definition in another function?
+                
+                function->as_decl.flags |= DECLARATION_FLAGS_is_dllexport;
             }
             
             if(specifiers.alignment > 0){
@@ -7536,6 +7524,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             decl = register_declaration(context, &function->as_decl);
             if(context->should_sleep) goto end; // @cleanup: should_sleep?
             
+            // @cleanup: We have to validate here that the declarations `FUNCTION_TYPE_flags` and declaration flags match.
+            
             if(!context->current_scope && scope){
                 // This is a global declaration and we define it!
                 
@@ -7543,9 +7533,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 assert(get_current_token(context)->type == TOKEN_open_curly);
                 
                 if(specifiers.specifier_flags & SPECIFIER_dllexport){
-                    struct function_node *function_node = push_struct(context->arena, struct function_node);
-                    function_node->function = function;
-                    add_potential_entry_point(function_node);
+                    add_global_reference_for_declaration(context->arena, &function->as_decl);
                 }
             }
         }else{
@@ -7647,9 +7635,16 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     goto end;
                 }
                 
+                if(specifiers.specifier_flags & SPECIFIER_dllexport){
+                    add_global_reference_for_declaration(context->arena, decl);
+                }
+                
                 struct ast_identifier *ident = parser_ast_push(context, declarator.ident, identifier);
                 ident->decl = decl;
                 set_resolved_type(&ident->base, decl->type, decl->defined_type);
+                
+                // :DeclarationReferenceThreadingBug
+                context->current_declaration = decl;
                 
                 struct ast *rhs = parse_initializer(context, ident, equals);
                 if(context->should_exit_statement) goto end;
@@ -8286,12 +8281,11 @@ func struct ast *parse_imperative_scope(struct context *context){
                 switch(at->kind){
                     case AST_identifier:{
                         struct ast_identifier *ident = (struct ast_identifier *)at;
-                        ident->decl->times_written++;
+                        ident->decl->_times_written++;
                         
                         should_break = true;
                     }break;
                     
-                    // case AST_member_deref:
                     case AST_member:{
                         struct ast_dot_or_arrow *dot_or_arrow = (struct ast_dot_or_arrow *)at;
                         
@@ -8325,9 +8319,9 @@ func struct ast *parse_imperative_scope(struct context *context){
         if(!decl) continue;
         
         if(decl->base.kind == AST_declaration){
-            if(decl->times_referenced == 0){
+            if(decl->_times_referenced == 0){
                 report_warning(context, WARNING_unused_local_variable, decl->base.token, "Local variable is never used.");
-            }else if(decl->times_referenced == decl->times_written){
+            }else if(decl->_times_referenced == decl->_times_written){
                 report_warning(context, WARNING_local_variable_only_ever_written, decl->base.token, "Local variable is never read, only written.");
             }
         }

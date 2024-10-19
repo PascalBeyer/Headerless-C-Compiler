@@ -223,130 +223,46 @@ func struct dll_import_node *lookup_function_in_dll_imports(struct context *cont
     return null;
 }
 
-func void report_errors_for_undefined_functions_and_types(struct context *context, struct ast_table *ast_table){
-    assert(!context->error && !context->should_sleep);
-    
-    // Everything below is in one giant error report, so we don't have to reset 'context->error' everytime.
-    begin_error_report(context);
-    
-    for(u64 ast_index = 0; ast_index < ast_table->capacity; ast_index++){
-        struct ast_node *node = ast_table->nodes + ast_index;
-        if(!node->ast) continue;
-        
-        if(node->ast->kind == AST_function){
-            struct ast_function *function = cast(struct ast_function *)node->ast;
-            
-            if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic) continue;
-            if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
-            
-            if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
-                if(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry){
-                    struct dll_import_node *import = lookup_function_in_dll_imports(context, function);
-                    
-                    if(!import){
-                        report_error(context, function->base.token, "Function is not contained in any of the imported dlls.");
-                        report_error(context, function->token_that_referenced_this_function, "... Here the function was referenced.");
-                    }
-                    
-                    function->dll_import_node = import;
-                }
-                continue;
-            }
-            
-            if(!function->scope){
-                if(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry){
-                    // :dllimports_with_missing_declspec
-                    // @note: apparently MSVC does note require 'dllimport' it appears to be a keyword
-                    //        that gets rid of one indirection which link.exe/we have to insert
-                    //        thus we generate a call to a rip relative jump, i.e.
-                    //            jmp [rip + <offset_off_dll_import_in_import_table>]
-                    struct dll_import_node *import = lookup_function_in_dll_imports(context, function);
-                    if(import){
-                        function->as_decl.flags |= DECLARATION_FLAGS_is_dll_import_with_missing_declspec;
-                        function->dll_import_node = import;
-                    }else{
-                        if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
-                            report_error(context, function->base.token, "A function marked '__declspec(dllexport)' must be defined.");
-                        }else{
-                            assert(function->token_that_referenced_this_function);
-                            
-                            // @cleanup: what about main?
-                            report_error(context, function->base.token, "Function was declared and referenced but never defined.");
-                            report_error(context, function->token_that_referenced_this_function, "... Here the function was referenced.");
-                        }
-                    }
-                }else{
-                    report_warning(context, WARNING_function_declared_but_never_defined, function->base.token, "Function was declared but never defined.");
-                }
-            }else if(!(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry)){
-                report_warning(context, WARNING_function_defined_but_unreachable, function->base.token, "Function was defined but unreachable from main.");
-            }
-            
-        }else if(node->ast->kind == AST_declaration){
-            struct ast_declaration *decl = (struct ast_declaration *)node->ast;
-            
-            if(type_is_array_of_unknown_size(decl->type)){
-                // 
-                // From the c-spec:
-                // 
-                // "If at the end of the translation unit containing
-                // 
-                //     int i[];
-                // 
-                // the array i still has incomplete type, the implicit initializer causes it to have one element,
-                // which is set to zero on program startup."
-                // 
-                
-                report_warning(context, WARNING_array_of_unknown_size_never_filled_in, decl->base.token, "Bounds for array of unknown size were never filled in. Assuming an array length of one.");
-                patch_array_size(context, (struct ast_array_type *)decl->type, 1, decl->base.token);
-            }
-        }else{
-            // I think these are fine, maybe one could do type never used or something later.
-            assert(node->ast->kind == AST_typedef);
-        }
-    }
-    
-    /* not sure if this actually did anything...
-    for(u64 i = 0; i < globals.compound_types.capacity; i++){
-        struct ast_node *node = globals.compound_types.nodes + i;
-        if(!node->ast) continue;
-        if(node->ast->kind == AST_enum) continue; // nothing to check here
-        struct ast_compound_type *compound = cast(struct ast_compound_type *)node->ast;
-        assert(compound->base.kind == AST_union || compound->base.kind == AST_struct);
-        
-        for_ast_list(compound->declarations){
-            struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-            if(decl->type->kind == AST_pointer_type){
-                struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)decl->type;
-                
-    @incomplete: this case will currently not be detected.
-                struct{
-                    struct unresolved *first;
-                    struct unresolved *last;
-                } debug_members;
-                
-                
-                // @sigh @speed looping until its not a pointer again @yikes
-                while(pointer->pointer_to->kind == AST_pointer_type){
-                    pointer = cast(struct ast_pointer_type *)pointer->pointer_to;
-                }
-                
-                if(maybe_resolve_pointer_to_unresolved_type_or_sleep(context, pointer)){
-                    //report_info(context, pointer->pointer_to->token, "Type declared but never defined.");
-                        
-                    //globals.an_error_has_accured = true;
-                }
-                
-            }
-        }
-    }
-    */
-    end_error_report(context);
-    
-    if(context->error){
-        globals.an_error_has_occurred = true;
-    }
-    
-}
 
+void resolve_dll_import_node_or_report_error_for_referenced_unresolved_function(struct context *context, struct ast_function *function, struct token *token_that_referenced_this_function){
+    
+    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
+        
+        struct dll_import_node *import = lookup_function_in_dll_imports(context, function);
+        if(!import){
+            report_error(context, function->base.token, "Function is not contained in any of the imported dlls.");
+            report_error(context, token_that_referenced_this_function, "... Here the function was referenced.");
+        }
+        function->dll_import_node = import;
+        
+        return;
+    }
+    
+    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
+        report_error(context, function->base.token, "A referenced function marked '__declspec(dllexport)' must be defined."); // :Error
+        report_error(context, token_that_referenced_this_function, "... Here the function was referenced.");
+        return;
+    }
+    
+    // :dllimports_with_missing_declspec
+    // 
+    // Apparently, MSVC does note require 'dllimport'. 
+    // It appears to be a keyword that gets rid of one indirection that we (or link.exe)
+    // have to insert. Hence, we generate a call to a rip relative jump, i.e.
+    //     jmp [rip + <offset_off_dll_import_in_import_table>]
+    // 
+    
+    struct dll_import_node *import = lookup_function_in_dll_imports(context, function);
+    if(import){
+        // @cleanup: I currently don't see a way of how we can get the name of the library or dll.
+        report_warning(context, WARNING_function_is_implicitly_dllimport, function->base.token, "Function is treated as import, but was not declared '__declspec(dllimport)'.");
+        
+        function->as_decl.flags |= DECLARATION_FLAGS_is_dll_import_with_missing_declspec;
+        function->dll_import_node = import;
+        return;
+    }
+    
+    report_error(context, function->base.token, "Function was declared and referenced but never defined.");
+    report_error(context, token_that_referenced_this_function, "... Here the function was referenced.");
+}
 

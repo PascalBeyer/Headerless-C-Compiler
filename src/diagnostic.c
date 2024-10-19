@@ -57,6 +57,9 @@ enum warning_type{
     WARNING_redefining_declaration_from_extern_to_static,
     WARNING_inline_function_is_implicitly_external,
     
+    WARNING_function_is_implicitly_dllimport,
+    WARNING_unreachable_declaration,
+    
     WARNING_count, 
 };
 
@@ -84,6 +87,7 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_unusual_entry_point]                 = 1,
     // [WARNING_function_declared_but_never_defined] = 1,
     // [WARNING_function_defined_but_unreachable]    = 1,
+    // [WARNING_unreachable_declaration] = 1,
     [WARNING_incorrect_format_specifier] = 1,
     [WARNING_unknown_format_specifier]  = 1,
     [WARNING_assignment_in_condition] = 1,
@@ -94,6 +98,8 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_return_in_noreturn_function] = 1,
     [WARNING_redefining_declaration_from_extern_to_static] = 1,
     [WARNING_inline_function_is_implicitly_external] = 1,
+    [WARNING_function_is_implicitly_dllimport] = 1,
+    
 };
 
 

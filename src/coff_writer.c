@@ -1604,58 +1604,52 @@ struct symbol_context{
 
 func void insert_function_into_the_right_list(struct symbol_context *symbol_context, struct ast_function *function, struct memory_arena *scratch){
     
+    // If the function is not reachable, we don't emit it.
+    if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)){
+        assert(!function->memory_location); // Make sure we did not emit code for the function.
+        return;
+    }
+    
     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic)  return;
     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) return;
     
     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
-        if(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry){
-            assert(function->dll_import_node);
-            ast_list_append(&symbol_context->dll_imports, scratch, &function->base);
-        }
-    }else{
-        if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
-            ast_list_append(&symbol_context->dllexports, scratch, &function->base);
-        }
+        assert(function->dll_import_node);
+        ast_list_append(&symbol_context->dll_imports, scratch, &function->base);
+        return;
+    }
+    
+    if(function->as_decl.flags & DECLARATION_FLAGS_is_dll_import_with_missing_declspec){
+        // :dllimports_with_missing_declspec
+        // 
+        // if we have a function like
+        //     extern double asin(double a);
+        // but we found it in 'ucrtbased.dll', then we allow that, but we have to insert an
+        // additional indirection, as all functions expect to call this directly.
+        // MSVC (or more so link.exe) also does this and the CRT relies on this feature.
+        //                                                              -20.09.2020
         
-        if(function->as_decl.flags & DECLARATION_FLAGS_is_dll_import_with_missing_declspec){
-            // :dllimports_with_missing_declspec
-            // 
-            // if we have a function like
-            //     extern double asin(double a);
-            // but we found it in 'ucrtbased.dll', then we allow that, but we have to insert an
-            // additional indirection, as all functions expect to call this directly.
-            // MSVC (or more so link.exe) also does this and the CRT relies on this feature.
-            //                                                              -20.09.2020
-            
-            ast_list_append(&symbol_context->dll_function_stubs, scratch, &function->base);
-            ast_list_append(&symbol_context->dll_imports, scratch, &function->base);
-            return;
-        }
-        
-        if(!function->scope){
-            // We allow non-referanced non-defined functions.
-            assert(!(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry));
-            return;
-        }
-        
-        if(!(function->as_decl.flags & DECLARATION_FLAGS_is_function_that_is_reachable_from_entry)){
-            // :only_emit_functions_that_are_reachable_from_main
-            // If we detected this function to be unreachable from main, we did not emit code for it
-            // and so we have to skip it here.
-            assert(!function->memory_location);
-            return;
-        }
-        
-        ast_list_append(&symbol_context->functions_with_a_body, scratch, &function->base);
-        assert(function->scope);
-        
-        for_ast_list(function->static_variables){
-            struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-            if(decl->assign_expr){
-                ast_list_append(&symbol_context->initialized_declarations, scratch, &decl->base);
-            }else{
-                ast_list_append(&symbol_context->uninitialized_declarations, scratch, &decl->base);
-            }
+        ast_list_append(&symbol_context->dll_function_stubs, scratch, &function->base);
+        ast_list_append(&symbol_context->dll_imports, scratch, &function->base);
+        return;
+    }
+    
+    // Once, we got through the dllimports, we can be sure that all functions are defined.
+    assert(function->scope);
+    
+    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
+        ast_list_append(&symbol_context->dllexports, scratch, &function->base);
+    }
+    
+    ast_list_append(&symbol_context->functions_with_a_body, scratch, &function->base);
+    assert(function->scope);
+    
+    for_ast_list(function->static_variables){
+        struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+        if(decl->assign_expr){
+            ast_list_append(&symbol_context->initialized_declarations, scratch, &decl->base);
+        }else{
+            ast_list_append(&symbol_context->uninitialized_declarations, scratch, &decl->base);
         }
     }
 }
@@ -1668,19 +1662,14 @@ func void add_declarations_for_ast_table(struct symbol_context *symbol_context, 
         if(node->ast->kind == AST_declaration || node->ast->kind == AST_typedef){
             struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
             
-            //
-            // Skip declarations which are never referenced and not exported.
-            //
-            if((decl->times_referenced == 0) && !(decl->flags & DECLARATION_FLAGS_is_dllexport)){
-                continue;
-            }
+            // Skip unreachable declarations.
+            if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
         }
         
         if(node->ast->kind == AST_typedef){
             ast_list_append(&symbol_context->typedefs, arena, node->ast);
             continue;
         }
-        
         
         if(table != &globals.global_declarations){
             struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
