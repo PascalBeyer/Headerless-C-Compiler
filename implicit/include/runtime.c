@@ -234,5 +234,5 @@ char *getcwd(char *buffer, int maxlen){
 
 __declspec(dllimport) int _rmdir(const char *dirname);
 int rmdir(const char *dirname){
-    _rmdir(dirname);
+    return _rmdir(dirname);
 }
