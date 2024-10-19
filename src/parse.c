@@ -5070,9 +5070,11 @@ case NUMBER_KIND_##type:{ \
                     
                     prefix = operand; // nothing to do here.
                     break;
+                }else if(operand->kind == AST_float_literal){
+                    prefix = operand; // nothing to do here.
+                    break;
                 }
                 
-                // @cleanup: CHECK_basic?
                 if(!check_unary_for_basic_types(context, operand, CHECK_integer | CHECK_float, op->base.token)) return operand;
                 
                 if(operand->resolved_type->kind == AST_integer_type || operand->resolved_type->kind == AST_bitfield_type){
