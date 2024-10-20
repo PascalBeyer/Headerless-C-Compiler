@@ -189,16 +189,12 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
     
     struct library_import_table_node *string_table = push_data(arena, struct library_import_table_node, 0);
     u64 amount_of_strings = 0;
-    smm import_symbol_base = -1;
     
     for(u8 *it = string_buffer; it < (u8 *)symbol_index_end;){
         struct string string = cstring_to_string((char *)it);
         it += string.size + 1;
         
-        if(string_front_match_eat(&string, "__imp_")){
-            if(import_symbol_base == -1) import_symbol_base = amount_of_strings;
-            push_struct(arena, struct library_import_table_node)->string = string;
-        }
+        push_struct(arena, struct library_import_table_node)->string = string;
         
         amount_of_strings++;
     }
@@ -223,7 +219,6 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
     library_node->symbol_member_indices = symbol_member_indices;
     library_node->import_symbol_string_table = string_table;
     library_node->amount_of_import_symbols   = amount_of_import_symbols;
-    library_node->import_symbol_base         = import_symbol_base;
     
     // @cleanup: In the future, we could thread this part and then this would need to be atomic.
     //           This will also be true for '#pragma comment(lib, <...>)'.
@@ -233,7 +228,43 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
 }
 
 // returns '1', if found, else '0'.
-struct dll_import_node *ar_lookup_symbol(struct memory_arena *arena, struct library_node *library_node, struct string identifier){
+struct ar_symbol_lookup{
+    
+    enum ar_symbol_lookup_result{
+        AR_SYMBOL_LOOKUP_failed,
+        AR_SYMBOL_LOOKUP_import_header,
+        AR_SYMBOL_LOOKUP_object_file,
+    } lookup_result;
+    
+    union{
+        struct ar_import_header{
+            u16 signature_1;
+            u16 signature_2;
+            u16 version;
+            u16 machine;
+            u32 time_date_stamp;
+            u32 size_of_data;
+            u16 ordinal_hint;
+            u16 type : 2;      // 0 - code, 1 - data, 2 - const
+            u16 name_type : 3; // 0 - ordinal, 1 - name, 2 - noprefix, 3 - undecorated
+            u16 reserved : 11;
+        } *ar_import_header;
+        struct coff_file_header{
+            u16 machine;
+            u16 number_of_sections;
+            u32 time_date_stamp;
+            u32 pointer_to_symbol_table;
+            u32 number_of_symbols;
+            u16 size_of_optional_header;
+            u16 characteristics;
+        } *coff_file_header;
+    };
+    u64 file_size;
+} ar_lookup_symbol(struct library_node *library_node, struct string identifier){
+    
+    struct ar_symbol_lookup ret = {
+        .lookup_result = AR_SYMBOL_LOOKUP_failed,
+    };
     
     // The algorithm goes as follows:
     //     
@@ -267,13 +298,13 @@ struct dll_import_node *ar_lookup_symbol(struct memory_arena *arena, struct libr
         }
         
         // Make sure we found it.
-        if(import_symbol_index == -1) return null;
+        if(import_symbol_index == -1) return ret;
         
         // Check if we have looked this up previously.
-        struct dll_import_node *dll_import_node = library_node->import_symbol_string_table[import_symbol_index].import_node;
-        if(dll_import_node) return dll_import_node;
+        // struct dll_import_node *dll_import_node = library_node->import_symbol_string_table[import_symbol_index].import_node;
+        // if(dll_import_node) return dll_import_node;
         
-        symbol_index = (u32)(import_symbol_index + library_node->import_symbol_base);
+        symbol_index = (u32)import_symbol_index;
     }
     
     assert(symbol_index < library_node->amount_of_symbols);
@@ -281,7 +312,7 @@ struct dll_import_node *ar_lookup_symbol(struct memory_arena *arena, struct libr
     u16 member_index = library_node->symbol_member_indices[symbol_index];
     if(member_index == 0 || member_index > library_node->amount_of_members){
         print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
-        return null;
+        return ret;
     }
     member_index -= 1;
     
@@ -323,7 +354,7 @@ struct dll_import_node *ar_lookup_symbol(struct memory_arena *arena, struct libr
     u64 member_offset = (u64)library_node->member_offsets[member_index];
     if(member_offset + sizeof(struct ar_file_header) > file.size){
         print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
-        return null;
+        return ret;
     }
     
     struct ar_file_header *file_header = (void *)(file.data + member_offset);
@@ -334,57 +365,36 @@ struct dll_import_node *ar_lookup_symbol(struct memory_arena *arena, struct libr
     u64 file_size = string_to_u64(file_size_string, &parse_size_success);
     if(!parse_size_success || file_size > file.size || member_offset + file_size > file.size){
         print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
-        return null;
+        return ret;
     }
     
-    struct ar_import_header{
-        u16 signature_1;
-        u16 signature_2;
-        u16 version;
-        u16 machine;
-        u32 time_date_stamp;
-        u32 size_of_data;
-        u16 ordinal_hint;
-        u16 type : 2;      // 0 - code, 1 - data, 2 - const
-        u16 name_type : 3; // 0 - ordinal, 1 - name, 2 - noprefix, 3 - undecorated
-        u16 reserved : 11;
-    } *import_header = (void *)(file_header + 1);
+    struct ar_import_header *import_header = (void *)(file_header + 1);
     
-    if((file_size <= sizeof(*import_header) + identifier.size + 1) || file_data[file_size-1] != 0){
+    // @note: The size of an import header matches the size of an _IMAGE_FILE_HEADER.
+    
+    if(file_size < sizeof(*import_header)){
         print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
-        return null;
+        return ret;
     }
     
-    u8 *library_name = (u8 *)(import_header + 1) + identifier.size + 1;
-    
-    struct string dll_name = cstring_to_string((char *)library_name);
-    
-    struct dll_node *dll_node = globals.dlls.first;
-    for(; dll_node; dll_node = dll_node->next){
-        if(string_match(dll_node->name, dll_name)) break;
-    }
-    
-    if(!dll_node){
-        dll_node = push_struct(arena, struct dll_node);
-        dll_node->name = dll_name;
+    if((import_header->signature_1 == 0) && (import_header->signature_2 == 0xffff)){
+        // 
+        // This is an import header.
+        // 
         
-        sll_push_back(globals.dlls, dll_node);
-        globals.dlls.amount += 1;
+        if((file_size <= sizeof(*import_header) + identifier.size + 1) || file_data[file_size-1] != 0){
+            print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
+            return ret;
+        }
+        ret.ar_import_header = import_header;
+        ret.file_size = file_size;
+        ret.lookup_result = AR_SYMBOL_LOOKUP_import_header;
+        return ret;
     }
     
-    // @note: We should not have to lookup the 'identifier' in the 'dll_node' as otherwise,
-    //        we should have already been here and set the 'import_node' member of the
-    //        lookup table.
-    
-    struct dll_import_node *import_node = push_struct(arena, struct dll_import_node);
-    import_node->import_name  = identifier;
-    import_node->ordinal_hint = import_header->ordinal_hint;
-    
-    sll_push_back(dll_node->import_list, import_node);
-    dll_node->import_list.count += 1;
-    
-    library_node->import_symbol_string_table[import_symbol_index].import_node = import_node;
-    
-    return import_node;
+    ret.lookup_result = AR_SYMBOL_LOOKUP_object_file;
+    ret.file_size = file_size;
+    ret.coff_file_header = (struct coff_file_header *)import_header;
+    return ret;
 }
 

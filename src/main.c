@@ -306,12 +306,10 @@ struct library_node{
     u32  amount_of_symbols;
     u16 *symbol_member_indices;
     
-    u64 import_symbol_base;
     u64 amount_of_import_symbols;
     
     struct library_import_table_node{
         struct string string;
-        struct dll_import_node *import_node;
     } *import_symbol_string_table;
 };
 
@@ -4611,19 +4609,22 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                                 patch_array_size(context, (struct ast_array_type *)declaration->type, 1, declaration->base.token);
                             }
                             
-                            if(globals.output_file_type != OUTPUT_FILE_obj){
-                                // @cleanup: dllimport?
-                                
-                                if(!declaration->assign_expr && (declaration->flags & DECLARATION_FLAGS_is_extern)){
-                                    report_error(context, declaration->base.token, "External declaration was referenced but never defined.");
-                                    report_error(context, node->at->token, "... Here the function was referenced.");
-                                }
-                            }
-                            
                             if(declaration->assign_expr){
                                 // @cleanup: This should probably not happen on the main thread.
                                 //           Furthermore, we also want to report errors for initializers that are non-constant but not referenced.
                                 declaration->memory_location = evaluate_static_initializer(context, declaration);
+                            }
+                            
+                            if(globals.output_file_type != OUTPUT_FILE_obj){
+                                
+                                if(!declaration->assign_expr && (declaration->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport))){
+                                    
+                                    lookup_declaration_in_libraries(context, declaration, node->at->token);
+                                    
+                                    // :Error the context should also be in `lookup_declaration_in_libraries`.
+                                    // report_error(context, declaration->base.token, "External declaration was referenced but never defined.");
+                                    // report_error(context, node->at->token, "... Here the function was referenced.");
+                                }
                             }
                         }
                         

@@ -60,6 +60,8 @@ enum warning_type{
     WARNING_function_is_implicitly_dllimport,
     WARNING_unreachable_declaration,
     
+    WARNING_imported_function_is_also_defined,
+    
     WARNING_count, 
 };
 

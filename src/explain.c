@@ -207,36 +207,216 @@ func void report_errors_for_unresolved_sleepers(struct context *context, struct 
 }
 
 
-func struct dll_import_node *lookup_function_in_dll_imports(struct context *context, struct ast_function *function){
-    begin_counter(context, lookup_dll_import);
+struct coff_section_header{
+    char name[8];
+    u32 virtual_size;
+    u32 virtual_address;
+    u32 size_of_raw_data;
+    u32 pointer_to_raw_data;
+    u32 pointer_to_relocations;
+    u32 pointer_to_line_numbers;
+    u16 number_of_relocations;
+    u16 number_of_line_numbers;
+    u32 characteristics;
+};
+
+
+struct coff_relocation {
+    u32 relocation_address;
+    u32 symbol_table_index;
+    u16 relocation_type;
+};
+
+struct coff_symbol {
+    union{
+        char short_name[8];
+        struct{
+            u32 zeroes;
+            u32 offset;
+        } long_name;
+    };
     
-    struct string identifier = function->identifier->string;
+    u32 value;
+    u16 section_number;
+    u16 symbol_type;
+    u8 storage_class;
+    u8 number_of_auxiliary_symbol_records;
+};
+
+int try_to_extract_simple_declaration_from_object_file(struct coff_file_header *coff_file_header, u64 coff_file_size, struct ast_declaration *declaration){
+    
+    (void)coff_file_size; // @cleanup: Check any offsets.
+    
+    struct coff_section_header *section_headers = (void *)(coff_file_header + 1);
+    
+    struct string identifier = declaration->identifier->string;
+    
+    char *string_table = (char*)coff_file_header + coff_file_header->pointer_to_symbol_table + coff_file_header->number_of_symbols * 18;
+    
+    u8 *symbol_at = (u8*)coff_file_header + coff_file_header->pointer_to_symbol_table;
+    for(u32 symbol_index = 0; symbol_index < coff_file_header->number_of_symbols; symbol_index++){
+        struct coff_symbol *symbol = (struct coff_symbol *)(symbol_at + symbol_index * 18);
+        symbol_index += symbol->number_of_auxiliary_symbol_records;
+        
+        struct string symbol_name;
+        if(symbol->long_name.zeroes == 0){
+            symbol_name = string_from_cstring(string_table + symbol->long_name.offset);
+        }else{
+            if(symbol->short_name[7] == 0){
+                symbol_name = string_from_cstring(symbol->short_name);
+            }else{
+                symbol_name = create_string((u8 *)symbol->short_name, 8);
+            }
+        }
+        
+        if(string_match(symbol_name, identifier)){
+            // We found the symbol, get the corresponding section. @cleanup: check in bounds and non-zero.
+            struct coff_section_header *section = &section_headers[symbol->section_number-/*one-based*/1];
+            if((section->number_of_relocations == 0) && (section->size_of_raw_data == declaration->type->size)){
+                // @cleanup: check that the section characteristics match what we expect (data or function).
+                declaration->memory_location = (u8 *)coff_file_header + section->pointer_to_raw_data;
+                declaration->assign_expr = &globals.empty_statement;// @HACK: Is this how we want to solve this?
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+void lookup_declaration_in_libraries(struct context *context, struct ast_declaration *declaration, struct token *token_that_referenced_this_declaration){
+    
+    char *function_or_declaration = (declaration->base.kind == AST_function) ? "function" : "declaration";
+    char *Function_or_Declaration = (declaration->base.kind == AST_function) ? "Function" : "Declaration";
+    int is_dll_import = (declaration->flags & DECLARATION_FLAGS_is_dllimport) != 0;
+    
+    // 
+    // Search the libraries for an identifier, if we found an import header,
+    // we can return a dll_import_node. If we found an object file that defines the symbol,
+    // remember that, but keep on searching.
+    // 
+    
+    struct string identifier = declaration->identifier->string;
+    struct string object_file_library_name = {0};
+    struct string import_library_name = {0};
+    
+    struct ar_import_header *ar_import_header = 0;
+    struct coff_file_header *coff_file_header = 0;
+    u64 coff_file_size = 0;
     
     for(struct library_node *library = globals.libraries.first; library; library = library->next){
         
-        struct dll_import_node *found = ar_lookup_symbol(context->arena, library, identifier);
-        if(found) return found;
+        struct ar_symbol_lookup found = ar_lookup_symbol(library, identifier);
+        if(found.lookup_result == AR_SYMBOL_LOOKUP_failed) continue;
+        
+        if(found.lookup_result == AR_SYMBOL_LOOKUP_import_header){
+            ar_import_header = found.ar_import_header;
+            import_library_name = library->path;
+            break;
+        }else{
+            object_file_library_name = library->path;
+            if(!is_dll_import){
+                coff_file_header = found.coff_file_header;
+                coff_file_size = found.file_size;
+                break;
+            }
+        }
     }
     
-    
-    end_counter(context, lookup_dll_import);
-    return null;
-}
-
-
-void resolve_dll_import_node_or_report_error_for_referenced_unresolved_function(struct context *context, struct ast_function *function, struct token *token_that_referenced_this_function){
-    
-    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
-        
-        struct dll_import_node *import = lookup_function_in_dll_imports(context, function);
-        if(!import){
-            report_error(context, function->base.token, "Function is not contained in any of the imported dlls.");
-            report_error(context, token_that_referenced_this_function, "... Here the function was referenced.");
+    if(!ar_import_header && !object_file_library_name.data){
+        // We have not found the symbol.
+        if(is_dll_import){
+            report_error(context, declaration->base.token, "%s is not contained in any of the imported dlls.", Function_or_Declaration);
+            report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
+        }else{
+            report_error(context, declaration->base.token, "%s was declared and referenced but never defined.", Function_or_Declaration);
+            report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
         }
-        function->dll_import_node = import;
-        
         return;
     }
+    
+    if(coff_file_header){
+        // 
+        // Try to extract the declaration from the object file if it is "simple".
+        // 
+        int success = try_to_extract_simple_declaration_from_object_file(coff_file_header, coff_file_size, declaration);
+        
+        if(!success){
+            // @incomplete:
+            report_error(context, declaration->base.token, "%s is defined in library '%.*s', but static linking is currently not supported.", Function_or_Declaration, object_file_library_name.size, object_file_library_name.data);
+            report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
+        }
+        return;
+    }
+    
+    if(!ar_import_header){
+        assert(object_file_library_name.data);
+        
+        // :Error no static linking
+        report_error(context, declaration->base.token, "Referenced %s declared `__declspec(dllimport)` is defined in library '%.*s'.", function_or_declaration, object_file_library_name.size, object_file_library_name.data);
+        report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
+        return;
+    }
+    
+    if(object_file_library_name.data){
+        report_warning(context, WARNING_imported_function_is_also_defined, declaration->base.token, "%s is imported from '%.*s', but also defined in library '%.*s'.", Function_or_Declaration, import_library_name.size, import_library_name.data, object_file_library_name.size, object_file_library_name.data);
+    }
+    
+    if(declaration->base.kind == AST_declaration){
+        // @incomplete:
+        report_error(context, declaration->base.token, "Currently no __declspec(dllimport) for data declarations?");
+        return;
+    }
+    
+    struct ast_function *function = (struct ast_function *)declaration;
+    
+    u8 *library_name = (u8 *)(ar_import_header + 1) + identifier.size + 1;
+    
+    struct string dll_name = cstring_to_string((char *)library_name);
+    
+    struct dll_node *dll_node = globals.dlls.first;
+    for(; dll_node; dll_node = dll_node->next){
+        if(string_match(dll_node->name, dll_name)) break;
+    }
+    
+    if(!dll_node){
+        dll_node = push_struct(context->arena, struct dll_node);
+        dll_node->name = dll_name;
+        
+        sll_push_back(globals.dlls, dll_node);
+        globals.dlls.amount += 1;
+    }
+    
+    // @note: We should not have to lookup the 'identifier' in the 'dll_node' as otherwise,
+    //        we should have already been here and set the 'import_node' member of the
+    //        lookup table.
+    
+    struct dll_import_node *import_node = push_struct(context->arena, struct dll_import_node);
+    import_node->import_name  = identifier;
+    import_node->ordinal_hint = ar_import_header->ordinal_hint;
+    
+    sll_push_back(dll_node->import_list, import_node);
+    dll_node->import_list.count += 1;
+    
+    if(is_dll_import){
+        function->dll_import_node = import_node;
+    }else{
+        // :dllimports_with_missing_declspec
+        // 
+        // Apparently, MSVC does note require 'dllimport'. 
+        // It appears to be a keyword that gets rid of one indirection that we (or link.exe)
+        // have to insert. Hence, we generate a call to a rip relative jump, i.e.
+        //     jmp [rip + <offset_off_dll_import_in_import_table>]
+        // 
+        
+        // @cleanup: I currently don't see a way of how we can get the name of the library or dll.
+        report_warning(context, WARNING_function_is_implicitly_dllimport, declaration->base.token, "%s is treated as import, but was not declared '__declspec(dllimport)'.", Function_or_Declaration);
+        
+        function->as_decl.flags |= DECLARATION_FLAGS_is_dll_import_with_missing_declspec;
+        function->dll_import_node = import_node;
+    }
+}
+
+void resolve_dll_import_node_or_report_error_for_referenced_unresolved_function(struct context *context, struct ast_function *function, struct token *token_that_referenced_this_function){
     
     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
         report_error(context, function->base.token, "A referenced function marked '__declspec(dllexport)' must be defined."); // :Error
@@ -244,25 +424,6 @@ void resolve_dll_import_node_or_report_error_for_referenced_unresolved_function(
         return;
     }
     
-    // :dllimports_with_missing_declspec
-    // 
-    // Apparently, MSVC does note require 'dllimport'. 
-    // It appears to be a keyword that gets rid of one indirection that we (or link.exe)
-    // have to insert. Hence, we generate a call to a rip relative jump, i.e.
-    //     jmp [rip + <offset_off_dll_import_in_import_table>]
-    // 
-    
-    struct dll_import_node *import = lookup_function_in_dll_imports(context, function);
-    if(import){
-        // @cleanup: I currently don't see a way of how we can get the name of the library or dll.
-        report_warning(context, WARNING_function_is_implicitly_dllimport, function->base.token, "Function is treated as import, but was not declared '__declspec(dllimport)'.");
-        
-        function->as_decl.flags |= DECLARATION_FLAGS_is_dll_import_with_missing_declspec;
-        function->dll_import_node = import;
-        return;
-    }
-    
-    report_error(context, function->base.token, "Function was declared and referenced but never defined.");
-    report_error(context, token_that_referenced_this_function, "... Here the function was referenced.");
+    lookup_declaration_in_libraries(context, &function->as_decl, token_that_referenced_this_function);
 }
 
