@@ -161,10 +161,10 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
     }
     
     u32 *symbol_index_at  = (u32 *)little_endian_symbol_index_base;
-    u32 *symbol_index_end = (u32 *)(little_endian_symbol_index_base + little_endian_symbol_index_size);
+    u8  *symbol_index_end = (u8 *)(little_endian_symbol_index_base + little_endian_symbol_index_size);
     
     u32 amount_of_members = *symbol_index_at++;
-    if(symbol_index_at + amount_of_members + 1 > symbol_index_end){
+    if(symbol_index_at + amount_of_members + 1 > (u32 *)symbol_index_end){
         print("Error: Failed to parse library '%s'.\n", file_name);
         return 1;
     }
@@ -180,7 +180,7 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
     
     u16 *symbol_member_indices = (u16 *)symbol_index_at;
     
-    if(symbol_member_indices + amount_of_symbols >= (u16 *)symbol_index_end){ // @note: Equality so the string buffer is not empty.
+    if(symbol_member_indices + amount_of_symbols >= (u16 *)symbol_index_end || symbol_index_end[-1] != 0){ // @note: Equality so the string buffer is not empty.
         print("Error: Failed to parse library '%s'.\n", file_name);
         return 1;
     }
@@ -280,7 +280,7 @@ struct dll_import_node *ar_lookup_symbol(struct memory_arena *arena, struct libr
     // @note: These indices are one based for some stupid reason.
     u16 member_index = library_node->symbol_member_indices[symbol_index];
     if(member_index == 0 || member_index > library_node->amount_of_members){
-        print("Warning: A parse error occured while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
+        print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
         return null;
     }
     member_index -= 1;
@@ -322,7 +322,7 @@ struct dll_import_node *ar_lookup_symbol(struct memory_arena *arena, struct libr
     
     u64 member_offset = (u64)library_node->member_offsets[member_index];
     if(member_offset + sizeof(struct ar_file_header) > file.size){
-        print("Warning: A parse error occured while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
+        print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
         return null;
     }
     
@@ -333,7 +333,7 @@ struct dll_import_node *ar_lookup_symbol(struct memory_arena *arena, struct libr
     int parse_size_success = 1;
     u64 file_size = string_to_u64(file_size_string, &parse_size_success);
     if(!parse_size_success || file_size > file.size || member_offset + file_size > file.size){
-        print("Warning: A parse error occured while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
+        print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
         return null;
     }
     
@@ -351,7 +351,7 @@ struct dll_import_node *ar_lookup_symbol(struct memory_arena *arena, struct libr
     } *import_header = (void *)(file_header + 1);
     
     if((file_size <= sizeof(*import_header) + identifier.size + 1) || file_data[file_size-1] != 0){
-        print("Warning: A parse error occured while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
+        print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
         return null;
     }
     

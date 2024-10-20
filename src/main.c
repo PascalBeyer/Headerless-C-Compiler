@@ -714,7 +714,7 @@ struct context{
     // are able to still provide decent error messages.
     b32 should_exit_statement; 
     
-    // An error occured, it need not be fatal, if it is fatal (no other errors in the 
+    // An error occurred, it need not be fatal, if it is fatal (no other errors in the 
     // global scope entry should be reported) should_sleep is also set.
     b32 error; 
     
