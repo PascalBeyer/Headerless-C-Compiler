@@ -4200,18 +4200,18 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             enum subsystem subsystem;
             struct string entry_point_name;
             char *pre_main_file;
+            char *pre_main_file_no_args;
         } table[] = {
             // Table is in order of preference.
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("_start"), 0},
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main"), "implicit/pre_main.c"},
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain"), "implicit/pre_wmain.c"},
-            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("WinMain"), "implicit/pre_WinMain.c"},
-            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("wWinMain"), "implicit/pre_wWinMain.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("_start")},
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main"),     "implicit/pre_main.c",     "implicit/pre_main_no_args.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain"),    "implicit/pre_wmain.c",    "implicit/pre_wmain_no_args.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("WinMain"),  "implicit/pre_WinMain.c",  "implicit/pre_WinMain.c"},  // These always need to have args I am pretty sure.
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("wWinMain"), "implicit/pre_wWinMain.c", "implicit/pre_wWinMain.c"}, // These always need to have args I am pretty sure.
             
             { OUTPUT_FILE_dll, SUBSYSTEM_windows, const_string("DllMain") },
             
             { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("_start") },
-            { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("main") },
             { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("efi_main") },
             { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("EfiMain") },
         };
@@ -4228,11 +4228,14 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                 struct ast_declaration *declaration = (struct ast_declaration *)ast_table_get(&globals.global_declarations, atom);
                 if(!declaration || !declaration->assign_expr || declaration->type->kind != AST_function_type) continue;
                 
-                if(table[index].pre_main_file && ((struct ast_function_type *)declaration->type)->argument_list.count){
+                if(table[index].pre_main_file){
+                    
+                    char *pre_main_file = ((struct ast_function_type *)declaration->type)->argument_list.count ? table[index].pre_main_file : table[index].pre_main_file_no_args;
+                    
                     // 
                     // We need to load the pre-main file.
                     // 
-                    struct string premain_path = concatenate_file_paths(arena, strip_file_name(compiler_path), string_from_cstring(table[index].pre_main_file));
+                    struct string premain_path = concatenate_file_paths(arena, strip_file_name(compiler_path), string_from_cstring(pre_main_file));
                     
                     struct os_file file = os_load_file((char *)premain_path.data, 0, 0);
                     if(file.file_does_not_exist){
@@ -4241,6 +4244,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                         print("       command line option to squelch this warning.\n");
                         print("       This file is usually contained in: \n");
                         print("             \"<compiler-path>/%s\".", table[index].pre_main_file);
+                        print("       @incomplete: The -no_premain option currently does not exist :)\n");
                         return 1;
                     }
                     

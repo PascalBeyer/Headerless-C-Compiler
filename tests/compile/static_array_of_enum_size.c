@@ -8,6 +8,6 @@ enum{
 // and thus we slept on the wrong declaration
 static char array[size];
 
-void main(){
+int main(){
     
 }

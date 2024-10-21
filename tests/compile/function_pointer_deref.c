@@ -1,7 +1,7 @@
 
 void (*function_pointer)(void);
 
-void main(){
-	function_pointer = main;
-	(*function_pointer)();
+int main(){
+    function_pointer = main;
+    (*function_pointer)();
 }

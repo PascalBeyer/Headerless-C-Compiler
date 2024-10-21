@@ -7,6 +7,6 @@ typedef struct {
 
 #define CASSERT(EXPRESSION) switch (0) {case 0: case (EXPRESSION):;}
 
-void main() {
-  CASSERT(sizeof(LanPacket) == 4);
+int main() {
+    CASSERT(sizeof(LanPacket) == 4);
 }
