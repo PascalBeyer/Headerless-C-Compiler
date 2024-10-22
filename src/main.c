@@ -3655,16 +3655,21 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         
                         "#define _MSC_EXTENSIONS 1\n"
                         
+                        // I will define these for now.
+                        // In the future, these will only be defined by the "clang-cl.exe"-like variant of my compiler.
+                        // For the time being, we are more or less working on that variant.
+                        //                                                                             - 21.10.2024
+                        "#define _MSC_BUILD 0\n"
+                        "#define _MSC_FUL_VER 192829336\n"
+                        "#define _MSC_VER 1928\n"
+                        
                         "#define __assume(a) (void)0\n"
                         
-                        // 
-                        // @cleanup: should we define these? 
-                        // 
                         "#define __STDC_VERSION__ 201112L\n"
                         "#define __STDC__ 1\n"
                         "#define __STDC_NO_COMPLEX__ 1\n"
                         "#define __STDC_NO_THREADS__ 1\n"
-                        "#define __STDC_NO_VLA__ 1\n"
+                        "#define __STDC_NO_VLA__     1\n"
                         "#define __STDC_NO_ATOMICS__ 1\n"
                         );
                 
