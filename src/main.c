@@ -4332,25 +4332,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     //
     begin_counter(context, unresolved_sleepers);
     
-    // 
-    // First report errors for global things that sleep.
-    // If we found some global thing that sleeps we want to exit before examining the local (static) sleeper tables, 
-    // as things in there might sleep on global declarations.
-    //
-    
-    report_errors_for_unresolved_sleepers(context, &globals.compound_sleeper_table);
-    if(globals.an_error_has_occurred) goto end;
-    
-    report_errors_for_unresolved_sleepers(context, &globals.declaration_sleeper_table);
-    if(globals.an_error_has_occurred) goto end;
-    
-    for(struct compilation_unit *compilation_unit = globals.compilation_units.first; compilation_unit; compilation_unit = compilation_unit->next){
-        //
-        // We report errors for unresolved global static identifiers for all compilation units, 
-        // even if one compilation unit already reported an unresolved identifier.
-        //
-        report_errors_for_unresolved_sleepers(context, &compilation_unit->static_sleeper_table);
-    }
+    report_errors_for_unresolved_sleepers(context);
     if(globals.an_error_has_occurred) goto end;
     
     end_counter(context, unresolved_sleepers);
