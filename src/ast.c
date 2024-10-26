@@ -347,6 +347,7 @@ enum ast_kind{
     
     AST_void_type,
     AST_integer_type,
+    AST_atomic_integer_type,
     AST_float_type,
     AST_bitfield_type,
     AST_pointer_type,

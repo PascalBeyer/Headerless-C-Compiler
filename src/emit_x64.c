@@ -1895,7 +1895,7 @@ func struct emit_location *emit_compound_assignment__internal(struct context *co
 func struct emit_location *emit_compound_assignment(struct context *context, struct ast *ast, u8 reg_extension, u8 u8_code, u8 opcode){
     struct ast_binary_op *assign = cast(struct ast_binary_op *)ast;
     
-    assert(assign->lhs->resolved_type->kind == AST_integer_type || assign->lhs->resolved_type->kind == AST_pointer_type);
+    assert(assign->lhs->resolved_type->kind == AST_integer_type || assign->lhs->resolved_type->kind == AST_pointer_type || assign->lhs->resolved_type->kind == AST_atomic_integer_type);
     assert(assign->rhs->resolved_type->kind == AST_integer_type);
     assert(assign->lhs->resolved_type->size == assign->rhs->resolved_type->size);
     assert(assign->base.resolved_type == assign->lhs->resolved_type);
@@ -1905,7 +1905,13 @@ func struct emit_location *emit_compound_assignment(struct context *context, str
     struct emit_location *lhs = emit_code_for_ast(context, assign->lhs);
     
     b32 is_signed = type_is_signed(assign->base.resolved_type);
-    return emit_compound_assignment__internal(context, no_prefix(), lhs, rhs, is_signed, reg_extension, u8_code, opcode);
+    
+    // @incomplete: This only works for some of the instructions and is technically incorrect, if the the resulting values is read.
+    //              Because I think it will re-fetch the value of the atomic.
+    struct prefixes prefix = no_prefix();
+    if(assign->lhs->resolved_type->kind == AST_atomic_integer_type) prefix.legacy_prefixes |= ASM_PREFIX_lock;
+    
+    return emit_compound_assignment__internal(context, prefix, lhs, rhs, is_signed, reg_extension, u8_code, opcode);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -2080,8 +2086,8 @@ func void emit_jump(struct context *context, smm location, enum comp_condition c
     emit_u32(rel_location);
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////
-
+//_____________________________________________________________________________________________________________________
+// Bitfields
 
 func struct emit_location *emit_load_bitfield(struct context *context, struct emit_location *loc, struct ast_bitfield_type *bitfield){
     
@@ -2157,10 +2163,30 @@ struct emit_location *emit_store_bitfield(struct context *context, struct ast_bi
     emit_store(context, lhs, lhs_loaded);
     emit_location_allow_spilling(context, lhs);
     
+    return lhs; // @cleanup: should this not return something else? lhs should be register-relative.
+}
+
+//_____________________________________________________________________________________________________________________
+// Atomic integers
+
+struct emit_location *emit_store_atomic_integer(struct context *context, struct emit_location *lhs, struct emit_location *rhs){
+    
+    // A plain move is not enough to store with memory_order_seq_cst, we have to use an xchg instruction instead.
+    
+    emit_location_prevent_spilling(context, lhs);
+    struct emit_location *rhs_loaded = emit_load(context, rhs);
+    
+    // xchg lhs, rhs_loaded
+    u8 inst = (lhs->size == 1) ? EXCHANGE_REG8_REGM8 : EXCHANGE_REG_REGM;
+    emit_register_relative_register(context, no_prefix(), one_byte_opcode(inst), rhs_loaded->loaded_register, lhs);
+    
+    free_emit_location(context, rhs_loaded);
+    emit_location_allow_spilling(context, lhs);
     return lhs;
 }
 
-
+//_____________________________________________________________________________________________________________________
+// Conditions
 
 func struct emit_location *emit_compare_to_zero(struct context *context, struct emit_location *loaded){
     assert(loaded->state == EMIT_LOCATION_loaded);
@@ -3205,6 +3231,8 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             if(assign->lhs->resolved_type->kind == AST_bitfield_type){
                 struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)assign->lhs->resolved_type;
                 return emit_store_bitfield(context, bitfield, lhs, rhs);
+            }else if(assign->lhs->resolved_type->kind == AST_atomic_integer_type){
+                return emit_store_atomic_integer(context, lhs, rhs);
             }
             
             emit_store(context, lhs, rhs);
@@ -3959,7 +3987,9 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
         }break;
         case AST_cast:{
             struct ast_unary_op *cast = cast(struct ast_unary_op *)ast;
-            struct emit_location *loc = emit_code_for_ast(context, cast->operand);
+            
+            struct ast *cast_what = cast->operand;
+            struct emit_location *loc = emit_code_for_ast(context, cast_what);
             struct ast_type *cast_to = cast->base.resolved_type;
             
             if(cast_to->kind == AST_bitfield_type){
@@ -3969,7 +3999,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 cast_to = bitfield->base_type;
             }
             
-            if(cast->operand->resolved_type == cast_to){
+            if(cast_what->resolved_type == cast_to){
                 return loc;
             }
             
@@ -3979,9 +4009,14 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 return emit_location_invalid(context);
             }
             
-            if(cast->operand->resolved_type->kind == AST_bitfield_type){
+            if(cast_what->resolved_type->kind == AST_bitfield_type){
                 // this is where we load bitfields
-                return emit_load_bitfield(context, loc, (struct ast_bitfield_type *)cast->operand->resolved_type);
+                return emit_load_bitfield(context, loc, (struct ast_bitfield_type *)cast_what->resolved_type);
+            }
+            
+            if(cast_what->resolved_type->kind == AST_atomic_integer_type){
+                // @note: It seems to me, that on x64 atomic-loads can simply be implemented as a mov.
+                return emit_load(context, loc);
             }
             
             if(cast_to == &globals.typedef_Bool){
@@ -3992,14 +4027,14 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             }
             
             assert(type_is_arithmetic(cast_to) || cast_to->kind == AST_pointer_type);
-            assert(type_is_arithmetic(cast->operand->resolved_type) || cast->operand->resolved_type->kind == AST_pointer_type);
+            assert(type_is_arithmetic(cast_what->resolved_type) || cast_what->resolved_type->kind == AST_pointer_type);
             
             if(loc->state != EMIT_LOCATION_register_relative){
                 loc = emit_load(context, loc);
             }
             
             if(loc->register_kind_when_loaded == REGISTER_KIND_xmm && cast_to->kind == AST_float_type){
-                assert(cast->operand->resolved_type->kind == AST_float_type);
+                assert(cast_what->resolved_type->kind == AST_float_type);
                 //
                 // Cast f32 -> f64 or f64 -> f32
                 //
@@ -4077,7 +4112,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             }
             
             assert(loc->register_kind_when_loaded == REGISTER_KIND_gpr);
-            b32 source_is_signed = type_is_signed(cast->operand->resolved_type);
+            b32 source_is_signed = type_is_signed(cast_what->resolved_type);
             
             if(cast_to->kind != AST_float_type && loc->size >= cast_to->size){
                 // If it is an integer to integer cast and the cast_to->size fits just truncate and return
@@ -4111,7 +4146,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             if(cast_to->kind == AST_float_type){
                 assert(loc->register_kind_when_loaded == REGISTER_KIND_gpr);
                 assert(loc->size == 4 || loc->size == 8);
-                assert(cast->operand->resolved_type->kind == AST_integer_type); // pointers are disallowed!
+                assert(cast_what->resolved_type->kind == AST_integer_type); // pointers are disallowed!
                 
                 // Casting from int to float:
                 //
@@ -4125,7 +4160,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 
                 enum legacy_prefixes prefix = (cast_to == &globals.typedef_f32) ? ASM_PREFIX_SSE_float : ASM_PREFIX_SSE_double;
                 
-                if(cast->operand->resolved_type == &globals.typedef_u64){
+                if(cast_what->resolved_type == &globals.typedef_u64){
                     assert(!source_is_signed && loc->size == 8);
                     // 
                     // This is the hard case. 
@@ -4198,7 +4233,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     return ret;
                 }
                 
-                if(cast->operand->resolved_type == &globals.typedef_u32){
+                if(cast_what->resolved_type == &globals.typedef_u32){
                     assert(!source_is_signed && loc->size == 4);
                     // if the source type is 
                     // we have to extend 'loc' into a full register, just in case it was casted from 64 bit.

@@ -40,6 +40,255 @@ int main(){
     ullong n_ullong = {0};
     
     
+    n_bool = n_bool + a_bool;
+    n_char = n_char + a_char;
+    n_short = n_short + a_short;
+    n_int = n_int + a_int;
+    n_long = n_long + a_long;
+    n_llong = n_llong + a_llong;
+    
+    n_uchar = n_uchar + a_uchar;
+    n_ushort = n_ushort + a_ushort;
+    n_uint = n_uint + a_uint;
+    n_ulong = n_ulong + a_ulong;
+    n_ullong = n_ullong + a_ullong;
+    
+    a_bool = n_bool;
+    a_char = n_char;
+    a_short = n_short;
+    a_int = n_int;
+    a_long = n_long;
+    a_llong = n_llong;
+    
+    a_uchar = n_uchar;
+    a_ushort = n_ushort;
+    a_uint = n_uint;
+    a_ulong = n_ulong;
+    a_ullong = n_ullong;
+    
+    a_bool = 1337;
+    a_char = 1337;
+    a_short = 1337;
+    a_int = 1337;
+    a_long = 1337;
+    a_llong = 1337;
+    
+    a_uchar = 1337;
+    a_ushort = 1337;
+    a_uint = 1337;
+    a_ulong = 1337;
+    a_ullong = 1337;
+    
+    
+    // 
+    // Technically wrongly implemented compound assignments:
+    // 
+    
+    a_bool &= n_bool;
+    a_char &= n_char;
+    a_short &= n_short;
+    a_int &= n_int;
+    a_long &= n_long;
+    a_llong &= n_llong;
+    
+    a_uchar &= n_uchar;
+    a_ushort &= n_ushort;
+    a_uint &= n_uint;
+    a_ulong &= n_ulong;
+    a_ullong &= n_ullong;
+    
+    a_bool |= n_bool;
+    a_char |= n_char;
+    a_short |= n_short;
+    a_int |= n_int;
+    a_long |= n_long;
+    a_llong |= n_llong;
+    
+    a_uchar |= n_uchar;
+    a_ushort |= n_ushort;
+    a_uint |= n_uint;
+    a_ulong |= n_ulong;
+    a_ullong |= n_ullong;
+    
+    a_bool ^= n_bool;
+    a_char ^= n_char;
+    a_short ^= n_short;
+    a_int ^= n_int;
+    a_long ^= n_long;
+    a_llong ^= n_llong;
+    
+    a_uchar ^= n_uchar;
+    a_ushort ^= n_ushort;
+    a_uint ^= n_uint;
+    a_ulong ^= n_ulong;
+    a_ullong ^= n_ullong;
+    
+    a_bool += n_bool;
+    a_char += n_char;
+    a_short += n_short;
+    a_int += n_int;
+    a_long += n_long;
+    a_llong += n_llong;
+    
+    a_uchar += n_uchar;
+    a_ushort += n_ushort;
+    a_uint += n_uint;
+    a_ulong += n_ulong;
+    a_ullong += n_ullong;
+    
+    a_bool -= n_bool;
+    a_char -= n_char;
+    a_short -= n_short;
+    a_int -= n_int;
+    a_long -= n_long;
+    a_llong -= n_llong;
+    
+    a_uchar -= n_uchar;
+    a_ushort -= n_ushort;
+    a_uint -= n_uint;
+    a_ulong -= n_ulong;
+    a_ullong -= n_ullong;
+    
+    a_bool &= 1337;
+    a_char &= 1337;
+    a_short &= 1337;
+    a_int &= 1337;
+    a_long &= 1337;
+    a_llong &= 1337;
+    
+    a_uchar &= 1337;
+    a_ushort &= 1337;
+    a_uint &= 1337;
+    a_ulong &= 1337;
+    a_ullong &= 1337;
+    
+    a_bool |= 1337;
+    a_char |= 1337;
+    a_short |= 1337;
+    a_int |= 1337;
+    a_long |= 1337;
+    a_llong |= 1337;
+    
+    a_uchar |= 1337;
+    a_ushort |= 1337;
+    a_uint |= 1337;
+    a_ulong |= 1337;
+    a_ullong |= 1337;
+    
+    a_bool ^= 1337;
+    a_char ^= 1337;
+    a_short ^= 1337;
+    a_int ^= 1337;
+    a_long ^= 1337;
+    a_llong ^= 1337;
+    
+    a_uchar ^= 1337;
+    a_ushort ^= 1337;
+    a_uint ^= 1337;
+    a_ulong ^= 1337;
+    a_ullong ^= 1337;
+    
+    a_bool += 1337;
+    a_char += 1337;
+    a_short += 1337;
+    a_int += 1337;
+    a_long += 1337;
+    a_llong += 1337;
+    
+    a_uchar += 1337;
+    a_ushort += 1337;
+    a_uint += 1337;
+    a_ulong += 1337;
+    a_ullong += 1337;
+    
+    a_bool -= 1337;
+    a_char -= 1337;
+    a_short -= 1337;
+    a_int -= 1337;
+    a_long -= 1337;
+    a_llong -= 1337;
+    
+    a_uchar -= 1337;
+    a_ushort -= 1337;
+    a_uint -= 1337;
+    a_ulong -= 1337;
+    a_ullong -= 1337;
+    
+    
+#if 0
+    // 
+    // Unimplemented compound assignments:
+    // 
+    
+    a_bool <<= n_bool;
+    a_char <<= n_char;
+    a_short <<= n_short;
+    a_int <<= n_int;
+    a_long <<= n_long;
+    a_llong <<= n_llong;
+    
+    a_uchar <<= n_uchar;
+    a_ushort <<= n_ushort;
+    a_uint <<= n_uint;
+    a_ulong <<= n_ulong;
+    a_ullong <<= n_ullong;
+    
+    
+    a_bool >>= n_bool;
+    a_char >>= n_char;
+    a_short >>= n_short;
+    a_int >>= n_int;
+    a_long >>= n_long;
+    a_llong >>= n_llong;
+    
+    a_uchar >>= n_uchar;
+    a_ushort >>= n_ushort;
+    a_uint >>= n_uint;
+    a_ulong >>= n_ulong;
+    a_ullong >>= n_ullong;
+    
+    a_bool *= n_bool;
+    a_char *= n_char;
+    a_short *= n_short;
+    a_int *= n_int;
+    a_long *= n_long;
+    a_llong *= n_llong;
+    
+    a_uchar *= n_uchar;
+    a_ushort *= n_ushort;
+    a_uint *= n_uint;
+    a_ulong *= n_ulong;
+    a_ullong *= n_ullong;
+    
+    a_bool /= n_bool;
+    a_char /= n_char;
+    a_short /= n_short;
+    a_int /= n_int;
+    a_long /= n_long;
+    a_llong /= n_llong;
+    
+    a_uchar /= n_uchar;
+    a_ushort /= n_ushort;
+    a_uint /= n_uint;
+    a_ulong /= n_ulong;
+    a_ullong /= n_ullong;
+    
+    a_bool %= n_bool;
+    a_char %= n_char;
+    a_short %= n_short;
+    a_int %= n_int;
+    a_long %= n_long;
+    a_llong %= n_llong;
+    
+    a_uchar %= n_uchar;
+    a_ushort %= n_ushort;
+    a_uint %= n_uint;
+    a_ulong %= n_ulong;
+    a_ullong %= n_ullong;
+    
+#endif
+    
+    
     //_____________________________________________________________________________________________________________________
     // Atomic Fences
     

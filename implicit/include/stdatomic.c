@@ -121,7 +121,7 @@ __declspec(inline_asm) void atomic_flag_clear_explicit(volatile atomic_flag *obj
 //_____________________________________________________________________________________________________________________
 // Atomic Exchange Functions
 
-__declspec(inline_asm) _Bool __atomic_exchange_bool(atomic_char *object, _Bool desired){
+__declspec(inline_asm) _Bool __atomic_exchange_bool(atomic_bool *object, _Bool desired){
     xchg [object], desired
     return desired
 }

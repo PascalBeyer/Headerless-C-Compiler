@@ -527,7 +527,7 @@ func struct ast_type *perform_integer_promotions(struct ast_type *type){
 }
 
 
-func struct ast *maybe_insert_bitfield_cast(struct context *context, struct ast *ast){
+func struct ast *maybe_insert_cast_from_special_int_to_int(struct context *context, struct ast *ast){
     if(ast->resolved_type->kind == AST_bitfield_type){
         struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)ast->resolved_type;
         
@@ -548,7 +548,12 @@ func struct ast *maybe_insert_bitfield_cast(struct context *context, struct ast 
         }else{
             ast = push_cast(context, bitfield->base_type, null, ast);
         }
+    }else if(ast->resolved_type->kind == AST_atomic_integer_type){
+        // :translate_atomic_to_non_atomic_and_back
+        struct ast_type *non_atomic_type = ast->resolved_type - (&globals.typedef_atomic_bool - &globals.typedef_Bool);
+        ast = push_cast(context, non_atomic_type, null, ast);
     }
+    
     return ast;
 }
 
@@ -566,7 +571,7 @@ func void perform_integer_promotion_on_literal(struct ast_integer_literal *lit){
 }
 
 func struct ast *maybe_insert_integer_promotion_cast(struct context *context, struct ast *ast){
-    ast = maybe_insert_bitfield_cast(context, ast);
+    ast = maybe_insert_cast_from_special_int_to_int(context, ast);
     
     struct ast_type *promoted_type = perform_integer_promotions(ast->resolved_type);
     if(ast->resolved_type != promoted_type){
@@ -625,8 +630,8 @@ func struct ast_type *perform_usual_arithmetic_conversions(struct ast_type *lhs,
 
 func void maybe_insert_arithmetic_conversion_casts(struct context *context, struct ast_binary_op *op){
     
-    op->lhs = maybe_insert_bitfield_cast(context, op->lhs);
-    op->rhs = maybe_insert_bitfield_cast(context, op->rhs);
+    op->lhs = maybe_insert_cast_from_special_int_to_int(context, op->lhs);
+    op->rhs = maybe_insert_cast_from_special_int_to_int(context, op->rhs);
     
     if(!type_is_arithmetic(op->lhs->resolved_type) || !type_is_arithmetic(op->rhs->resolved_type)) return;
     
@@ -1134,11 +1139,12 @@ func b32 check_for_basic_types__internal(struct context *context, struct ast *as
     struct ast_type *type = ast->resolved_type;
     
     b32 okay = false;
-    if((flags & CHECK_integer) && (type->kind == AST_integer_type))  okay = true;
-    if((flags & CHECK_integer) && (type->kind == AST_bitfield_type)) okay = true;
-    if((flags & CHECK_pointer) && (type->kind == AST_pointer_type))  okay = true;
-    if((flags & CHECK_pointer) && (type->kind == AST_array_type))    okay = true;
-    if((flags & CHECK_float)   && (type->kind == AST_float_type))    okay = true;
+    if((flags & CHECK_integer) && (type->kind == AST_integer_type))        okay = true;
+    if((flags & CHECK_integer) && (type->kind == AST_bitfield_type))       okay = true;
+    if((flags & CHECK_integer) && (type->kind == AST_atomic_integer_type)) okay = true;
+    if((flags & CHECK_pointer) && (type->kind == AST_pointer_type))        okay = true;
+    if((flags & CHECK_pointer) && (type->kind == AST_array_type))          okay = true;
+    if((flags & CHECK_float)   && (type->kind == AST_float_type))          okay = true;
     
     if(!okay){
         char *msg;
@@ -1521,7 +1527,7 @@ func struct ast *push_nodes_for_subscript(struct context *context, struct ast *l
         invalid_code_path;
     }
     
-    index = maybe_insert_bitfield_cast(context, index);
+    index = maybe_insert_cast_from_special_int_to_int(context, index);
     index = push_cast(context, &globals.typedef_s64, NULL, index);
     
     struct ast_subscript *subscript = _parser_ast_push(context, token, sizeof(struct ast_subscript), alignof(struct ast_subscript), subscript_kind);
@@ -1535,7 +1541,13 @@ func struct ast *push_nodes_for_subscript(struct context *context, struct ast *l
 
 func struct ast *maybe_insert_implicit_assignment_cast_and_check_that_types_match(struct context *context, struct ast_type *lhs_type, struct ast *lhs_defined_type, struct ast *rhs, struct token *assignment){
     
-    rhs = maybe_insert_bitfield_cast(context, rhs);
+    rhs = maybe_insert_cast_from_special_int_to_int(context, rhs);
+    
+    // :translate_atomic_to_non_atomic_and_back
+    // 
+    // If the lhs_type is an atomic integer type, we want to do the exact same stuff as if it was non-atomic.
+    // The atomic storing is handled by the back-end.
+    if(lhs_type->kind == AST_atomic_integer_type) lhs_type = lhs_type - (&globals.typedef_atomic_bool - &globals.typedef_Bool);
     
     if(lhs_type == rhs->resolved_type) return rhs;
     if(rhs->resolved_type == &globals.typedef_poison) return rhs;
@@ -5213,7 +5225,7 @@ case NUMBER_KIND_##type:{ \
                 
                 // @cleanup: is this correct?
                 operand = maybe_load_address_for_array_or_function(context, operand);
-                operand = maybe_insert_bitfield_cast(context, operand);
+                operand = maybe_insert_cast_from_special_int_to_int(context, operand);
                 
                 if(operand->resolved_type == &globals.typedef_void){
                     if(op->base.resolved_type != &globals.typedef_void){
@@ -5745,7 +5757,7 @@ case NUMBER_KIND_##type:{ \
                 //           maybe we could make it compatible with binary ops, to use these functions
                 
                 cond->if_false = maybe_load_address_for_array_or_function(context, operand);
-                cond->if_false = maybe_insert_bitfield_cast(context, cond->if_false);
+                cond->if_false = maybe_insert_cast_from_special_int_to_int(context, cond->if_false);
                 // "one of the following shall hold":
                 
                 // "- both are arithmetic types"
@@ -6127,7 +6139,7 @@ case NUMBER_KIND_##type:{ \
             cond->condition = operand;
             struct ast *if_true = parse_expression(context, false);
             cond->if_true = maybe_load_address_for_array_or_function(context, if_true);
-            cond->if_true = maybe_insert_bitfield_cast(context, cond->if_true);
+            cond->if_true = maybe_insert_cast_from_special_int_to_int(context, cond->if_true);
             expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
             if(context->should_exit_statement) return operand;
             
@@ -6375,7 +6387,6 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             // Type qualifiers (const, restrict, volatile, _Atomic)
             //
             case TOKEN_atomic:{
-                report_warning(context, WARNING_atomic_ignored, token, "'_Atomic' is ignored for now.");
                 type_qualifiers |= QUALIFIER_atomic;
                 
                 if(peek_token_eat(context, TOKEN_open_paren)){
@@ -6384,6 +6395,10 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                     if(!type_info.type){
                         report_error(context, get_current_token_for_error_report(context), "Expected a type after '_Atomic('.");
                         break;
+                    }
+                    
+                    if(type_info.type->kind != AST_integer_type){
+                        report_error(context, token, "_Atomic is currently only implemented for integer types.");
                     }
                     
                     expect_token(context, TOKEN_closed_paren, "Expected a ')' after '_Atomic(<...>'");
@@ -7149,66 +7164,77 @@ case TOKEN_##type_name:{                                                 \
         
         switch((int)c_type){
             
-            case C_TYPE_void: specifiers.type_specifier =  &globals.typedef_void; break;
+            case C_TYPE_void: specifiers.type_specifier = &globals.typedef_void; break;
             
-            case C_TYPE_Bool: specifiers.type_specifier =  &globals.typedef_Bool; break;
+            case C_TYPE_Bool: specifiers.type_specifier = &globals.typedef_Bool; break;
             
-            case C_TYPE_unsigned: specifiers.type_specifier =  &globals.typedef_u32; break;
-            case C_TYPE_signed:   specifiers.type_specifier =  &globals.typedef_s32; break;
-            case C_TYPE_char:     specifiers.type_specifier =  &globals.typedef_s8; break;
-            case C_TYPE_short:    specifiers.type_specifier =  &globals.typedef_s16; break;
-            case C_TYPE_int:      specifiers.type_specifier =  &globals.typedef_s32; break;
-            case C_TYPE_long:     specifiers.type_specifier =  &globals.typedef_s32; break;
+            case C_TYPE_unsigned: specifiers.type_specifier = &globals.typedef_u32; break;
+            case C_TYPE_signed:   specifiers.type_specifier = &globals.typedef_s32; break;
+            case C_TYPE_char:     specifiers.type_specifier = &globals.typedef_s8; break;
+            case C_TYPE_short:    specifiers.type_specifier = &globals.typedef_s16; break;
+            case C_TYPE_int:      specifiers.type_specifier = &globals.typedef_s32; break;
+            case C_TYPE_long:     specifiers.type_specifier = &globals.typedef_s32; break;
             
-            case (C_TYPE_short | C_TYPE_int): specifiers.type_specifier =  &globals.typedef_s16; break;
-            case (C_TYPE_long  | C_TYPE_int): specifiers.type_specifier =  &globals.typedef_s32; break;
-            case (C_TYPE_long  | C_TYPE_long_long): specifiers.type_specifier =  &globals.typedef_s64; break;
-            case (C_TYPE_long  | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier =  &globals.typedef_s64; break;
+            case (C_TYPE_short | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s16; break;
+            case (C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_long  | C_TYPE_long_long): specifiers.type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_long  | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
             
-            case (C_TYPE_unsigned | C_TYPE_char):  specifiers.type_specifier =  &globals.typedef_u8; break;
-            case (C_TYPE_unsigned | C_TYPE_short): specifiers.type_specifier =  &globals.typedef_u16; break;
-            case (C_TYPE_unsigned | C_TYPE_int):   specifiers.type_specifier =  &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_long):  specifiers.type_specifier =  &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long): specifiers.type_specifier =  &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_char):  specifiers.type_specifier = &globals.typedef_u8; break;
+            case (C_TYPE_unsigned | C_TYPE_short): specifiers.type_specifier = &globals.typedef_u16; break;
+            case (C_TYPE_unsigned | C_TYPE_int):   specifiers.type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long): specifiers.type_specifier = &globals.typedef_u64; break;
             
-            case (C_TYPE_unsigned | C_TYPE_short | C_TYPE_int): specifiers.type_specifier =  &globals.typedef_u16; break;
-            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier =  &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier =  &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_short | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u16; break;
+            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u64; break;
             
-            case (C_TYPE_signed | C_TYPE_char):  specifiers.type_specifier =  &globals.typedef_s8; break;
-            case (C_TYPE_signed | C_TYPE_short): specifiers.type_specifier =  &globals.typedef_s16; break;
-            case (C_TYPE_signed | C_TYPE_int):   specifiers.type_specifier =  &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long):  specifiers.type_specifier =  &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long): specifiers.type_specifier =  &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_char):  specifiers.type_specifier = &globals.typedef_s8; break;
+            case (C_TYPE_signed | C_TYPE_short): specifiers.type_specifier = &globals.typedef_s16; break;
+            case (C_TYPE_signed | C_TYPE_int):   specifiers.type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long): specifiers.type_specifier = &globals.typedef_s64; break;
             
-            case (C_TYPE_signed | C_TYPE_short | C_TYPE_int): specifiers.type_specifier =  &globals.typedef_s16; break;
-            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier =  &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier =  &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_short | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s16; break;
+            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
             
-            case C_TYPE_int8:  specifiers.type_specifier =  &globals.typedef_s8; break;
-            case C_TYPE_int16: specifiers.type_specifier =  &globals.typedef_s16; break;
-            case C_TYPE_int32: specifiers.type_specifier =  &globals.typedef_s32; break;
-            case C_TYPE_int64: specifiers.type_specifier =  &globals.typedef_s64; break;
+            case C_TYPE_int8:  specifiers.type_specifier = &globals.typedef_s8; break;
+            case C_TYPE_int16: specifiers.type_specifier = &globals.typedef_s16; break;
+            case C_TYPE_int32: specifiers.type_specifier = &globals.typedef_s32; break;
+            case C_TYPE_int64: specifiers.type_specifier = &globals.typedef_s64; break;
             
-            case (C_TYPE_signed | C_TYPE_int8):  specifiers.type_specifier =  &globals.typedef_s8; break;
-            case (C_TYPE_signed | C_TYPE_int16): specifiers.type_specifier =  &globals.typedef_s16; break;
-            case (C_TYPE_signed | C_TYPE_int32): specifiers.type_specifier =  &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_int64): specifiers.type_specifier =  &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_int8):  specifiers.type_specifier = &globals.typedef_s8; break;
+            case (C_TYPE_signed | C_TYPE_int16): specifiers.type_specifier = &globals.typedef_s16; break;
+            case (C_TYPE_signed | C_TYPE_int32): specifiers.type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_int64): specifiers.type_specifier = &globals.typedef_s64; break;
             
-            case (C_TYPE_unsigned | C_TYPE_int8):  specifiers.type_specifier =  &globals.typedef_u8; break;
-            case (C_TYPE_unsigned | C_TYPE_int16): specifiers.type_specifier =  &globals.typedef_u16; break;
-            case (C_TYPE_unsigned | C_TYPE_int32): specifiers.type_specifier =  &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_int64): specifiers.type_specifier =  &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_int8):  specifiers.type_specifier = &globals.typedef_u8; break;
+            case (C_TYPE_unsigned | C_TYPE_int16): specifiers.type_specifier = &globals.typedef_u16; break;
+            case (C_TYPE_unsigned | C_TYPE_int32): specifiers.type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_int64): specifiers.type_specifier = &globals.typedef_u64; break;
             
-            case C_TYPE_float:    specifiers.type_specifier =  &globals.typedef_f32; break;
-            case C_TYPE_double:   specifiers.type_specifier =  &globals.typedef_f64; break;
-            case (C_TYPE_long | C_TYPE_double): specifiers.type_specifier =  &globals.typedef_f64; break;
+            case C_TYPE_float:    specifiers.type_specifier = &globals.typedef_f32; break;
+            case C_TYPE_double:   specifiers.type_specifier = &globals.typedef_f64; break;
+            case (C_TYPE_long | C_TYPE_double): specifiers.type_specifier = &globals.typedef_f64; break;
             
             default:{
                 prev_token(context); // This token is valid, as we just now got a c type.
                 report_error(context, next_token(context), "Invalid combination of base types.");
-                specifiers.type_specifier =  &globals.typedef_poison;
+                specifiers.type_specifier = &globals.typedef_poison;
             }break;
+        }
+    }
+    
+    if(type_qualifiers & QUALIFIER_atomic){
+        
+        if(specifiers.type_specifier->kind != AST_integer_type){
+            report_error(context, get_current_token_for_error_report(context), "_Atomic is currently only implemented for integer types.");
+            specifiers.type_specifier = &globals.typedef_poison;
+        }else{
+            // :translate_atomic_to_non_atomic_and_back
+            specifiers.type_specifier = specifiers.type_specifier + (&globals.typedef_atomic_bool - &globals.typedef_Bool);
         }
     }
     
@@ -7991,7 +8017,7 @@ func struct ast *parse_statement(struct context *context){
             struct ast_switch *ast_switch = parser_ast_push(context, initial_token, switch);
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'switch'.");
             ast_switch->switch_on = parse_expression(context, false);
-            ast_switch->switch_on = maybe_insert_bitfield_cast(context, ast_switch->switch_on);
+            ast_switch->switch_on = maybe_insert_cast_from_special_int_to_int(context, ast_switch->switch_on);
             
             if(ast_switch->switch_on->resolved_type->kind != AST_integer_type){
                 report_error(context, ast_switch->base.token, "Can only switch on integers.");
@@ -8404,6 +8430,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             if(peek_token_eat(context, TOKEN_restrict))  type_qualifiers |= QUALIFIER_restrict;
             if(peek_token_eat(context, TOKEN_const))     type_qualifiers |= QUALIFIER_const;
             if(peek_token_eat(context, TOKEN_volatile))  type_qualifiers |= QUALIFIER_volatile;
+            if(peek_token_eat(context, TOKEN_atomic))    type_qualifiers |= QUALIFIER_atomic;
             
             if(get_current_token(context) == begin) break;
         }

@@ -513,33 +513,82 @@ static struct{
         struct token *token;
     } *globally_referenced_declarations;
     
-#define members_for_typedef(typedef)    \
-struct token token_##typedef;       \
-struct ast_type typedef_##typedef   \
-
-    members_for_typedef(void);
-    members_for_typedef(Bool);
+    // 
+    // Tokens for basic types:
+    // 
     
-    members_for_typedef(u8);
-    members_for_typedef(u16);
-    members_for_typedef(u32);
-    members_for_typedef(u64);
+    struct token token_void;
+    struct token token_Bool;
     
-    members_for_typedef(s8);
-    members_for_typedef(s16);
-    members_for_typedef(s32);
-    members_for_typedef(s64);
+    struct token token_u8;
+    struct token token_u16;
+    struct token token_u32;
+    struct token token_u64;
     
-    members_for_typedef(f32);
-    members_for_typedef(f64);
+    struct token token_s8;
+    struct token token_s16;
+    struct token token_s32;
+    struct token token_s64;
     
-    members_for_typedef(poison);
+    struct token token_atomic_bool;
     
-    // typedef_bool?
+    struct token token_atomic_u8;
+    struct token token_atomic_u16;
+    struct token token_atomic_u32;
+    struct token token_atomic_u64;
+    
+    struct token token_atomic_s8;
+    struct token token_atomic_s16;
+    struct token token_atomic_s32;
+    struct token token_atomic_s64;
+    
+    struct token token_f32;
+    struct token token_f64;
+    
+    struct token token_poison;
+    
+    // 
+    // Basic types:
+    // @WARNING: The non-atomic version need to stay in the same order as the atomic versions, 
+    //           so that we can use address manipulation to go from atomic to non atomic.
+    //           (See :translate_atomic_to_non_atomic_and_back)
+    // 
+    
+    struct ast_type typedef_void;
+    struct ast_type typedef_Bool;
+    
+    struct ast_type typedef_u8;
+    struct ast_type typedef_u16;
+    struct ast_type typedef_u32;
+    struct ast_type typedef_u64;
+    
+    struct ast_type typedef_s8;
+    struct ast_type typedef_s16;
+    struct ast_type typedef_s32;
+    struct ast_type typedef_s64;
+    
+    struct ast_type typedef_atomic_bool;
+    
+    struct ast_type typedef_atomic_u8;
+    struct ast_type typedef_atomic_u16;
+    struct ast_type typedef_atomic_u32;
+    struct ast_type typedef_atomic_u64;
+    
+    struct ast_type typedef_atomic_s8;
+    struct ast_type typedef_atomic_s16;
+    struct ast_type typedef_atomic_s32;
+    struct ast_type typedef_atomic_s64;
+    
+    struct ast_type typedef_f32;
+    struct ast_type typedef_f64;
+    
+    struct ast_type typedef_poison;
+    
+    
     struct ast_type *typedef_void_pointer;
     struct ast_type *typedef_u8_pointer;
     struct ast_type *typedef_s8_pointer;
-    struct ast_type *typedef__m128;
+    
     
     //
     // Invalid/Default values
@@ -567,7 +616,7 @@ func b32 type_is_signed(struct ast_type *type){
 }
 
 func b32 type_is_arithmetic(struct ast_type *type){
-    return (type->kind == AST_integer_type || type->kind == AST_float_type);
+    return (type->kind == AST_integer_type || type->kind == AST_atomic_integer_type || type->kind == AST_float_type);
 }
 
 func b32 type_is_array_of_unknown_size(struct ast_type *type){
@@ -915,7 +964,8 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
     switch(type->kind){
         case AST_void_type:
         case AST_float_type:
-        case AST_integer_type:{
+        case AST_integer_type:
+        case AST_atomic_integer_type:{
             string_list_prefix(list, scratch, token_get_string(type->token));
         }break;
         case AST_union: case AST_struct: case AST_enum:{
@@ -3599,7 +3649,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
 
         make_const_typedef(void, TOKEN_void,     AST_void_type,    "void",               0, 1);
         
-        make_const_typedef(Bool,   TOKEN_Bool,     AST_integer_type, "_Bool",             1, 1);
+        make_const_typedef(Bool, TOKEN_Bool,     AST_integer_type, "_Bool",              1, 1);
         
         make_const_typedef(u8,   TOKEN_unsigned, AST_integer_type, "unsigned char",      1, 1);
         make_const_typedef(u16,  TOKEN_short,    AST_integer_type, "unsigned short",     2, 2);
@@ -3610,6 +3660,19 @@ globals.typedef_##postfix = (struct ast_type){                                  
         make_const_typedef(s16,  TOKEN_short,    AST_integer_type, "short",              2, 2);
         make_const_typedef(s32,  TOKEN_int,      AST_integer_type, "int",                4, 4);
         make_const_typedef(s64,  TOKEN_long,     AST_integer_type, "long long",          8, 8);
+        
+        make_const_typedef(atomic_bool, TOKEN_identifier, AST_atomic_integer_type, "atomic_bool",   1, 1);
+        
+        make_const_typedef(atomic_u8,   TOKEN_identifier, AST_atomic_integer_type, "atomic_uchar",  1, 1);
+        make_const_typedef(atomic_u16,  TOKEN_identifier, AST_atomic_integer_type, "atomic_ushort", 2, 2);
+        make_const_typedef(atomic_u32,  TOKEN_identifier, AST_atomic_integer_type, "atomic_uint",   4, 4);
+        make_const_typedef(atomic_u64,  TOKEN_identifier, AST_atomic_integer_type, "atomic_ullong", 8, 8);
+        
+        make_const_typedef(atomic_s8,   TOKEN_identifier, AST_atomic_integer_type, "atomic_char",   1, 1);
+        make_const_typedef(atomic_s16,  TOKEN_identifier, AST_atomic_integer_type, "atomic_short",  2, 2);
+        make_const_typedef(atomic_s32,  TOKEN_identifier, AST_atomic_integer_type, "atomic_int",    4, 4);
+        make_const_typedef(atomic_s64,  TOKEN_identifier, AST_atomic_integer_type, "atomic_llong",  8, 8);
+        
         
         make_const_typedef(f32,  TOKEN_float,    AST_float_type,   "float",              4, 4);
         make_const_typedef(f64,  TOKEN_double,   AST_float_type,   "double",             8, 8);

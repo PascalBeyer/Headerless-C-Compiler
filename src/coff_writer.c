@@ -1240,6 +1240,17 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
                     out_int(bitfield->bit_index, s8);
                 }end_symbol();
             }break;
+            
+            case AST_atomic_integer_type:{
+                
+                struct ast_type *non_atomic_type = type - (&globals.typedef_atomic_bool - &globals.typedef_Bool);
+                
+                type_index = begin_symbol(0x1001);{ // LF_MODIFIER
+                    out_int(non_atomic_type->pdb_type_index, u32);
+                    out_int(8, u16); // @cleanup: is 8 correct?
+                }end_symbol();
+            }break;
+            
             case AST_unresolved_type:{
                 // struct ast_unresolved_type *unresolved = (struct ast_unresolved_type *)type;
                 
