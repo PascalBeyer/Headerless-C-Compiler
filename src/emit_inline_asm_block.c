@@ -75,12 +75,14 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
     struct asm_operand *operand = &instruction->operands[operand_index];
     
     switch(operand->kind){
+        case ASM_ARG_declaration_dereference:
         case ASM_ARG_declaration_reference:{
             // Two different scenarios:
             //     1) the operand is 'stack relative' or 'rip relative'.
             //     2) the operand is a '__declspec(inline_asm)' function argument and therefore either a 'register', 
             //        'spilled' or 'immediate'.
             
+            struct emit_location *ret = null;
             struct ast *expression = operand->expr;
             
             if(context->in_inline_asm_function && expression->kind == AST_identifier){
@@ -104,33 +106,42 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
                                 integer_location = emit_location_immediate(context, decl->type->size, 0);
                             }
                             
-                            return integer_location;
+                            ret = integer_location;
+                        }else{
+                            if(integer_location && operand->is_inline_asm_function_argument_that_can_be_integer){
+                                ret = integer_location;
+                            }else{
+                                
+                                //
+                                // This is part of case '2)' (globals will never be cached in registers and 
+                                // this is all local to the '__declspec(inline_asm)' function).
+                                // Therefore, this is either a register, or spilled.
+                                //
+                                ret = loaded_location;
+                            }
                         }
-                        
-                        if(integer_location && operand->is_inline_asm_function_argument_that_can_be_integer){
-                            return integer_location;
-                        }
-                        
-                        //
-                        // This is part of case '2)' (globals will never be cached in registers and 
-                        // this is all local to the '__declspec(inline_asm)' function).
-                        // Therefore, this is either a register, or spilled.
-                        //
-                        return loaded_location;
+                        break;
                     }
                 }
                 
                 // It was not an 'inline_asm_function_argument' it might be rip-relative below!
             }
             
-            //
-            // We are in case '1)' either a 'stack relative' or 'rip relative' variable.
-            // Evaluate the expression, which should only be members and one identifier.
-            //
-            smm bytes_emitted_for_assert = get_bytes_emitted(context);
-            struct emit_location *ret = emit_code_for_ast(context, expression);
-            assert(bytes_emitted_for_assert == get_bytes_emitted(context));
-            assert(ret->state == EMIT_LOCATION_register_relative);
+            if(!ret){
+                //
+                // We are in case '1)' either a 'stack relative' or 'rip relative' variable.
+                // Evaluate the expression, which should only be members and one identifier.
+                //
+                smm bytes_emitted_for_assert = get_bytes_emitted(context);
+                ret = emit_code_for_ast(context, expression);
+                assert(bytes_emitted_for_assert == get_bytes_emitted(context));
+                assert(ret->state == EMIT_LOCATION_register_relative);
+            }
+            
+            if(operand->kind == ASM_ARG_declaration_dereference){
+                // @cleanup: in the future 'index' might not always be null.
+                ret = emit_location_register_relative(context, ret->register_kind_when_loaded, ret, null, 0, operand->size);
+            }
             
             return ret;
         }break;
@@ -694,6 +705,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 
                 if(lhs->state == EMIT_LOCATION_register_relative){
                     emit_register_relative_register(context, user_prefixes, opcode, loaded->loaded_register, lhs);
+                    free_emit_location(context, lhs); // ?
                 }else{
                     assert(lhs->state == EMIT_LOCATION_loaded);
                     emit_register_register(context, user_prefixes, opcode, /*reg*/loaded, /*regm*/lhs);
@@ -707,6 +719,16 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 struct opcode opcode = (operand->size == 1) ? one_byte_opcode(0xfe) : one_byte_opcode(0xff);
                 u8 reg_extension = (inst->memonic == MEMONIC_dec) ? 1 : 0;
                 
+                if(operand->state == EMIT_LOCATION_register_relative){
+                    emit_register_relative_extended(context, user_prefixes, opcode, reg_extension, operand);
+                }else{
+                    emit_reg_extended_op(context, user_prefixes, opcode, reg_extension, operand);
+                }
+            }break;
+            
+            case MEMONIC_neg:{
+                struct opcode opcode = (operand->size == 1) ? one_byte_opcode(0xf6) : one_byte_opcode(0xf7);
+                u8 reg_extension = 3;
                 if(operand->state == EMIT_LOCATION_register_relative){
                     emit_register_relative_extended(context, user_prefixes, opcode, reg_extension, operand);
                 }else{
