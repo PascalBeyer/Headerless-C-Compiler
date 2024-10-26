@@ -431,8 +431,10 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         //     jmp [rip + <offset_off_dll_import_in_import_table>]
         // 
         
-        // @cleanup: I currently don't see a way of how we can get the name of the library or dll.
-        report_warning(context, WARNING_function_is_implicitly_dllimport, declaration->base.token, "%s is treated as import, but was not declared '__declspec(dllimport)'.", Function_or_Declaration);
+        if(!globals.file_table.data[declaration->base.token->file_index]->is_system_include){ // @note: Manually shut this warning up, as we are currently in a big error_report.
+            // @cleanup: I currently don't see a way of how we can get the name of the library or dll.
+            report_warning(context, WARNING_function_is_implicitly_dllimport, declaration->base.token, "%s is treated as import, but was not declared '__declspec(dllimport)'.", Function_or_Declaration);
+        }
         
         function->as_decl.flags |= DECLARATION_FLAGS_is_dll_import_with_missing_declspec;
         function->dll_import_node = import_node;
