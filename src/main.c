@@ -3729,7 +3729,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         "#define __assume(a) (void)0\n"
                         
                         "#define __STDC_VERSION__ 201112L\n"
-                        "#define __STDC__ 1\n"
+                        // "#define __STDC__ 1\n" @note: Don't define this as some Microsoft headers work differantly if this is specified.
                         "#define __STDC_NO_COMPLEX__ 1\n"
                         "#define __STDC_NO_THREADS__ 1\n"
                         "#define __STDC_NO_VLA__     1\n"
