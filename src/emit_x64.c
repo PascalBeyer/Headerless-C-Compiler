@@ -2223,7 +2223,8 @@ func struct emit_location *emit_code_for_plain_condition(struct context *context
         if(ast->resolved_type->kind == AST_bitfield_type){
             loaded = emit_load_bitfield(context, cond, (struct ast_bitfield_type *)ast->resolved_type);
         }else{
-            assert(ast->resolved_type->kind == AST_integer_type || ast->resolved_type->kind == AST_pointer_type || ast->resolved_type->kind == AST_float_type);
+            assert(ast->resolved_type->kind == AST_integer_type || ast->resolved_type->kind == AST_atomic_integer_type || ast->resolved_type->kind == AST_pointer_type || ast->resolved_type->kind == AST_float_type);
+            // @cleanup: atomic integers might need a special load instruction on other architectures?
             loaded = emit_load(context, cond);
         }
         

@@ -81,7 +81,7 @@
         atomic_uint:    __atomic_compare_exchange_uint,                               \
         atomic_ulong:   __atomic_compare_exchange_ulong,                              \
         atomic_ullong:  __atomic_compare_exchange_ullong,                             \
-)(object, value)
+)(object, desired)
 
 #define atomic_compare_exchange_strong_explicit(object, expected, desired, order) atomic_compare_exchange_strong(object, expected)
 
@@ -104,7 +104,7 @@
         atomic_uint:    __atomic_fetch_add_uint,              \
         atomic_ulong:   __atomic_fetch_add_ulong,             \
         atomic_ullong:  __atomic_fetch_add_ullong,            \
-)(object, value)
+)(object, operand)
 #define atomic_fetch_sub(object, operand) _Generic(*(object), \
         atomic_char:    __atomic_fetch_sub_char,              \
         atomic_short:   __atomic_fetch_sub_short,             \
@@ -117,7 +117,7 @@
         atomic_uint:    __atomic_fetch_sub_uint,              \
         atomic_ulong:   __atomic_fetch_sub_ulong,             \
         atomic_ullong:  __atomic_fetch_sub_ullong,            \
-)(object, value)
+)(object, operand)
 #define atomic_fetch_or(object, operand) _Generic(*(object),  \
         atomic_char:    __atomic_fetch_or_char,               \
         atomic_short:   __atomic_fetch_or_short,              \
@@ -130,7 +130,7 @@
         atomic_uint:    __atomic_fetch_or_uint,               \
         atomic_ulong:   __atomic_fetch_or_ulong,              \
         atomic_ullong:  __atomic_fetch_or_ullong,             \
-)(object, value)
+)(object, operand)
 #define atomic_fetch_xor(object, operand) _Generic(*(object), \
         atomic_char:    __atomic_fetch_xor_char,              \
         atomic_short:   __atomic_fetch_xor_short,             \
@@ -143,7 +143,7 @@
         atomic_uint:    __atomic_fetch_xor_uint,              \
         atomic_ulong:   __atomic_fetch_xor_ulong,             \
         atomic_ullong:  __atomic_fetch_xor_ullong,            \
-)(object, value)
+)(object, operand)
 #define atomic_fetch_and(object, operand) _Generic(*(object), \
         atomic_char:    __atomic_fetch_and_char,              \
         atomic_short:   __atomic_fetch_and_short,             \
@@ -156,7 +156,7 @@
         atomic_uint:    __atomic_fetch_and_uint,              \
         atomic_ulong:   __atomic_fetch_and_ulong,             \
         atomic_ullong:  __atomic_fetch_and_ullong,            \
-)(object, value)
+)(object, operand)
 
 #define atomic_fetch_add_explicit(object, operand, order) atomic_fetch_add(object, operand)
 #define atomic_fetch_sub_explicit(object, operand, order) atomic_fetch_sub(object, operand)
