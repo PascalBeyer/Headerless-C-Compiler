@@ -4591,12 +4591,25 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             
             struct ast_declaration *initial_declaration = entry->declaration;
             
+            // 
+            // @cleanup: This seems bad, we have to do here essentially the same stuff for
+            //           root-level declarations, as we have to for all other declarations.
+            //           So we should find a way to handle the 'initial_declaration' in the same way 
+            //           as all the referenced declarations.
+            // 
+            
             if(initial_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry) continue;
             initial_declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
             
             if((initial_declaration->base.kind == AST_function) && initial_declaration->assign_expr){
                 // Queue the entry point, if it is a defined function.
                 work_queue_push_work(context, &globals.work_queue_emit_code, initial_declaration);
+            }
+            
+            if((initial_declaration->base.kind == AST_declaration) && initial_declaration->assign_expr){
+                // @cleanup: This should probably not happen on the main thread.
+                //           Furthermore, we also want to report errors for initializers that are non-constant but not referenced.
+                initial_declaration->memory_location = evaluate_static_initializer(context, initial_declaration);
             }
             
             // If this declaration does not reference any other declarations we are done.
