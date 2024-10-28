@@ -4398,6 +4398,57 @@ case NUMBER_KIND_##type:{ \
             }
         }break;
         
+        case TOKEN_generic:{
+            // 
+            // generic-selection:
+            //      _Generic ( assignment-expression, ({type-name|default}: assignment-expression)* )
+            // 
+            struct token *generic = next_token(context);
+            
+            expect_token(context, TOKEN_open_paren, "Expected a '(' after '_Generic'.");
+            
+            struct ast *choice = parse_expression(context, /*skip_comma_expression*/1);
+            
+            struct ast *default_expression = null;
+            struct ast *choosen_expression = null;
+            
+            while(in_current_token_array(context) && !peek_token_eat(context, TOKEN_closed_paren)){
+                
+                expect_token(context, TOKEN_comma, "Expected ')' or ',' while parsing a _Generic association list.");
+                if(peek_token_eat(context, TOKEN_closed_paren)) break; // Allow trailing comma.
+                
+                if(peek_token_eat(context, TOKEN_default)){
+                    expect_token(context, TOKEN_colon, "Expected ':' after 'default' while parsing a _Generic association list.");
+                    
+                    default_expression = parse_expression(context, /*skip_comma_expression*/1);
+                }else{
+                    struct type_info_return type_name = maybe_parse_type_for_cast_or_sizeof(context);
+                    if(!type_name.type){
+                        report_error(context, get_current_token_for_error_report(context), "Expected a type-name or 'default' while parsing a _Generic association list.");
+                        type_name.type = &globals.typedef_s32;
+                    }
+                    
+                    expect_token(context, TOKEN_colon, "Expected ':' after the type-name while parsing a _Generic association list.");
+                    
+                    struct ast *expression = parse_expression(context, /*skip_comma_expression*/1);
+                    
+                    if(types_are_equal(type_name.type, choice->resolved_type)){
+                        choosen_expression = expression;
+                    }
+                }
+            }
+            
+            if(choosen_expression){
+                operand = choosen_expression;
+            }else if(default_expression){
+                operand = default_expression;
+            }else{
+                // :Error
+                report_error(context, generic, "_Generic choice did not match any of the associations.");
+                operand = choice;
+            }
+        }break;
+        
         default:{
             report_syntax_error(context, get_current_token_for_error_report(context), "Unexpected token in expression.");
             return &globals.empty_statement;

@@ -157,6 +157,8 @@ enum token_type{
     TOKEN_asm,
     TOKEN_embed, // Synthetic token coming from #embed.
     
+    TOKEN_generic, // C11 _Generic
+    
     TOKEN_count,
     TOKEN_one_past_last_keyword = TOKEN_count,
 };
@@ -230,6 +232,8 @@ static struct{
     {const_string("__FUNCSIG__"),  TOKEN___func__}, // wrong msvc-extension implementation.
     
     {const_string("_Static_assert"), TOKEN_static_assert},
+    
+    {const_string("_Generic"), TOKEN_generic},
 };
 
 enum preprocessor_directive{
