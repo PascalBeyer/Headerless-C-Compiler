@@ -176,6 +176,21 @@ struct string string_eat_characters_front(struct string *string, char *character
     return string_eat_front(string, index);
 }
 
+void string_eat_characters_back(struct string *string, char *characters){
+    
+    while(string->size){
+        int found = 0;
+        for(char *c = characters; *c; c++){
+            if(*c == string->data[string->size-1]){
+                string->size -= 1;
+                found = 1;
+                break;
+            }
+        }
+        if(!found) break;
+    }
+}
+
 struct string string_eat_until_characters_front(struct string *string, char *characters){
     u64 index = 0;
     for(; index < string->size; index++){
@@ -332,6 +347,8 @@ int main(int argc, char *argv[]){
         struct string option_name;
         struct string_list_node *option_aliases;
         struct string option_argument;
+        struct string category;
+        
         int is_optional_argument;
         enum option_argument_type{
             CLI_ARGUMENT_TYPE_none,
@@ -344,7 +361,6 @@ int main(int argc, char *argv[]){
             CLI_ARGUMENT_TYPE_directory_list,
             CLI_ARGUMENT_TYPE_string_list,
         } option_argument_type;
-        
         
         struct string short_description;
         struct string long_description;
@@ -360,6 +376,8 @@ int main(int argc, char *argv[]){
         
     } *options = 0;
     
+    struct option *warning_option = 0;
+    
     static char *option_argument_type_strings[] = {
         [CLI_ARGUMENT_TYPE_none] = "CLI_ARGUMENT_TYPE_none",
         [CLI_ARGUMENT_TYPE_string] = "CLI_ARGUMENT_TYPE_string",
@@ -372,10 +390,22 @@ int main(int argc, char *argv[]){
         [CLI_ARGUMENT_TYPE_string_list] = "CLI_ARGUMENT_TYPE_string_list",
     };
     
+    struct string current_category = {0};
+    
     while(file.size){
         
         // @note: For now we skip Categories (e.g.: # Common / # Hidden)
-        if(line.data[0] != '/'){
+        if(!line.size || line.data[0] != '/'){
+            
+            if(line.size && line.data[0] == '#'){
+                string_eat_front(&line, 1);
+                string_eat_whitespace(&line);
+                string_eat_characters_back(&line, "\r\n ");
+                
+                current_category = line;
+            }
+            
+            
             line = string_eat_line(&file);
             continue;
         }
@@ -398,7 +428,7 @@ int main(int argc, char *argv[]){
             string_eat_characters_front(&long_description, "\r\n");
         }while(!long_description.size && file.size);
         
-        if(long_description.data[0] == '/'){
+        if(!long_description.size || long_description.data[0] == '/' || long_description.data[0] == '#'){
             // There is no "long_description".
             line = long_description;
             long_description = (struct string){0};
@@ -407,7 +437,7 @@ int main(int argc, char *argv[]){
             // 
             // Find the next option.
             // 
-            while(file.size && file.data[0] != /*start of next option_string*/'/'){
+            while(file.size && file.data[0] != /*start of next option_string*/'/' && file.data[0] != /*start of next category*/'#'){
                 line = string_eat_line(&file);
             }
             
@@ -621,9 +651,15 @@ int main(int argc, char *argv[]){
         new_option->short_description = short_description;
         new_option->long_description = long_description;
         new_option->enum_members = enum_members;
+        new_option->category = current_category;
         
         new_option->next = options;
         options = new_option;
+        
+        // Hack for options, I think this is probably the only "special" option kind we will ever need.
+        if(string_match(main_option_name, string("warning"))){
+            warning_option = new_option;
+        }
     }
     
     // 
@@ -661,7 +697,6 @@ int main(int argc, char *argv[]){
         }
         options = new_list;
     }
-    
     
     // 
     // Write out a header comment.
@@ -749,6 +784,27 @@ int main(int argc, char *argv[]){
     print("};\n\n");
     
     // 
+    // Generate the enums neeeded for cli_options.
+    // 
+    for(struct option *option = options; option; option = option->next){
+        
+        if(option->option_argument_type == CLI_ARGUMENT_TYPE_enum){
+            struct string option_name = option->option_name;
+            
+            u64 longest_name = 0;
+            for(struct enum_member *member = option->enum_members; member; member = member->next){
+                if(member->name.size > longest_name) longest_name = member->name.size;
+            }
+            
+            print("enum %.*s{\n", option_name.size, option_name.data);
+            for(struct enum_member *member = option->enum_members; member; member = member->next){
+                print("    %.*s_%-*.*s = %2llu, // %.*s\n", option_name.size, CAPITALIZE(option_name), longest_name, member->name.size, member->name.data, member->value, member->short_description.size, member->short_description.data);
+            }
+            print("};\n\n");
+        }
+    }
+    
+    // 
     // Generate the structure for the cli_options.
     // 
     print("struct cli_options{\n");
@@ -768,15 +824,7 @@ int main(int argc, char *argv[]){
             case CLI_ARGUMENT_TYPE_warning: continue;
             
             case CLI_ARGUMENT_TYPE_enum:{
-                
-                struct string option_name = option->option_name;
-                
-                print("    enum %.*s{\n", option_name.size, option_name.data);
-                for(struct enum_member *member = option->enum_members; member; member = member->next){
-                    print("        %.*s_%.*s = %llu, // %.*s\n", option_name.size, CAPITALIZE(option_name), member->name.size, member->name.data, member->value, member->short_description.size, member->short_description.data);
-                }
-                print("    } %.*s; // %.*s\n", option_name.size, option_name.data, option->short_description.size, option->short_description.data);
-                continue;
+                print("    enum %.*s", option->option_name.size, option->option_name.data);
             }break;
             
             case CLI_ARGUMENT_TYPE_directory:
@@ -793,9 +841,67 @@ int main(int argc, char *argv[]){
     }
     print("};\n\n");
     
+    // 
+    // Build the warning table and write it out at the same time.
+    // @note: In the future, we might want to have something that maps between the 
+    //        "warning index" to the "warning value" so we can have stable warning values.
+    // 
+    u64 amount_of_warnings = 0;
+    u64 highest_warning = 0;
+    for(struct enum_member *warning = warning_option->enum_members; warning; warning = warning->next){
+        amount_of_warnings += 1;
+        if(warning->value > highest_warning) highest_warning = warning->value;
+    }
+    
+    print("#define WARNING_none 0\n");
+    print("#define WARNING_count %llu\n\n", highest_warning+1);
+    print("static u8 warning_enabled[WARNING_count]; // Later filled in for now.\n\n");
+    
+    u64 warning_table_capacity = u64_round_up_to_next_power_of_two(amount_of_warnings);
+    
+    struct string *warning_table = calloc(sizeof(*warning_table), warning_table_capacity);
+    
+    print("struct warning_table_entry{\n");
+    print("    struct string canonicalized_name;\n");
+    print("    enum warning warning_kind;\n");
+    print("} warning_table[0x%llx] = {\n", option_table_capacity);
+    
+    for(struct enum_member *warning = warning_option->enum_members; warning; warning = warning->next){
+        char *canonicalized_name_data = malloc(warning->name.size + 1);
+        u64 canonicalized_name_size = 0;
+        
+        struct string warning_name = warning->name;
+        for(u64 index = 0; index < warning_name.size; index++){
+            char c = warning_name.data[index];
+            if(c == '-' || c == '_') continue;
+            canonicalized_name_data[canonicalized_name_size++] = (c|32);
+        }
+        
+        struct string canonicalized_name = {.data = canonicalized_name_data, .size = canonicalized_name_size};
+        u64 hash = string_djb2_hash(canonicalized_name);
+        
+        for(u64 index = 0; index < warning_table_capacity; index++){
+            u64 hash_index = (hash + index) & (warning_table_capacity - 1);
+            
+            if(!warning_table[hash_index].data){
+                warning_table[hash_index] = canonicalized_name;
+                
+                print("    [%llu] = {{%llu, (u8 *)\"%.*s\"}, WARNING_%.*s},\n", hash_index, canonicalized_name.size, canonicalized_name.size, canonicalized_name.data, warning->name.size, warning->name.data);
+                break;
+            }
+            
+            if(string_match(warning_table[hash_index], canonicalized_name)){
+                print("Error: Canonicalization collision between to warnings. One of which is '%.*s' and the canoncialized version is '%.*s'.\n", warning_name.size, warning_name.data, canonicalized_name.size, canonicalized_name.data);
+                return 1;
+            }
+        }
+    }
+    print("};\n\n");
     
     puts(
             "int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){\n"
+            "    \n"
+            "    int should_print_help = 0;\n"
             "    \n"
             "    for(int option_index = 1; option_index < argc; option_index++){\n"
             "        char *option_cstring = argv[option_index];\n"
@@ -812,6 +918,8 @@ int main(int argc, char *argv[]){
             "            option_cstring++;\n"
             "            if(*option_cstring == '-') option_cstring++;\n"
             "        }\n"
+            "        \n"
+            "        if(should_print_help) is_option = 1;\n"
             "        \n"
             "        if(!is_option){\n"
             "            string_list_postfix(&cli_options->files, arena, string_from_cstring(option_cstring));\n"
@@ -843,9 +951,9 @@ int main(int argc, char *argv[]){
             "        // Look up the canonicalized option in the hash table.\n"
             "        //\n"
             "        struct cli_option_hash_table_entry *option_hash_table_entry = 0;\n"
-            "        u64 hash = string_djb2_hash(canonicalized_option);\n"
+            "        u64 option_hash = string_djb2_hash(canonicalized_option);\n"
             "        for(u64 index = 0; index < array_count(cli_option_hash_table); index++){\n"
-            "            u64 hash_index = (hash + index) & (array_count(cli_option_hash_table) - 1);\n"
+            "            u64 hash_index = (option_hash + index) & (array_count(cli_option_hash_table) - 1);\n"
             "            if(!cli_option_hash_table[hash_index].canonicalized_name.data) break;\n"
             "            if(string_match(cli_option_hash_table[hash_index].canonicalized_name, canonicalized_option)){\n"
             "                option_hash_table_entry = &cli_option_hash_table[hash_index];\n"
@@ -906,6 +1014,8 @@ int main(int argc, char *argv[]){
             "            argument_is_optional = 0; // If we get here, there was an argument (otherwise the hash-table lookup would have worked), so we can safely set this to 0.\n"
             "        }\n"
             "        \n"
+            "        if(should_print_help && option_index + 1 >= argc) argument_is_optional = true;\n"
+            "        \n"
             "        //\n"
             "        // If the option needs an argument, make sure we have one.\n"
             "        //\n"
@@ -946,7 +1056,94 @@ int main(int argc, char *argv[]){
             "                    return 0;\n"
             "                }\n"
             "            }break;\n"
-            "        }\n"
+            "        }"
+            );
+    
+    
+    // 
+    // Help option:
+    // 
+    
+    puts(
+            "        \n"
+            "        // \n"
+            "        // If we are supposed to print help for this option, do so!\n"
+            "        // \n"
+            "        if(should_print_help){\n"
+            "            switch(option_kind){\n"
+            );
+    
+    for(struct option *option = options; option; option = option->next){
+        print("                case CLI_OPTION_%.*s:{\n", option->option_name.size, option->option_name.data);
+        
+        print("                    print(\"-%.*s ", option->option_name.size, option->option_name.data);
+        if(option->option_argument_type != CLI_ARGUMENT_TYPE_none){
+            char opening_brace = option->is_optional_argument ? '[' : '<';
+            char closing_brace = option->is_optional_argument ? ']' : '>';
+            print("%c%.*s%c ", opening_brace, option->option_argument.size, option->option_argument.data, closing_brace);
+        }
+        print("| %.*s\\n\\n\");\n", option->short_description.size, option->short_description.data);
+        
+        struct string long_description = option->long_description;
+        
+        if(long_description.size != 0){
+            print("                    os_print_string(\n");
+            print("                            \"");
+            for(u64 index = 0; index < long_description.size; index++){
+                char c = long_description.data[index];
+                if(c == '\n'){
+                    print("\\n\"\n                            \"");
+                }else if(c == '\"'){
+                    print("\\\"");
+                }else if(c == '\\'){
+                    print("\\\\");
+                }else{
+                    print("%c", c);
+                }
+            }
+            
+            print("\", %llu);\n", long_description.size);
+        }
+        
+        if(option->option_argument_type == CLI_ARGUMENT_TYPE_enum){
+            print("                    if(option_argument){\n");
+            
+            // @cleanup: long help for enums.
+            
+            print("                    }else{\n");
+            print("                        os_print_string(\n");
+            int total_size = 0;
+            for(struct enum_member *member = option->enum_members; member; member = member->next){
+                
+                int argument_size = 0;
+                print("                                \"");
+                
+                argument_size += print("%.*s (%llu)", member->name.size, member->name.data, member->value);
+                
+                if(argument_size < 40){
+                    argument_size += print("%*s", 40 - argument_size, "");
+                }
+                
+                argument_size += print("| %.*s", member->short_description.size, member->short_description.data);
+                
+                print("\\n\"\n");
+                total_size += argument_size + /*ending new-line*/1;
+            }
+            print("                                , %d);\n", total_size);
+            print("                    }\n");
+        }
+        
+        print("                }break;\n");
+    }
+    
+    puts(
+            "                invalid_default_case();\n"
+            "            }\n"
+            "            os_panic(0);\n"
+            "        }"
+    );
+    
+    puts(
             "        \n"
             "        //\n"
             "        // We are ready to parse the command line option!\n"
@@ -961,12 +1158,69 @@ int main(int argc, char *argv[]){
             continue;
         }
         
+        // We don't need code for the warning option.
+        if(option == warning_option) continue;
+        
         print("            \n");
         print("            case CLI_OPTION_%.*s:{\n", option->option_name.size, option->option_name.data);
         
         if(string_match(option->option_name, string("help"))){
-            print("                not_implemented;\n");
-            print("            }break;\n");
+            
+            // @cleanup: More discoverability!
+            //           It should print the other categories and have an all category and so on.
+            
+            puts(
+                    "                if(!option_argument){\n"
+                    "                    if(option_index + 1 != argc){\n"
+                    "                         should_print_help = 1;\n"
+                    "                         continue;\n"
+                    "                    }\n"
+                    "                    \n"
+                    "                    os_print_string("
+                    );
+            
+            int total_size = 0;
+            for(struct option *help_option = options; help_option; help_option = help_option->next){
+                if(!string_match(help_option->category, string("Common"))) continue;
+                
+                int argument_size = 0;
+                print("                            \"");
+                
+                argument_size += print("  -%.*s ", help_option->option_name.size, help_option->option_name.data);
+                if(help_option->option_argument_type != CLI_ARGUMENT_TYPE_none){
+                    char opening_brace = help_option->is_optional_argument ? '[' : '<';
+                    char closing_brace = help_option->is_optional_argument ? ']' : '>';
+                    argument_size += print("%c%.*s%c ", opening_brace, help_option->option_argument.size, help_option->option_argument.data, closing_brace);
+                }
+                
+                if(argument_size < 30){
+                    argument_size += print("%*s", 30 - argument_size, "");
+                }
+                
+                argument_size += print("| %.*s", help_option->short_description.size, help_option->short_description.data);
+                
+                print("\\n\"\n");
+                total_size += argument_size + /*ending new-line*/1;
+            }
+            print("                    , %d);\n", total_size);
+            
+            puts(
+                    "                }else{\n"
+                    "                    //\n"
+                    "                    //@HACK: We want to handle --help=argument exactly as we handle --help argument.\n"
+                    "                    //       Hence, I reset the argument array here.\n"
+                    "                    //\n"
+                    "                    should_print_help = 1;\n"
+                    "                    static char *new_argv[2];\n"
+                    "                    new_argv[0] = option_argument;\n"
+                    "                    option_index = -1;\n"
+                    "                    argv = new_argv;\n"
+                    "                    argc = 1;\n"
+                    "                    continue;\n"
+                    "                }\n"
+                    "                os_panic(0);\n"
+                    "            }break;\n"
+                    );
             continue;
         }
         
@@ -977,7 +1231,57 @@ int main(int argc, char *argv[]){
             }break;
             
             case CLI_ARGUMENT_TYPE_warning:{
-                // print("                not_implemented;\n"); @incomplete
+                int enable = string_match(option->option_name, string("W"));
+                puts(
+                        "                int is_number = 1;\n"
+                        "                u64 warning_value = string_to_u64(argument_string, &is_number);\n"
+                        "                if(is_number){\n"
+                        "                    if(warning_value >= WARNING_count){\n"
+                        "                        print(\"Warning: Unhandled warning value %lld.\\n\", warning_value);\n"
+                        "                    }else{"
+                        );
+                print("                        warning_enabled[warning_value] = %d;\n", enable);
+                puts(
+                        "                    }\n"
+                        "                    break;\n"
+                        "                }\n"
+                        "                //\n"
+                        "                // Canonicalize the Warning-Name.\n"
+                        "                //\n"
+                        "                u8  canonicalized_warning_data[0x100];\n"
+                        "                u64 canonicalized_warning_size = 0;\n"
+                        "                for(smm index = 0; index < argument_string.size; index++){\n"
+                        "                    char c = argument_string.data[index];\n"
+                        "                    if(c == '-' || c == '_') continue;\n"
+                        "                    \n"
+                        "                    if(canonicalized_warning_size == sizeof(canonicalized_warning_data)){\n"
+                        "                        print(\"Error: Option '%.*s' is too long. Command line warnings can be at most %lld bytes.\\n\", argument_string.size, argument_string.data, array_count(canonicalized_warning_data));\n"
+                        "                        return 0;\n"
+                        "                    }\n"
+                        "                    canonicalized_warning_data[canonicalized_warning_size++] = (c|32);\n"
+                        "                }\n"
+                        "                \n"
+                        "                struct string canonicalized_warning = {.data = canonicalized_warning_data, .size = canonicalized_warning_size};\n"
+                        "                \n"
+                        "                struct warning_table_entry *warning_entry = null;\n"
+                        "                u64 warning_hash = string_djb2_hash(canonicalized_warning);\n"
+                        "                for(u64 index = 0; index < array_count(warning_table); index++){\n"
+                        "                    u64 hash_index = (warning_hash + index) & (array_count(warning_table) - 1);\n"
+                        "                    if(!warning_table[hash_index].canonicalized_name.data) break;\n"
+                        "                    if(string_match(warning_table[hash_index].canonicalized_name, canonicalized_warning)){\n"
+                        "                        warning_entry = &warning_table[hash_index];\n"
+                        "                        break;\n"
+                        "                    }\n"
+                        "                }\n"
+                        "                \n"
+                        "                if(!warning_entry){\n"
+                        "                    print(\"Warning: Unhandled warning value '%.*s'.\\n\", argument_string.size, argument_string.data);\n"
+                        "                }else{"
+                        );
+                print("                    warning_enabled[warning_entry->warning_kind] = %d;\n", enable);
+                print("                }\n");
+                
+                
             }break;
             case CLI_ARGUMENT_TYPE_enum:{
                 for(struct enum_member *member = option->enum_members; member; member = member->next){
@@ -1007,8 +1311,10 @@ int main(int argc, char *argv[]){
         }
         print("            }break;\n");
     }
+    print("            \n");
     print("            case CLI_OPTION_count:\n");
     print("            case CLI_OPTION_none:\n");
+    print("            case CLI_OPTION_warning:\n");
     print("                invalid_code_path;\n");
     print("        }\n"); // switch terminator.
     

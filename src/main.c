@@ -3088,15 +3088,6 @@ func struct ast_function *get_entry_point_or_error(struct context *context){
         return null;
     }
     
-    // @cleanup: how to do the thing where we at compile time want to pass arguments?
-    
-    b32 type_matches = true;
-    if(function->type->return_type != &globals.typedef_s32 && function->type->return_type != &globals.typedef_void) type_matches = false;
-    if(function->type->argument_list.count != 0) type_matches = false;
-    if(!type_matches){
-        report_warning(context, WARNING_unusual_entry_point, function->base.token, "Entry point has to be of fit definition 'int %.*s()' or 'void %.*s()'.", entry_point.amount, entry_point.data, entry_point.amount, entry_point.data);
-    }
-    
     return function;
 }
 
@@ -4130,7 +4121,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
 #endif
     
     smm thread_count = 1;
-    if(globals.cli_options.thread_count_specified && globals.cli_options.MT){
+    if(globals.cli_options.thread_count_specified && globals.cli_options.MP){
         print("Error: Found both a /MT and a /thread_count %llu option.\n", globals.cli_options.thread_count);
         return 1;
     }
@@ -4146,7 +4137,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         }
     }
     
-    if(globals.cli_options.MT){
+    if(globals.cli_options.MP){
         thread_count = system_info.dwNumberOfProcessors;
     }
     

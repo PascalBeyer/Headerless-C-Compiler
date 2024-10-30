@@ -5,6 +5,7 @@ enum error_report_node_kind{
     REPORT_warning,
 };
 
+#if 0
 enum warning_type{
     WARNING_none,
     
@@ -64,6 +65,7 @@ enum warning_type{
     
     WARNING_count, 
 };
+#endif
 
 static u8 warning_enabled[WARNING_count] = {
     [WARNING_compile_time_overflow]               = 1, 
@@ -86,7 +88,6 @@ static u8 warning_enabled[WARNING_count] = {
     // [WARNING_casting_u64_to_float]                = 1,
     [WARNING_local_variable_only_ever_written]    = 1,
     [WARNING_atomic_ignored]                      = 1,
-    [WARNING_unusual_entry_point]                 = 1,
     // [WARNING_function_declared_but_never_defined] = 1,
     // [WARNING_function_defined_but_unreachable]    = 1,
     // [WARNING_unreachable_declaration] = 1,

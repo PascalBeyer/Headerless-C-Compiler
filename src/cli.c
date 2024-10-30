@@ -24,7 +24,7 @@ enum cli_option_kind{
     CLI_OPTION_dll,
     CLI_OPTION_obj,
     CLI_OPTION_thread_count,
-    CLI_OPTION_MT,
+    CLI_OPTION_MP,
     CLI_OPTION_I,
     CLI_OPTION_D,
     CLI_OPTION_Wall,
@@ -37,6 +37,7 @@ enum cli_option_kind{
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
     CLI_OPTION_report_warnings_in_system_includes,
+    CLI_OPTION_warning,
 
     CLI_OPTION_count,
 };
@@ -79,9 +80,9 @@ struct cli_option_hash_table_entry{
     [32] = {{3, (u8 *)"obj"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
     [8] = {{1, (u8 *)"c"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
     [6] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
-    [9] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
+    [2] = {{2, (u8 *)"mp"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MP, -1},
     [14] = {{1, (u8 *)"i"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
-    [10] = {{1, (u8 *)"d"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_D, 0},
+    [9] = {{1, (u8 *)"d"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_D, 0},
     [25] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
     [12] = {{5, (u8 *)"wnone"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wnone, -1},
     [28] = {{1, (u8 *)"w"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_W, 0},
@@ -93,6 +94,57 @@ struct cli_option_hash_table_entry{
     [27] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [61] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
+    [59] = {{7, (u8 *)"warning"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
+    [15] = {{8, (u8 *)"warnings"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
+};
+
+enum subsystem{
+    SUBSYSTEM_console         =  3, // Sets the Subsystem field to `IMAGE_SUBSYSTEM_WINDOWS_CUI`.
+    SUBSYSTEM_windows         =  2, // Sets the Subsystem field to `IMAGE_SUBSYSTEM_WINDOWS_GUI`.
+    SUBSYSTEM_efi_application = 10, // Sets the Subsystem field to `IMAGE_SUBSYSTEM_EFI_APPLICATION`.
+};
+
+enum incremental{
+    INCREMENTAL_yes =  1, // Does nothing, we do not support incremental linking.
+    INCREMENTAL_no  =  2, // This is what we do anyway :)
+};
+
+enum warning{
+    WARNING_missing_newline_after_backslash              =  1, // The preprocessor found a whitespace after a backslash.
+    WARNING_junk_after_directive                         =  2, // The preprocessor skipped tokens after a directive in a line.
+    WARNING_compile_time_overflow                        =  3, // A compile time computation caused an overflow.
+    WARNING_compile_time_multiplication_by_zero          =  4, // Detected a compile-time multiplication by 0.
+    WARNING_shadowing_local                              =  5, // A declaration hides a previous local declaration.
+    WARNING_shadowing_global                             =  6, // A declaration hides a previous global declaration.
+    WARNING_shadowing_in_same_scope                      =  7, // A declaration hides a previous declaration in the same scope.
+    WARNING_type_mismatch                                =  8, // Potentially erroneous operation between two mismatching types.
+    WARNING_compile_time_truncation                      =  9, // An integer was truncated at compile type.
+    WARNING_unsigned_negation                            = 10, // Applying '-' to an unsigned value results in an unsigned value.
+    WARNING_unsupported_declspec                         = 11, // Unsupported or unknown __declspec(<...>) invocations are ignored.
+    WARNING_ret_in_asm_block                             = 12, // A 'ret' opcode was detected in an __asm__-block.
+    WARNING_does_not_declare_anything                    = 13, // Potentially malformed declaration.
+    WARNING_undefined_static_if_operand                  = 14, // An undefined identifier in a #if expression gets evaluated to 0.
+    WARNING_undef_on_undefined                           = 15, // Using #undef on an undefined identifier.
+    WARNING_unsupported_pragma                           = 16, // Unsupported or unknown #pragma directives are ignored.
+    WARNING_function_declared_but_never_defined          = 17, // A function had a declaration, but was never defined.
+    WARNING_function_defined_but_unreachable             = 18, // The function is dead code and is removed from the executable.
+    WARNING_unused_local_variable                        = 19, // A local variable was never referenced.
+    WARNING_local_variable_only_ever_written             = 20, // A local variable that is only ever written is probably useless.
+    WARNING_casting_u64_to_float                         = 21, // Casting an unsigned 64-bit value to a floating point value is slow on x64.
+    WARNING_double_specifier                             = 22, // More than one of the same specifier for a declaration.
+    WARNING_incorrect_format_specifier                   = 23, // Wrong argument passed to a __declspec(printlike) procedure.
+    WARNING_unknown_format_specifier                     = 24, // Unknown format specifier to __declspec(printlike) procedure.
+    WARNING_atomic_ignored                               = 25, // Currently, the _Atomic keyword is ignored.
+    WARNING_assignment_in_condition                      = 26, // Using an assignments in a condition is a common mistake.
+    WARNING_extension_used                               = 27, // A hlc-specific extension was used. This is reported very inconsistently.
+    WARNING_missing_return                               = 28, // A function forgot to return a value.
+    WARNING_return_in_noreturn_function                  = 29, // A return statement inside a function declared _Noreturn.
+    WARNING_function_alignment                           = 30, // Currently, specifying alignment for functions is unimplemented.
+    WARNING_array_of_unknown_size_never_filled_in        = 31, // An array of unknown size without initializer (e.g: `int array[];`) that is never defined will implicitly have length 1.
+    WARNING_redefining_declaration_from_extern_to_static = 32, // First declaring a function as extern then as static is undefined behaviour.
+    WARNING_inline_function_is_implicitly_external       = 33, // First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.
+    WARNING_function_is_implicitly_dllimport             = 34, // Function was not declared with dllimport, but we could only find it as an import.
+    WARNING_imported_function_is_also_defined            = 35, // Function was both found in an import library an a static library.
 };
 
 struct cli_options{
@@ -105,36 +157,78 @@ struct cli_options{
     int image_base_specified;
     u64 image_base; // Set the default image base address of the image.
     int show_includes; // Prints all file paths of included files to stdout.
-    enum subsystem{
-        SUBSYSTEM_console = 3, // Sets the Subsystem field to `IMAGE_SUBSYSTEM_WINDOWS_CUI`.
-        SUBSYSTEM_windows = 2, // Sets the Subsystem field to `IMAGE_SUBSYSTEM_WINDOWS_GUI`.
-        SUBSYSTEM_efi_application = 10, // Sets the Subsystem field to `IMAGE_SUBSYSTEM_EFI_APPLICATION`.
-    } subsystem; // Set the 'Subsystem' field of the image optional header.
+    enum subsystem     subsystem; // Set the 'Subsystem' field of the image optional header.
     struct string out; // Sets the name of the output files.
     struct string entry; // Explicitly set the entry point symbol.
     int no_entry; // Indicates that there is no entry point. This option implies /DLL.
     int dll; // Produce a Dynamic Link Library.
     int obj; // Produce an object file instead of an executable.
     int thread_count_specified;
-    u64 thread_count; // The amount of threads to be used during compilation. Default: 1
-    int MT; // Sets the amout of threads to be used during compilation to the number of processors on the system.
+    u64 thread_count; // Sets the amount of threads to be used during compilation. Default: 1
+    int MP; // Sets the amount of threads to the number of processors on the system.
     struct string_list I; // Specify an additional include directory.
     struct string_list D; // Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
     int Wall; // Enable all warnings.
     int Wnone; // Disable all warnings.
-    enum incremental{
-        INCREMENTAL_yes = 1, // Does nothing, we do not support incremental linking.
-        INCREMENTAL_no = 2, // This is what we do anyway :)
-    } incremental; // Does nothing, here for MSVC cli-compatibility.
+    enum incremental     incremental; // Does nothing, here for MSVC cli-compatibility.
     struct string MF; // Currently ignored, is supposed to produce a .dep file?
     int no_discard; // Emit all functions and declarations.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
     int report_warnings_in_system_includes; // Self explanatory.
+    enum warning     warning; // A list of all warnings, only accessible from '-help warning'.
+};
+
+#define WARNING_none 0
+#define WARNING_count 36
+
+static u8 warning_enabled[WARNING_count]; // Later filled in for now.
+
+struct warning_table_entry{
+    struct string canonicalized_name;
+    enum warning warning_kind;
+} warning_table[0x40] = {
+    [15] = {{28, (u8 *)"missingnewlineafterbackslash"}, WARNING_missing_newline_after_backslash},
+    [46] = {{18, (u8 *)"junkafterdirective"}, WARNING_junk_after_directive},
+    [17] = {{19, (u8 *)"compiletimeoverflow"}, WARNING_compile_time_overflow},
+    [6] = {{31, (u8 *)"compiletimemultiplicationbyzero"}, WARNING_compile_time_multiplication_by_zero},
+    [52] = {{14, (u8 *)"shadowinglocal"}, WARNING_shadowing_local},
+    [26] = {{15, (u8 *)"shadowingglobal"}, WARNING_shadowing_global},
+    [32] = {{20, (u8 *)"shadowinginsamescope"}, WARNING_shadowing_in_same_scope},
+    [29] = {{12, (u8 *)"typemismatch"}, WARNING_type_mismatch},
+    [36] = {{21, (u8 *)"compiletimetruncation"}, WARNING_compile_time_truncation},
+    [55] = {{16, (u8 *)"unsignednegation"}, WARNING_unsigned_negation},
+    [18] = {{19, (u8 *)"unsupporteddeclspec"}, WARNING_unsupported_declspec},
+    [51] = {{13, (u8 *)"retinasmblock"}, WARNING_ret_in_asm_block},
+    [53] = {{22, (u8 *)"doesnotdeclareanything"}, WARNING_does_not_declare_anything},
+    [56] = {{24, (u8 *)"undefinedstaticifoperand"}, WARNING_undefined_static_if_operand},
+    [38] = {{16, (u8 *)"undefonundefined"}, WARNING_undef_on_undefined},
+    [39] = {{17, (u8 *)"unsupportedpragma"}, WARNING_unsupported_pragma},
+    [57] = {{31, (u8 *)"functiondeclaredbutneverdefined"}, WARNING_function_declared_but_never_defined},
+    [63] = {{29, (u8 *)"functiondefinedbutunreachable"}, WARNING_function_defined_but_unreachable},
+    [10] = {{19, (u8 *)"unusedlocalvariable"}, WARNING_unused_local_variable},
+    [23] = {{28, (u8 *)"localvariableonlyeverwritten"}, WARNING_local_variable_only_ever_written},
+    [40] = {{17, (u8 *)"castingu64tofloat"}, WARNING_casting_u64_to_float},
+    [27] = {{15, (u8 *)"doublespecifier"}, WARNING_double_specifier},
+    [49] = {{24, (u8 *)"incorrectformatspecifier"}, WARNING_incorrect_format_specifier},
+    [58] = {{22, (u8 *)"unknownformatspecifier"}, WARNING_unknown_format_specifier},
+    [42] = {{13, (u8 *)"atomicignored"}, WARNING_atomic_ignored},
+    [28] = {{21, (u8 *)"assignmentincondition"}, WARNING_assignment_in_condition},
+    [19] = {{13, (u8 *)"extensionused"}, WARNING_extension_used},
+    [0] = {{13, (u8 *)"missingreturn"}, WARNING_missing_return},
+    [31] = {{24, (u8 *)"returninnoreturnfunction"}, WARNING_return_in_noreturn_function},
+    [43] = {{17, (u8 *)"functionalignment"}, WARNING_function_alignment},
+    [44] = {{31, (u8 *)"arrayofunknownsizeneverfilledin"}, WARNING_array_of_unknown_size_never_filled_in},
+    [59] = {{39, (u8 *)"redefiningdeclarationfromexterntostatic"}, WARNING_redefining_declaration_from_extern_to_static},
+    [41] = {{34, (u8 *)"inlinefunctionisimplicitlyexternal"}, WARNING_inline_function_is_implicitly_external},
+    [62] = {{29, (u8 *)"functionisimplicitlydllimport"}, WARNING_function_is_implicitly_dllimport},
+    [9] = {{29, (u8 *)"importedfunctionisalsodefined"}, WARNING_imported_function_is_also_defined},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
+    
+    int should_print_help = 0;
     
     for(int option_index = 1; option_index < argc; option_index++){
         char *option_cstring = argv[option_index];
@@ -151,6 +245,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             option_cstring++;
             if(*option_cstring == '-') option_cstring++;
         }
+        
+        if(should_print_help) is_option = 1;
         
         if(!is_option){
             string_list_postfix(&cli_options->files, arena, string_from_cstring(option_cstring));
@@ -182,9 +278,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
         // Look up the canonicalized option in the hash table.
         //
         struct cli_option_hash_table_entry *option_hash_table_entry = 0;
-        u64 hash = string_djb2_hash(canonicalized_option);
+        u64 option_hash = string_djb2_hash(canonicalized_option);
         for(u64 index = 0; index < array_count(cli_option_hash_table); index++){
-            u64 hash_index = (hash + index) & (array_count(cli_option_hash_table) - 1);
+            u64 hash_index = (option_hash + index) & (array_count(cli_option_hash_table) - 1);
             if(!cli_option_hash_table[hash_index].canonicalized_name.data) break;
             if(string_match(cli_option_hash_table[hash_index].canonicalized_name, canonicalized_option)){
                 option_hash_table_entry = &cli_option_hash_table[hash_index];
@@ -253,6 +349,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             argument_is_optional = 0; // If we get here, there was an argument (otherwise the hash-table lookup would have worked), so we can safely set this to 0.
         }
         
+        if(should_print_help && option_index + 1 >= argc) argument_is_optional = true;
+        
         //
         // If the option needs an argument, make sure we have one.
         //
@@ -295,14 +393,357 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
         }
         
+        // 
+        // If we are supposed to print help for this option, do so!
+        // 
+        if(should_print_help){
+            switch(option_kind){
+
+                case CLI_OPTION_help:{
+                    print("-help [option] | Display this help message or a help message for another option.\n\n");
+                    os_print_string(
+                            "The --help command can be used to display information on other command line arguments.\n"
+                            "Usage examples:\n"
+                            "    > hlc.exe --help out\n"
+                            "    > hlc.exe --help subsystem:console\n"
+                            "", 167);
+                }break;
+                case CLI_OPTION_no_stdlib:{
+                    print("-no_stdlib | Don't link to 'ucrt.lib'.\n\n");
+                    os_print_string(
+                            "By default, the compiler adds include paths to ucrt header files and links to ucrt.lib.\n"
+                            "You can disable this behaviour to ensure you are not using any standard library functions,\n"
+                            "or when you want to link to a different standard library.\n"
+                            "\n"
+                            "> hlc.exe test.c -no_stdlib\n"
+                            ">\n"
+                            "> #include <stdio.h> // Error at 'include': 'stdio.h' include file not found.\n"
+                            ">\n"
+                            "> int main(){\n"
+                            ">     printf(\"Hello, World!\\n\");\n"
+                            "> }\n"
+                            "", 399);
+                }break;
+                case CLI_OPTION_no_predefines:{
+                    print("-no_predefines | Disable all standard predefines.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
+                case CLI_OPTION_no_debug:{
+                    print("-no_debug | Disables generation of debugging information.\n\n");
+                    os_print_string(
+                            "By default, the compiler generates debug information either in the form of a PDB,\n"
+                            "if an image is requested, or in the for of a .debug$S and .debug$T section, if an\n"
+                            "object file is requested. This option disables this behaviour.\n"
+                            "", 227);
+                }break;
+                case CLI_OPTION_no_dynamic_base:{
+                    print("-no_dynamic_base | Generate a non-relocatable image.\n\n");
+                    os_print_string(
+                            "This option sets the `IMAGE_FILE_RELOCS_STRIPPED` flag in the `Characteristics` \n"
+                            "field of the COFF file header and skips setting the \n"
+                            "`IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE` field in the `DllCharacteristics` of the\n"
+                            "image optional header. Furthermore, no base relocations are produced.\n"
+                            "", 285);
+                }break;
+                case CLI_OPTION_image_base:{
+                    print("-image_base <u64> | Set the default image base address of the image.\n\n");
+                    os_print_string(
+                            "This option sets the `ImageBase` field of the image optional header.\n"
+                            "For executables this defaults to 0x140000000 and for DLLs it defaults to 0x180000000.\n"
+                            "", 155);
+                }break;
+                case CLI_OPTION_show_includes:{
+                    print("-show_includes | Prints all file paths of included files to stdout.\n\n");
+                    os_print_string(
+                            "This option allows you to detect include files used by a compilation unit.\n"
+                            "For example:\n"
+                            "\n"
+                            "> // test.c\n"
+                            "> #include <stdio.h>\n"
+                            "> \n"
+                            "> int main(){\n"
+                            ">     printf(\"Hello, World!\\n\");\n"
+                            "> }\n"
+                            "\n"
+                            "> hlc.exe test.c /show_includes\n"
+                            "> \n"
+                            "> <...>\n"
+                            "> \n"
+                            "> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/ucrt/stdio.h\n"
+                            "> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/ucrt/corecrt.h\n"
+                            "> C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.37.32822/include/vcruntime.h\n"
+                            "> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/shared/sal.h\n"
+                            "> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/shared/concurrencysal.h\n"
+                            "> C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.37.32822/include/vadefs.h\n"
+                            "> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/ucrt/corecrt_wstdio.h\n"
+                            "> C:/Program Files (x86)/Windows Kits/10/Include/10.0.20348.0/ucrt/corecrt_stdio_config.h\n"
+                            "\n"
+                            "Some build tools uses this option to automatically detect which source files a compilation unit depends on.\n"
+                            "", 1038);
+                }break;
+                case CLI_OPTION_subsystem:{
+                    print("-subsystem <enum> | Set the 'Subsystem' field of the image optional header.\n\n");
+                    os_print_string(
+                            "This option allows you to set the 'Subsystem' field of the image optional header.\n"
+                            "The default subsystem is inferred by the choice of \"main\" function.\n"
+                            "If main, or wmain is defined, the default subsystem is console.\n"
+                            "If WinMain or wWinMain is specified the default subsystem is windows.\n"
+                            "\n"
+                            "", 285);
+                    if(option_argument){
+                    }else{
+                        os_print_string(
+                                "console (3)                             | Sets the Subsystem field to `IMAGE_SUBSYSTEM_WINDOWS_CUI`.\n"
+                                "windows (2)                             | Sets the Subsystem field to `IMAGE_SUBSYSTEM_WINDOWS_GUI`.\n"
+                                "efi_application (10)                    | Sets the Subsystem field to `IMAGE_SUBSYSTEM_EFI_APPLICATION`.\n"
+                                , 307);
+                    }
+                }break;
+                case CLI_OPTION_out:{
+                    print("-out <path> | Sets the name of the output files.\n\n");
+                    os_print_string(
+                            "The default output file name is derived from the first compilation unit.\n"
+                            "For example, for `hlc src/test.c` the resulting files would be `test.exe` and `test.pdb`.\n"
+                            "When /out specifies a directory, the resulting files are put in the directory with their \n"
+                            "default name. If out does not specify a file extension, the default file extension is appended.\n"
+                            "The default file extension is `.exe` for an executable, `.obj` for an object file and `.dll`\n"
+                            "for a dynamic link library.\n"
+                            "", 470);
+                }break;
+                case CLI_OPTION_entry:{
+                    print("-entry <name> | Explicitly set the entry point symbol.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
+                case CLI_OPTION_no_entry:{
+                    print("-no_entry | Indicates that there is no entry point. This option implies /DLL.\n\n");
+                    os_print_string(
+                            "This option is useful for building a resource-only DLL.\n"
+                            "For example:\n"
+                            "\n"
+                            "> hlc.exe dll.c /dll /no_entry\n"
+                            ">\n"
+                            "> // dll.c\n"
+                            "> __declspec(dllexport) int export;\n"
+                            ">\n"
+                            "", 152);
+                }break;
+                case CLI_OPTION_dll:{
+                    print("-dll | Produce a Dynamic Link Library.\n\n");
+                    os_print_string(
+                            "This option is used to set the output file type to be a DLL.\n"
+                            "If the program is using a DllMain\n"
+                            "", 95);
+                }break;
+                case CLI_OPTION_obj:{
+                    print("-obj | Produce an object file instead of an executable.\n\n");
+                    os_print_string(
+                            "Using the /obj option allows you to compile in \"more classic\" c-compiler fashion.\n"
+                            "\n"
+                            "Example:\n"
+                            "> hlc /obj main.c\n"
+                            "> hlc /obj other.c\n"
+                            "> link main.obj other.obj\n"
+                            "> main.exe\n"
+                            "", 166);
+                }break;
+                case CLI_OPTION_thread_count:{
+                    print("-thread_count <u64> | Sets the amount of threads to be used during compilation. Default: 1\n\n");
+                    os_print_string(
+                            "The number of threads must be between 1 and 10 times the amount of cores your system has.\n"
+                            "", 90);
+                }break;
+                case CLI_OPTION_MP:{
+                    print("-MP | Sets the amount of threads to the number of processors on the system.\n\n");
+                    os_print_string(
+                            "This is the \"whatever\" throw some cores at it option.\n"
+                            "", 54);
+                }break;
+                case CLI_OPTION_I:{
+                    print("-I <dir_list> | Specify an additional include directory.\n\n");
+                    os_print_string(
+                            "This makes it possible to use your own headers in <>-includes.\n"
+                            "", 63);
+                }break;
+                case CLI_OPTION_D:{
+                    print("-D <name[=<text>]> | Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.\n\n");
+                }break;
+                case CLI_OPTION_Wall:{
+                    print("-Wall | Enable all warnings.\n\n");
+                    os_print_string(
+                            "Enable all implemented warnings. To see a list of all warnings use `hlc.exe --help W`.\n"
+                            "", 87);
+                }break;
+                case CLI_OPTION_Wnone:{
+                    print("-Wnone | Disable all warnings.\n\n");
+                    os_print_string(
+                            "Disable all implemented warnings. To see a list of all warnings use `hlc.exe --help W`.\n"
+                            "", 88);
+                }break;
+                case CLI_OPTION_W:{
+                    print("-W <warning> | Enable specific warnings.\n\n");
+                    os_print_string(
+                            "Enables a specific warning. Warnings can be supplied either by their name, or by their number.\n"
+                            "For a list of all warnings see `hlc --help warning`. For help on a specific warning, see\n"
+                            "`hlc --help warning <warning>`, e.g.: `hlc --help warning type_mismatch`.\n"
+                            "", 258);
+                }break;
+                case CLI_OPTION_Wno:{
+                    print("-Wno <warning> | Disable specific warnings.\n\n");
+                    os_print_string(
+                            "Disables a specific warning. Warnings can be supplied either by their name, or by their number.\n"
+                            "For a list of all warnings see `hlc --help warning`. For help on a specific warning, see\n"
+                            "`hlc --help warning <warning>`, e.g.: `hlc --help warning type_mismatch`.\n"
+                            "", 259);
+                }break;
+                case CLI_OPTION_incremental:{
+                    print("-incremental <enum> | Does nothing, here for MSVC cli-compatibility.\n\n");
+                    os_print_string(
+                            "Otherwise, -INCREMENTAL:no would be interpreted as -I NCREMENTAL:no, but \"NCREMENTAL:no\" is not a directory.\n"
+                            "\n"
+                            "", 110);
+                    if(option_argument){
+                    }else{
+                        os_print_string(
+                                "yes (1)                                 | Does nothing, we do not support incremental linking.\n"
+                                "no (2)                                  | This is what we do anyway :)\n"
+                                , 166);
+                    }
+                }break;
+                case CLI_OPTION_MF:{
+                    print("-MF <file> | Currently ignored, is supposed to produce a .dep file?\n\n");
+                    os_print_string(
+                            "@incomplete\n"
+                            "", 12);
+                }break;
+                case CLI_OPTION_no_discard:{
+                    print("-no_discard | Emit all functions and declarations.\n\n");
+                    os_print_string(
+                            "This option is designed for fuzzing.\n"
+                            "", 37);
+                }break;
+                case CLI_OPTION_dont_print_the_files:{
+                    print("-dont_print_the_files | Don't print the files because we are in a test suite.\n\n");
+                    os_print_string(
+                            "This option is used by the test-runner for tests that only have to compile, \n"
+                            "but not run.\n"
+                            "", 90);
+                }break;
+                case CLI_OPTION_seed:{
+                    print("-seed <u64> | Specifies a seed used to shuffle around declarations.\n\n");
+                    os_print_string(
+                            "This options exists to stress test out of order compilation.\n"
+                            "If -seed 0 is used, the seed is generated by `__rdtsc()`.\n"
+                            "After a bug is found, the resulting seed can be reused to reproduce the issue.\n"
+                            "", 198);
+                }break;
+                case CLI_OPTION_report_warnings_in_system_includes:{
+                    print("-report_warnings_in_system_includes | Self explanatory.\n\n");
+                }break;
+                case CLI_OPTION_warning:{
+                    print("-warning <enum> | A list of all warnings, only accessible from '-help warning'.\n\n");
+                    if(option_argument){
+                    }else{
+                        os_print_string(
+                                "missing_newline_after_backslash (1)     | The preprocessor found a whitespace after a backslash.\n"
+                                "junk_after_directive (2)                | The preprocessor skipped tokens after a directive in a line.\n"
+                                "compile_time_overflow (3)               | A compile time computation caused an overflow.\n"
+                                "compile_time_multiplication_by_zero (4) | Detected a compile-time multiplication by 0.\n"
+                                "shadowing_local (5)                     | A declaration hides a previous local declaration.\n"
+                                "shadowing_global (6)                    | A declaration hides a previous global declaration.\n"
+                                "shadowing_in_same_scope (7)             | A declaration hides a previous declaration in the same scope.\n"
+                                "type_mismatch (8)                       | Potentially erroneous operation between two mismatching types.\n"
+                                "compile_time_truncation (9)             | An integer was truncated at compile type.\n"
+                                "unsigned_negation (10)                  | Applying '-' to an unsigned value results in an unsigned value.\n"
+                                "unsupported_declspec (11)               | Unsupported or unknown __declspec(<...>) invocations are ignored.\n"
+                                "ret_in_asm_block (12)                   | A 'ret' opcode was detected in an __asm__-block.\n"
+                                "does_not_declare_anything (13)          | Potentially malformed declaration.\n"
+                                "undefined_static_if_operand (14)        | An undefined identifier in a #if expression gets evaluated to 0.\n"
+                                "undef_on_undefined (15)                 | Using #undef on an undefined identifier.\n"
+                                "unsupported_pragma (16)                 | Unsupported or unknown #pragma directives are ignored.\n"
+                                "function_declared_but_never_defined (17)| A function had a declaration, but was never defined.\n"
+                                "function_defined_but_unreachable (18)   | The function is dead code and is removed from the executable.\n"
+                                "unused_local_variable (19)              | A local variable was never referenced.\n"
+                                "local_variable_only_ever_written (20)   | A local variable that is only ever written is probably useless.\n"
+                                "casting_u64_to_float (21)               | Casting an unsigned 64-bit value to a floating point value is slow on x64.\n"
+                                "double_specifier (22)                   | More than one of the same specifier for a declaration.\n"
+                                "incorrect_format_specifier (23)         | Wrong argument passed to a __declspec(printlike) procedure.\n"
+                                "unknown_format_specifier (24)           | Unknown format specifier to __declspec(printlike) procedure.\n"
+                                "atomic_ignored (25)                     | Currently, the _Atomic keyword is ignored.\n"
+                                "assignment_in_condition (26)            | Using an assignments in a condition is a common mistake.\n"
+                                "extension_used (27)                     | A hlc-specific extension was used. This is reported very inconsistently.\n"
+                                "missing_return (28)                     | A function forgot to return a value.\n"
+                                "return_in_noreturn_function (29)        | A return statement inside a function declared _Noreturn.\n"
+                                "function_alignment (30)                 | Currently, specifying alignment for functions is unimplemented.\n"
+                                "array_of_unknown_size_never_filled_in (31)| An array of unknown size without initializer (e.g: `int array[];`) that is never defined will implicitly have length 1.\n"
+                                "redefining_declaration_from_extern_to_static (32)| First declaring a function as extern then as static is undefined behaviour.\n"
+                                "inline_function_is_implicitly_external (33)| First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.\n"
+                                "function_is_implicitly_dllimport (34)   | Function was not declared with dllimport, but we could only find it as an import.\n"
+                                "imported_function_is_also_defined (35)  | Function was both found in an import library an a static library.\n"
+                                , 3604);
+                    }
+                }break;
+                invalid_default_case();
+            }
+            os_panic(0);
+        }
+        
         //
         // We are ready to parse the command line option!
         //
         switch(option_kind){
             
             case CLI_OPTION_help:{
-                not_implemented;
+                if(!option_argument){
+                    if(option_index + 1 != argc){
+                         should_print_help = 1;
+                         continue;
+                    }
+                    
+                    os_print_string(
+                            "  -help [option]              | Display this help message or a help message for another option.\n"
+                            "  -no_stdlib                  | Don't link to 'ucrt.lib'.\n"
+                            "  -no_predefines              | Disable all standard predefines.\n"
+                            "  -no_debug                   | Disables generation of debugging information.\n"
+                            "  -no_dynamic_base            | Generate a non-relocatable image.\n"
+                            "  -image_base <u64>           | Set the default image base address of the image.\n"
+                            "  -show_includes              | Prints all file paths of included files to stdout.\n"
+                            "  -subsystem <enum>           | Set the 'Subsystem' field of the image optional header.\n"
+                            "  -out <path>                 | Sets the name of the output files.\n"
+                            "  -entry <name>               | Explicitly set the entry point symbol.\n"
+                            "  -no_entry                   | Indicates that there is no entry point. This option implies /DLL.\n"
+                            "  -dll                        | Produce a Dynamic Link Library.\n"
+                            "  -obj                        | Produce an object file instead of an executable.\n"
+                            "  -thread_count <u64>         | Sets the amount of threads to be used during compilation. Default: 1\n"
+                            "  -MP                         | Sets the amount of threads to the number of processors on the system.\n"
+                            "  -I <dir_list>               | Specify an additional include directory.\n"
+                            "  -D <name[=<text>]>          | Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.\n"
+                            "  -Wall                       | Enable all warnings.\n"
+                            "  -Wnone                      | Disable all warnings.\n"
+                            "  -W <warning>                | Enable specific warnings.\n"
+                            "  -Wno <warning>              | Disable specific warnings.\n"
+                            "  -incremental <enum>         | Does nothing, here for MSVC cli-compatibility.\n"
+                            "  -MF <file>                  | Currently ignored, is supposed to produce a .dep file?\n"
+                    , 1771);
+                }else{
+                    //
+                    //@HACK: We want to handle --help=argument exactly as we handle --help argument.
+                    //       Hence, I reset the argument array here.
+                    //
+                    should_print_help = 1;
+                    static char *new_argv[2];
+                    new_argv[0] = option_argument;
+                    option_index = -1;
+                    argv = new_argv;
+                    argc = 1;
+                    continue;
+                }
+                os_panic(0);
             }break;
+
             case CLI_OPTION_no_stdlib: cli_options->no_stdlib = 1; break;
             case CLI_OPTION_no_predefines: cli_options->no_predefines = 1; break;
             case CLI_OPTION_no_debug: cli_options->no_debug = 1; break;
@@ -342,7 +783,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 cli_options->thread_count_specified = 1;
                 cli_options->thread_count = argument_as_u64;
             }break;
-            case CLI_OPTION_MT: cli_options->MT = 1; break;
+            case CLI_OPTION_MP: cli_options->MP = 1; break;
             
             case CLI_OPTION_I:{
                 string_list_postfix(&cli_options->I, arena, argument_string);
@@ -355,9 +796,97 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_Wnone: cli_options->Wnone = 1; break;
             
             case CLI_OPTION_W:{
+                int is_number = 1;
+                u64 warning_value = string_to_u64(argument_string, &is_number);
+                if(is_number){
+                    if(warning_value >= WARNING_count){
+                        print("Warning: Unhandled warning value %lld.\n", warning_value);
+                    }else{
+                        warning_enabled[warning_value] = 1;
+                    }
+                    break;
+                }
+                //
+                // Canonicalize the Warning-Name.
+                //
+                u8  canonicalized_warning_data[0x100];
+                u64 canonicalized_warning_size = 0;
+                for(smm index = 0; index < argument_string.size; index++){
+                    char c = argument_string.data[index];
+                    if(c == '-' || c == '_') continue;
+                    
+                    if(canonicalized_warning_size == sizeof(canonicalized_warning_data)){
+                        print("Error: Option '%.*s' is too long. Command line warnings can be at most %lld bytes.\n", argument_string.size, argument_string.data, array_count(canonicalized_warning_data));
+                        return 0;
+                    }
+                    canonicalized_warning_data[canonicalized_warning_size++] = (c|32);
+                }
+                
+                struct string canonicalized_warning = {.data = canonicalized_warning_data, .size = canonicalized_warning_size};
+                
+                struct warning_table_entry *warning_entry = null;
+                u64 warning_hash = string_djb2_hash(canonicalized_warning);
+                for(u64 index = 0; index < array_count(warning_table); index++){
+                    u64 hash_index = (warning_hash + index) & (array_count(warning_table) - 1);
+                    if(!warning_table[hash_index].canonicalized_name.data) break;
+                    if(string_match(warning_table[hash_index].canonicalized_name, canonicalized_warning)){
+                        warning_entry = &warning_table[hash_index];
+                        break;
+                    }
+                }
+                
+                if(!warning_entry){
+                    print("Warning: Unhandled warning value '%.*s'.\n", argument_string.size, argument_string.data);
+                }else{
+                    warning_enabled[warning_entry->warning_kind] = 1;
+                }
             }break;
             
             case CLI_OPTION_Wno:{
+                int is_number = 1;
+                u64 warning_value = string_to_u64(argument_string, &is_number);
+                if(is_number){
+                    if(warning_value >= WARNING_count){
+                        print("Warning: Unhandled warning value %lld.\n", warning_value);
+                    }else{
+                        warning_enabled[warning_value] = 0;
+                    }
+                    break;
+                }
+                //
+                // Canonicalize the Warning-Name.
+                //
+                u8  canonicalized_warning_data[0x100];
+                u64 canonicalized_warning_size = 0;
+                for(smm index = 0; index < argument_string.size; index++){
+                    char c = argument_string.data[index];
+                    if(c == '-' || c == '_') continue;
+                    
+                    if(canonicalized_warning_size == sizeof(canonicalized_warning_data)){
+                        print("Error: Option '%.*s' is too long. Command line warnings can be at most %lld bytes.\n", argument_string.size, argument_string.data, array_count(canonicalized_warning_data));
+                        return 0;
+                    }
+                    canonicalized_warning_data[canonicalized_warning_size++] = (c|32);
+                }
+                
+                struct string canonicalized_warning = {.data = canonicalized_warning_data, .size = canonicalized_warning_size};
+                
+                struct warning_table_entry *warning_entry = null;
+                u64 warning_hash = string_djb2_hash(canonicalized_warning);
+                for(u64 index = 0; index < array_count(warning_table); index++){
+                    u64 hash_index = (warning_hash + index) & (array_count(warning_table) - 1);
+                    if(!warning_table[hash_index].canonicalized_name.data) break;
+                    if(string_match(warning_table[hash_index].canonicalized_name, canonicalized_warning)){
+                        warning_entry = &warning_table[hash_index];
+                        break;
+                    }
+                }
+                
+                if(!warning_entry){
+                    print("Warning: Unhandled warning value '%.*s'.\n", argument_string.size, argument_string.data);
+                }else{
+                    warning_enabled[warning_entry->warning_kind] = 0;
+                }
             }break;
             
             case CLI_OPTION_incremental:{
@@ -382,8 +911,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 cli_options->seed = argument_as_u64;
             }break;
             case CLI_OPTION_report_warnings_in_system_includes: cli_options->report_warnings_in_system_includes = 1; break;
+            
             case CLI_OPTION_count:
             case CLI_OPTION_none:
+            case CLI_OPTION_warning:
                 invalid_code_path;
         }
     }
