@@ -2637,7 +2637,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             struct patch_node *next = patch->next;
             
             struct ast_declaration *dest_declaration = patch->dest_declaration;
-            if(!(dest_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+            if(!(dest_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)){
+                // @cleanup: should this even be possible?
+                patch = next;
+                continue;
+            }
             
             if(dest_declaration->base.kind == AST_function){
                 patch->next = text_patches;

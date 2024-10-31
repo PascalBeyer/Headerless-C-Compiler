@@ -2954,6 +2954,10 @@ func void worker_emit_code(struct context *context, struct work_queue_entry *wor
     
     for_ast_list(function->static_variables){
         struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+        
+        // @cleanup: what if they are not referenced?
+        decl->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
+        
         assert(!decl->memory_location);
         if(decl->assign_expr){
             decl->memory_location = evaluate_static_initializer(context, decl);
