@@ -2085,7 +2085,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                             if(!decl->assign_expr) break;
                             
                             // Dont emit lines for declarations that are static.
-                            if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist)) break;
+                            if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist | DECLARATION_FLAGS_is_global)) break;
                             
                             push_to_stack(decl->assign_expr);
                         }break;
