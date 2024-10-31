@@ -3,7 +3,6 @@
 #define _VCRTIMP __declspec(dllimport)
 
 #include <sal.h>
-#include <stddef.h>
 #include <stdarg.h>
 #include <stdint.h>
 
@@ -23,3 +22,9 @@
 #define _CRT_DECLARE_NONSTDC_NAMES 1
 
 #define __crt_countof(array) (sizeof(array) / sizeof((array)[0]))
+
+typedef unsigned short wchar_t;
+typedef unsigned __int64 size_t;
+typedef __int64 ptrdiff_t;
+typedef __int64 intptr_t;
+
