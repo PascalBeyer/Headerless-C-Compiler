@@ -4561,6 +4561,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                 }else if(ast->kind == AST_declaration){
                     struct ast_declaration *decl = (struct ast_declaration *)ast;
                     assert(!(decl->flags & DECLARATION_FLAGS_is_static)); // These are 'global_declarations' they should not be static.
+                    if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue; // Don't add enum members.
                     
                     // Don't add reference nodes for explictly external declarations.
                     if((decl->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport)) && !decl->assign_expr) continue;
