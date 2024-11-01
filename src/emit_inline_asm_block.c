@@ -215,6 +215,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
         switch(inst->memonic){
             
             static enum legacy_prefixes memonic_to_prefix[] = {
+                
                 [MEMONIC_unpcklps] = ASM_PREFIX_SSE_packed_float, [MEMONIC_unpcklpd] = ASM_PREFIX_SSE_packed_double,
                 [MEMONIC_unpckhps] = ASM_PREFIX_SSE_packed_float, [MEMONIC_unpckhpd] = ASM_PREFIX_SSE_packed_double,
                 
@@ -428,7 +429,6 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 [MEMONIC_psrld] = 0xd2, [MEMONIC_psrad] = 0xe2, [MEMONIC_pslld] = 0xf2, 
                 [MEMONIC_psrlq] = 0xd3, /* [MEMONIC_psraq], */  [MEMONIC_psllq] = 0xf3,
                 
-                
                 [MEMONIC_maskmovdqu] = 0xf7,
                 
                 [MEMONIC_shufps]  = 0xc6, [MEMONIC_shufpd]  = 0xc6,
@@ -483,6 +483,11 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 // [MEMONIC_pinsrw] = 0x15,
                 [MEMONIC_pinsrd] = 0x22,
                 [MEMONIC_pinsrq] = 0x22,
+                
+                // These are acutually the /reg-extension
+                [MEMONIC_neg] = 3,
+                [MEMONIC_mul] = 4,
+                [MEMONIC_div] = 6,
             };
             
             case MEMONIC_mov:{
@@ -729,9 +734,9 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 }
             }break;
             
-            case MEMONIC_neg:{
+            case MEMONIC_mul: case MEMONIC_div: case MEMONIC_neg:{
                 struct opcode opcode = (operand->size == 1) ? one_byte_opcode(0xf6) : one_byte_opcode(0xf7);
-                u8 reg_extension = 3;
+                u8 reg_extension = memonic_to_opcode[inst->memonic];
                 if(operand->state == EMIT_LOCATION_register_relative){
                     emit_register_relative_extended(context, user_prefixes, opcode, reg_extension, operand);
                 }else{
@@ -1347,6 +1352,11 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 // os_panic(1337);
             }break;
         }
+        
+        for(smm operand_index = 0; operand_index < inst->amount_of_operands; operand_index++){
+            if(operands[operand_index]->state != EMIT_LOCATION_freed) free_emit_location(context, operands[operand_index]);
+        }
+        
     }
     
     //

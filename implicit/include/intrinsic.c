@@ -775,14 +775,21 @@ __declspec(inline_asm) void *_InterlockedExchangePointer(void **target, void *va
     return rax
 }
 
-#if 0
+
 __declspec(inline_asm) unsigned __int64 _umul128(unsigned __int64 Multiplier, unsigned __int64 Multiplicand, unsigned __int64 *HighProduct){
     mov rax, Multiplicand
     mul Multiplier
-    mov *HighProduct, rdx
+    mov [HighProduct], rdx
     return rax
 }
-#endif
+
+__declspec(inline_asm) unsigned __int64 _udiv128(unsigned __int64 highDividend, unsigned __int64 lowDividend, unsigned __int64 divisor, unsigned __int64 *remainder){
+    mov rdx, highDividend
+    mov rax, lowDividend
+    div divisor
+    mov [remainder], rdx
+    return rax
+}
 
 __declspec(inline_asm) void __faststorefence(void){
     lock or dword ptr [rsp], 0

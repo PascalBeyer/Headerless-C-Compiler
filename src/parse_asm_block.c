@@ -160,6 +160,9 @@ enum memonic{
     MEMONIC_inc, MEMONIC_dec,
     MEMONIC_neg,
     
+    MEMONIC_mul,
+    MEMONIC_div,
+    
     MEMONIC_bt, MEMONIC_bts, MEMONIC_btr, MEMONIC_btc,
     
     MEMONIC_bsf, MEMONIC_bsr,
@@ -499,6 +502,9 @@ static struct{
     [MEMONIC_dec] = {.memonic = const_string("dec"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
     [MEMONIC_neg] = {.memonic = const_string("neg"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
     
+    [MEMONIC_div] = {.memonic = const_string("div"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
+    [MEMONIC_mul] = {.memonic = const_string("mul"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
+    
     [MEMONIC_seto]   = {.memonic = const_string("seto"),   .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_regm8 },
     [MEMONIC_setno]  = {.memonic = const_string("setno"),  .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_regm8 },
     [MEMONIC_setc]   = {.memonic = const_string("setc"),   .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_regm8 },
@@ -568,7 +574,6 @@ static struct{
     [MEMONIC_btr] = {.memonic = const_string("btr"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8 | ASM_OP_KIND_imm8},
     [MEMONIC_bts] = {.memonic = const_string("bts"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8 | ASM_OP_KIND_imm8},
     [MEMONIC_btc] = {.memonic = const_string("btc"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8 | ASM_OP_KIND_imm8},
-    
     
     [MEMONIC_bsf]    = {.memonic = const_string("bsf"),   .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_reg8, .operand_kind_flags[1] = ASM_OP_KIND_non_regm8 },
     [MEMONIC_bsr]    = {.memonic = const_string("bsr"),   .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_reg8, .operand_kind_flags[1] = ASM_OP_KIND_non_regm8 },
