@@ -458,6 +458,8 @@ enum ast_kind{
     
     AST_panic, 
     
+    AST_array_range, // GNU extension: array[1 ... 5] - only allowed in initializers.
+    
     AST_count,
 };
 
@@ -707,6 +709,13 @@ struct ast_subscript{
     struct ast base;
     struct ast *lhs;
     struct ast *index;
+};
+
+struct ast_array_range{ // array[1 ... 5] - only allowed in initializers.
+    struct ast base;
+    struct ast *lhs;
+    u64 start_index;
+    u64 end_index;
 };
 
 struct ast_return{

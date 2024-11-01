@@ -2094,6 +2094,10 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
     assert(assignment_ast->kind == AST_assignment);
     struct ast_binary_op *assign = cast(struct ast_binary_op *)assignment_ast;
     
+    // For range initializers. This kinda sucks.
+    u64 range_stride = 0;
+    u64 range_size = 1;
+    
     {
         //
         // Evaluate the lhs to get the 'offset'.
@@ -2123,6 +2127,16 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
                     }
                 }break;
                 
+                case AST_array_range:{
+                    struct ast_array_range *range = (struct ast_array_range *)lhs;
+                    
+                    range_stride = range->base.resolved_type->size;
+                    range_size   = (range->end_index + 1) - range->start_index;
+                    
+                    offset += range->start_index * range_stride;
+                    lhs = range->lhs;
+                }break;
+                
                 case AST_identifier:{
                     // We have arrived at the root node.
                     should_loop = 0;
@@ -2141,199 +2155,206 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
     
     assert(offset + lhs_type->size <= data_size);
     
-    retry_because_we_hit_a_pointer_to_64bit_cast:;
-    
-    switch(rhs->kind){
-        case AST_integer_literal:{
-            u64 value = integer_literal_as_u64(rhs);
-            // @note: The rhs does not have to fit: if we have 'u8 a = 0xffff;' this only gives a warning.
-            
-            if(lhs_type->kind == AST_bitfield_type){
-                u64 old_value = 0;
-                memcpy(&old_value, data + offset, lhs_type->size);
+    // 
+    // @sigh: For now, we assume range initializers are rare and just do the static initializer path
+    //        for each element in the range. This is quite in efficient in a bunch of cases.
+    // 
+    for(u64 range_index = 0; range_index < range_size; range_index++, offset += range_stride){
+        
+        retry_because_we_hit_a_pointer_to_64bit_cast:;
+        
+        switch(rhs->kind){
+            case AST_integer_literal:{
+                u64 value = integer_literal_as_u64(rhs);
+                // @note: The rhs does not have to fit: if we have 'u8 a = 0xffff;' this only gives a warning.
                 
-                struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)lhs_type;
-                value <<= bitfield->bit_index;
-                
-                u64 mask = ~(((1ull << bitfield->width) - 1) << bitfield->bit_index);
-                u64 new_value = (mask & old_value) | value;
-                memcpy(data + offset, &new_value, lhs_type->size);
-            }else{
-                assert(lhs_type->kind == AST_integer_type || lhs_type->kind == AST_pointer_type);
+                if(lhs_type->kind == AST_bitfield_type){
+                    u64 old_value = 0;
+                    memcpy(&old_value, data + offset, lhs_type->size);
+                    
+                    struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)lhs_type;
+                    value <<= bitfield->bit_index;
+                    
+                    u64 mask = ~(((1ull << bitfield->width) - 1) << bitfield->bit_index);
+                    u64 new_value = (mask & old_value) | value;
+                    memcpy(data + offset, &new_value, lhs_type->size);
+                }else{
+                    assert(lhs_type->kind == AST_integer_type || lhs_type->kind == AST_pointer_type);
+                    memcpy(data + offset, &value, lhs_type->size);
+                }
+            }break;
+            case AST_pointer_literal:{
+                struct ast_pointer_literal *lit = cast(struct ast_pointer_literal *)rhs;
+                u8 *value = lit->pointer;
                 memcpy(data + offset, &value, lhs_type->size);
-            }
-        }break;
-        case AST_pointer_literal:{
-            struct ast_pointer_literal *lit = cast(struct ast_pointer_literal *)rhs;
-            u8 *value = lit->pointer;
-            memcpy(data + offset, &value, lhs_type->size);
-        }break;
-        
-        case AST_compound_literal:{
-            struct ast_compound_literal *lit = cast(struct ast_compound_literal *)rhs;
+            }break;
             
-            for_ast_list(lit->assignment_list){
-                evaluate_static_initializer__internal(context, it->value, patch_declaration, data, data_size, offset);
-            }
-        }break;
-        
-        case AST_float_literal:{
-            struct ast_float_literal *f = cast(struct ast_float_literal *)rhs;
-            f64 big_value = f->value;
-            f32 small_value = (f32)f->value;
-            void *copy_from;
-            if(f->base.resolved_type == &globals.typedef_f32){
-                copy_from = &small_value;
-            }else{
-                assert(f->base.resolved_type == &globals.typedef_f64);
-                copy_from = &big_value;
-            }
-            memcpy(data + offset, copy_from, lhs_type->size);
-        }break;
-        
-        case AST_string_literal:{
-            struct ast_string_literal *str = cast(struct ast_string_literal *)rhs;
-            
-            // If the left hand side is not an array, we should be in the 'AST_implicit_address_conversion' case.
-            assert(lhs_type->kind == AST_array_type);
-            struct ast_array_type *lhs_array = (struct ast_array_type *)lhs_type;
-            assert(!lhs_array->is_of_unknown_size);
-            
-            // This is the 
-            //      char asd[] = "asd";
-            //      u16  asd[] = L"asd";
-            // case.
-            
-            assert(offset + str->value.size <= data_size); // Make sure at least the string fits.
-            assert(str->value.size <= lhs_array->element_type->size * lhs_array->amount_of_elements);
-            
-            memcpy(data + offset, str->value.data, str->value.size);
-            
-            // @cleanup: should we memset the whole "upper" part?
-            if(offset + str->value.size + lhs_array->element_type->size <= lhs_array->amount_of_elements){
-                memset(&data[offset + str->value.size], 0, lhs_array->element_type->size); // zero-terminate
-            }
-        }break;
-        
-        case AST_embed:{
-            // We should only be able to initialize 'char []' and 'unsigned char []' with #embed.
-            // But we sadly cannot really check this here, because we made this an initializer 
-            // for the character, which determines the offset.
-            // 
-            // @cleanup: This is all a gross hack, just to get it working.
-            //           We want to rework intialization pretty soon anyway.
-            //           
-            //                                                        23.11.2023
-            
-            struct string file_data = rhs->token->string;
-            assert(offset + file_data.size <= data_size); // Make sure it fits.
-            
-            memcpy(data + offset, file_data.data, file_data.size);
-        }break;
-        
-        case AST_binary_plus: case AST_binary_minus:{
-            struct ast_binary_op *binary = (struct ast_binary_op *)rhs;
-            
-            // 
-            // Ignore casts to 64-bit (poinre sized) things.
-            // 
-            struct ast *binary_rhs = binary->rhs;
-            while(binary_rhs->kind == AST_cast && binary_rhs->resolved_type->size == 8){
-                struct ast_unary_op *cast = (struct ast_unary_op *)binary_rhs;
-                binary_rhs = cast->operand;
-            }
-            
-            struct ast *binary_lhs = binary->lhs;
-            while(binary_lhs->kind == AST_cast && binary_lhs->resolved_type->size == 8){
-                struct ast_unary_op *cast = (struct ast_unary_op *)binary_lhs;
-                binary_lhs = cast->operand;
-            }
-            
-            
-            smm offset_lhs = 0;
-            struct ast *patch_lhs = null;
-            
-            if(binary_lhs->kind == AST_pointer_literal){
-                offset_lhs = (smm)((struct ast_pointer_literal *)binary_lhs)->pointer;
-            }else if(binary_lhs->kind == AST_integer_literal){
-                offset_lhs = integer_literal_as_s64(binary_lhs);
-            }else if(binary_lhs->kind == AST_implicit_address_conversion || binary_lhs->kind == AST_unary_address || binary_lhs->kind == AST_cast){
-                while(binary_lhs->kind == AST_cast){
+            case AST_compound_literal:{
+                struct ast_compound_literal *lit = cast(struct ast_compound_literal *)rhs;
+                
+                for_ast_list(lit->assignment_list){
+                    evaluate_static_initializer__internal(context, it->value, patch_declaration, data, data_size, offset);
                 }
-                int error = evaluate_static_address(context, binary_lhs, &patch_lhs, &offset_lhs);
-                if(error) return 1;
-            }else{
-                goto initializer_non_const;
-            }
+            }break;
             
-            smm offset_rhs = 0;
-            struct ast *patch_rhs = null;
+            case AST_float_literal:{
+                struct ast_float_literal *f = cast(struct ast_float_literal *)rhs;
+                f64 big_value = f->value;
+                f32 small_value = (f32)f->value;
+                void *copy_from;
+                if(f->base.resolved_type == &globals.typedef_f32){
+                    copy_from = &small_value;
+                }else{
+                    assert(f->base.resolved_type == &globals.typedef_f64);
+                    copy_from = &big_value;
+                }
+                memcpy(data + offset, copy_from, lhs_type->size);
+            }break;
             
-            if(binary_rhs->kind == AST_pointer_literal){
-                offset_rhs = (smm)((struct ast_pointer_literal *)binary_rhs)->pointer;
-            }else if(binary_rhs->kind == AST_integer_literal){
-                offset_rhs = integer_literal_as_s64(binary_rhs);
-            }else if(binary_rhs->kind == AST_implicit_address_conversion || binary_rhs->kind == AST_unary_address){
-                int error = evaluate_static_address(context, binary_rhs, &patch_rhs, &offset_rhs);
-                if(error) return 1;
-            }else{
-                goto initializer_non_const;
-            }
+            case AST_string_literal:{
+                struct ast_string_literal *str = cast(struct ast_string_literal *)rhs;
+                
+                // If the left hand side is not an array, we should be in the 'AST_implicit_address_conversion' case.
+                assert(lhs_type->kind == AST_array_type);
+                struct ast_array_type *lhs_array = (struct ast_array_type *)lhs_type;
+                assert(!lhs_array->is_of_unknown_size);
+                
+                // This is the 
+                //      char asd[] = "asd";
+                //      u16  asd[] = L"asd";
+                // case.
+                
+                assert(offset + str->value.size <= data_size); // Make sure at least the string fits.
+                assert(str->value.size <= lhs_array->element_type->size * lhs_array->amount_of_elements);
+                
+                memcpy(data + offset, str->value.data, str->value.size);
+                
+                // @cleanup: should we memset the whole "upper" part?
+                if(offset + str->value.size + lhs_array->element_type->size <= lhs_array->amount_of_elements){
+                    memset(&data[offset + str->value.size], 0, lhs_array->element_type->size); // zero-terminate
+                }
+            }break;
             
-            smm offset_in_rhs = rhs->kind == AST_binary_plus ? offset_lhs + offset_rhs : offset_lhs - offset_rhs;
+            case AST_embed:{
+                // We should only be able to initialize 'char []' and 'unsigned char []' with #embed.
+                // But we sadly cannot really check this here, because we made this an initializer 
+                // for the character, which determines the offset.
+                // 
+                // @cleanup: This is all a gross hack, just to get it working.
+                //           We want to rework intialization pretty soon anyway.
+                //           
+                //                                                        23.11.2023
+                
+                struct string file_data = rhs->token->string;
+                assert(offset + file_data.size <= data_size); // Make sure it fits.
+                
+                memcpy(data + offset, file_data.data, file_data.size);
+            }break;
             
-            if(patch_lhs == patch_rhs){
-                // @note: This includes the case where 'patch_lhs == patch_rhs == null'.
-                memcpy(data + offset, &offset, lhs_type->size);
-            }else if(patch_lhs && patch_rhs){
-                goto initializer_non_const;
-            }else{
-                struct ast *patch = patch_lhs ? patch_lhs : patch_rhs;
-                emit_patch(context, PATCH_absolute, patch, offset_in_rhs, patch_declaration, offset, -1);
-            }
-        }break;
-        
-        case AST_implicit_address_conversion: case AST_unary_address:{
-            
-            struct ast *patch_ast = null; // Either a 'AST_declartation' or 'AST_string_literal'.
-            smm offset_in_rhs = 0;
-            
-            int error = evaluate_static_address(context, rhs, &patch_ast, &offset_in_rhs);
-            if(error) return 1;
-            
-            emit_patch(context, PATCH_absolute, patch_ast, offset_in_rhs, patch_declaration, offset, -1);
-        }break;
-        
-        case AST_cast:{
-            //
-            // We should only get here for casts of a pointer to an integer/pointer, 
-            // everything else should have been constant propagated, or is not constant.
-            // 
-            // @note: Technically, (currently) this is not true. 
-            //        There can be expressions like '&x[1] - &x[2]', which are constant.
-            //        But I think if we ever make these work, then in the parser, 
-            //        by knowing the original declaration for 'x' and then const-prop'ing it.
-            //
-            
-            struct ast_unary_op *cast = cast(struct ast_unary_op *)rhs;
-            
-            if(cast->operand->resolved_type->kind == AST_pointer_type){
-                if(cast->base.resolved_type->size == 8){
-                    rhs = cast->operand;
-                    goto retry_because_we_hit_a_pointer_to_64bit_cast;
+            case AST_binary_plus: case AST_binary_minus:{
+                struct ast_binary_op *binary = (struct ast_binary_op *)rhs;
+                
+                // 
+                // Ignore casts to 64-bit (poinre sized) things.
+                // 
+                struct ast *binary_rhs = binary->rhs;
+                while(binary_rhs->kind == AST_cast && binary_rhs->resolved_type->size == 8){
+                    struct ast_unary_op *cast = (struct ast_unary_op *)binary_rhs;
+                    binary_rhs = cast->operand;
                 }
                 
-                report_error(context, cast->base.token, "Cannot truncate a pointer at compile time.");
-            }else{
-                goto initializer_non_const;
-            }
-        }break;
-        
-        default:{
-            initializer_non_const:
-            report_error(context, assign->base.token, "Initializer is not a constant.");
-            return 1;
-        }break;
+                struct ast *binary_lhs = binary->lhs;
+                while(binary_lhs->kind == AST_cast && binary_lhs->resolved_type->size == 8){
+                    struct ast_unary_op *cast = (struct ast_unary_op *)binary_lhs;
+                    binary_lhs = cast->operand;
+                }
+                
+                
+                smm offset_lhs = 0;
+                struct ast *patch_lhs = null;
+                
+                if(binary_lhs->kind == AST_pointer_literal){
+                    offset_lhs = (smm)((struct ast_pointer_literal *)binary_lhs)->pointer;
+                }else if(binary_lhs->kind == AST_integer_literal){
+                    offset_lhs = integer_literal_as_s64(binary_lhs);
+                }else if(binary_lhs->kind == AST_implicit_address_conversion || binary_lhs->kind == AST_unary_address || binary_lhs->kind == AST_cast){
+                    while(binary_lhs->kind == AST_cast){
+                    }
+                    int error = evaluate_static_address(context, binary_lhs, &patch_lhs, &offset_lhs);
+                    if(error) return 1;
+                }else{
+                    goto initializer_non_const;
+                }
+                
+                smm offset_rhs = 0;
+                struct ast *patch_rhs = null;
+                
+                if(binary_rhs->kind == AST_pointer_literal){
+                    offset_rhs = (smm)((struct ast_pointer_literal *)binary_rhs)->pointer;
+                }else if(binary_rhs->kind == AST_integer_literal){
+                    offset_rhs = integer_literal_as_s64(binary_rhs);
+                }else if(binary_rhs->kind == AST_implicit_address_conversion || binary_rhs->kind == AST_unary_address){
+                    int error = evaluate_static_address(context, binary_rhs, &patch_rhs, &offset_rhs);
+                    if(error) return 1;
+                }else{
+                    goto initializer_non_const;
+                }
+                
+                smm offset_in_rhs = rhs->kind == AST_binary_plus ? offset_lhs + offset_rhs : offset_lhs - offset_rhs;
+                
+                if(patch_lhs == patch_rhs){
+                    // @note: This includes the case where 'patch_lhs == patch_rhs == null'.
+                    memcpy(data + offset, &offset, lhs_type->size);
+                }else if(patch_lhs && patch_rhs){
+                    goto initializer_non_const;
+                }else{
+                    struct ast *patch = patch_lhs ? patch_lhs : patch_rhs;
+                    emit_patch(context, PATCH_absolute, patch, offset_in_rhs, patch_declaration, offset, -1);
+                }
+            }break;
+            
+            case AST_implicit_address_conversion: case AST_unary_address:{
+                
+                struct ast *patch_ast = null; // Either a 'AST_declartation' or 'AST_string_literal'.
+                smm offset_in_rhs = 0;
+                
+                int error = evaluate_static_address(context, rhs, &patch_ast, &offset_in_rhs);
+                if(error) return 1;
+                
+                emit_patch(context, PATCH_absolute, patch_ast, offset_in_rhs, patch_declaration, offset, -1);
+            }break;
+            
+            case AST_cast:{
+                //
+                // We should only get here for casts of a pointer to an integer/pointer, 
+                // everything else should have been constant propagated, or is not constant.
+                // 
+                // @note: Technically, (currently) this is not true. 
+                //        There can be expressions like '&x[1] - &x[2]', which are constant.
+                //        But I think if we ever make these work, then in the parser, 
+                //        by knowing the original declaration for 'x' and then const-prop'ing it.
+                //
+                
+                struct ast_unary_op *cast = cast(struct ast_unary_op *)rhs;
+                
+                if(cast->operand->resolved_type->kind == AST_pointer_type){
+                    if(cast->base.resolved_type->size == 8){
+                        rhs = cast->operand;
+                        goto retry_because_we_hit_a_pointer_to_64bit_cast;
+                    }
+                    
+                    report_error(context, cast->base.token, "Cannot truncate a pointer at compile time.");
+                }else{
+                    goto initializer_non_const;
+                }
+            }break;
+            
+            default:{
+                initializer_non_const:
+                report_error(context, assign->base.token, "Initializer is not a constant.");
+                return 1;
+            }break;
+        }
     }
     
     return 0;

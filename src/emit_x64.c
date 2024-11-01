@@ -3220,6 +3220,36 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 emit_memcpy(context, lhs, rhs);
                 
                 return lhs;
+            }else if(assign->lhs->kind == AST_array_range){
+                // 
+                // GNU extension array range initializer:
+                //     
+                //     [1 ... 5] = expr,
+                // 
+                struct ast_array_range *array_range = (struct ast_array_range *)assign->lhs;
+                
+                // Get the rhs:
+                struct emit_location *rhs = emit_code_for_ast(context, assign->rhs);
+                if(rhs->state == EMIT_LOCATION_conditional) rhs = emit_load(context, rhs);
+                
+                emit_location_prevent_freeing(context, rhs);
+                
+                struct emit_location *lhs_base = emit_code_for_ast(context, array_range->lhs);
+                assert(lhs_base->state == EMIT_LOCATION_register_relative);
+                
+                u64 element_size = array_range->base.resolved_type->size;
+                lhs_base->offset += array_range->start_index * element_size;
+                lhs_base->size = element_size;
+                
+                for(u64 index = array_range->start_index; index <= array_range->end_index; index++, lhs_base->offset += element_size){
+                    emit_store(context, lhs_base, rhs);
+                }
+                
+                emit_location_allow_freeing(context, rhs);
+                free_emit_location(context, rhs);
+                free_emit_location(context, lhs_base);
+                
+                return emit_location_invalid(context);
             }
             
             // 

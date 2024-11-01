@@ -1725,14 +1725,14 @@ func struct ast *push_current_object_for_designator_node(struct context *context
     return current_object;
 }
 
-func struct ast_list parse_initializer_list(struct context *context, struct ast *ast, smm *out_trailing_initializer_size){
+func struct ast_list parse_initializer_list(struct context *context, struct ast *ast_to_initialize, smm *out_trailing_initializer_size){
     
     struct token *initial_open_curly = next_token(context);
     assert(initial_open_curly->type == TOKEN_open_curly);
     
     struct ast_list ret = {0};
     
-    if(ast->resolved_type->kind != AST_array_type && ast->resolved_type->kind != AST_struct && ast->resolved_type->kind != AST_union){
+    if(ast_to_initialize->resolved_type->kind != AST_array_type && ast_to_initialize->resolved_type->kind != AST_struct && ast_to_initialize->resolved_type->kind != AST_union){
         // 
         // For an initializer like:
         //     int a = {1};
@@ -1746,7 +1746,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             // We found an initializer like 'int a = {{1}};', or '(int){{1}}'.
             // This is sort of stupid, but legal.
             // 
-            ret = parse_initializer_list(context, ast, out_trailing_initializer_size);
+            ret = parse_initializer_list(context, ast_to_initialize, out_trailing_initializer_size);
             expect_token(context, TOKEN_closed_curly, "Expected '}'."); // :Error, but it does not matter, noones ever going to see this.
             return ret;
         }
@@ -1773,11 +1773,11 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
         expect_token(context, TOKEN_closed_curly, "More than one member in initializer-list for scalar type.");
         
         initializer = maybe_load_address_for_array_or_function(context, initializer);
-        initializer = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, ast->resolved_type, ast->defined_type, initializer, initial_open_curly);
+        initializer = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, ast_to_initialize->resolved_type, ast_to_initialize->defined_type, initializer, initial_open_curly);
         
-        struct ast *assignment = ast_push_binary_expression(context, AST_assignment, initial_open_curly, ast, initializer);
+        struct ast *assignment = ast_push_binary_expression(context, AST_assignment, initial_open_curly, ast_to_initialize, initializer);
         
-        set_resolved_type(assignment, ast->resolved_type, ast->defined_type);
+        set_resolved_type(assignment, ast_to_initialize->resolved_type, ast_to_initialize->defined_type);
         
         ast_list_append(&ret, context->arena, assignment);
         
@@ -1799,10 +1799,10 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
     //    struct => designator.lhs."designator.declaration_in_struct"
     //
     
-    struct designator_node initial_node = {.lhs = ast};
+    struct designator_node initial_node = {.lhs = ast_to_initialize};
     
-    if(ast->resolved_type->kind == AST_struct || ast->resolved_type->kind == AST_union){
-        struct ast_compound_type *ast_struct = cast(struct ast_compound_type *)ast->resolved_type;
+    if(ast_to_initialize->resolved_type->kind == AST_struct || ast_to_initialize->resolved_type->kind == AST_union){
+        struct ast_compound_type *ast_struct = (struct ast_compound_type *)ast_to_initialize->resolved_type;
         
         if(!ast_struct->amount_of_members){
             //
@@ -1934,19 +1934,85 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                         goto error;
                     }
                     
-                    expect_token(context, TOKEN_closed_index, "Expected ']' at the end of array designator.");
-                    
-                    if(!array->is_of_unknown_size && (smm)value >= array->amount_of_elements){
-                        report_error(context, index->token, "Index '%llu' out of bounds. Array has only '%lld' elements.", value, array->amount_of_elements);
-                        goto error;
+                    if(peek_token(context, TOKEN_dotdotdot)){
+                        struct token *dotdotdot = next_token(context);
+                        // Gnu extension:
+                        // 
+                        //    [1 ... 5] = 1,
+                        // 
+                        // We parse this as [<const integer expression> ... <const integer expression>] = <expression>,
+                        // and restart the loop.
+                        // 
+                        
+                        struct ast *end_index = parse_expression(context, /*should_skip_comma_expression*/false);
+                        if(end_index->kind != AST_integer_literal){
+                            report_error(context, end_index->token, "Expected a constant integer expression in range designator. (e.g.: [1 ... moose]).");
+                            goto error;
+                        }
+                        
+                        u64 end_value;
+                        if(type_is_signed(end_index->resolved_type)){
+                            s64 signed_value = integer_literal_as_s64(end_index);
+                            if(signed_value < 0){
+                                report_error(context, index->token, "Array subscript cannot be negative.");
+                                goto error;
+                            }
+                            
+                            end_value = (u64)signed_value;
+                        }else{
+                            end_value = integer_literal_as_u64(end_index);
+                        }
+                        
+                        expect_token(context, TOKEN_closed_index, "Expected ']' at the end of range-designator (e.g.: `[1 ... `).");
+                        
+                        if(end_value <= value){
+                            report_error(context, end_index->token, "Invalid range [%llu, %llu] specified, second index must be larger than the first.", value, end_value);
+                            end_value = value + 1;
+                        }
+                        
+                        if(!array->is_of_unknown_size && end_value >= (u64)array->amount_of_elements){
+                            report_error(context, index->token, "Range designator [%llu, %llu] overflows array bounds. Array has only '%lld' elements.", value, end_value, array->amount_of_elements);
+                            goto error;
+                        }
+                        
+                        if(peek_token(context, TOKEN_dot) || peek_token(context, TOKEN_open_index)){
+                            report_error(context, get_current_token(context), "Nested range designators are unsupported. (e.g.: `[1 .. 5][1 .. 3] = 1`).");
+                        }
+                        
+                        designator_stack.first->array_at = end_value;
+                        
+                        struct ast_array_range *range_initializer = parser_ast_push(context, dotdotdot, array_range);
+                        range_initializer->start_index = value;
+                        range_initializer->end_index = end_value;
+                        range_initializer->lhs = current_object;
+                        set_resolved_type(&range_initializer->base, array->element_type, array->element_type_defined_type);
+                        
+                        check_for_basic_types__internal(context, &range_initializer->base, CHECK_basic, "@incomplete: Range designator", dotdotdot);
+                        
+                        struct designator_node *new_node = push_struct(&context->scratch, struct designator_node);
+                        new_node->lhs = &range_initializer->base;
+                        sll_push_front(designator_stack, new_node);
+                        
+                    }else{
+                        
+                        // 
+                        // "Normal" array designator:
+                        //    [1] = 1,
+                        // 
+                        
+                        expect_token(context, TOKEN_closed_index, "Expected ']' at the end of array designator.");
+                        
+                        if(!array->is_of_unknown_size && value >= (u64)array->amount_of_elements){
+                            report_error(context, index->token, "Index '%llu' out of bounds. Array has only '%lld' elements.", value, array->amount_of_elements);
+                            goto error;
+                        }
+                        
+                        designator_stack.first->array_at = value;
+                        
+                        struct designator_node *new_node = push_struct(&context->scratch, struct designator_node);
+                        new_node->lhs = push_nodes_for_subscript(context, current_object, index, token);
+                        sll_push_front(designator_stack, new_node);
                     }
-                    
-                    designator_stack.first->array_at = value;
-                    
-                    struct designator_node *new_node = push_struct(&context->scratch, struct designator_node);
-                    new_node->lhs = push_nodes_for_subscript(context, current_object, index, token);
-                    
-                    sll_push_front(designator_stack, new_node);
                 }
             } while(peek_token(context, TOKEN_dot) || peek_token(context, TOKEN_open_index));
             
@@ -1968,7 +2034,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 // but then the initializer list did not end and also did not have a designator, to reset 
                 // the current_object, therefore report an error!
                 //
-                struct ast_type *type = ast->resolved_type;
+                struct ast_type *type = ast_to_initialize->resolved_type;
                 
                 if(type->kind == AST_struct || type->kind == AST_union){
                     struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
