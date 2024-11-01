@@ -2645,7 +2645,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     array->index = index_register;
                 }
                 
-                
                 switch(size){
                     case 1: array->log_index_scale = 0; break;
                     case 2: array->log_index_scale = 1; break;
@@ -3262,7 +3261,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             if(assign->lhs->resolved_type->kind == AST_bitfield_type){
                 struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)assign->lhs->resolved_type;
                 return emit_store_bitfield(context, bitfield, lhs, rhs);
-            }else if(assign->lhs->resolved_type->kind == AST_atomic_integer_type){
+            }else if(assign->lhs->resolved_type->flags & TYPE_FLAG_is_atomic){
                 return emit_store_atomic_integer(context, lhs, rhs);
             }
             

@@ -3712,6 +3712,15 @@ globals.typedef_##postfix = (struct ast_type){                                  
         make_const_typedef(atomic_s32,  TOKEN_identifier, AST_atomic_integer_type, "atomic_int",    4, 4);
         make_const_typedef(atomic_s64,  TOKEN_identifier, AST_atomic_integer_type, "atomic_llong",  8, 8);
         
+        globals.typedef_atomic_bool.flags |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_u8.flags   |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_u16.flags  |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_u32.flags  |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_u64.flags  |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_s8.flags   |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_s16.flags  |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_s32.flags  |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_s64.flags  |= TYPE_FLAG_is_atomic;
         
         make_const_typedef(f32,  TOKEN_float,    AST_float_type,   "float",              4, 4);
         make_const_typedef(f64,  TOKEN_double,   AST_float_type,   "double",             8, 8);
@@ -3772,7 +3781,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         "#define __STDC_NO_COMPLEX__ 1\n"
                         "#define __STDC_NO_THREADS__ 1\n"
                         "#define __STDC_NO_VLA__     1\n"
-                        "#define __STDC_NO_ATOMICS__ 1\n"
+                        // "#define __STDC_NO_ATOMICS__ 1\n"
                         );
                 
                 string_list_prefix(&predefines, arena, hardcoded_predefines);

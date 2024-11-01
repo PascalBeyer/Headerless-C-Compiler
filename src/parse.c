@@ -6514,8 +6514,8 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                         break;
                     }
                     
-                    if(type_info.type->kind != AST_integer_type){
-                        report_error(context, token, "_Atomic is currently only implemented for integer types.");
+                    if(type_info.type->kind != AST_integer_type && type_info.type->kind != AST_pointer_type){
+                        report_error(context, token, "_Atomic is currently only implemented for integer and pointer types.");
                     }
                     
                     expect_token(context, TOKEN_closed_paren, "Expected a ')' after '_Atomic(<...>'");
@@ -6524,6 +6524,7 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                         report_error(context, token, "Declaration specifies more than one data type.");
                     }
                     
+                    // @note: The type will be adjust later on.
                     specifiers.type_specifier = type_info.type;
                     specifiers.defined_type_specifier = type_info.defined_type;
                 }
@@ -6823,6 +6824,7 @@ case TOKEN_##type_name:{                                                 \
                         if(!is_union && had_array_of_unknown_size){
                             report_error(context, had_array_of_unknown_size, "Array of unknown size has to be the last member of struct.");
                         }
+                        
                         
                         // 
                         // struct-declaration-list:
@@ -7352,12 +7354,21 @@ case TOKEN_##type_name:{                                                 \
     
     if(type_qualifiers & QUALIFIER_atomic){
         
-        if(specifiers.type_specifier->kind != AST_integer_type){
-            report_error(context, get_current_token_for_error_report(context), "_Atomic is currently only implemented for integer types.");
+        if(specifiers.type_specifier->kind != AST_integer_type && specifiers.type_specifier->kind != AST_pointer_type){
+            report_error(context, get_current_token_for_error_report(context), "_Atomic is currently only implemented for integer and pointer types.");
             specifiers.type_specifier = &globals.typedef_poison;
         }else{
-            // :translate_atomic_to_non_atomic_and_back
-            specifiers.type_specifier = specifiers.type_specifier + (&globals.typedef_atomic_bool - &globals.typedef_Bool);
+            if(specifiers.type_specifier->kind == AST_integer_type){
+                // :translate_atomic_to_non_atomic_and_back
+                specifiers.type_specifier = specifiers.type_specifier + (&globals.typedef_atomic_bool - &globals.typedef_Bool);
+            }else{
+                // Atomic pointer type
+                struct ast_pointer_type *copied_pointer = push_struct(context->arena, struct ast_pointer_type);
+                *copied_pointer = *(struct ast_pointer_type *)specifiers.type_specifier;
+                copied_pointer->base.flags |= TYPE_FLAG_is_atomic;
+                specifiers.type_specifier = &copied_pointer->base;
+                specifiers.defined_type_specifier = null;
+            }
         }
     }
     

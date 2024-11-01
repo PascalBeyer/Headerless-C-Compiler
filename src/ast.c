@@ -482,6 +482,7 @@ enum type_flags{
     TYPE_FLAG_pdb_permanent = 0x2, 
     TYPE_FLAG_ends_in_array_of_unknown_size = 0x4,
     TYPE_FLAG_is_intrin_type = 0x8,
+    TYPE_FLAG_is_atomic      = 0x10,
 };
 
 struct ast_type{
