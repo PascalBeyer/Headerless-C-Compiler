@@ -1,4 +1,4 @@
-// ompile /c
+// compile /c
 
 int main(){
     extern int a;

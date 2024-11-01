@@ -415,6 +415,8 @@ PRINTLIKE __declspec(noinline) func void report_internal_compiler_error(struct t
     
     print("\n");
     
+    
+    os_debug_break();
     os_panic(1);
 }
 
