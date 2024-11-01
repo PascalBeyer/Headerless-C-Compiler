@@ -529,6 +529,17 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                 end_type_record();
             }break;
             
+            case AST_atomic_integer_type:{
+                struct ast_type *non_atomic_type = current_type - (&globals.typedef_atomic_bool - &globals.typedef_Bool);
+                
+                type_index = begin_type_record(/*LF_MODIFIER*/0x1001);
+                
+                *push_struct(arena, u32) = non_atomic_type->pdb_type_index;
+                *push_struct(arena, u16) = 8; // @cleanup: is 8 correct?
+                
+                end_type_record();
+            }break;
+            
             case AST_unresolved_type:{
                 struct ast_unresolved_type *unresolved = (struct ast_unresolved_type *)current_type;
                 
