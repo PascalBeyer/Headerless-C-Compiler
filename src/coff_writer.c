@@ -1756,15 +1756,9 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     struct ast_list *typedefs   = &symbol_context.typedefs;
     struct ast_list *dllexports = &symbol_context.dllexports;
     
-    char *file_extension = null;
-    switch(globals.output_file_type){
-        case OUTPUT_FILE_exe: file_extension = "exe"; break;
-        case OUTPUT_FILE_dll: file_extension = "dll"; break;
-        invalid_default_case();
-    }
-    
-    struct string exe_full_path = push_format_string(arena, "%.*s.%s",  output_file_path.size, output_file_path.data, file_extension);
-    struct string pdb_full_path = push_format_string(arena, "%.*s.pdb", output_file_path.size, output_file_path.data);
+    struct string root_file_name = strip_file_extension(output_file_path);
+    struct string exe_full_path = push_format_string(arena, "%.*s",  output_file_path.size, output_file_path.data);
+    struct string pdb_full_path = push_format_string(arena, "%.*s.pdb", root_file_name.size, root_file_name.data);
     replace_characters(pdb_full_path, "/", '\\');
     replace_characters(exe_full_path, "/", '\\');
     

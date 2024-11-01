@@ -4902,19 +4902,16 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                 output_file_path = concatenate_file_paths(arena, output_file_path, file_name);
             }
             
-            struct string file_extension = zero_struct;
-            switch(globals.output_file_type){
-                case OUTPUT_FILE_exe: file_extension = string(".exe"); break;
-                case OUTPUT_FILE_dll: file_extension = string(".dll"); break;
-                case OUTPUT_FILE_obj: file_extension = string(".obj"); break;
-                case OUTPUT_FILE_efi: file_extension = string(".efi"); break;
-                invalid_default_case();
-            }
-            
-            // Attempt to infer the output file type from the out string.
-            struct string output_file_extension = get_file_extension(output_file_path);
-            if(string_match(output_file_extension, file_extension)){
-                output_file_path.size -= file_extension.size;
+            if(!get_file_extension(output_file_path).size){
+                struct string file_extension = zero_struct;
+                switch(globals.output_file_type){
+                    case OUTPUT_FILE_exe: file_extension = string(".exe"); break;
+                    case OUTPUT_FILE_dll: file_extension = string(".dll"); break;
+                    case OUTPUT_FILE_obj: file_extension = string(".obj"); break;
+                    case OUTPUT_FILE_efi: file_extension = string(".efi"); break;
+                    invalid_default_case();
+                }
+                output_file_path = string_concatenate(arena, output_file_path, file_extension);
             }
         }
         

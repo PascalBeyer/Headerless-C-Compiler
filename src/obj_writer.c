@@ -2888,15 +2888,13 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     
     if(!globals.cli_options.dont_print_the_files){
         begin_counter(context, write_obj);
-        struct string obj_full_path = push_format_string(arena, "%.*s.obj", output_file_path.size, output_file_path.data);
-        char *obj_name = (char *)obj_full_path.data;
-        smm success = os_write_file(obj_name, obj_base_address, obj_size);
+        smm success = os_write_file((char *)output_file_path.data, obj_base_address, obj_size);
         end_counter(context, write_obj);
         
         if(success){
-            print("Wrote file: '%s'\n", obj_name);
+            print("Wrote file: '%.*s'\n", output_file_path.size, output_file_path.data);
         }else{
-            print("Error: Unable to write file '%s'.\n", obj_name);
+            print("Error: Unable to write file '%.*s'.\n", output_file_path.size, output_file_path.data);
             globals.an_error_has_occurred = true;
         }
     }
