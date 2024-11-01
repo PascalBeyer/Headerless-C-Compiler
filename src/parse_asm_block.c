@@ -165,6 +165,7 @@ enum memonic{
     MEMONIC_bsf, MEMONIC_bsr,
     
     MEMONIC_popcnt,
+    MEMONIC_lzcnt,
     
     // @WARNING: these must be in the order of opcode as we use the formula
     //               'opcode = 0x90 + memonic - MEMONIC_seto'
@@ -568,9 +569,11 @@ static struct{
     [MEMONIC_bts] = {.memonic = const_string("bts"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8 | ASM_OP_KIND_imm8},
     [MEMONIC_btc] = {.memonic = const_string("btc"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8 | ASM_OP_KIND_imm8},
     
+    
     [MEMONIC_bsf]    = {.memonic = const_string("bsf"),   .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_reg8, .operand_kind_flags[1] = ASM_OP_KIND_non_regm8 },
     [MEMONIC_bsr]    = {.memonic = const_string("bsr"),   .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_reg8, .operand_kind_flags[1] = ASM_OP_KIND_non_regm8 },
     [MEMONIC_popcnt] = {.memonic = const_string("popcnt"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_reg8, .operand_kind_flags[1] = ASM_OP_KIND_non_regm8 },
+    [MEMONIC_lzcnt]  = {.memonic = const_string("lzcnt"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_reg8, .operand_kind_flags[1] = ASM_OP_KIND_non_regm8 },
     
     [MEMONIC_xadd]    = {.memonic = const_string("xadd"),    .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_any_regm, .operand_kind_flags[1] = ASM_OP_KIND_any_reg},
     [MEMONIC_cmpxchg] = {.memonic = const_string("cmpxchg"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_any_regm, .operand_kind_flags[1] = ASM_OP_KIND_any_reg},

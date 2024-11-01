@@ -788,6 +788,32 @@ __declspec(inline_asm) void __faststorefence(void){
     lock or dword ptr [rsp], 0
 }
 
+__declspec(inline_asm) unsigned short __lzcnt16(unsigned short value){
+    lzcnt value, value
+    return value
+}
+
+__declspec(inline_asm) unsigned int __lzcnt(unsigned int value){
+    lzcnt value, value
+    return value
+}
+
+__declspec(inline_asm) unsigned __int64 __lzcnt64(unsigned __int64 value){
+    lzcnt value, value
+    return value
+}
+
+__declspec(inline_asm) unsigned int _lzcnt_u32(unsigned int value){
+    lzcnt value, value
+    return value
+}
+
+__declspec(inline_asm) unsigned __int64 _lzcnt_u64(unsigned __int64 value){
+    lzcnt value, value
+    return value
+}
+
+
 //
 // GNU intrinsics
 //

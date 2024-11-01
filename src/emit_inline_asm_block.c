@@ -290,6 +290,8 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 
                 // [MEMONIC_vmovupd] = ASM_PREFIX_VEX | ASM_PREFIX_SSE_packed_double,
                 
+                [MEMONIC_lzcnt] = ASM_PREFIX_F3,
+                
                 [MEMONIC_cvtdq2ps] = ASM_PREFIX_none, [MEMONIC_cvtps2dq] = ASM_PREFIX_66, [MEMONIC_cvttps2dq] = ASM_PREFIX_F3,
                 [MEMONIC_cvtdq2pd] = ASM_PREFIX_F3,   [MEMONIC_cvtpd2dq] = ASM_PREFIX_F2, [MEMONIC_cvttpd2dq] = ASM_PREFIX_66,
                 
@@ -337,6 +339,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 
                 [MEMONIC_bsf] = 0xbc,
                 [MEMONIC_bsr] = 0xbd,
+                [MEMONIC_lzcnt] = 0xbd,
                 
                 [MEMONIC_unpcklps] = 0x14, [MEMONIC_unpcklpd] = 0x14,
                 [MEMONIC_unpckhps] = 0x15, [MEMONIC_unpckhpd] = 0x15,
@@ -792,14 +795,15 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 }
             }break;
             
+            case MEMONIC_lzcnt:
             case MEMONIC_bsf: case MEMONIC_bsr:{
                 struct emit_location *loaded = emit_load_without_freeing(context, lhs);
                 
                 if(rhs->state == EMIT_LOCATION_loaded){
-                    emit_register_register(context, no_prefix(), two_byte_opcode(memonic_to_opcode[inst->memonic]), /*reg*/loaded, /*regm*/rhs);
+                    emit_register_register(context, create_prefixes(memonic_to_prefix[inst->memonic]), two_byte_opcode(memonic_to_opcode[inst->memonic]), /*reg*/loaded, /*regm*/rhs);
                 }else{
                     assert(rhs->state == EMIT_LOCATION_register_relative);
-                    emit_register_relative_register(context, no_prefix(), two_byte_opcode(memonic_to_opcode[inst->memonic]), /*reg*/loaded->loaded_register, /*regm*/rhs);
+                    emit_register_relative_register(context, create_prefixes(memonic_to_prefix[inst->memonic]), two_byte_opcode(memonic_to_opcode[inst->memonic]), /*reg*/loaded->loaded_register, /*regm*/rhs);
                 }
                 if(loaded != lhs) emit_store(context, lhs, loaded);
             }break;
