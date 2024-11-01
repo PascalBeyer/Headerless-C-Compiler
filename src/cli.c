@@ -145,6 +145,7 @@ enum warning{
     WARNING_inline_function_is_implicitly_external       = 33, // First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.
     WARNING_function_is_implicitly_dllimport             = 34, // Function was not declared with dllimport, but we could only find it as an import.
     WARNING_imported_function_is_also_defined            = 35, // Function was both found in an import library an a static library.
+    WARNING_incompatible_redefinition_of_macro           = 36, // Redefined a macro with different replacement-list or arguments.
 };
 
 struct cli_options{
@@ -157,7 +158,7 @@ struct cli_options{
     int image_base_specified;
     u64 image_base; // Set the default image base address of the image.
     int show_includes; // Prints all file paths of included files to stdout.
-    enum subsystem     subsystem; // Set the 'Subsystem' field of the image optional header.
+    enum subsystem subsystem; // Set the 'Subsystem' field of the image optional header.
     struct string out; // Sets the name of the output files.
     struct string entry; // Explicitly set the entry point symbol.
     int no_entry; // Indicates that there is no entry point. This option implies /DLL.
@@ -170,18 +171,18 @@ struct cli_options{
     struct string_list D; // Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
     int Wall; // Enable all warnings.
     int Wnone; // Disable all warnings.
-    enum incremental     incremental; // Does nothing, here for MSVC cli-compatibility.
+    enum incremental incremental; // Does nothing, here for MSVC cli-compatibility.
     struct string MF; // Currently ignored, is supposed to produce a .dep file?
     int no_discard; // Emit all functions and declarations.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
     int report_warnings_in_system_includes; // Self explanatory.
-    enum warning     warning; // A list of all warnings, only accessible from '-help warning'.
+    enum warning warning; // A list of all warnings, only accessible from '-help warning'.
 };
 
 #define WARNING_none 0
-#define WARNING_count 36
+#define WARNING_count 37
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -224,6 +225,7 @@ struct warning_table_entry{
     [41] = {{34, (u8 *)"inlinefunctionisimplicitlyexternal"}, WARNING_inline_function_is_implicitly_external},
     [62] = {{29, (u8 *)"functionisimplicitlydllimport"}, WARNING_function_is_implicitly_dllimport},
     [9] = {{29, (u8 *)"importedfunctionisalsodefined"}, WARNING_imported_function_is_also_defined},
+    [3] = {{31, (u8 *)"incompatibleredefinitionofmacro"}, WARNING_incompatible_redefinition_of_macro},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -683,7 +685,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "inline_function_is_implicitly_external (33)| First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.\n"
                                 "function_is_implicitly_dllimport (34)   | Function was not declared with dllimport, but we could only find it as an import.\n"
                                 "imported_function_is_also_defined (35)  | Function was both found in an import library an a static library.\n"
-                                , 3604);
+                                "incompatible_redefinition_of_macro (36) | Redefined a macro with different replacement-list or arguments.\n"
+                                , 3710);
                     }
                 }break;
                 invalid_default_case();

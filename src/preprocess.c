@@ -3522,7 +3522,18 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     }
                     
                     struct define_node *redecl = lookup_define(context, name);
-                    if(redecl){
+                    if(!redecl){
+                        struct define_node *new_node = push_struct(scratch, struct define_node);
+                        new_node->replacement_list   = replacement_list;
+                        new_node->name               = name;
+                        new_node->defined_token      = defined_identifier;
+                        new_node->arguments          = arguments;
+                        new_node->stringify_count    = stringify_count;
+                        new_node->is_function_like   = is_function_like;
+                        new_node->is_varargs         = is_varargs;
+                        
+                        register_define(context, new_node);
+                    }else{
                         
                         if(redecl->defined_token == &globals.invalid_token){
                             report_error(context, defined_identifier, "Cannot use '%.*s' as a macro name.", redecl->name.size, redecl->name.data);
@@ -3639,30 +3650,23 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         
                         if(!defines_are_equivalent){
                             begin_error_report(context);
-                            report_error(context, defined_identifier, "Redefinition of macro '%.*s'.", name.amount, name.data);
+                            report_warning(context, WARNING_incompatible_redefinition_of_macro, defined_identifier, "Redefinition of macro '%.*s'.", name.amount, name.data);
                             if(redecl->defined_token->file_index == -1){
                                 // @error: Print the actual definition.
-                                report_error(context, redecl->defined_token, "The previous definition was the predefined or a commandline argument.");
+                                report_warning(context, WARNING_incompatible_redefinition_of_macro, redecl->defined_token, "The previous definition was the predefined or a commandline argument.");
                             }else{
-                                report_error(context, redecl->defined_token, "... Here is the previous definition.");
+                                report_warning(context, WARNING_incompatible_redefinition_of_macro, redecl->defined_token, "... Here is the previous definition.");
                             }
                             end_error_report(context);
-                            goto end;
+                            
+                            redecl->replacement_list   = replacement_list;
+                            redecl->name               = name;
+                            redecl->defined_token      = defined_identifier;
+                            redecl->arguments          = arguments;
+                            redecl->stringify_count    = stringify_count;
+                            redecl->is_function_like   = is_function_like;
+                            redecl->is_varargs         = is_varargs;
                         }
-                    }
-                    
-                    // dont push a new define if we found an equivalent redeclaration
-                    if(!redecl){
-                        struct define_node *new_node = push_struct(scratch, struct define_node);
-                        new_node->replacement_list   = replacement_list;
-                        new_node->name               = name;
-                        new_node->defined_token      = defined_identifier;
-                        new_node->arguments          = arguments;
-                        new_node->stringify_count    = stringify_count;
-                        new_node->is_function_like   = is_function_like;
-                        new_node->is_varargs         = is_varargs;
-                        
-                        register_define(context, new_node);
                     }
                     
                     end_counter(context, define_parsing);

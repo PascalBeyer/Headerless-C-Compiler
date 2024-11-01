@@ -421,4 +421,12 @@ Example:
 
 -> imported_function_is_also_defined - Function was both found in an import library an a static library.
 
+-> incompatible_redefinition_of_macro - Redefined a macro with different replacement-list or arguments.
+
+Exaple:
+> #define macro(a) 123 * (a)
+> #define macro(a) 123*(a)   // okay
+> #define macro(x) 123*(x)   // not, okay
+> #define macro 123*(x)      // also not, okay
+
 

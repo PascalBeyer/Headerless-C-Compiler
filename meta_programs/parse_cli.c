@@ -811,13 +811,12 @@ int main(int argc, char *argv[]){
     print("    \n");
     print("    struct string_list files; // Non-options. These are not checked, as they might contain wild-cards.\n");
     for(struct option *option = options; option; option = option->next){
-        struct string argument_type = {0};
         
         switch(option->option_argument_type){
-            case CLI_ARGUMENT_TYPE_none: argument_type = string("int"); break;
+            case CLI_ARGUMENT_TYPE_none: print("    int");  break;
             case CLI_ARGUMENT_TYPE_u64:{ 
-                argument_type = string("u64"); 
                 print("    int %.*s_specified;\n", option->option_name.size, option->option_name.data);
+                print("    u64"); 
             }break;
             
             case CLI_ARGUMENT_TYPE_option:  continue;
@@ -828,16 +827,15 @@ int main(int argc, char *argv[]){
             }break;
             
             case CLI_ARGUMENT_TYPE_directory:
-            case CLI_ARGUMENT_TYPE_string: argument_type = string("struct string"); break;
+            case CLI_ARGUMENT_TYPE_string: print("    struct string"); break;
             
             case CLI_ARGUMENT_TYPE_directory_list: 
-            case CLI_ARGUMENT_TYPE_string_list: argument_type = string("struct string_list"); break;
-            
+            case CLI_ARGUMENT_TYPE_string_list: print("    struct string_list"); break;
             
             default: assert(0);
         }
         
-        print("    %.*s %.*s; // %.*s\n", argument_type.size, argument_type.data, option->option_name.size, option->option_name.data, option->short_description.size, option->short_description.data);
+        print(" %.*s; // %.*s\n", option->option_name.size, option->option_name.data, option->short_description.size, option->short_description.data);
     }
     print("};\n\n");
     

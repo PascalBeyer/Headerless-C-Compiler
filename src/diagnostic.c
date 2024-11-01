@@ -102,7 +102,7 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_redefining_declaration_from_extern_to_static] = 1,
     [WARNING_inline_function_is_implicitly_external] = 1,
     [WARNING_function_is_implicitly_dllimport] = 1,
-    
+    [WARNING_incompatible_redefinition_of_macro] = 1,
 };
 
 
