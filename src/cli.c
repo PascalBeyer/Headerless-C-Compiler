@@ -134,18 +134,18 @@ enum warning{
     WARNING_double_specifier                             = 22, // More than one of the same specifier for a declaration.
     WARNING_incorrect_format_specifier                   = 23, // Wrong argument passed to a __declspec(printlike) procedure.
     WARNING_unknown_format_specifier                     = 24, // Unknown format specifier to __declspec(printlike) procedure.
-    WARNING_atomic_ignored                               = 25, // Currently, the _Atomic keyword is ignored.
-    WARNING_assignment_in_condition                      = 26, // Using an assignments in a condition is a common mistake.
-    WARNING_extension_used                               = 27, // A hlc-specific extension was used. This is reported very inconsistently.
-    WARNING_missing_return                               = 28, // A function forgot to return a value.
-    WARNING_return_in_noreturn_function                  = 29, // A return statement inside a function declared _Noreturn.
-    WARNING_function_alignment                           = 30, // Currently, specifying alignment for functions is unimplemented.
-    WARNING_array_of_unknown_size_never_filled_in        = 31, // An array of unknown size without initializer (e.g: `int array[];`) that is never defined will implicitly have length 1.
-    WARNING_redefining_declaration_from_extern_to_static = 32, // First declaring a function as extern then as static is undefined behaviour.
-    WARNING_inline_function_is_implicitly_external       = 33, // First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.
-    WARNING_function_is_implicitly_dllimport             = 34, // Function was not declared with dllimport, but we could only find it as an import.
-    WARNING_imported_function_is_also_defined            = 35, // Function was both found in an import library an a static library.
-    WARNING_incompatible_redefinition_of_macro           = 36, // Redefined a macro with different replacement-list or arguments.
+    WARNING_assignment_in_condition                      = 25, // Using an assignments in a condition is a common mistake.
+    WARNING_extension_used                               = 26, // A hlc-specific extension was used. This is reported very inconsistently.
+    WARNING_missing_return                               = 27, // A function forgot to return a value.
+    WARNING_return_in_noreturn_function                  = 28, // A return statement inside a function declared _Noreturn.
+    WARNING_function_alignment                           = 29, // Currently, specifying alignment for functions is unimplemented.
+    WARNING_array_of_unknown_size_never_filled_in        = 30, // An array of unknown size without initializer (e.g: `int array[];`) that is never defined will implicitly have length 1.
+    WARNING_redefining_declaration_from_extern_to_static = 31, // First declaring a function as extern then as static is undefined behaviour.
+    WARNING_inline_function_is_implicitly_external       = 32, // First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.
+    WARNING_function_is_implicitly_dllimport             = 33, // Function was not declared with dllimport, but we could only find it as an import.
+    WARNING_imported_function_is_also_defined            = 34, // Function was both found in an import library an a static library.
+    WARNING_incompatible_redefinition_of_macro           = 35, // Redefined a macro with different replacement-list or arguments.
+    WARNING_extraneous_semicolon                         = 36, // We found an extraneous semicolon in a structure or at global scope.
 };
 
 struct cli_options{
@@ -214,18 +214,18 @@ struct warning_table_entry{
     [27] = {{15, (u8 *)"doublespecifier"}, WARNING_double_specifier},
     [49] = {{24, (u8 *)"incorrectformatspecifier"}, WARNING_incorrect_format_specifier},
     [58] = {{22, (u8 *)"unknownformatspecifier"}, WARNING_unknown_format_specifier},
-    [42] = {{13, (u8 *)"atomicignored"}, WARNING_atomic_ignored},
     [28] = {{21, (u8 *)"assignmentincondition"}, WARNING_assignment_in_condition},
     [19] = {{13, (u8 *)"extensionused"}, WARNING_extension_used},
     [0] = {{13, (u8 *)"missingreturn"}, WARNING_missing_return},
     [31] = {{24, (u8 *)"returninnoreturnfunction"}, WARNING_return_in_noreturn_function},
-    [43] = {{17, (u8 *)"functionalignment"}, WARNING_function_alignment},
-    [44] = {{31, (u8 *)"arrayofunknownsizeneverfilledin"}, WARNING_array_of_unknown_size_never_filled_in},
+    [42] = {{17, (u8 *)"functionalignment"}, WARNING_function_alignment},
+    [43] = {{31, (u8 *)"arrayofunknownsizeneverfilledin"}, WARNING_array_of_unknown_size_never_filled_in},
     [59] = {{39, (u8 *)"redefiningdeclarationfromexterntostatic"}, WARNING_redefining_declaration_from_extern_to_static},
     [41] = {{34, (u8 *)"inlinefunctionisimplicitlyexternal"}, WARNING_inline_function_is_implicitly_external},
     [62] = {{29, (u8 *)"functionisimplicitlydllimport"}, WARNING_function_is_implicitly_dllimport},
     [9] = {{29, (u8 *)"importedfunctionisalsodefined"}, WARNING_imported_function_is_also_defined},
     [3] = {{31, (u8 *)"incompatibleredefinitionofmacro"}, WARNING_incompatible_redefinition_of_macro},
+    [60] = {{19, (u8 *)"extraneoussemicolon"}, WARNING_extraneous_semicolon},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -674,19 +674,19 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "double_specifier (22)                   | More than one of the same specifier for a declaration.\n"
                                 "incorrect_format_specifier (23)         | Wrong argument passed to a __declspec(printlike) procedure.\n"
                                 "unknown_format_specifier (24)           | Unknown format specifier to __declspec(printlike) procedure.\n"
-                                "atomic_ignored (25)                     | Currently, the _Atomic keyword is ignored.\n"
-                                "assignment_in_condition (26)            | Using an assignments in a condition is a common mistake.\n"
-                                "extension_used (27)                     | A hlc-specific extension was used. This is reported very inconsistently.\n"
-                                "missing_return (28)                     | A function forgot to return a value.\n"
-                                "return_in_noreturn_function (29)        | A return statement inside a function declared _Noreturn.\n"
-                                "function_alignment (30)                 | Currently, specifying alignment for functions is unimplemented.\n"
-                                "array_of_unknown_size_never_filled_in (31)| An array of unknown size without initializer (e.g: `int array[];`) that is never defined will implicitly have length 1.\n"
-                                "redefining_declaration_from_extern_to_static (32)| First declaring a function as extern then as static is undefined behaviour.\n"
-                                "inline_function_is_implicitly_external (33)| First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.\n"
-                                "function_is_implicitly_dllimport (34)   | Function was not declared with dllimport, but we could only find it as an import.\n"
-                                "imported_function_is_also_defined (35)  | Function was both found in an import library an a static library.\n"
-                                "incompatible_redefinition_of_macro (36) | Redefined a macro with different replacement-list or arguments.\n"
-                                , 3710);
+                                "assignment_in_condition (25)            | Using an assignments in a condition is a common mistake.\n"
+                                "extension_used (26)                     | A hlc-specific extension was used. This is reported very inconsistently.\n"
+                                "missing_return (27)                     | A function forgot to return a value.\n"
+                                "return_in_noreturn_function (28)        | A return statement inside a function declared _Noreturn.\n"
+                                "function_alignment (29)                 | Currently, specifying alignment for functions is unimplemented.\n"
+                                "array_of_unknown_size_never_filled_in (30)| An array of unknown size without initializer (e.g: `int array[];`) that is never defined will implicitly have length 1.\n"
+                                "redefining_declaration_from_extern_to_static (31)| First declaring a function as extern then as static is undefined behaviour.\n"
+                                "inline_function_is_implicitly_external (32)| First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.\n"
+                                "function_is_implicitly_dllimport (33)   | Function was not declared with dllimport, but we could only find it as an import.\n"
+                                "imported_function_is_also_defined (34)  | Function was both found in an import library an a static library.\n"
+                                "incompatible_redefinition_of_macro (35) | Redefined a macro with different replacement-list or arguments.\n"
+                                "extraneous_semicolon (36)               | We found an extraneous semicolon in a structure or at global scope.\n"
+                                , 3735);
                     }
                 }break;
                 invalid_default_case();

@@ -355,8 +355,6 @@ the function frame will not be popped. Furthermore, it is easy to confuse the
     Example:
     > print("%q", 1);
 
--> atomic_ignored - Currently, the _Atomic keyword is ignored.
-
 -> assignment_in_condition - Using an assignments in a condition is a common mistake.
 
     Example:
@@ -429,4 +427,13 @@ Exaple:
 > #define macro(x) 123*(x)   // not, okay
 > #define macro 123*(x)      // also not, okay
 
+-> extraneous_semicolon - We found an extraneous semicolon in a structure or at global scope.
+
+Example:
+> // test.c
+> ;                // warning: Extraneous ';' at global scope.
+> struct s{
+>    ;             // warning: Extraneous ';' in struct.
+>    int a;
+> };
 

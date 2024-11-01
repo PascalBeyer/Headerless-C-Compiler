@@ -87,7 +87,6 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_unused_local_variable]               = 1,
     // [WARNING_casting_u64_to_float]                = 1,
     [WARNING_local_variable_only_ever_written]    = 1,
-    [WARNING_atomic_ignored]                      = 1,
     // [WARNING_function_declared_but_never_defined] = 1,
     // [WARNING_function_defined_but_unreachable]    = 1,
     // [WARNING_unreachable_declaration] = 1,
@@ -103,6 +102,8 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_inline_function_is_implicitly_external] = 1,
     [WARNING_function_is_implicitly_dllimport] = 1,
     [WARNING_incompatible_redefinition_of_macro] = 1,
+    
+    [WARNING_extraneous_semicolon] = 1,
 };
 
 

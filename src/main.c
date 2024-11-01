@@ -2778,8 +2778,9 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
     
     begin_token_array(context, parse_work->tokens);
     
-    if(peek_token_eat(context, TOKEN_semicolon)){
+    if(peek_token(context, TOKEN_semicolon)){
         // allow for empty ';' at global scope @speed, we could detect this above
+        report_warning(context, WARNING_extraneous_semicolon, next_token(context), "Extraneous ';' at global scope.");
         assert(!in_current_token_array(context));
         return;
     }

@@ -6814,6 +6814,12 @@ case TOKEN_##type_name:{                                                 \
                     
                     while(!peek_token_eat(context, TOKEN_closed_curly)){
                         
+                        if(peek_token(context, TOKEN_semicolon)){
+                            report_warning(context, WARNING_extraneous_semicolon, next_token(context), "Extraneous ';' in struct.");
+                            continue;
+                        }
+                        
+                        
                         if(!is_union && had_array_of_unknown_size){
                             report_error(context, had_array_of_unknown_size, "Array of unknown size has to be the last member of struct.");
                         }
