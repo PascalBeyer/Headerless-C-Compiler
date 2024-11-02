@@ -1884,17 +1884,34 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 current_object = designator_stack.first->lhs;
                 
                 if(token->type == TOKEN_dot){
+                    struct token *identifier = expect_token(context, TOKEN_identifier, "Expected an identifier after '.' in initializer list.");
+                    
                     struct ast_type *type = current_object->resolved_type;
                     if(type->kind != AST_struct && type->kind != AST_union){
-                        struct token *identifier = expect_token(context, TOKEN_identifier, "Expected an identifier after '.' in initializer list.");
-                        
                         struct string type_string = push_type_string(context->arena, &context->scratch, type);
                         report_error(context, token, "Field designator '.%.*s' can only be used for structs or unions and not '%.*s'.", identifier->size, identifier->data, type_string.size, type_string.data);
                         goto error;
                     }
                     
-                    struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)handle_dot_or_arrow(context, (struct ast_compound_type *)type, current_object, AST_member, token);
-                    if(context->should_exit_statement) goto error;
+                    struct ast_compound_type *compound = (struct ast_compound_type *)type;
+                    
+                    struct compound_member *found = find_member_in_compound(compound, identifier->atom);
+                    if(!found){
+                        char *struct_or_union = (compound->base.kind == AST_struct) ? "structure" : "union";
+                        
+                        begin_error_report(context);
+                        report_error(context, identifier, "Identifier is not a member of %s.", struct_or_union);
+                        report_error(context, compound->base.token, "... Here is the definition of the %s.", struct_or_union);
+                        end_error_report(context);
+                        goto error;
+                    }
+                    
+                    struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)_parser_ast_push(context, token, sizeof(struct ast_dot_or_arrow), alignof(struct ast_dot_or_arrow), AST_member);
+                    dot->lhs = current_object;
+                    dot->member = found;
+                    set_resolved_type(&dot->base, found->type, found->defined_type);
+                    
+                    designator_stack.first->member_at = found - compound->members;
                     
                     struct designator_node *new_node = push_struct(&context->scratch, struct designator_node);
                     new_node->lhs = &dot->base;
