@@ -1333,7 +1333,7 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
         // 
         // All tokens staring a type-name:
         // 
-        case TOKEN_volatile: case TOKEN_const: case TOKEN_unaligned: case TOKEN_restrict:
+        case TOKEN_volatile: case TOKEN_const: case TOKEN_unaligned: case TOKEN_restrict: case TOKEN_atomic:
         
         case TOKEN_signed: case TOKEN_unsigned:
         
