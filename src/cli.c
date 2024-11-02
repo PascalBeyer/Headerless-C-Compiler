@@ -251,7 +251,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
         if(should_print_help) is_option = 1;
         
         if(!is_option){
-            string_list_postfix(&cli_options->files, arena, string_from_cstring(option_cstring));
+            string_list_postfix_no_copy(&cli_options->files, arena, string_from_cstring(option_cstring));
             continue;
         }
         

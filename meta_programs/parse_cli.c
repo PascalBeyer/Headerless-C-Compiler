@@ -920,7 +920,7 @@ int main(int argc, char *argv[]){
             "        if(should_print_help) is_option = 1;\n"
             "        \n"
             "        if(!is_option){\n"
-            "            string_list_postfix(&cli_options->files, arena, string_from_cstring(option_cstring));\n"
+            "            string_list_postfix_no_copy(&cli_options->files, arena, string_from_cstring(option_cstring));\n"
             "            continue;\n"
             "        }\n"
             "        \n"

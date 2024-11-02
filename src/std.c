@@ -1415,6 +1415,17 @@ func void string_list_postfix(struct string_list *list, struct memory_arena *are
     list->amount_of_strings += 1;
 }
 
+func void string_list_postfix_no_copy(struct string_list *list, struct memory_arena *arena, struct string string){
+    if(string.size == 0) return;
+    
+    struct string_list_node *node = push_struct(arena, struct string_list_node);
+    node->string = string;
+    dll_push_back(list->list, node);
+    list->total_size += string.length;
+    list->amount_of_strings += 1;
+}
+
+
 func b32 string_list_add_uniquely(struct string_list *list, struct memory_arena *arena, struct string string){
     for(struct string_list_node *node = list->list.first; node; node = node->next){
         if(string_match(node->string, string)){
