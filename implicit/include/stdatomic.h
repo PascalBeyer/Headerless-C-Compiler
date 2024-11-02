@@ -81,14 +81,14 @@
         atomic_uint:    __atomic_compare_exchange_uint,                               \
         atomic_ulong:   __atomic_compare_exchange_ulong,                              \
         atomic_ullong:  __atomic_compare_exchange_ullong,                             \
-)(object, desired)
+)(object, expected, desired)
 
-#define atomic_compare_exchange_strong_explicit(object, expected, desired, order) atomic_compare_exchange_strong(object, expected)
+#define atomic_compare_exchange_strong_explicit(object, expected, desired, order) atomic_compare_exchange_strong(object, expected, desired)
 
 // _Bool atomic_compare_exchange_weak(volatile atomic_type *object, non_atomic_type *expected, non_atomic_type desired);
 // _Bool atomic_compare_exchange_weak_explicit(volatile atomic_type *object, non_atomic_type *expected, non_atomic_type desired, memory_order order);
-#define atomic_compare_exchange_weak(object, expected, desired) atomic_compare_exchange_strong(object, expected)
-#define atomic_compare_exchange_weak_explicit(object, expected, desired, order) atomic_compare_exchange_strong(object, expected)
+#define atomic_compare_exchange_weak(object, expected, desired) atomic_compare_exchange_strong(object, expected, desired)
+#define atomic_compare_exchange_weak_explicit(object, expected, desired, order) atomic_compare_exchange_strong(object, expected, desired)
 
 // non_atomic_type atomic_fetch_{add,sub,or,xor,and}(volatile atomic_type *object, non_atomic_type operand);
 // non_atomic_type atomic_fetch_{add,sub,or,xor,and}_explicit(volatile atomic_type *object, non_atomic_type operand, memory_order order);
