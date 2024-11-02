@@ -703,7 +703,7 @@ struct ast_panic{
 struct ast_dot_or_arrow{
     struct ast base;
     struct ast *lhs;
-    struct compound_member *member;
+    struct compound_member *member; // @cleanup: This should probably be an index.
 };
 
 struct ast_subscript{

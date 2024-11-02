@@ -1708,8 +1708,10 @@ func struct ast *maybe_insert_implicit_assignment_cast_and_check_that_types_matc
 struct designator_node{
     struct designator_node *next;
     struct ast *lhs;
-    smm member_at;
-    smm array_at;
+    union{
+        smm member_at;
+        smm array_at;
+    };
 };
 
 func struct ast *push_current_object_for_designator_node(struct context *context, struct designator_node *designator_node, struct token *site){
@@ -1783,7 +1785,6 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
         
         return ret;
     }
-    
     
     //
     // 3 cases:
@@ -2081,6 +2082,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
         //                                                  15.10.2023
         
         if(peek_token(context, TOKEN_open_curly)){
+            
             // 
             // Parse a sub-initializer-list, like 'struct{ struct v2 v; } asd = {{1.0f, 2.0f}};'
             // This also handles the case of 'struct{int a;} asd = {{1}};
@@ -2101,6 +2103,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             // 
             sll_push_back_list(ret, sub_initializers);
             ret.count += sub_initializers.count;
+            
         }else if(peek_token(context, TOKEN_embed)){
             // 
             // This is data specified by a #embed directive.
@@ -2135,6 +2138,53 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             designator_node->array_at += (file_data.size - 1); 
         }else{
             struct ast *expression = parse_expression(context, /*skip_comma_expression*/true);
+            
+            if(designator_stack.first->member_at == 0 && expression->kind == AST_string_literal && designator_stack.first->lhs->resolved_type->kind == AST_array_type){
+                // 
+                // The C-spec allows the initializer of a character array to be optionally brace enclosed.
+                // In this case, we end up here.
+                // 
+                //      char arst[10] = {"arst"};
+                //      
+                //      struct s{
+                //          char arst[10];
+                //      } arst = {
+                //          .arst = {"arst"},
+                //      };
+                //  
+                //  
+                //  
+                // 
+                
+                struct ast_array_type *wanted_array = (struct ast_array_type *)designator_stack.first->lhs->resolved_type;
+                struct ast_array_type *given_array  = (struct ast_array_type *)expression->resolved_type;
+                
+                if(wanted_array->element_type->size == given_array->element_type->size){
+                    
+                    // Pop one layer off the designator stack, making `designator_stack.first->lhs` the current object.
+                    current_object = designator_stack.first->lhs;
+                    sll_pop_front(designator_stack);
+                    
+                    // @cleanup: arrays of unknown size?
+                    if(wanted_array->amount_of_elements == (given_array->amount_of_elements - 1)){
+                        // Special case for 
+                        //    struct { u8 array[3]; } asd = {"asd"};
+                        // which should work and just not write a zero terminator.
+                        
+                    }else if(wanted_array->amount_of_elements < given_array->amount_of_elements){
+                        report_error(context, site, "Array initialized to string literal of size %lld, but the array size is only %lld.", given_array->amount_of_elements, wanted_array->amount_of_elements);
+                        goto error;
+                    }
+                    
+                    struct ast *assignment = ast_push_binary_expression(context, AST_assignment, expression->token, current_object, expression);
+                    set_resolved_type(assignment, current_object->resolved_type, current_object->defined_type);
+                    
+                    ast_list_append(&ret, context->arena, assignment);
+                    
+                    continue;
+                }
+            }
+            
             
             while(true){
                 
@@ -2283,7 +2333,6 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
     error:; // @cleanup: Why do we have this?
     return ret;
 }
-
 
 func struct ast *parse_initializer(struct context *context, struct ast_identifier *lhs, struct token *equals){
     
