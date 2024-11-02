@@ -7557,7 +7557,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(!decl){
                 report_error(context, declarator.ident, "This 'extern' variable was never defined.");
-                goto end;
+                decl = push_declaration_for_declarator(context, declarator);
             }
             
             if(!types_are_equal(decl->type, declarator.type)){
