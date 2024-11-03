@@ -1346,6 +1346,17 @@ func struct string strip_quotes(struct string string){
     return string;
 }
 
+func struct string strip_prefix_and_quotes(struct string string){
+    
+    eat_until_char(&string, '"', /*eat_delimiter*/0);
+    
+    assert(string.size >= 2);
+    assert(string.data[0] == string.data[string.size - 1]);
+    string.data += 1;
+    string.size -= 2;
+    return string;
+}
+
 PRINTLIKE func struct string push_format_string(struct memory_arena *arena, char *format, ...){
     va_list va;
     va_start(va, format);

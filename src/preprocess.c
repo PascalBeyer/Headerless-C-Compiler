@@ -3707,13 +3707,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     if(peek_token_raw(context, TOKEN_string_literal)){
                         is_system_include = false;
                         
-                        struct token *lit = next_token_raw(context);
-                        if(lit->data[0] != '"'){
-                            // Disallow L"" and stuff
-                            report_error(context, lit, "Wide character strings not support in '#include'.");
-                            goto end;
-                        }
-                        file_name = strip_quotes(token_get_string(lit));
+                        file_name = strip_prefix_and_quotes(token_get_string(next_token_raw(context)));
                     }else if(peek_token_raw(context, TOKEN_smaller)){
                         is_system_include = true;
                         
@@ -3937,7 +3931,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             expect_token_raw(context, pragma_comment_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma comment(lib, \"<.lib>\"'.");
                             
                             if(string_literal->type == TOKEN_string_literal){
-                                struct string library = strip_quotes(string_literal->string);
+                                struct string library = strip_prefix_and_quotes(string_literal->string);
                                 
                                 if(!string_match(get_file_extension(library), string(".lib"))){
                                     library = string_concatenate(context->arena, library, string(".lib"));
@@ -4004,7 +3998,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         expect_token_raw(context, pragma_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma compilation_unit(\"<.c>\"'.");
                         
                         if(string_literal->type == TOKEN_string_literal){
-                            struct string c_file = strip_quotes(string_literal->string);
+                            struct string c_file = strip_prefix_and_quotes(string_literal->string);
                             
                             struct file *parent_file = globals.file_table.data[string_literal->file_index];
                             struct string path = strip_file_name(string_from_cstring(parent_file->absolute_file_path));
@@ -4147,13 +4141,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         if(peek_token(context, TOKEN_string_literal)){
                             is_system_include = false;
                             
-                            struct token *lit = next_token(context);
-                            if(lit->data[0] != '"'){
-                                // Disallow L"" and stuff
-                                report_error(context, lit, "Wide character strings not support in '#include'.");
-                                goto end;
-                            }
-                            file_name = strip_quotes(token_get_string(lit));
+                            file_name = strip_prefix_and_quotes(token_get_string(next_token(context)));
                         }else if(peek_token(context, TOKEN_smaller)){
                             is_system_include = true;
                             
