@@ -3406,7 +3406,7 @@ int main(int argc, char *argv[]){
     } files_to_parse = zero_struct;
     
     struct string_list libraries    = {0};
-    // struct string_list object_files = {0};
+    struct string_list object_files = {0};
     
     for(struct string_list_node *file_name_node = globals.cli_options.files.list.first; file_name_node; file_name_node = file_name_node->next){
         
@@ -3420,11 +3420,15 @@ int main(int argc, char *argv[]){
             // Hence, in this loop we don't want to handle it in any way.
             // 
             if(string_match(extension, string(".lib"))){
-                string_list_postfix(&libraries, arena, path);
+                string_list_add_uniquely(&libraries, arena, path);
                 continue;
             }else if(string_match(extension, string(".obj"))){
-                print("Error: Currently linking to .obj files are not implemented.\n");
-                return 1;
+                // @hack: This is a hack to handle linking for now.
+                //        We set the output file type to obj and then call into link.exe.
+                globals.output_file_type = OUTPUT_FILE_obj;
+                
+                string_list_postfix(&object_files, arena, path);
+                continue;
             }else if(string_match(extension, string(".dll")) || string_match(extension, string(".exe"))){
                 print("Error: Currently linking to %.*s files are not implemented.\n", extension.size, extension.data);
                 return 1;
@@ -3494,7 +3498,6 @@ int main(int argc, char *argv[]){
             
             FindClose(search_handle);
         }else{
-            
             struct os_file file = os_load_file((char *)path.data, 0, 0);
             
             if(file.file_does_not_exist){
@@ -3520,9 +3523,33 @@ int main(int argc, char *argv[]){
     }
     
     if(sll_is_empty(files_to_parse)){
+        
+        if(!sll_is_empty(object_files.list)){
+            struct string_list command = {0};
+            
+            string_list_postfix_no_copy(&command, arena, string("link.exe"));
+            
+            for(struct string_list_node *object_file = object_files.list.first; object_file; object_file = object_file->next){
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", object_file->string.size, object_file->string.data));
+            }
+            
+            for(struct string_list_node *lib_file = libraries.list.first; lib_file; lib_file = lib_file->next){
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", lib_file->string.size, lib_file->string.data));
+            }
+            
+            int system(char *);
+            return system((char*)string_list_flatten(command, arena).data);
+        }
+        
         print("Error: No input files specified.\n");
         return 1;
     }
+    
+    if(!sll_is_empty(object_files.list)){
+        print("Error: Currently linking to .obj files are not implemented.\n");
+        return 1;
+    }
+    
     
     for(struct string_list_node *dir = globals.cli_options.I.list.first; dir; dir = dir->next){
         
