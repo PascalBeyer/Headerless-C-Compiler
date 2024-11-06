@@ -3031,10 +3031,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
             end_counter(context, if0_block);
         }
         
-        if(got_newline && peek_token_raw(context, TOKEN_hash)){
+        if(got_newline && peek_token_eat_raw(context, TOKEN_hash)){
             got_newline = false; // Directives do not eat their newlines, this also needs to be here for 'postponed_directives'.
-            
-            struct token *directive_hash = next_token_raw(context);
             
             begin_counter(context, handle_directive);
             
@@ -3043,9 +3041,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
             if(peek_token_raw(context, TOKEN_newline)){
                 // do nothing
                 continue;
-            }else if(!peek_token_raw(context, TOKEN_identifier)){
-                report_error(context, directive_hash, "Expected a newline or a preprocessor directive after '#'.");
-                goto end;
             }
             
             struct token *directive = next_token_raw(context);
@@ -3076,8 +3071,14 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
             
             switch(directive_kind){
                 case DIRECTIVE_invalid:{
-                    report_error(context, directive, "Invalid preprocessor directive.");
-                    goto end;
+                    if(!static_if_stack.first || static_if_stack.first->is_true){
+                        // 
+                        // Only report on invalid preprocessor directives, if we are in active code.
+                        // This allows writing arbitrary stuff inside of an `#if 0`-block.
+                        // 
+                        report_error(context, directive, "Invalid preprocessor directive.");
+                        goto end;
+                    }
                 }break;
                 
                 case DIRECTIVE_if:{
