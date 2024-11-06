@@ -1783,10 +1783,10 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
     smm regm_index = -1;
     for(smm operand_index = 0; operand_index < amount_of_operands; operand_index++){
         if(asm_instruction->operands[operand_index].size == 0){
-            assert(asm_instruction->operands[operand_index].kind == ASM_ARG_memory_operand);
+            assert(asm_instruction->operands[operand_index].kind == ASM_ARG_memory_operand || /*[void_ptr]*/asm_instruction->operands[operand_index].kind == ASM_ARG_declaration_dereference);
         }
         
-        if(asm_instruction->operands[operand_index].kind == ASM_ARG_memory_operand){
+        if(asm_instruction->operands[operand_index].kind == ASM_ARG_memory_operand || asm_instruction->operands[operand_index].kind == ASM_ARG_declaration_dereference){
             if(regm_index == -1){
                 regm_index = operand_index;
             }else{
@@ -2122,7 +2122,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
         case MEMONIC_vshufps: case MEMONIC_vblendps: case MEMONIC_vperm2f128: // 'op ymm1, ymm2, ymm3/m256, imm8' or 'op xmm1, xmm2, xmm3/m128, imm8'
         case MEMONIC_vpminub: case MEMONIC_vpxor:
         case MEMONIC_vmulps:  case MEMONIC_vaddps:{ // 'op ymm1, ymm2, ymm3/m256' or 'op xmm1, xmm2, xmm3/m128'
-            if(asm_instruction->operands[2].size == 0){
+            if(asm_instruction->operands[2].size == 0){ // @cleanup: regm_index ? 
                 u32 size = (memonic == MEMONIC_movsd) ? 8 : 4;
                 asm_instruction->operands[regm_index].size = size;
             }
