@@ -379,15 +379,15 @@ int main(int argc, char *argv[]){
     struct option *warning_option = 0;
     
     static char *option_argument_type_strings[] = {
-        [CLI_ARGUMENT_TYPE_none] = "CLI_ARGUMENT_TYPE_none",
-        [CLI_ARGUMENT_TYPE_string] = "CLI_ARGUMENT_TYPE_string",
-        [CLI_ARGUMENT_TYPE_u64] = "CLI_ARGUMENT_TYPE_u64", 
-        [CLI_ARGUMENT_TYPE_option] = "CLI_ARGUMENT_TYPE_option",
-        [CLI_ARGUMENT_TYPE_warning] = "CLI_ARGUMENT_TYPE_warning",
-        [CLI_ARGUMENT_TYPE_enum] = "CLI_ARGUMENT_TYPE_enum",
-        [CLI_ARGUMENT_TYPE_directory] = "CLI_ARGUMENT_TYPE_directory",
+        [CLI_ARGUMENT_TYPE_none]           = "CLI_ARGUMENT_TYPE_none",
+        [CLI_ARGUMENT_TYPE_string]         = "CLI_ARGUMENT_TYPE_string",
+        [CLI_ARGUMENT_TYPE_u64]            = "CLI_ARGUMENT_TYPE_u64", 
+        [CLI_ARGUMENT_TYPE_option]         = "CLI_ARGUMENT_TYPE_option",
+        [CLI_ARGUMENT_TYPE_warning]        = "CLI_ARGUMENT_TYPE_warning",
+        [CLI_ARGUMENT_TYPE_enum]           = "CLI_ARGUMENT_TYPE_enum",
+        [CLI_ARGUMENT_TYPE_directory]      = "CLI_ARGUMENT_TYPE_directory",
         [CLI_ARGUMENT_TYPE_directory_list] = "CLI_ARGUMENT_TYPE_directory_list",
-        [CLI_ARGUMENT_TYPE_string_list] = "CLI_ARGUMENT_TYPE_string_list",
+        [CLI_ARGUMENT_TYPE_string_list]    = "CLI_ARGUMENT_TYPE_string_list",
     };
     
     struct string current_category = {0};
@@ -915,6 +915,25 @@ int main(int argc, char *argv[]){
             "            is_option = 1;\n"
             "            option_cstring++;\n"
             "            if(*option_cstring == '-') option_cstring++;\n"
+            "        }else if(*option_cstring == '@'){\n"
+            "            //\n"
+            "            // @CommandFile, load the file and recursively call `cli_parse_options`.\n"
+            "            //\n"
+            "            struct os_file command_file = load_file_into_arena(option_cstring + 1, arena); // @note: This functions puts a zero-terminator.\n"
+            "            if(command_file.file_does_not_exist){\n"
+            "                print(\"Error: Could not load command file '%s'.\\n\", option_cstring + 1);\n"
+            "                return 0;\n"
+            "            }\n"
+            "            if(command_file.size > 2 && command_file.data[0] == 0xff && command_file.data[1] == 0xfe){\n"
+            "                // UTF16-LE BOM (Byte Order Mark).\n"
+            "                print(\"Error: @incomplete command file '%s' is utf-16 currently unsupported.\\n\", option_cstring + 1);\n"
+            "                return 0;\n"
+            "            }\n"
+            "            struct parsed_command_line parsed_command_line = windows_parse_command_line((char *)command_file.data);\n"
+            "            int cli_parse_options_success = cli_parse_options(cli_options, arena, parsed_command_line.argc, parsed_command_line.argv);\n"
+            "            if(!cli_parse_options_success) return 0;\n"
+            "            \n"
+            "            continue;\n"
             "        }\n"
             "        \n"
             "        if(should_print_help) is_option = 1;\n"
