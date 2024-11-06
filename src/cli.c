@@ -33,10 +33,13 @@ enum cli_option_kind{
     CLI_OPTION_Wno,
     CLI_OPTION_incremental,
     CLI_OPTION_MF,
+    CLI_OPTION_l,
     CLI_OPTION_no_discard,
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
     CLI_OPTION_report_warnings_in_system_includes,
+    CLI_OPTION_ignore,
+    CLI_OPTION_link,
     CLI_OPTION_warning,
 
     CLI_OPTION_count,
@@ -73,6 +76,7 @@ struct cli_option_hash_table_entry{
     [30] = {{3, (u8 *)"out"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
     [21] = {{1, (u8 *)"o"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
     [16] = {{2, (u8 *)"fe"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
+    [26] = {{2, (u8 *)"fo"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
     [23] = {{5, (u8 *)"entry"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_entry, 0},
     [22] = {{7, (u8 *)"noentry"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_entry, -1},
     [33] = {{3, (u8 *)"dll"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
@@ -90,10 +94,13 @@ struct cli_option_hash_table_entry{
     [0] = {{2, (u8 *)"wd"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_Wno, 0},
     [55] = {{11, (u8 *)"incremental"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_incremental, 0},
     [56] = {{2, (u8 *)"mf"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_MF, 0},
+    [17] = {{1, (u8 *)"l"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_l, 0},
     [60] = {{9, (u8 *)"nodiscard"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_discard, -1},
     [27] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [61] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
+    [42] = {{6, (u8 *)"ignore"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_ignore, 0},
+    [51] = {{4, (u8 *)"link"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_link, -1},
     [59] = {{7, (u8 *)"warning"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
     [15] = {{8, (u8 *)"warnings"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
 };
@@ -173,11 +180,14 @@ struct cli_options{
     int Wnone; // Disable all warnings.
     enum incremental incremental; // Does nothing, here for MSVC cli-compatibility.
     struct string MF; // Currently ignored, is supposed to produce a .dep file?
+    struct string_list l; // Link to the specified library.
     int no_discard; // Emit all functions and declarations.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
     int report_warnings_in_system_includes; // Self explanatory.
+    struct string ignore; // Ignores the argument.
+    int link; // Ignored option, here to prevent it from interpretting it as `-l ink.lib`.
     enum warning warning; // A list of all warnings, only accessible from '-help warning'.
 };
 
@@ -246,6 +256,25 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             is_option = 1;
             option_cstring++;
             if(*option_cstring == '-') option_cstring++;
+        }else if(*option_cstring == '@'){
+            //
+            // @CommandFile, load the file and recursively call `cli_parse_options`.
+            //
+            struct os_file command_file = load_file_into_arena(option_cstring + 1, arena); // @note: This functions puts a zero-terminator.
+            if(command_file.file_does_not_exist){
+                print("Error: Could not load command file '%s'.\n", option_cstring + 1);
+                return 0;
+            }
+            if(command_file.size > 2 && command_file.data[0] == 0xff && command_file.data[1] == 0xfe){
+                // UTF16-LE BOM (Byte Order Mark).
+                print("Error: @incomplete command file '%s' is utf-16 currently unsupported.\n", option_cstring + 1);
+                return 0;
+            }
+            struct parsed_command_line parsed_command_line = windows_parse_command_line((char *)command_file.data);
+            int cli_parse_options_success = cli_parse_options(cli_options, arena, parsed_command_line.argc, parsed_command_line.argv);
+            if(!cli_parse_options_success) return 0;
+            
+            continue;
         }
         
         if(should_print_help) is_option = 1;
@@ -321,6 +350,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }else if(string_front_match_eat(&option, "Fe")){
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_out;
+            }else if(string_front_match_eat(&option, "Fo")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_out;
             }else if(string_front_match_eat(&option, "I")){
                 option_argument_type = CLI_ARGUMENT_TYPE_directory_list;
                 option_kind          = CLI_OPTION_I;
@@ -339,6 +371,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }else if(string_front_match_eat(&option, "MF")){
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_MF;
+            }else if(string_front_match_eat(&option, "l")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
+                option_kind          = CLI_OPTION_l;
             }
             
             if(option_kind == CLI_OPTION_none){
@@ -621,6 +656,16 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "@incomplete\n"
                             "", 12);
                 }break;
+                case CLI_OPTION_l:{
+                    print("-l <library> | Link to the specified library.\n\n");
+                    os_print_string(
+                            "Option is equivalent to passing `library.lib` on the command line.\n"
+                            "Example:\n"
+                            "> hlc main.c -luser32\n"
+                            "Equivalent to\n"
+                            "> hlc main.c user32.lib\n"
+                            "", 136);
+                }break;
                 case CLI_OPTION_no_discard:{
                     print("-no_discard | Emit all functions and declarations.\n\n");
                     os_print_string(
@@ -644,6 +689,18 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 }break;
                 case CLI_OPTION_report_warnings_in_system_includes:{
                     print("-report_warnings_in_system_includes | Self explanatory.\n\n");
+                }break;
+                case CLI_OPTION_ignore:{
+                    print("-ignore <ignored> | Ignores the argument.\n\n");
+                    os_print_string(
+                            "This option is mostly here to add the registry key:\n"
+                            "`HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\cl.exe`\n"
+                            "and an option `Debugger` to `C:\\path\\to\\hlc.exe --ignore`. This will make windows redirect every call\n"
+                            "to `cl.exe` to a call of `hlc.exe`.\n"
+                            "", 292);
+                }break;
+                case CLI_OPTION_link:{
+                    print("-link | Ignored option, here to prevent it from interpretting it as `-l ink.lib`.\n\n");
                 }break;
                 case CLI_OPTION_warning:{
                     print("-warning <enum> | A list of all warnings, only accessible from '-help warning'.\n\n");
@@ -730,7 +787,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -Wno <warning>              | Disable specific warnings.\n"
                             "  -incremental <enum>         | Does nothing, here for MSVC cli-compatibility.\n"
                             "  -MF <file>                  | Currently ignored, is supposed to produce a .dep file?\n"
-                    , 1771);
+                            "  -l <library>                | Link to the specified library.\n"
+                    , 1834);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -906,6 +964,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_MF:{
                 cli_options->MF = argument_string;
             }break;
+            
+            case CLI_OPTION_l:{
+                string_list_postfix(&cli_options->l, arena, argument_string);
+            }break;
             case CLI_OPTION_no_discard: cli_options->no_discard = 1; break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
             
@@ -914,6 +976,11 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 cli_options->seed = argument_as_u64;
             }break;
             case CLI_OPTION_report_warnings_in_system_includes: cli_options->report_warnings_in_system_includes = 1; break;
+            
+            case CLI_OPTION_ignore:{
+                cli_options->ignore = argument_string;
+            }break;
+            case CLI_OPTION_link: cli_options->link = 1; break;
             
             case CLI_OPTION_count:
             case CLI_OPTION_none:

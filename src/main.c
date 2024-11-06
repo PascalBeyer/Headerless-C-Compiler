@@ -3593,6 +3593,15 @@ int main(int argc, char *argv[]){
     string_list_add_uniquely(&globals.library_paths, arena, um_library_path);
     string_list_add_uniquely(&globals.library_paths, arena, ucrt_library_path);
     
+    // Process the -l options.
+    for(struct string_list_node *library_node = globals.cli_options.l.list.first; library_node; library_node = library_node->next){
+        struct string library = library_node->string;
+        if(!string_match(get_file_extension(library), string(".lib"))){
+            library = string_concatenate(arena, library, string(".lib"));
+        }
+        string_list_add_uniquely(&libraries, arena, library);
+    }
+    
     for(struct string_list_node *library_node = libraries.list.first; library_node; library_node = library_node->next){
         
         struct string full_library_path = zero_struct;
