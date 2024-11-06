@@ -3855,7 +3855,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 emit_inline_asm_block(context, asm_block);
                 
                 // free all 'argument_locations'
-                for(u32 i = 0; i < array_count(*argument_registers) && i < arg_count; i++){
+                for(u32 i = 0; i < arg_count; i++){
                     emit_location_allow_freeing(context, emit_locations[i]);
                     
                     if(emit_locations[i] != context->asm_block_return){
