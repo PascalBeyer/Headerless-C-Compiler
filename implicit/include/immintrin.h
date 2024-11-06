@@ -1,3 +1,5 @@
 
-// @cleanup: For now there is no include granularity for intrinsics.
-#pragma compilation_unit("intrinsic.c")
+#pragma once
+
+#include <wmmintrin.h>
+// #include <zmmintrin.h>
