@@ -837,9 +837,34 @@ __declspec(inline_asm) int __builtin_clz(unsigned int x){
     return eax
 }
 
+__declspec(inline_asm) int __builtin_ffs(int x){
+    mov edx, 0xffffffff
+    bsf eax, x
+    cmove eax, edx
+    add eax, 1
+    return eax
+}
+
+__declspec(inline_asm) int __builtin_ffsll(long long x){
+    mov edx, 0xffffffff
+    bsf rax, x
+    cmove eax, edx
+    add eax, 1
+    return eax
+}
+
 __declspec(inline_asm) int __builtin_expect(int __expression, int expected){
     return __expression
 }
+
+__declspec(inline_asm) void __builtin_trap(void){
+    bytes{0f 0b} // ud2
+}
+
+__declspec(inline_asm) void __builtin_unreachable(void){
+    bytes{0f 0b} // ud2
+}
+
 
 //
 // SSE intrinsics
