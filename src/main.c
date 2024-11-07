@@ -3832,6 +3832,10 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 
                 struct string time_define = push_format_string(arena, "#define __TIME__ \"%.2d:%.2d:%.2d\"\n", LocalTime.wHour, LocalTime.wMinute, LocalTime.wSecond); 
                 string_list_prefix(&predefines, arena, time_define);
+                
+                if(globals.output_file_type == OUTPUT_FILE_obj){
+                    string_list_prefix(&predefines, arena, string("#define __HLC_COMPILE_TO_OBJECT__ 1\n"));
+                }
             }
             
             struct string predefines_string = string_list_flatten(predefines, arena);

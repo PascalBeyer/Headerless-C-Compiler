@@ -43,13 +43,30 @@
 // We only have to implement the list of functions specified above.
 // 
 
+
+static typedef unsigned short wchar_t;
+static typedef unsigned __int64 size_t;
+
+#ifdef __HLC_COMPILE_TO_OBJECT__
+// Memory functions.
+void *memset(void *mem, int val, unsigned __int64 amount);
+void *memcpy(void *dest, const void *source, unsigned __int64 amount);
+void *memmove(void *dest, const void *source, unsigned __int64 amount);
+int   memcmp(void *_string1, void *_string2, unsigned __int64 amount);
+void *memchr(void *mem, int c, size_t count);
+// String functions.
+char *strstr(char *haystack, char *needle);
+char *strchr(char *haystack, int needle);
+char *strrchr(char *haystack, int needle);
+// Wide-Character String functions
+wchar_t *wcsstr(wchar_t *haystack, wchar_t *needle);
+wchar_t *wcschr(wchar_t *haystack, wchar_t needle);
+wchar_t *wcsrchr(wchar_t *haystack, wchar_t needle);
+
+#else
+
 //_____________________________________________________________________________________________________________________
 // Memory functions.
-
-
-// @cleanup: How to handle types in "implicit" files.
-#define wchar_t unsigned short
-#define size_t  unsigned __int64
 
 
 void *memset(void *mem, int val, unsigned __int64 amount){
@@ -236,3 +253,5 @@ __declspec(dllimport) int _rmdir(const char *dirname);
 int rmdir(const char *dirname){
     return _rmdir(dirname);
 }
+
+#endif
