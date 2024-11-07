@@ -1323,6 +1323,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         
         for(int is_double = 0; is_double < 2; is_double++){
             
+            smm size = is_double ? 8 : 4;
+            push_zero_align(arena, size);
+            
             if(is_double){
                 double_start_offset = (u32)(arena_current(arena) - rdata_base);
             }else{
@@ -1331,12 +1334,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
             smm amount_of_literals = float_literals_by_type[is_double].amount_of_literals;
             
-            smm size = is_double ? 8 : 4;
-            
             smm capacity = u64_round_up_to_next_power_of_two((u64)(1.5 * amount_of_literals));
             void **table = push_data(scratch, void *, capacity);
-            
-            push_zero_align(arena, size);
             
             for(struct ast_float_literal *lit = float_literals_by_type[is_double].literals; lit; lit = lit->next){
                 
