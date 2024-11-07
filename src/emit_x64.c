@@ -3633,9 +3633,18 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             struct ast_function *patch_call_source_declaration = null; 
             
             if(call->identifier_expression->resolved_type->kind == AST_function_type){
-                assert(call->identifier_expression->kind == AST_identifier);
-                identifier_to_call = cast(struct ast_identifier *)call->identifier_expression;
-                function_type = cast(struct ast_function_type *)identifier_to_call->base.resolved_type;
+                identifier_to_call = (struct ast_identifier *)call->identifier_expression;
+                function_type = (struct ast_function_type *)identifier_to_call->base.resolved_type;
+                
+                while(identifier_to_call->base.kind == AST_comma_expression){
+                    // @cleanup: This sort of sucks.
+                    //           Maybe we should spitt the function pointer call case 
+                    //           from the function call case.
+                    struct ast_binary_op *comma = (struct ast_binary_op *)identifier_to_call;
+                    identifier_to_call = (struct ast_identifier *)comma->rhs;
+                }
+                
+                assert(identifier_to_call->base.kind == AST_identifier);
                 
                 if(!patch_call_source_declaration) patch_call_source_declaration = (struct ast_function *)identifier_to_call->decl;
                 
