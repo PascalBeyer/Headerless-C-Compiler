@@ -467,6 +467,7 @@ static struct{
     struct sleeper_table declaration_sleeper_table;
     
     struct ast_table global_declarations;
+    struct ast_table external_declarations_at_function_scope; // This is only used when compiling to an object file, where it is valid to have an unresolved exernal symbol at function scope.
     struct ast_table compound_types;
     // struct ast_table type_defs; this has to be the same as global_declarations because '(asd)expr' would sleep on (asd) as an expression
     
@@ -4050,6 +4051,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         // :ast_tables
         globals.global_declarations = ast_table_create(1 << 8);
+        if(globals.output_file_type == OUTPUT_FILE_obj) globals.external_declarations_at_function_scope = ast_table_create(1 << 8);
         globals.compound_types      = ast_table_create(1 << 8);
         
         globals.intrinsic_table.nodes = push_data(arena, struct intrinsic_info, INTRINSIC_TABLE_CAPACITY);

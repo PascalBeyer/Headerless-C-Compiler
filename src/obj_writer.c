@@ -865,6 +865,19 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         }
     }
     
+    // Add all external declarations that were declared at local scope.
+    for(u64 table_index = 0; table_index < globals.external_declarations_at_function_scope.capacity; table_index++){
+        struct ast_declaration *decl = (struct ast_declaration *)globals.external_declarations_at_function_scope.nodes[table_index].ast;
+        if(!decl) continue;
+        if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+        
+        if(decl->base.kind == AST_declaration){
+            ast_list_append(&external_variables, scratch, &decl->base);
+        }else{
+            ast_list_append(&external_functions, scratch, &decl->base);
+        }
+    }
+    
     for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
         struct context *thread_context = globals.thread_infos[thread_index].context;
         

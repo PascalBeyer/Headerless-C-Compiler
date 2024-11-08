@@ -1075,7 +1075,7 @@ func struct ast *parse_declaration_list_in_imperative_scope(struct context *cont
         if(decl->base.kind == AST_typedef) continue;
         if(decl->base.kind == AST_function) continue;
         
-        if(!(decl->flags & DECLARATION_FLAGS_is_local_persist)){
+        if(!(decl->flags & DECLARATION_FLAGS_is_local_persist) && !(decl->flags & DECLARATION_FLAGS_is_global)){
             parser_emit_memory_location(context, decl);
         }
     }
@@ -7556,8 +7556,19 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             decl = (struct ast_declaration *)ast_table_get(table, declarator.ident->atom);
             
             if(!decl){
-                report_error(context, declarator.ident, "This 'extern' variable was never defined.");
+                // Push the declaration so we can continue as if it was defined.
                 decl = push_declaration_for_declarator(context, declarator);
+                if(declarator.type->kind == AST_function_type) decl->base.kind = AST_function;
+                decl->flags |= DECLARATION_FLAGS_is_global;
+                
+                if(globals.output_file_type == OUTPUT_FILE_obj){
+                    // If we are compiling to an object, this is fine. 
+                    // The declaration is just an unresolved external in the end.
+                    struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(&globals.external_declarations_at_function_scope, &decl->base, declarator.ident);
+                    if(redecl) decl = redecl;
+                }else{
+                    report_error(context, declarator.ident, "This 'extern' variable was never defined.");
+                }
             }
             
             if(!types_are_equal(decl->type, declarator.type)){
@@ -8550,6 +8561,7 @@ func struct ast *parse_imperative_scope(struct context *context){
         
         struct ast_declaration *decl = scope->declarations[table_index];
         if(!decl) continue;
+        if(decl->flags & DECLARATION_FLAGS_is_global) continue; // We don't track the used information for external declarations at function scope.
         
         if(decl->base.kind == AST_declaration){
             if(decl->_times_referenced == 0){
