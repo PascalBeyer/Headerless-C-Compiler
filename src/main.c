@@ -702,7 +702,8 @@ struct context{
     
     struct static_if_evaluate_stack_node{
         enum static_if_evaluate_operation operation;
-        s64 value;
+        int is_unsigned;
+        u64 value;
         struct token *token;
         struct token *macro_expansion_token;
         int should_skip_undefined_identifier;

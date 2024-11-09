@@ -3827,7 +3827,6 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
     
     if(context->should_exit_statement) return invalid_ast(context);
     
-    
     struct ast *operand = null;
     
     switch(get_current_token(context)->type){
@@ -4167,12 +4166,13 @@ case NUMBER_KIND_##type:{ \
                     }
                 } // fallthrough
                 case NUMBER_KIND_long_long:{
-                    if(val >= max_s64){
-                        //18446744073709551615;
-                        // @cleanup: warning here
+                    if(val < max_s64){
+                        lit->_s64 = (s64)val;
+                        set_resolved_type(&lit->base, &globals.typedef_s64, null);
+                        break;
                     }
-                    lit->_s64 = (s64)val;
-                    set_resolved_type(&lit->base, &globals.typedef_s64, null);
+                    set_resolved_type(&lit->base, &globals.typedef_u64, null);
+                    report_warning(context, WARNING_integer_literal_too_large_to_be_signed, lit_token, "Integer literal exceeds the maximum value representable as a signed integer and is interpreted as unsigned.");
                 }break;
                 case NUMBER_KIND_unsigned_long: // @cleanup: long vs int
                 case NUMBER_KIND_unsigned:{

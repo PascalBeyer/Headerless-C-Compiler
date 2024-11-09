@@ -455,3 +455,10 @@ Example:
 >    int a;
 > };
 
+
+-> integer_literal_too_large_to_be_signed - We found an integer literal that exceeds the maximum for a signed value.
+
+Example:
+> 18446744073709551615ll;
+> 18446744073709551615l;
+> 18446744073709551615;

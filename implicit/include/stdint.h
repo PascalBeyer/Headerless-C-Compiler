@@ -43,7 +43,7 @@ typedef signed   __int64  intmax_t;
 #define UINT8_MAX 255
 #define UINT16_MAX 32767
 #define UINT32_MAX 4294967295
-#define UINT64_MAX 9223372036854775807LL
+#define UINT64_MAX 18446744073709551615
 
 #define INT8_MIN (-127-1)
 #define INT16_MIN (-32767-1)

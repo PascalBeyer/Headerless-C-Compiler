@@ -844,12 +844,14 @@ struct parsed_integer{
     
     enum number_kind{
         NUMBER_KIND_invalid,
+        
         NUMBER_KIND_int,
+        NUMBER_KIND_long,
+        NUMBER_KIND_long_long,
+        
         NUMBER_KIND_unsigned,
         NUMBER_KIND_unsigned_long,
         NUMBER_KIND_unsigned_long_long,
-        NUMBER_KIND_long,
-        NUMBER_KIND_long_long,
         
         NUMBER_KIND_s8,  // i8
         NUMBER_KIND_s16, // i16
@@ -958,8 +960,6 @@ func struct parsed_integer parse_character_literal(struct context *context, stru
         report_error(context, lit_token, "Empty character constant is not allowed.");
     }
     
-    // @note: string_kind is ignored...
-    
     u64 value = 0;
     for(smm i = 0; i < escaped.string.size; i++){
         value <<= 8;
@@ -967,6 +967,12 @@ func struct parsed_integer parse_character_literal(struct context *context, stru
     }
     
     ret.value = value;
+    switch(escaped.string_kind){
+        case STRING_KIND_utf8:  ret.number_kind = NUMBER_KIND_s8;  break;
+        case STRING_KIND_utf16: ret.number_kind = NUMBER_KIND_u16; break;
+        case STRING_KIND_utf32: ret.number_kind = NUMBER_KIND_u32; break;
+        default: ret.number_kind = NUMBER_KIND_invalid; break;
+    }
     
     return ret;
 }
@@ -1055,7 +1061,6 @@ func struct parsed_integer parse_hex_literal(struct context *context, struct tok
     }
     
     string_eat_front(&literal, length);
-    
     
     if(report_overflow){
         report_warning(context, WARNING_compile_time_overflow, lit_token, "Compile time overflow.");
@@ -2320,6 +2325,7 @@ func struct token *peek_token_eat(struct context *context, enum token_type type)
 
 enum static_if_evaluate_operation{
     STATIC_IF_EVALUATE_none,
+    
     STATIC_IF_EVALUATE_parenthesized_expression,
     STATIC_IF_EVALUATE_ternary_condition,
     STATIC_IF_EVALUATE_ternary_if_true,
@@ -2352,6 +2358,7 @@ enum static_if_evaluate_operation{
     STATIC_IF_EVALUATE_logical_and,
     STATIC_IF_EVALUATE_logical_or,
     
+    STATIC_IF_EVALUATE_operation_count,
 };
 
 func struct static_if_evaluate_stack_node *static_if_stack_current(struct context *context){
@@ -2359,14 +2366,14 @@ func struct static_if_evaluate_stack_node *static_if_stack_current(struct contex
     return context->static_if_evaluate_stack + context->static_if_stack_at;
 }
 
-// @note: technically returns an element out of bound so be careful!
+// @note: Technically returns an element out of bounds so be careful!
 func struct static_if_evaluate_stack_node *static_if_stack_pop(struct context *context){
     struct static_if_evaluate_stack_node *ret = context->static_if_evaluate_stack + context->static_if_stack_at;
     if(context->static_if_stack_at > 0) context->static_if_stack_at -= 1;
     return ret;
 }
 
-func void static_if_stack_push(struct context *context, struct token *token, enum static_if_evaluate_operation operation, s64 value){
+func void static_if_stack_push(struct context *context, struct token *token, enum static_if_evaluate_operation operation, s64 value, int is_unsigned){
     if(context->static_if_stack_at + 1 >= array_count(context->static_if_evaluate_stack)){
         report_error(context, token, "Expression in '#if' nests too deep.");
         return;
@@ -2376,6 +2383,7 @@ func void static_if_stack_push(struct context *context, struct token *token, enu
     struct static_if_evaluate_stack_node *node = context->static_if_evaluate_stack + ++context->static_if_stack_at;
     node->token     = token;
     node->operation = operation;
+    node->is_unsigned = is_unsigned;
     node->value     = value;
     node->macro_expansion_token = context->macro_expansion_token;
     node->should_skip_undefined_identifier = context->static_if_evaluate_should_skip_undefined_identifier;
@@ -2407,44 +2415,92 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
     retry:;
     if(context->error) return 0;
     
-    struct token *test = next_token(context);
-    
-    while(true){
-        
-        b32 should_break = false;
-        
-        switch(test->type){
-            case TOKEN_logical_not: static_if_stack_push(context, test, STATIC_IF_EVALUATE_logical_not, 0); break;
-            case TOKEN_bitwise_not: static_if_stack_push(context, test, STATIC_IF_EVALUATE_bitwise_not, 0); break;
-            case TOKEN_minus:       static_if_stack_push(context, test, STATIC_IF_EVALUATE_unary_minus, 0); break;
-            case TOKEN_plus:  break; // just ignore this I guess
-            default: should_break = true; break;
-        }
-        
-        if(should_break) break;
-        test = next_token(context);
-    }
-    
     // "[...], all signed integer types and all unsigned integer types act as if they have the same 
     //  representation as, respectively, the types intmax_t and uintmax_t defined in the header <stdint.h>."
-    //  
-    //  @cleanup: It seems like we actually have to care about the type of the values.
-    //            Arithmetic conversions and all that shit, just so we _know_ whether we have to 
-    //            apply the signed or unsigned operation on the 'value'.
-    s64 value;
+    
+    // 
+    // I think this means that there are only two types 'intmax_t' and 'uintmax_t', cl, clang and gcc both print "Hello" here:
+    // 
+    //     #if (123u - 1245ll) > 0
+    //          #error "Hello"
+    //     #endif
+    //     
+    // Meaning (123u - 1245ll) = (123ull - 1234ll) > 0
+    // 
+    
+    u64 value = 0;
+    int is_unsigned = 0;
+    
+    struct token *test = next_token(context);
+    
     switch(test->type){
+        case TOKEN_logical_not: static_if_stack_push(context, test, STATIC_IF_EVALUATE_logical_not, 0, 0); goto retry;
+        case TOKEN_bitwise_not: static_if_stack_push(context, test, STATIC_IF_EVALUATE_bitwise_not, 0, 0); goto retry;
+        case TOKEN_minus:       static_if_stack_push(context, test, STATIC_IF_EVALUATE_unary_minus, 0, 0); goto retry;
+        case TOKEN_plus:        /* just ignore this I guess */                                             goto retry;
+        
         case TOKEN_character_literal:{
-            value = (s64)parse_character_literal(context, test).value;
-            test = next_token(context);
+            struct parsed_integer parsed_integer = parse_character_literal(context, test);
+            switch(parsed_integer.number_kind){
+                case NUMBER_KIND_s8:  value = (s8)parsed_integer.value; break;
+                case NUMBER_KIND_u16: value = (u16)parsed_integer.value; is_unsigned = 1; break;
+                case NUMBER_KIND_u32: value = (u32)parsed_integer.value; is_unsigned = 1; break;
+                case NUMBER_KIND_invalid:{
+                    static_if_report_error(context, test, context->macro_expansion_token, directive, "Invalid prefix on string literal.");
+                }break;
+                invalid_default_case();
+            }
         }break;
-        case TOKEN_hex_literal:{
-            value = (s64)parse_hex_literal(context, test).value;
-            test = next_token(context);
-        }break;
+        
+        case TOKEN_binary_literal:
+        case TOKEN_hex_literal:
         case TOKEN_base10_literal:{
-            value = (s64)parse_base10_literal(context, test).value;
-            test = next_token(context);
+            struct parsed_integer parsed_integer;
+            if(test->type == TOKEN_base10_literal){
+                parsed_integer = parse_base10_literal(context, test);
+            }else if(test->type == TOKEN_hex_literal) {
+                parsed_integer = parse_hex_literal(context, test);
+            }else{
+                parsed_integer = parse_binary_literal(context, test);
+            }
+            
+            value = parsed_integer.value;
+            
+            switch(parsed_integer.number_kind){
+                
+                // For 0xffffffff (hex u32_max):
+                // 
+                // Okay, As far as I undestand, all of these types (are!) just int64 so the first type that matches is s64. 
+                // Hence, we don't have the case where we need to check for values between s32_max and u32_max.
+                
+                case NUMBER_KIND_int:
+                case NUMBER_KIND_long:
+                case NUMBER_KIND_long_long:{
+                    if(value < max_s64) break;
+                    report_warning(context, WARNING_integer_literal_too_large_to_be_signed, test, "Integer literal exceeds the maximum value representable as a signed integer and is interpreted as unsigned.");
+                    is_unsigned = 1;
+                }break;
+                
+                case NUMBER_KIND_unsigned:
+                case NUMBER_KIND_unsigned_long:
+                case NUMBER_KIND_unsigned_long_long:{
+                    is_unsigned = 1;
+                }break;
+                
+                case NUMBER_KIND_s8:  value = (s8)value;  break;
+                case NUMBER_KIND_s16: value = (s16)value; break;
+                case NUMBER_KIND_s32: value = (s32)value; break;
+                case NUMBER_KIND_s64: value = (s64)value; break;
+                
+                case NUMBER_KIND_u8:  value = (u8)value;  is_unsigned = 1; break;
+                case NUMBER_KIND_u16: value = (u16)value; is_unsigned = 1; break;
+                case NUMBER_KIND_u32: value = (u32)value; is_unsigned = 1; break;
+                case NUMBER_KIND_u64: value = (u64)value; is_unsigned = 1; break;
+                
+                default: break; // We have reported an error in `parse_*_literal`.
+            }
         }break;
+        
         case TOKEN_identifier:{
             if(string_match(token_get_string(test), string("defined"))){ // @cleanup: atoms match ?
                 eat_whitespace_and_comments(context);
@@ -2460,19 +2516,19 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
                     return 0;
                 }
                 
-                test = next_token(context);
-                
                 if(got_paren){
+                    test = next_token(context);
+                    
                     if(test->type != TOKEN_closed_paren){
                         static_if_report_error(context, test, context->macro_expansion_token, directive, "Expected a ')' after 'defined' identifier.");
                         return 0;
                     }
-                    test = next_token(context);
                 }
                 
                 if(context->should_exit_statement) return 0;
                 
                 value = lookup_define(context, token->atom) != null;
+                is_unsigned = 0;
             }else{
                 if(!context->static_if_evaluate_should_skip_undefined_identifier){
                     struct token *ret = push_uninitialized_struct(&context->scratch, struct token);
@@ -2485,12 +2541,13 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
                     }
                     report_warning(context, WARNING_undefined_static_if_operand, ret, "Undefined identifier in '#if' operand gets evaluated to zero.");
                 }
+                
                 value = 0;
-                test = next_token(context);
+                is_unsigned = 0;
             }
         }break;
         case TOKEN_open_paren:{
-            static_if_stack_push(context, test, STATIC_IF_EVALUATE_parenthesized_expression, 0);
+            static_if_stack_push(context, test, STATIC_IF_EVALUATE_parenthesized_expression, 0, 0);
             goto retry;
             
             resume_for_parenthesized_expression:;
@@ -2498,7 +2555,6 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
                 static_if_report_error(context, test, context->macro_expansion_token, directive, "Expected ')' in '#if' argument."); // :Error
                 return 0;
             }
-            test = next_token(context);
         }break;
         default:{
             static_if_report_error(context, test, context->macro_expansion_token, directive, "Unexpected token in '#if' operand.");
@@ -2506,182 +2562,236 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
         }break;   
     }
     
-    while(true){
-        b32 should_break = false;
+    static enum precedence{
+        PRECEDENCE_prefix         = 2,
+        PRECEDENCE_multiplicative = 3,
+        PRECEDENCE_additive       = 4,
+        PRECEDENCE_shift          = 5,
+        PRECEDENCE_relational     = 6,
+        PRECEDENCE_equality       = 7,
+        PRECEDENCE_bitwise_and    = 8,
+        PRECEDENCE_bitwise_xor    = 9,
+        PRECEDENCE_bitwise_or     = 10,
+        PRECEDENCE_logical_and    = 11,
+        PRECEDENCE_logical_or     = 12,
+        PRECEDENCE_ternary        = 13,
+        PRECEDENCE_assignment     = 14,
+        PRECEDENCE_comma          = 15,
+        PRECEDENCE_parenthesized_expression = 16,
+    } token_to_precedence[TOKEN_count] = {
+        [TOKEN_times] = PRECEDENCE_multiplicative, 
+        [TOKEN_slash] = PRECEDENCE_multiplicative, 
+        [TOKEN_mod]   = PRECEDENCE_multiplicative,
         
-        switch(static_if_stack_current(context)->operation){
+        [TOKEN_plus]  = PRECEDENCE_additive, 
+        [TOKEN_minus] = PRECEDENCE_additive,
+        
+        [TOKEN_left_shift]  = PRECEDENCE_shift, 
+        [TOKEN_right_shift] = PRECEDENCE_shift,
+        
+        [TOKEN_bigger_equals]  = PRECEDENCE_relational,
+        [TOKEN_smaller_equals] = PRECEDENCE_relational,
+        [TOKEN_bigger]         = PRECEDENCE_relational,
+        [TOKEN_smaller]        = PRECEDENCE_relational,
+        
+        [TOKEN_logical_equals]   = PRECEDENCE_equality,
+        [TOKEN_logical_unequals] = PRECEDENCE_equality,
+        
+        [TOKEN_and] = PRECEDENCE_bitwise_and,
+        [TOKEN_xor] = PRECEDENCE_bitwise_xor,
+        [TOKEN_or]  = PRECEDENCE_bitwise_or,
+        [TOKEN_logical_and] = PRECEDENCE_logical_and,
+        [TOKEN_logical_or]  = PRECEDENCE_logical_or,
+        
+        [TOKEN_question_mark] = PRECEDENCE_ternary,
+        
+        [TOKEN_comma] = PRECEDENCE_comma, // ?
+    };
+    
+    struct token *binary_expression = next_token(context);
+    
+    while(context->static_if_stack_at > 0){
+        static enum precedence operation_to_precedence[STATIC_IF_EVALUATE_operation_count] = {
+            [STATIC_IF_EVALUATE_bitwise_not] = PRECEDENCE_prefix,
+            [STATIC_IF_EVALUATE_logical_not] = PRECEDENCE_prefix,
+            [STATIC_IF_EVALUATE_unary_minus] = PRECEDENCE_prefix,
+            
+            [STATIC_IF_EVALUATE_times]  = PRECEDENCE_multiplicative,
+            [STATIC_IF_EVALUATE_div] = PRECEDENCE_multiplicative,
+            [STATIC_IF_EVALUATE_mod]    = PRECEDENCE_multiplicative,
+            
+            [STATIC_IF_EVALUATE_plus]  = PRECEDENCE_additive,
+            [STATIC_IF_EVALUATE_minus] = PRECEDENCE_additive,
+            
+            [STATIC_IF_EVALUATE_left_shift]  = PRECEDENCE_shift,
+            [STATIC_IF_EVALUATE_right_shift] = PRECEDENCE_shift,
+            
+            [STATIC_IF_EVALUATE_logical_bigger_equals]  = PRECEDENCE_relational,
+            [STATIC_IF_EVALUATE_logical_smaller_equals] = PRECEDENCE_relational,
+            [STATIC_IF_EVALUATE_logical_bigger]         = PRECEDENCE_relational,
+            [STATIC_IF_EVALUATE_logical_smaller]        = PRECEDENCE_relational,
+            
+            [STATIC_IF_EVALUATE_logical_equals]   = PRECEDENCE_equality,
+            [STATIC_IF_EVALUATE_logical_unequals] = PRECEDENCE_equality,
+            
+            [STATIC_IF_EVALUATE_and] = PRECEDENCE_bitwise_and,
+            [STATIC_IF_EVALUATE_xor] = PRECEDENCE_bitwise_xor,
+            [STATIC_IF_EVALUATE_or]  = PRECEDENCE_bitwise_or,
+            
+            [STATIC_IF_EVALUATE_logical_and] = PRECEDENCE_logical_and,
+            [STATIC_IF_EVALUATE_logical_or]  = PRECEDENCE_logical_or,
+            
+            [STATIC_IF_EVALUATE_parenthesized_expression] = PRECEDENCE_parenthesized_expression,
+            
+            // [STATIC_IF_EVALUATE_conditional_expression] = PRECEDENCE_ternary, // right-to-left associative @cleanup should these two be supported?
+            // [STATIC_IF_EVALUATE_comma_expression] = PRECEDENCE_comma,
+        };
+        
+        struct static_if_evaluate_stack_node *current = static_if_stack_current(context);
+        
+        enum precedence operation_precedence = operation_to_precedence[current->operation];
+        enum precedence token_precedence     = token_to_precedence[binary_expression->type];
+        
+        if(token_precedence && operation_precedence > token_precedence) break;
+        
+        static_if_stack_pop(context);
+        
+        switch(current->operation){
             case STATIC_IF_EVALUATE_logical_not: value = !value; break;
             case STATIC_IF_EVALUATE_bitwise_not: value = ~value; break;
-            case STATIC_IF_EVALUATE_unary_minus: value = -value; break;
-            default: should_break = true; break;
-        }
-        
-        if(should_break) break;
-        static_if_stack_pop(context);
-    }
-    
-    if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_left_shift){
-        value = static_if_stack_pop(context)->value << value;
-    }else if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_right_shift){
-        value = static_if_stack_pop(context)->value >> value;
-    }
-    
-    if(test->type == TOKEN_left_shift){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_left_shift, value);
-        goto retry;
-    }    
-    if(test->type == TOKEN_right_shift){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_right_shift, value);
-        goto retry;
-    }
-    
-    // bitwise operation
-    if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_and){
-        value = static_if_stack_pop(context)->value & value;
-    }else if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_or){
-        value = static_if_stack_pop(context)->value | value;
-    }else if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_xor){
-        value = static_if_stack_pop(context)->value ^ value;
-    }
-    
-    if(test->type == TOKEN_and){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_and, value);
-        goto retry;
-    }
-    if(test->type == TOKEN_or){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_or, value);
-        goto retry;
-    }
-    if(test->type == TOKEN_xor){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_xor, value);
-        goto retry;
-    }
-    
-    // multiplicative operation
-    if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_times){
-        value = static_if_stack_pop(context)->value * value;
-    }else if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_div){
-        if(value == 0){
-            static_if_report_error(context, static_if_stack_current(context)->token, static_if_stack_current(context)->macro_expansion_token, directive, "Divide by zero.");
-            return 0;
-        }
-        value = static_if_stack_pop(context)->value / value;
-    }else if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_mod){
-        if(value == 0){
-            static_if_report_error(context, static_if_stack_current(context)->token, static_if_stack_current(context)->macro_expansion_token, directive, "Mod with zero.");
-            return 0;
-        }
-        value = static_if_stack_pop(context)->value % value;
-    }
-    
-    
-    if(test->type == TOKEN_times){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_times, value);
-        goto retry;
-    }else if(test->type ==  TOKEN_slash){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_div, value);
-        goto retry;
-    }else if(test->type ==  TOKEN_mod){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_mod, value);
-        goto retry;
-    }
-    
-    // additive operation
-    if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_plus){
-        value = static_if_stack_pop(context)->value + value;
-    }else if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_minus){
-        value = static_if_stack_pop(context)->value - value;
-    }
-    
-    if(test->type == TOKEN_plus){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_plus, value);
-        goto retry;
-    }
-    
-    if(test->type == TOKEN_minus){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_minus, value);
-        goto retry;
-    }
-    
-    {   // logical operation
-        switch(static_if_stack_current(context)->operation){
-            case STATIC_IF_EVALUATE_logical_equals:{
-                value = static_if_stack_pop(context)->value == value;
+            case STATIC_IF_EVALUATE_unary_minus: value = -(s64)value; break; // @cleanup: warning?
+            
+            case STATIC_IF_EVALUATE_left_shift:{
+                is_unsigned |= current->is_unsigned;
+                value = is_unsigned ? ((u64)current->value << (u64)value) : ((s64)current->value << (s64)value);
             }break;
-            case STATIC_IF_EVALUATE_logical_unequals:{
-                value = static_if_stack_pop(context)->value != value;
+            case STATIC_IF_EVALUATE_right_shift:{
+                is_unsigned |= current->is_unsigned;
+                value = is_unsigned ? ((u64)current->value >> (u64)value) : ((s64)current->value >> (s64)value);
             }break;
+            
+            case STATIC_IF_EVALUATE_and: is_unsigned |= current->is_unsigned; value = current->value & value; break;
+            case STATIC_IF_EVALUATE_or:  is_unsigned |= current->is_unsigned; value = current->value | value; break;
+            case STATIC_IF_EVALUATE_xor: is_unsigned |= current->is_unsigned; value = current->value ^ value; break;
+            
+            case STATIC_IF_EVALUATE_times:{
+                is_unsigned |= current->is_unsigned;
+                value = is_unsigned ? ((u64)current->value * (u64)value) : ((s64)current->value * (s64)value);
+            }break;
+            
+            case STATIC_IF_EVALUATE_div:{
+                is_unsigned |= current->is_unsigned;
+                if(value == 0){
+                    static_if_report_error(context, static_if_stack_current(context)->token, static_if_stack_current(context)->macro_expansion_token, directive, "Divide by zero.");
+                    return 0;
+                }
+                value = is_unsigned ? ((u64)current->value / (u64)value) : ((s64)current->value / (s64)value);
+            }break;
+            
+            case STATIC_IF_EVALUATE_mod:{
+                is_unsigned |= current->is_unsigned;
+                if(value == 0){
+                    static_if_report_error(context, static_if_stack_current(context)->token, static_if_stack_current(context)->macro_expansion_token, directive, "Mod with zero.");
+                    return 0;
+                }
+                value = is_unsigned ? ((u64)current->value % (u64)value) : ((s64)current->value % (s64)value);
+            }break;
+            
+            case STATIC_IF_EVALUATE_plus:  is_unsigned |= current->is_unsigned; value = current->value + value; break;
+            case STATIC_IF_EVALUATE_minus: is_unsigned |= current->is_unsigned; value = current->value - value; break;
+            
+            case STATIC_IF_EVALUATE_logical_equals:   is_unsigned = 0; value = (current->value == value); break;
+            case STATIC_IF_EVALUATE_logical_unequals: is_unsigned = 0; value = (current->value != value); break;
+            
             case STATIC_IF_EVALUATE_logical_bigger_equals:{
-                value = static_if_stack_pop(context)->value >= value;
+                value = (is_unsigned | current->is_unsigned) ? ((u64)current->value >= (u64)value) : ((s64)current->value >= (s64)value);
+                is_unsigned = 0;
             }break;
+            
             case STATIC_IF_EVALUATE_logical_smaller_equals:{
-                value = static_if_stack_pop(context)->value <= value;
+                value = (is_unsigned | current->is_unsigned) ? ((u64)current->value <= (u64)value) : ((s64)current->value <= (s64)value);
+                is_unsigned = 0;
             }break;
+            
             case STATIC_IF_EVALUATE_logical_bigger:{
-                value = static_if_stack_pop(context)->value > value;
+                value = (is_unsigned | current->is_unsigned) ? ((u64)current->value > (u64)value) : ((s64)current->value > (s64)value);
+                is_unsigned = 0;
             }break;
             case STATIC_IF_EVALUATE_logical_smaller:{
-                value = static_if_stack_pop(context)->value < value;
+                value = (is_unsigned | current->is_unsigned) ? ((u64)current->value < (u64)value) : ((s64)current->value < (s64)value);
+                is_unsigned = 0;
             }break;
-            default: break;
+            
+            case STATIC_IF_EVALUATE_logical_and:{
+                is_unsigned = 0; 
+                value = (current->value && value); 
+                
+                // Restore the old value of 'should_skip_undefined_identifier'.
+                context->static_if_evaluate_should_skip_undefined_identifier = current->should_skip_undefined_identifier;
+            }break;
+                
+            case STATIC_IF_EVALUATE_logical_or:{
+                is_unsigned = 0; 
+                value = (current->value || value); 
+                
+                // Restore the old value of 'should_skip_undefined_identifier'.
+                context->static_if_evaluate_should_skip_undefined_identifier = current->should_skip_undefined_identifier;
+            }break;
+            
+            case STATIC_IF_EVALUATE_parenthesized_expression:{
+                // @note: leave 'value' where it is!
+                test = binary_expression;
+                goto resume_for_parenthesized_expression;
+            }break;
+            
+            invalid_default_case();
         }
-        
-        enum static_if_evaluate_operation operation;
-        switch(test->type){
-            case TOKEN_logical_equals:   operation = STATIC_IF_EVALUATE_logical_equals;         break;
-            case TOKEN_logical_unequals: operation = STATIC_IF_EVALUATE_logical_unequals;       break;
-            case TOKEN_bigger_equals:    operation = STATIC_IF_EVALUATE_logical_bigger_equals;  break;
-            case TOKEN_smaller_equals:   operation = STATIC_IF_EVALUATE_logical_smaller_equals; break;
-            case TOKEN_bigger:           operation = STATIC_IF_EVALUATE_logical_bigger;         break;
-            case TOKEN_smaller:          operation = STATIC_IF_EVALUATE_logical_smaller;        break;
-            default:                     operation = STATIC_IF_EVALUATE_none;                   break;
-        }
-        
-        if(operation != STATIC_IF_EVALUATE_none){
-            static_if_stack_push(context, test, operation, value);
+    }
+    
+    switch(binary_expression->type){
+        case TOKEN_times:            static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_times,                  value, is_unsigned); goto retry;
+        case TOKEN_slash:            static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_div,                    value, is_unsigned); goto retry;
+        case TOKEN_mod:              static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_mod,                    value, is_unsigned); goto retry;
+        case TOKEN_plus:             static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_plus,                   value, is_unsigned); goto retry;
+        case TOKEN_minus:            static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_minus,                  value, is_unsigned); goto retry;
+        case TOKEN_left_shift:       static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_left_shift,             value, is_unsigned); goto retry;
+        case TOKEN_right_shift:      static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_right_shift,            value, is_unsigned); goto retry;
+        case TOKEN_bigger_equals:    static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_logical_bigger_equals,  value, is_unsigned); goto retry;
+        case TOKEN_smaller_equals:   static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_logical_smaller_equals, value, is_unsigned); goto retry;
+        case TOKEN_logical_equals:   static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_logical_equals,         value, is_unsigned); goto retry;
+        case TOKEN_logical_unequals: static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_logical_unequals,       value, is_unsigned); goto retry;
+        case TOKEN_bigger:           static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_logical_bigger,         value, is_unsigned); goto retry;
+        case TOKEN_smaller:          static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_logical_smaller,        value, is_unsigned); goto retry;
+        case TOKEN_and:              static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_and,                    value, is_unsigned); goto retry;
+        case TOKEN_or:               static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_or,                     value, is_unsigned); goto retry;
+        case TOKEN_xor:              static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_xor,                    value, is_unsigned); goto retry;
+        case TOKEN_logical_and:{
+            static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_logical_and, value, is_unsigned); 
+            
+            // 
+            // Don't report 'undefined identifier'-warnings within the rhs if the lhs was 0.
+            // This prevents us from reporting an error for '#if defined(_MSC_VER) && _MSC_VER >= 1337'.
+            // 
+            context->static_if_evaluate_should_skip_undefined_identifier |= (value == 0);
+            
             goto retry;
         }
-    }
-    
-    if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_logical_and){
-        struct static_if_evaluate_stack_node *node = static_if_stack_pop(context);
-        value = node->value && value;
         
-        // restore the old value of 'should_skip_undefined_identifier'.
-        context->static_if_evaluate_should_skip_undefined_identifier = node->should_skip_undefined_identifier;
-    }
-    
-    // :logical_and
-    if(test->type == TOKEN_logical_and){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_logical_and, value);
-        // don't report 'undefined identifier'-warnings within the rhs if the lhs was 0.
-        // This prevents us from reporting an error for '#if defined(_MSC_VER) && _MSC_VER >= 1337'
-        context->static_if_evaluate_should_skip_undefined_identifier |= (value == 0);
-        goto retry;
-    }
-    // :logical_or
-    if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_logical_or){
-        struct static_if_evaluate_stack_node *node = static_if_stack_pop(context);
-        value = node->value || value;
+        case TOKEN_logical_or:{
+            static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_logical_or, value, is_unsigned); 
+            
+            // 
+            // Don't report 'undefined identifier'-warnings within the rhs if the lhs was not 0.
+            // This prevents us from reporting an error for '#if !defined(_MSC_VER) || _MSC_VER < 1337'.
+            // 
+            context->static_if_evaluate_should_skip_undefined_identifier |= (value != 0);
+            
+            goto retry;
+        }
         
-        // restore the old value of 'should_skip_undefined_identifier'.
-        context->static_if_evaluate_should_skip_undefined_identifier = node->should_skip_undefined_identifier;
-    }
-    
-    if(test->type == TOKEN_logical_or){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_logical_or, value);
+        case TOKEN_question_mark: static_if_stack_push(context, test, STATIC_IF_EVALUATE_ternary_condition, value, is_unsigned); goto retry;
         
-        // don't report 'undefined identifier'-warnings within the rhs if the lhs was not 0.
-        // This prevents us from reporting an error for '#if !defined(_MSC_VER) || _MSC_VER < 1337'
-        context->static_if_evaluate_should_skip_undefined_identifier |= (value != 0);
-        goto retry;
-    }
-    
-    if(test->type == TOKEN_question_mark){
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_ternary_condition, value);
-        
-        // @cleanup: do the undefined identifier?
-        goto retry;
+        default: break;
     }
     
     if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_ternary_condition){
@@ -2691,7 +2801,7 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
             return 0;
         }
         
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_ternary_if_true, value);
+        static_if_stack_push(context, test, STATIC_IF_EVALUATE_ternary_if_true, value, is_unsigned);
         goto retry;
     }
     
@@ -2704,17 +2814,10 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
         
         value = condition->value ? if_true->value : value;
     }
-    
-    
-    if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_parenthesized_expression){
-        // @note: leave 'value' where it is!
-        static_if_stack_pop(context);
-        goto resume_for_parenthesized_expression;
-    }
-    
-    
+
     assert(context->static_if_stack_at == 0);
     end_counter(context, static_if_evaluate);
+    
     return value;
 }
 
