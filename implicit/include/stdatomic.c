@@ -290,6 +290,16 @@ __declspec(inline_asm) _Bool __atomic_compare_exchange_ullong(atomic_ullong *obj
     return al
 }
 
+__declspec(inline_asm) _Bool __atomic_compare_exchange_pointer(_Atomic(void *) *object, void *expected, void *desired){
+    
+    mov rax, [expected]
+    lock cmpxchg [object], desired
+    mov [expected], rax
+    
+    sete al
+    return al
+}
+
 //_____________________________________________________________________________________________________________________
 // Atomic Fetch Add
 
