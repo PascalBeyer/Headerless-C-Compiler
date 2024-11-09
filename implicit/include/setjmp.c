@@ -1,5 +1,14 @@
 
-typedef unsigned char jmp_buf[256];
+struct __declspec(align(16)) aligned_char{
+    unsigned char a;
+};
+
+typedef struct aligned_char jmp_buf[256];
+
+#if __HLC_COMPILE_TO_OBJECT__
+int setjmp(jmp_buf environment_buffer);
+_Noreturn void longjmp(jmp_buf environment_buffer, int return_value);
+#else
 
 int setjmp(jmp_buf environment_buffer){
     int return_value;
@@ -105,3 +114,4 @@ _Noreturn void longjmp(jmp_buf environment_buffer, int return_value){
     do_not_warn_for_noreturn_please();
 }
 
+#endif
