@@ -1,4 +1,6 @@
 
+#pragma once
+
 #define __CRTDECL
 #define _VCRTIMP __declspec(dllimport)
 
