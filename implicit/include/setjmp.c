@@ -5,8 +5,8 @@ struct __declspec(align(16)) aligned_char{
 
 typedef struct aligned_char jmp_buf[256];
 
-#if __HLC_COMPILE_TO_OBJECT__
-int setjmp(jmp_buf environment_buffer);
+#ifdef __HLC_COMPILE_TO_OBJECT__
+int setjmp(jmp_buf environment_buffer, char *frame);
 _Noreturn void longjmp(jmp_buf environment_buffer, int return_value);
 #else
 
