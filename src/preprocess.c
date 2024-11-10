@@ -2937,21 +2937,20 @@ struct file *load_or_get_source_file_by_absolute_path(struct context *context, c
 func int handle_include_directive(struct context *context, struct token *directive, int is_system_include, struct string include_string){
     begin_counter(context, handle_include);
     
-    // The file that included us. @cleanup: better name
-    struct file *parent_file = globals.file_table.data[directive->file_index];
-    if(parent_file->is_system_include){
-        is_system_include = true; // ""-include in system includes are again system includes
-    }
-    
     include_string = push_zero_terminated_string_copy(context->arena, include_string);
     hacky_canonicalize_file_for_case_insensitivity(&include_string);
     
     struct file *file = null;
     
     if(!is_system_include){
+        
         //
         // First check relative to this file.
         //
+        struct file *parent_file = globals.file_table.data[directive->file_index];
+        
+        // For the purposes of reporting warnings we want to treat ""-includes in system include files the same as system includes.
+        if(parent_file->is_system_include) is_system_include = true;
         
         struct string path = strip_file_name(string_from_cstring(parent_file->absolute_file_path));
         struct string absolute_file_path = canonicalize_slashes(concatenate_file_paths(&context->scratch, path, include_string));
