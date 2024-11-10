@@ -4315,11 +4315,16 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     work_queue_append_list(&globals.work_queue_tokenize_files, files_to_parse.first, files_to_parse.last, files_to_parse.amount);
     
     // @note: thread '0' is the main thread, so just start all other ones
-    for(u32 thread_index = 1; thread_index < thread_count; thread_index++) {
+    for(u32 thread_index = 1; thread_index < thread_count; thread_index++){
         os_create_thread(work_thread_proc, &thread_infos[thread_index]);
     }
     
     while(globals.work_queue_tokenize_files.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_tokenize_files, worker_tokenize_file);
+    
+    // Ensure that all thread wrote in `thread_infos[thread_index].context`.
+    for(u32 thread_index = 1; thread_index < thread_count; thread_index++){
+        while(atomic_load(struct context *, thread_infos[thread_index].context) == null){};
+    }
     
     assert(globals.work_queue_tokenize_files.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
