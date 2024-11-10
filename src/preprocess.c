@@ -2912,6 +2912,19 @@ struct file *load_or_get_source_file_by_absolute_path(struct context *context, c
         .size = os_file.size + 2,
     };
     
+    // 
+    // BOM (Byte Order Mark) handling.
+    // 
+    if(file_buffer[0] == 0xEF && file_buffer[1] == 0xBB && file_buffer[2] == 0xBF){
+        // UTF8-BOM
+        file_contents.data += 3;
+        file_contents.size -= 3;
+    }else if((file_buffer[0] == 0xEF && file_buffer[1] == 0xFF) || (file_buffer[0] == 0xFF && file_buffer[1] == 0xFE)){
+        // Big Endian UTF16
+        report_error(context, 0, "Error: File '%s' starts with a UTF-16 Byte Order Mark. UTF-16 source files are not supported at this point.", absolute_file_path);
+        goto end;
+    }
+    
     file->tokens = tokenize_raw(context, file_contents, file->file_index, /* is_stupid_hack */ false, &file->lines);
     
     end:
