@@ -7483,19 +7483,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
         
         if(context->should_exit_statement) goto end;
         
-        if(declarator.type->kind == AST_unresolved_type){
-            // :unresolved_types.
-            // The only unresolved types that are allowed are either pointers
-            // or 'AST_unresolved_type' in function arguments or typedefs.
-            //                                                    -09.10.2020
-            if(specifiers.specifier_flags & SPECIFIER_typedef){
-                // This is fine allow typedefs to :unresolved_types.
-            }else{
-                sleep_or_error_on_unresolved_type(context, declarator.type);
-                goto end;
-            }
-        }
-        
         if(context->current_scope && declarator.type->kind == AST_function_type && !(specifiers.specifier_flags & SPECIFIER_typedef)){
             // @cleanup: this feels really hacky.
             //           The use case here is that a function declaration at local scope, e.g.
@@ -7833,6 +7820,11 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             decl->compilation_unit = context->current_compilation_unit;
             
+            // If the declaration is not explicitly extern, it cannot have unresolved type.
+            if(!(specifiers.specifier_flags & SPECIFIER_extern) && !(specifiers.specifier_flags & SPECIFIER_typedef)){
+                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) goto end;
+            }
+            
             // 
             // Register it up here already in case of 'void *asd = &asd;'
             // this means that for right now the declaration is 'not initialized' even if it has an
@@ -7856,6 +7848,9 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     report_error(context, equals, "Cannot initialize a typedef.");
                     goto end;
                 }
+                
+                // If the declaration has an initializer, it cannot have unresolved type.
+                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) goto end;
                 
                 if(specifiers.specifier_flags & SPECIFIER_dllimport){
                     report_error(context, declarator.ident, "Variable declared '__declspec(dllimport)' cannot be initialized.");
