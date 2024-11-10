@@ -208,6 +208,7 @@ static struct{
     {const_string("__ptr64"),       TOKEN_ptr64},
     {const_string("__stdcall"),     TOKEN_stdcall},
     {const_string("__cdecl"),       TOKEN_cdecl},
+    {const_string("_cdecl"),        TOKEN_cdecl},
     
     {const_string("__asm__"),       TOKEN_asm},
     
