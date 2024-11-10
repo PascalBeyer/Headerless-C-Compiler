@@ -3203,12 +3203,23 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 sll_push_back(context->string_literals, lit);
                 context->string_literals.amount_of_strings += 1;
                 
-                
                 smm array_size = array->amount_of_elements * array->element_type->size;
+                if(array->is_of_unknown_size){
+                    // We are in an initializer like:
+                    // 
+                    // struct s{
+                    //     char array[];
+                    // } arst = {"hello :)"};
+                    // 
+                    // We have made sure to allocate enough space to hold the initializer.
+                    array_size = lit->value.size + array->element_type->size;
+                }
+                
                 
                 smm extra = (array_size == lit->value.size) ? 0 : array->element_type->size;
                 
                 struct emit_location *lhs = emit_code_for_ast(context, assign->lhs);
+                if(array->is_of_unknown_size) lhs->size = array_size;
                 
                 if(array_size > lit->value.size + extra){
                     // @cleanup: We only would have to zero the upper part of the 'lhs'.

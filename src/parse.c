@@ -2152,8 +2152,6 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 //          .arst = {"arst"},
                 //      };
                 //  
-                //  
-                //  
                 // 
                 
                 struct ast_array_type *wanted_array = (struct ast_array_type *)designator_stack.first->lhs->resolved_type;
@@ -2165,13 +2163,9 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                     current_object = designator_stack.first->lhs;
                     sll_pop_front(designator_stack);
                     
-                    // @cleanup: arrays of unknown size?
-                    if(wanted_array->amount_of_elements == (given_array->amount_of_elements - 1)){
-                        // Special case for 
-                        //    struct { u8 array[3]; } asd = {"asd"};
-                        // which should work and just not write a zero terminator.
-                        
-                    }else if(wanted_array->amount_of_elements < given_array->amount_of_elements){
+                    if(wanted_array->is_of_unknown_size){
+                        trailing_initializer_size = max_of(trailing_initializer_size, given_array->base.size);
+                    }else if(wanted_array->amount_of_elements < given_array->amount_of_elements - /*zero-terminator*/1){
                         report_error(context, site, "Array initialized to string literal of size %lld, but the array size is only %lld.", given_array->amount_of_elements, wanted_array->amount_of_elements);
                         goto error;
                     }
@@ -2198,13 +2192,9 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                     
                     if(wanted_array->element_type->size == given_array->element_type->size){
                         
-                        // @cleanup: arrays of unknown size?
-                        if(wanted_array->amount_of_elements == (given_array->amount_of_elements - 1)){
-                            // Special case for 
-                            //    struct { u8 array[3]; } asd = {"asd"};
-                            // which should work and just not write a zero terminator.
-                            
-                        }else if(wanted_array->amount_of_elements < given_array->amount_of_elements){
+                        if(wanted_array->is_of_unknown_size){
+                            trailing_initializer_size = max_of(trailing_initializer_size, given_array->base.size);
+                        }else if(wanted_array->amount_of_elements < given_array->amount_of_elements - /*zero-terminator*/1){
                             report_error(context, site, "Array initialized to string literal of size %lld, but the array size is only %lld.", given_array->amount_of_elements, wanted_array->amount_of_elements);
                             goto error;
                         }

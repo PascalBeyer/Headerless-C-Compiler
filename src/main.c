@@ -986,7 +986,7 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
             push_type_string__inner(list, arena, scratch, pointer->pointer_to);
         }break;
         case AST_unresolved_type:{
-            struct ast_unresolved_type *unresolved = cast(struct ast_unresolved_type *)type;
+            struct ast_unresolved_type *unresolved = (struct ast_unresolved_type *)type;
             string_list_prefix(list, scratch, token_get_string(unresolved->base.token));
             
             struct string type_prefix = type_prefix_for_unresolved_type(unresolved);
@@ -2219,7 +2219,20 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
                 // If the left hand side is not an array, we should be in the 'AST_implicit_address_conversion' case.
                 assert(lhs_type->kind == AST_array_type);
                 struct ast_array_type *lhs_array = (struct ast_array_type *)lhs_type;
-                assert(!lhs_array->is_of_unknown_size);
+                
+                smm array_size;
+                if(lhs_array->is_of_unknown_size){
+                    // We are in an initializer like:
+                    // 
+                    // struct s{
+                    //     char array[];
+                    // } arst = {"hello :)"};
+                    // 
+                    // We have made sure to allocate enough space to hold the initializer.
+                    array_size = str->base.resolved_type->size;
+                }else{
+                    array_size = lhs_array->amount_of_elements * lhs_array->element_type->size;
+                }
                 
                 // This is the 
                 //      char asd[] = "asd";
@@ -2227,12 +2240,12 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
                 // case.
                 
                 assert(offset + str->value.size <= data_size); // Make sure at least the string fits.
-                assert(str->value.size <= lhs_array->element_type->size * lhs_array->amount_of_elements);
+                assert(str->value.size <= array_size);
                 
                 memcpy(data + offset, str->value.data, str->value.size);
                 
                 // @cleanup: should we memset the whole "upper" part?
-                if(offset + str->value.size + lhs_array->element_type->size <= lhs_array->amount_of_elements){
+                if(offset + str->value.size + lhs_array->element_type->size <= array_size){
                     memset(&data[offset + str->value.size], 0, lhs_array->element_type->size); // zero-terminate
                 }
             }break;
