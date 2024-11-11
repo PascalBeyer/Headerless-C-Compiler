@@ -546,7 +546,7 @@ struct ast_declaration{
     // memory_location and relative_virtual_address for dllimports, describe the entry in the dllimport table.
     
     u8 *memory_location; // if it is global a pointer to the evaluated initializer.
-    smm relative_virtual_address;
+    smm relative_virtual_address; // In object files this is the offset in section.
     smm symbol_table_index;
     struct compilation_unit *compilation_unit;
     

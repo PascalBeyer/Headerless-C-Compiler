@@ -754,13 +754,15 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     //     8) local-persist variables. // @cleanup: test other things at local scope.
     // 
     
-    struct ast_list defined_functions  = zero_struct;
-    struct ast_list external_functions = zero_struct;
+    struct ast_list defined_functions   = zero_struct;
+    struct ast_list external_functions  = zero_struct;
+    // struct ast_list selectany_functions = zero_struct;
     
-    struct ast_list external_variables  = zero_struct;
-    struct ast_list automatic_variables = zero_struct;
+    struct ast_list external_variables       = zero_struct;
+    struct ast_list automatic_variables      = zero_struct;
     struct ast_list zero_initialized_statics = zero_struct;
-    struct ast_list defined_variables   = zero_struct;
+    struct ast_list defined_variables        = zero_struct;
+    struct ast_list selectany_variables      = zero_struct;
     
     struct string_list directives = zero_struct;
     string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\"LIBCMT\" /DEFAULTLIB:\"OLDNAMES\" /STACK:0x100000,0x100000 "));
@@ -782,6 +784,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         .next = globals.compilation_units.first, 
         .static_declaration_table = globals.global_declarations,
     };
+    
+    u64 selectany_sections = 0;
     
     for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
         
@@ -817,8 +821,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 if(decl->assign_expr){
                     if(decl->flags & DECLARATION_FLAGS_is_selectany){
-                        // @cleanup: report warning?
-                        print("WARNING: Variable '%.*s' is declarated __declspec(selectany). This is currently unsupported for .obj-files. Ignoring it...\n", decl->identifier->size, decl->identifier->data);
+                        ast_list_append(&selectany_variables, scratch, &decl->base);
+                        selectany_sections += 1; // @cleanup: .debug$S ?
+                        continue;
                     }
                     
                     ast_list_append(&defined_variables, scratch, &decl->base);
@@ -850,8 +855,15 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         string_list_postfix(&directives, scratch, push_format_string(scratch, "/EXPORT:%.*s ", function->identifier->size, function->identifier->data));
                     }
                     
+                    // if(function->as_decl.flags & DECLARATION_FLAGS_is_selectany){
+                    //     ast_list_append(&selectany_functions, scratch, &function->base);
+                    //     selectany_sections += 1; // @cleanup: .debug$S .xdata .pdata .data for statics
+                    //     continue;
+                    // }
+                    
                     ast_list_append(&defined_functions, scratch, &function->base);
                     
+                    // @cleanup: These should work different for selectany.
                     for_ast_list(function->static_variables){
                         ast_list_append(&defined_variables, scratch, it->value);
                     }
@@ -883,6 +895,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         
         // 
         // Append the declarations for 'global_struct_and_array_literals' to the 'initialized_declarations'.
+        // @cleanup: These should be pruned as well.
         // 
         
         for_ast_list(thread_context->global_struct_and_array_literals){
@@ -1006,9 +1019,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         // 
         u32 characteristics;
         
-    } *section_headers = push_data(arena, struct coff_section_header, 10);
+    } *section_headers = push_data(arena, struct coff_section_header, selectany_sections + 10);
     
-    u32 section_header_count = 0;
+    u64 section_header_count = 0;
     
     struct coff_section_header *drectve = null;
     struct coff_section_header *text  = null;
@@ -1189,6 +1202,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     if(zero_initialized_statics.count){
         bss = section_headers + section_header_count++;
         
+        smm section_alignment = 1;
+        
         smm size = 0;
         for_ast_list(zero_initialized_statics){
             struct ast_declaration *decl = (struct ast_declaration *)it->value;
@@ -1196,14 +1211,18 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             smm alignment = get_declaration_alignment(decl);
             smm decl_size = get_declaration_size(decl);
             
+            section_alignment = max_of(section_alignment, alignment);
+            
             size = align_up(size, alignment);
             decl->relative_virtual_address = size;
             size += decl_size;
         }
         
+        u32 alignment_flag = ((count_trailing_zeros64(section_alignment)+1) << 20);
+        
         memcpy(bss, ".bss", sizeof(".bss"));
         bss->size_of_raw_data = (u32)size;
-        bss->characteristics  = /*UNINITIALIZED_DATA*/0x00000080 | /*ALIGN_16BYTES*/0x00500000 | /*MEM_READ*/0x40000000 | /*MEM_WRITE*/0x80000000;
+        bss->characteristics  = /*UNINITIALIZED_DATA*/0x00000080 | /*ALIGN_16BYTES*/alignment_flag | /*MEM_READ*/0x40000000 | /*MEM_WRITE*/0x80000000;
     }
     
     // 
@@ -1227,8 +1246,6 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     u32 double_end_offset = 0;
     
     {
-        // .rdata 
-        rdata = section_headers + section_header_count++;
         
         push_zero_align(arena, 16);
         u8 *rdata_base = arena_current(arena);
@@ -1313,7 +1330,6 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             }
         }
         
-        
         struct{
             struct ast_float_literal *literals;
             smm amount_of_literals;
@@ -1391,10 +1407,14 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             }
         }
         
-        memcpy(rdata, ".rdata", sizeof(".rdata"));
-        rdata->pointer_to_raw_data = (u32)(rdata_base - obj_base_address);
-        rdata->size_of_raw_data    = (u32)(arena_current(arena) - rdata_base);
-        rdata->characteristics     = /*INITIALIZED_DATA*/0x00000040 | /*ALIGN_16BYTES*/0x00500000 | /*MEM_READ*/0x40000000;
+        if(arena_current(arena) != rdata_base){
+            // .rdata 
+            rdata = section_headers + section_header_count++;
+            memcpy(rdata, ".rdata", sizeof(".rdata"));
+            rdata->pointer_to_raw_data = (u32)(rdata_base - obj_base_address);
+            rdata->size_of_raw_data    = (u32)(arena_current(arena) - rdata_base);
+            rdata->characteristics     = /*INITIALIZED_DATA*/0x00000040 | /*ALIGN_16BYTES*/0x00500000 | /*MEM_READ*/0x40000000;
+        }
     }
     
     if(defined_variables.count){
@@ -1402,13 +1422,17 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         
         u8 *data_base = arena_current(arena);
         
+        smm section_alignment = 1;
+        
         for_ast_list(defined_variables){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
             
             smm alignment = get_declaration_alignment(decl);
             smm decl_size = get_declaration_size(decl);
             
-            push_zero_align(arena, alignment);
+            push_zero_align(arena, alignment); // @cleanup: This seems wrong... We want to align the offset from the base.
+            
+            section_alignment = max_of(section_alignment, alignment);
             
             u8 *mem = push_uninitialized_data(arena, u8, decl_size);
             
@@ -1423,10 +1447,12 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             decl->relative_virtual_address = (u32)(mem - data_base);
         }
         
+        u32 alignment_flag = ((count_trailing_zeros64(section_alignment)+1) << 20);
+        
         memcpy(data, ".data", sizeof(".data"));
         data->pointer_to_raw_data = (u32)(data_base - obj_base_address);
         data->size_of_raw_data    = (u32)(arena_current(arena) - data_base);
-        data->characteristics     = /*INITIALIZED_DATA*/0x00000040 | /*ALIGN_16BYTES*/0x00500000 | /*MEM_READ*/0x40000000 | /*MEM_WRITE*/0x80000000;
+        data->characteristics     = /*INITIALIZED_DATA*/0x00000040 | /*ALIGN_*BYTES*/alignment_flag | /*MEM_READ*/0x40000000 | /*MEM_WRITE*/0x80000000;
     }
     
     
@@ -1656,8 +1682,6 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     default: break;
                 }
             }
-            
-
         }
         
         
@@ -2206,6 +2230,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     
                     struct ast_declaration *decl = (struct ast_declaration *)ast;
                     
+                    // For now no debug information for selectany declarations.
+                    if(decl->flags & DECLARATION_FLAGS_is_selectany) continue;
+                    
                     if(decl->flags & DECLARATION_FLAGS_is_enum_member){
                         // 
                         // Emit a 'S_CONSTANT' for all enum members.
@@ -2287,6 +2314,37 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         debug_symbols->characteristics     = /*INITIALIZED_DATA*/0x00000040 | /*DISCARDABLE*/0x02000000 | /*1-BYTE-ALIGN*/0x00100000 |  /*MEM_READ*/0x40000000;
     }
     
+    
+    // 
+    // Selectany sections.
+    // 
+    
+    for_ast_list(selectany_variables){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        u8 *section_base = arena_current(arena);
+        
+        u64 section_index = section_header_count++;
+        struct coff_section_header *selectany_section = section_headers + section_index;
+        
+        smm alignment = get_declaration_alignment(decl);
+        smm decl_size = get_declaration_size(decl);
+        
+        u8 *mem = push_uninitialized_data(arena, u8, decl_size);
+        memcpy(mem, decl->memory_location, decl_size);
+        decl->memory_location = mem;
+        
+        // :symbols_table_index_is_section_index_for_declspec_selectany_until_we_have_a_symbol_table_entry
+        decl->symbol_table_index = section_index;
+        
+        u32 alignment_flag = ((count_trailing_zeros64(alignment)+1) << 20);
+        
+        memcpy(selectany_section, ".data", sizeof(".data"));
+        selectany_section->pointer_to_raw_data = (u32)(section_base - obj_base_address);
+        selectany_section->size_of_raw_data    = (u32)(arena_current(arena) - section_base);
+        selectany_section->characteristics     = /*INITIALIZED_DATA*/0x00000040 | /*ALIGN_*BYTES*/alignment_flag | /*MEM_READ*/0x40000000 | /*MEM_WRITE*/0x80000000 | /*IMAGE_SCN_LNK_COMDAT*/0x1000;
+    }
+    
     smm amount_of_debug_symbols_relocations = push_data(scratch, struct debug_symbols_relocation_info, 0) - debug_symbols_relocations;
     
     struct coff_symbol_table_record{
@@ -2340,7 +2398,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     
     // @WARNING: you cannot index 'symbol_table_base' because of alignment.
     
-    for(u32 section_index = 0; section_index < section_header_count; section_index++){
+    for(u64 section_index = 0; section_index < section_header_count; section_index++){
         struct coff_section_header *section_header = &section_headers[section_index];
         
         struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
@@ -2366,7 +2424,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         } *auxiliary_entry = (struct coff_symbol_table_auxiliary_section_definition_entry *)push_data(arena, u8, 18);
         auxiliary_entry->size_of_raw_data = section_header->size_of_raw_data;
         auxiliary_entry->number_of_relocations = 0;
-        // @cleanup: check_sum, number, selection are for COMDAT or communal data this implements '__declspec(selectany)'.
+        
+        if(section_header->characteristics & /*IMAGE_SCN_LNK_COMDAT*/0x1000){
+            // @cleanup: Currently, we only emit the data sections, no debug / unwind sections.
+            auxiliary_entry->selection = /*IMAGE_COMDAT_SELECT_ANY*/2;
+        }
     }
     
     struct string_list long_name_strings = zero_struct;
@@ -2567,6 +2629,32 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         record->type = 0;
     }
     
+    for_ast_list(selectany_variables){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        // :symbols_table_index_is_section_index_for_declspec_selectany_until_we_have_a_symbol_table_entry
+        u64 section_index = decl->symbol_table_index;
+        struct coff_section_header *section_header = &section_headers[section_index];
+        
+        decl->symbol_table_index = (arena_current(arena) - (u8 *)symbol_table_base)/18;
+        struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
+        
+        struct string name = decl->identifier->string;
+        
+        if(name.size <= 8){
+            memcpy(record->short_name, name.data, name.size);
+        }else{
+            record->string_table_offset = (u32)coff_string_table_at;
+            coff_string_table_at += name.size + 1;
+            string_list_postfix(&long_name_strings, scratch, name);
+        }
+        
+        record->value = (s32)decl->relative_virtual_address; // This will be 0 but whatever.
+        record->section_number = (s16)((section_header - section_headers) + 1);
+        record->storage_class = /*IMAGE_SYM_CLASS_EXTERNAL*/2;
+        record->type = 0;
+    }
+    
     smm string_symbol_base = (arena_current(arena) - (u8 *)symbol_table_base)/18;
     for(struct string_symbol *symbol = string_symbols.first; symbol; symbol = symbol->next){
         struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
@@ -2655,6 +2743,10 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     
     for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
         struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        // 
+        // @cleanup: Patches to __declspec(selectany) variables probably do not work.
+        // 
         
         for(struct patch_node *patch = thread_context->local_patch_list.first; patch; ){
             struct patch_node *next = patch->next;
