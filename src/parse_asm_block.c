@@ -392,6 +392,7 @@ enum memonic{
     MEMONIC_vptest,
     
     MEMONIC_vaddps,
+    MEMONIC_vsubps,
     MEMONIC_vmulps,
     
     MEMONIC_vpminub,
@@ -927,6 +928,7 @@ static struct{
     
     
     [MEMONIC_vaddps]  = {.memonic = const_string("vaddps"),  .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },
+    [MEMONIC_vsubps]  = {.memonic = const_string("vsubps"),  .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },
     [MEMONIC_vmulps]  = {.memonic = const_string("vmulps"),  .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },
     [MEMONIC_vpminub] = {.memonic = const_string("vpminub"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },
     [MEMONIC_vpxor]   = {.memonic = const_string("vpxor"),   .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },

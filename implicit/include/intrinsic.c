@@ -1585,6 +1585,7 @@ __declspec(inline_asm) __m128i _mm_add_epi64(__m128i a, __m128i b){
     return a
 }
 
+
 __declspec(inline_asm) __m128d _mm_add_pd(__m128d a, __m128d b){
     addpd a, b
     return a
@@ -2595,12 +2596,14 @@ __declspec(inline_asm) __m128i _mm_srl_epi64(__m128i a, __m128i count){
 
 
 __declspec(inline_asm) __m128i _mm_srli_epi16(__m128i a, int imm8){
-    psrlw  a, imm8
+    movd xmm0, imm8
+    psrlw  a, xmm0
     return a
 }
 
 __declspec(inline_asm) __m128i _mm_srli_epi32(__m128i a, int imm8){
-    psrld a, imm8
+    movd xmm0, imm8
+    psrld a, xmm0
     return a
 }
 
@@ -3007,6 +3010,12 @@ typedef union  __declspec(intrin_type) __declspec(align(32)) __m256i {
 __declspec(inline_asm) __m256 _mm256_add_ps(__m256 a, __m256 b){
     vmovups ymm0, a
     vaddps ymm0, ymm0, b
+    return ymm0
+}
+
+__declspec(inline_asm) __m256 _mm256_sub_ps(__m256 a, __m256 b){
+    vmovups ymm0, a
+    vsubps ymm0, ymm0, b
     return ymm0
 }
 

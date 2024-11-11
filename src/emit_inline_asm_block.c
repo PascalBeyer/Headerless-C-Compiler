@@ -308,6 +308,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 [MEMONIC_vblendps] = ASM_PREFIX_VEX | ASM_PREFIX_SSE_packed_float,
                 [MEMONIC_vmulps]   = ASM_PREFIX_VEX | ASM_PREFIX_SSE_packed_float,
                 [MEMONIC_vaddps]   = ASM_PREFIX_VEX | ASM_PREFIX_SSE_packed_float,
+                [MEMONIC_vsubps]   = ASM_PREFIX_VEX | ASM_PREFIX_SSE_packed_float,
                 
                 // @hack: this is the middle byte of the opcode
                 [MEMONIC_vpshufb]     = 0x38,
@@ -456,6 +457,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 
                 
                 [MEMONIC_vaddps]      = 0x58,
+                [MEMONIC_vsubps]      = 0x5C,
                 [MEMONIC_vmulps]      = 0x59,
                 [MEMONIC_vpminub]     = 0xDA,
                 [MEMONIC_vpxor]       = 0xEF,
@@ -1222,7 +1224,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_vpsraq:
             case MEMONIC_vshufps: case MEMONIC_vblendps:
             case MEMONIC_vpminub: case MEMONIC_vpxor: case MEMONIC_vpcmpeqb:
-            case MEMONIC_vmulps: case MEMONIC_vaddps:{
+            case MEMONIC_vmulps: case MEMONIC_vaddps: case MEMONIC_vsubps:{
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 struct opcode opcode = two_byte_opcode(memonic_to_opcode[inst->memonic]);
                 
