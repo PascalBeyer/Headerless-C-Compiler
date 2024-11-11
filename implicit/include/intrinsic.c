@@ -490,6 +490,11 @@ __declspec(inline_asm) __int64 _InterlockedExchangeAdd64(__int64 *destination, _
     return rdx
 }
 
+__declspec(inline_asm) long _InterlockedOr(long volatile *value, long mask){
+    lock or [value], mask
+    return mask // @cleanup: This is supposed to return the old value.
+}
+
 __declspec(inline_asm) __int8 _InterlockedIncrement8(__int8 *to_increment){
     // We need to return the incremented value, thus we have to use an xadd
     // to fetch the memory and cannot use a 'lock inc'.
@@ -912,7 +917,7 @@ __declspec(inline_asm) __m128 _mm_and_ps(__m128 a, __m128 b){
     return a
 }
 
-__declspec(inline_asm) __m128 _mm_addnot_ps(__m128 a, __m128 b){
+__declspec(inline_asm) __m128 _mm_andnot_ps(__m128 a, __m128 b){
     andnps a, b
     return a
 }
@@ -1083,6 +1088,11 @@ __declspec(inline_asm) int _mm_comineq_ss(__m128 a, __m128 b){
 }
 
 __declspec(inline_asm) __m128 _mm_cvtsi32_ss(__m128 a, int b){
+    cvtsi2ss a, b
+    return a
+}
+
+__declspec(inline_asm) __m128 _mm_cvt_si2ss(__m128 a, int b){
     cvtsi2ss a, b
     return a
 }
@@ -1804,6 +1814,11 @@ __declspec(inline_asm) __m128d _mm_cvtps_pd(__m128 a){
 __declspec(inline_asm) double _mm_cvtsd_f64(__m128d a){
     movsd a, a
     return a
+}
+
+__declspec(inline_asm) __m128i _mm_cvtsi32_si128(int a){
+    movd xmm0, a
+    return xmm0
 }
 
 __declspec(inline_asm) int _mm_cvtsd_si32(__m128d a){
