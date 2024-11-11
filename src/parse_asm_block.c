@@ -234,6 +234,7 @@ enum memonic{
     MEMONIC_maxps,   MEMONIC_maxss,   MEMONIC_maxpd,   MEMONIC_maxsd,
     MEMONIC_minps,   MEMONIC_minss,   MEMONIC_minpd,   MEMONIC_minsd,
     MEMONIC_rsqrtps, MEMONIC_rsqrtss,
+    MEMONIC_haddps,  MEMONIC_haddpd,
     
     MEMONIC_xorps,   MEMONIC_xorpd,
     MEMONIC_orps,    MEMONIC_orpd,
@@ -296,6 +297,7 @@ enum memonic{
     MEMONIC_comiss, MEMONIC_ucomiss, MEMONIC_comisd, MEMONIC_ucomisd,
     
     MEMONIC_ldmxcsr,
+    MEMONIC_stmxcsr,
     
     MEMONIC_pxor, MEMONIC_por,
     MEMONIC_pand, MEMONIC_pandn,
@@ -693,6 +695,9 @@ static struct{
     // [MEMONIC_rsqrtpd] = {.memonic = const_string("rsqrtpd"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128},
     // [MEMONIC_rsqrtsd] = {.memonic = const_string("rsqrtsd"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm64},
     
+    [MEMONIC_haddps] = {.memonic = const_string("haddps"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128},
+    [MEMONIC_haddpd] = {.memonic = const_string("haddpd"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128},
+    
     [MEMONIC_movss]  = {.memonic = const_string("movss"),  .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmmm32,  .operand_kind_flags[1] = ASM_OP_KIND_xmmm32  },
     [MEMONIC_movsd]  = {.memonic = const_string("movsd"),  .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmmm64,  .operand_kind_flags[1] = ASM_OP_KIND_xmmm64  },
     [MEMONIC_movaps] = {.memonic = const_string("movaps"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmmm128, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128 },
@@ -725,6 +730,7 @@ static struct{
     [MEMONIC_pshufd] = {.memonic = const_string("pshufd"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128, .operand_kind_flags[2] = ASM_OP_KIND_imm8 },
     
     [MEMONIC_ldmxcsr] = {.memonic = const_string("ldmxcsr"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_regm32 & ~ASM_OP_KIND_reg32, },
+    [MEMONIC_stmxcsr] = {.memonic = const_string("stmxcsr"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_regm32 & ~ASM_OP_KIND_reg32, },
     
     [MEMONIC_pshufhw] = {.memonic = const_string("pshufhw"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128, .operand_kind_flags[2] = ASM_OP_KIND_imm8 },
     [MEMONIC_pshuflw] = {.memonic = const_string("pshuflw"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128, .operand_kind_flags[2] = ASM_OP_KIND_imm8 },
@@ -1910,7 +1916,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             }
         }break;
         
-        case MEMONIC_ldmxcsr:
+        case MEMONIC_ldmxcsr: case MEMONIC_stmxcsr:        
         case MEMONIC_cmpxchg16b: case MEMONIC_cmpxchg8b:{
             if(asm_instruction->operands[0].size == 0){
                 asm_instruction->operands[0].size = 4;
@@ -2022,11 +2028,13 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
         case MEMONIC_addps: case MEMONIC_subps:  case MEMONIC_mulps: case MEMONIC_divps:
         case MEMONIC_rcpps: case MEMONIC_sqrtps: case MEMONIC_maxps: case MEMONIC_minps:
         case MEMONIC_rsqrtps:
+        case MEMONIC_haddps:
         
         case MEMONIC_andps: case MEMONIC_andnps: case MEMONIC_xorps: case MEMONIC_orps:
         
         case MEMONIC_addpd: case MEMONIC_subpd:  case MEMONIC_mulpd: case MEMONIC_divpd:
         case MEMONIC_sqrtpd: case MEMONIC_maxpd: case MEMONIC_minpd:
+        case MEMONIC_haddpd:
         
         case MEMONIC_cmpeqps:  case MEMONIC_cmpltps:  case MEMONIC_cmpleps:  case MEMONIC_cmpunordps:
         case MEMONIC_cmpneqps: case MEMONIC_cmpnltps: case MEMONIC_cmpnleps: case MEMONIC_cmpordps:

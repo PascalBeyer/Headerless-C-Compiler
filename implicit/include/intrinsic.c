@@ -1,4 +1,113 @@
 
+
+enum{
+    _MM_HINT_NTA = 0,
+    _MM_HINT_T0 = 1,
+    _MM_HINT_T1 = 2,
+    _MM_HINT_T2 = 3,
+    
+    // 
+    // MxCsr bits:
+    // 
+    
+    _MM_EXCEPT_MASK     = 0x003f,
+    _MM_MASK_MASK       = 0x1f80,
+    _MM_ROUND_MASK      = 0x6000,
+    _MM_FLUSH_ZERO_MASK = 0x8000,
+    
+    _MM_EXCEPT_INVALID   = 0x0001,
+    _MM_EXCEPT_DENORM    = 0x0002,
+    _MM_EXCEPT_DIV_ZERO  = 0x0004,
+    _MM_EXCEPT_OVERFLOW  = 0x0008,
+    _MM_EXCEPT_UNDERFLOW = 0x0010,
+    _MM_EXCEPT_INEXACT   = 0x0020,
+    
+    _MM_MASK_INVALID   = 0x0080,
+    _MM_MASK_DENORM    = 0x0100,
+    _MM_MASK_DIV_ZERO  = 0x0200,
+    _MM_MASK_OVERFLOW  = 0x0400,
+    _MM_MASK_UNDERFLOW = 0x0800,
+    _MM_MASK_INEXACT   = 0x1000,
+    
+    _MM_ROUND_NEAREST     = 0x0000,
+    _MM_ROUND_DOWN        = 0x2000,
+    _MM_ROUND_UP          = 0x4000,
+    _MM_ROUND_TOWARD_ZERO = 0x6000,
+    
+    _MM_FLUSH_ZERO_ON  = 0x8000,
+    _MM_FLUSH_ZERO_OFF = 0x0000,
+};
+
+// @cleanup: For now I assume [rsp] is fair game.
+
+
+__declspec(inline_asm) void _mm_setcsr(unsigned int a){
+    mov [rsp], a
+    ldmxcsr [rsp]
+}
+
+__declspec(inline_asm) unsigned int _mm_getcsr(){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    return eax
+}
+
+__declspec(inline_asm) void _MM_SET_EXCEPTION_STATE(unsigned int mask){
+    stmxcsr [rsp]
+    and dword ptr [rsp], ~_MM_EXCEPT_MASK
+    or dword ptr [rsp], mask
+    ldmxcsr[rsp]
+}
+
+__declspec(inline_asm) void _MM_SET_EXCEPTION_MASK(unsigned int mask){
+    stmxcsr [rsp]
+    and dword ptr [rsp], ~_MM_MASK_MASK
+    or dword ptr [rsp], mask
+    ldmxcsr[rsp]
+}
+
+__declspec(inline_asm) void _MM_SET_ROUNDING_MODE(unsigned int mask){
+    stmxcsr [rsp]
+    and dword ptr [rsp], ~_MM_ROUND_MASK
+    or dword ptr [rsp], mask
+    ldmxcsr[rsp]
+}
+
+__declspec(inline_asm) void _MM_SET_FLUSH_ZERO_MODE(unsigned int mask){
+    stmxcsr [rsp]
+    and dword ptr [rsp], ~_MM_FLUSH_ZERO_MASK
+    or dword ptr [rsp], mask
+    ldmxcsr[rsp]
+}
+
+__declspec(inline_asm) unsigned int _MM_GET_EXCEPTION_STATE(void){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    and eax, _MM_EXCEPT_MASK
+    return eax
+}
+
+__declspec(inline_asm) unsigned int _MM_GET_EXCEPTION_MASK(void){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    and eax, _MM_MASK_MASK
+    return eax
+}
+
+__declspec(inline_asm) unsigned int _MM_GET_ROUNDING_MODE(void){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    and eax, _MM_ROUND_MASK
+    return eax
+}
+
+__declspec(inline_asm) unsigned int _MM_GET_FLUSH_ZERO_MODE(void){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    and eax, _MM_FLUSH_ZERO_MASK
+    return eax
+}
+
 __declspec(inline_asm) void _ReadWriteBarrier(){}
 
 
@@ -1547,6 +1656,17 @@ __declspec(inline_asm) __m128i _mm_bsrli_si128(__m128i a, int imm8){
     psrldq a, imm8
     return a
 }
+
+
+__declspec(inline_asm) __m128 _mm_hadd_ps(__m128 a, __m128 b){
+    haddps a, b
+    return a
+}
+__declspec(inline_asm) __m128d _mm_hadd_pd(__m128d a, __m128d b){
+    haddpd a, b
+    return a
+}
+
 
 __declspec(inline_asm) __m128  _mm_castpd_ps(__m128d a)    { return a }
 __declspec(inline_asm) __m128i _mm_castpd_si128(__m128d a) { return a }

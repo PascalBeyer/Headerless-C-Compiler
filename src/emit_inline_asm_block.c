@@ -249,6 +249,8 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 [MEMONIC_divss] = ASM_PREFIX_SSE_float, [MEMONIC_divsd] = ASM_PREFIX_SSE_double, [MEMONIC_divps] = ASM_PREFIX_SSE_packed_float, [MEMONIC_divpd] = ASM_PREFIX_SSE_packed_double,
                 [MEMONIC_mulss] = ASM_PREFIX_SSE_float, [MEMONIC_mulsd] = ASM_PREFIX_SSE_double, [MEMONIC_mulps] = ASM_PREFIX_SSE_packed_float, [MEMONIC_mulpd] = ASM_PREFIX_SSE_packed_double,
                 
+                [MEMONIC_haddps] = ASM_PREFIX_SSE_packed_float, [MEMONIC_haddpd] = ASM_PREFIX_SSE_packed_double,
+                
                 [MEMONIC_movmskps] = ASM_PREFIX_SSE_packed_float, [MEMONIC_movmskpd] = ASM_PREFIX_SSE_packed_double,
                 
                 [MEMONIC_cvtsi2ss] = ASM_PREFIX_SSE_float, [MEMONIC_cvtsi2sd] = ASM_PREFIX_SSE_double, 
@@ -365,6 +367,8 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 
                 [MEMONIC_addss] = 0x58, [MEMONIC_addps] = 0x58, [MEMONIC_addsd] = 0x58, [MEMONIC_addpd] = 0x58,
                 [MEMONIC_mulss] = 0x59, [MEMONIC_mulps] = 0x59, [MEMONIC_mulsd] = 0x59, [MEMONIC_mulpd] = 0x59,
+                
+                [MEMONIC_haddps] = 0x7c,  [MEMONIC_haddpd] = 0x7c,
                 
                 [MEMONIC_cvtps2pd] = 0x5a, [MEMONIC_cvtpd2ps] = 0x5a, [MEMONIC_cvtss2sd] = 0x5a, [MEMONIC_cvtsd2ss] = 0x5a, 
                 
@@ -858,6 +862,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_mulps:    case MEMONIC_mulpd:  case MEMONIC_mulss:  case MEMONIC_mulsd: 
             case MEMONIC_minps:    case MEMONIC_minpd:  case MEMONIC_minss:  case MEMONIC_minsd: 
             case MEMONIC_maxps:    case MEMONIC_maxpd:  case MEMONIC_maxss:  case MEMONIC_maxsd: 
+            case MEMONIC_haddps:   case MEMONIC_haddpd:
             case MEMONIC_andps:    case MEMONIC_andpd:
             case MEMONIC_xorps:    case MEMONIC_xorpd:
             case MEMONIC_orps:     case MEMONIC_orpd:
