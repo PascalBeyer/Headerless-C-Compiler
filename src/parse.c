@@ -4479,20 +4479,32 @@ case NUMBER_KIND_##type:{ \
             if(lookup->base.kind == AST_function || (lookup->base.kind == AST_declaration && (lookup->flags & DECLARATION_FLAGS_is_global))){
                 struct ast_declaration *outer_declaration = context->current_function ? &context->current_function->as_decl : context->current_declaration;
                 
-                struct declaration_reference_node *new_reference = push_struct(context->arena, struct declaration_reference_node);
-                new_reference->declaration = lookup;
-                new_reference->token = token;
-                
-                // :DeclarationReferenceThreadingBug
-                // 
-                // @cleanup: This should probably be atomic, as we might be parsing an initializer of a declaration
-                //           in two different threads at the same time.
-                //           This happens if there are two initializers in the code (a bug), because we `register_declaration` and then
-                //           reassign the declaration in `parse_declaration_list`.
-                //           In the future, there should probably be a guard in `parse_declaration_list` against parsing an initializer
-                //           twice at the same time.
-                //                                                                                            - 19.10.2024
-                sll_push_back(outer_declaration->referenced_declarations, new_reference);
+                if(!outer_declaration){
+                    // We are in something like this:
+                    // 
+                    //    int a;
+                    //    struct{
+                    //        int arr[a];
+                    //        int arr[sizeof(a)];
+                    //    };
+                    //    
+                    // Either, this is an error, or the reference is inside a sizeof and we don't need to add a dependency reference.
+                }else{
+                    struct declaration_reference_node *new_reference = push_struct(context->arena, struct declaration_reference_node);
+                    new_reference->declaration = lookup;
+                    new_reference->token = token;
+                    
+                    // :DeclarationReferenceThreadingBug
+                    // 
+                    // @cleanup: This should probably be atomic, as we might be parsing an initializer of a declaration
+                    //           in two different threads at the same time.
+                    //           This happens if there are two initializers in the code (a bug), because we `register_declaration` and then
+                    //           reassign the declaration in `parse_declaration_list`.
+                    //           In the future, there should probably be a guard in `parse_declaration_list` against parsing an initializer
+                    //           twice at the same time.
+                    //                                                                                            - 19.10.2024
+                    sll_push_back(outer_declaration->referenced_declarations, new_reference);
+                }
             }else{
                 lookup->_times_referenced++;
             }
