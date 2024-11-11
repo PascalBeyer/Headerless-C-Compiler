@@ -4614,7 +4614,7 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 struct ast *inc = ast_push_unary_expression(context, AST_unary_postinc, test, operand);
-                if(!check_unary_for_basic_types(context, operand, CHECK_integer | CHECK_pointer, test)) return operand;
+                if(!check_unary_for_basic_types(context, operand, CHECK_basic, test)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand, "++")) return operand;
                 
                 set_resolved_type(inc, operand->resolved_type, operand->defined_type);
@@ -4631,7 +4631,7 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 struct ast *dec = ast_push_unary_expression(context, AST_unary_postdec, test, operand);
-                if(!check_unary_for_basic_types(context, operand, CHECK_integer | CHECK_pointer, test)) return operand;
+                if(!check_unary_for_basic_types(context, operand, CHECK_basic, test)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand, "--")) return operand;
                 
                 set_resolved_type(dec, operand->resolved_type, operand->defined_type);
@@ -5115,7 +5115,7 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
-                if(!check_unary_for_basic_types(context, operand, CHECK_integer | CHECK_pointer, op->base.token)) return operand;
+                if(!check_unary_for_basic_types(context, operand, CHECK_basic, op->base.token)) return operand;
                 char *token_string = (prefix->kind == AST_unary_preinc) ? "++" : "--";
                 if(check_types_for_increment_or_decrement(context, operand, token_string)) return operand;
                 

@@ -1251,16 +1251,14 @@ func void emit_register_relative__internal(struct context *context, struct prefi
 // Emits instructions of the form:
 //    1) 'op [base + scale * index + offset], register'
 //    2) 'op register, [base + scale * index + offset]'
-func void emit_register_relative_register(struct context *context, struct prefixes prefixes, struct opcode opcode, 
-        enum register_encoding other_reg, struct emit_location *loc){
+func void emit_register_relative_register(struct context *context, struct prefixes prefixes, struct opcode opcode, enum register_encoding other_reg, struct emit_location *loc){
     emit_register_relative__internal(context, prefixes, opcode, other_reg, loc, null);
 }
 
 // Emits instructions of the form:
 //   'op [base + scale * index + offset], immediate'
 // caller has to make sure that the 'opcode' matches the 'immediate->size'
-func void emit_register_relative_immediate(struct context *context, struct prefixes prefixes, struct opcode opcode, 
-        u8 reg_extension, struct emit_location *register_relative, struct emit_location *immediate){
+func void emit_register_relative_immediate(struct context *context, struct prefixes prefixes, struct opcode opcode, u8 reg_extension, struct emit_location *register_relative, struct emit_location *immediate){
     assert(register_relative->register_kind_when_loaded == REGISTER_KIND_gpr);
     emit_register_relative__internal(context, prefixes, opcode, reg_extension, register_relative, immediate);
 }
@@ -2789,6 +2787,23 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 u8 inst = (ast->kind == AST_unary_preinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
                 u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
                 emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
+            }else if(op->base.resolved_type->kind == AST_float_type){
+                struct ast_float_literal *one = parser_ast_push(context, op->base.token, float_literal);
+                one->value = 1.0;
+                set_resolved_type(&one->base, op->base.resolved_type, null);
+                
+                struct emit_location *rhs = emit_code_for_ast(context, &one->base);
+                assert(rhs->state == EMIT_LOCATION_register_relative);
+                
+                emit_location_prevent_spilling(context, loc);
+                struct emit_location *lhs = emit_load(context, loc);
+                
+                // emit 'op lhs, [float_literal]'
+                emit_register_relative_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode((ast->kind == AST_unary_preinc) ? ADD_XMM : SUB_XMM), lhs->loaded_register, rhs);
+                
+                emit_store(context, loc, lhs);
+                
+                emit_location_allow_spilling(context, loc);
             }else{
                 assert(op->base.resolved_type->kind == AST_bitfield_type);
                 struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)op->base.resolved_type;
@@ -2842,6 +2857,19 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 u8 inst = (ast->kind == AST_unary_postinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
                 u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
                 emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
+            }else if(op->base.resolved_type->kind == AST_float_type){
+                struct ast_float_literal *one = parser_ast_push(context, op->base.token, float_literal);
+                one->value = 1.0;
+                set_resolved_type(&one->base, op->base.resolved_type, null);
+                
+                struct emit_location *rhs = emit_code_for_ast(context, &one->base);
+                assert(rhs->state == EMIT_LOCATION_register_relative);
+                
+                struct emit_location *lhs = emit_load(context, loc); // @cleanup: This should be a register-to-register move instead.
+                
+                // emit 'op lhs, [float_literal]'
+                emit_register_relative_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode((ast->kind == AST_unary_postinc) ? ADD_XMM : SUB_XMM), lhs->loaded_register, rhs);
+                emit_store(context, loc, lhs);
             }else{
                 assert(op->base.resolved_type->kind == AST_bitfield_type);
                 struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)op->base.resolved_type;
