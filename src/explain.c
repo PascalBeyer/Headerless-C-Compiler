@@ -351,7 +351,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
             report_error(context, declaration->base.token, "%s is not contained in any of the imported dlls.", Function_or_Declaration);
             report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
         }else{
-            report_error(context, declaration->base.token, "%s was declared and referenced but never defined.", Function_or_Declaration);
+            report_error(context, declaration->base.token, "External %s was declared and referenced but never defined.", function_or_declaration);
             report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
         }
         return;

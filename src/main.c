@@ -4797,10 +4797,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                                 if(!declaration->assign_expr && (declaration->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport))){
                                     
                                     lookup_declaration_in_libraries(context, declaration, node->at->token);
-                                    
-                                    // :Error the context should also be in `lookup_declaration_in_libraries`.
-                                    // report_error(context, declaration->base.token, "External declaration was referenced but never defined.");
-                                    // report_error(context, node->at->token, "... Here the function was referenced.");
                                 }
                             }
                         }
