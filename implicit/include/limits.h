@@ -1,4 +1,5 @@
 #define CHAR_BIT 8
+#define MB_LEN_MAX 5
 
 #define SCHAR_MAX 127
 #define CHAR_MAX 127
@@ -12,10 +13,10 @@
 #define INT_MIN (-2147483647-1)
 #define LLONG_MIN (-9223372036854775807LL-1)
 
-#define UCHAR_MAX 255
-#define USHRT_MAX 65535
-#define UINT_MAX 4294967295
-#define ULLONG_MAX 18446744073709551615
+#define UCHAR_MAX 255ui8
+#define USHRT_MAX 65535ui16
+#define UINT_MAX 4294967295ui32
+#define ULLONG_MAX 18446744073709551615ui64
 
 // @note: For now assume windows and we don't care about int vs long.
 #define LONG_MIN INT_MIN

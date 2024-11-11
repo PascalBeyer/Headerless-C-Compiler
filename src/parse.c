@@ -4161,6 +4161,7 @@ case NUMBER_KIND_##type:{ \
                         set_resolved_type(&lit->base, &globals.typedef_s64, null);
                         break;
                     }
+                    lit->_u64 = (u64)val;
                     set_resolved_type(&lit->base, &globals.typedef_u64, null);
                     report_warning(context, WARNING_integer_literal_too_large_to_be_signed, lit_token, "Integer literal exceeds the maximum value representable as a signed integer and is interpreted as unsigned.");
                 }break;
