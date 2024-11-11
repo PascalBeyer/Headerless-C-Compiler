@@ -1,4 +1,4 @@
-// fail "External declaration was referenced but never defined."
+// fail "External declaration was declared and referenced but never defined."
 
 extern int arst;
 

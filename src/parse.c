@@ -4388,8 +4388,6 @@ case NUMBER_KIND_##type:{ \
                 // nothing (long double not supported / is double)
             }else{
                 report_error(context, float_token, "Invalid suffix '%.*s' on float literal.", suffix.size, suffix.data);
-                set_resolved_type(&f->base, &globals.typedef_f32, null);
-                return &f->base;
             }
             
             struct string value = create_string(string.data, string.size - suffix.size);
@@ -4397,10 +4395,11 @@ case NUMBER_KIND_##type:{ \
             char *endptr;
             double val = strtod(cvalue, &endptr);
             
-            // @cleanup: once we parse these ourselves we can make sure of this, but for now, we might allow invalid
-            //           suffixes and thats fine.
             // @cleanup: handle strtod errors
-            // assert(endptr == cvalue + value.size);
+            
+            if(endptr != cvalue + value.size){
+                report_error(context, float_token, "Invalid suffix '%.*s' on float literal.", suffix.size, suffix.data);
+            }
             
             set_resolved_type(&f->base, is_32_bit ? &globals.typedef_f32 : &globals.typedef_f64, null);
             f->value = val;
