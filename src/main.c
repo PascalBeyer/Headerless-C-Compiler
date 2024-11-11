@@ -3447,7 +3447,7 @@ int main(int argc, char *argv[]){
             }else if(string_match(extension, string(".dll")) || string_match(extension, string(".exe"))){
                 print("Error: Currently linking to %.*s files are not implemented.\n", extension.size, extension.data);
                 return 1;
-            }else if(string_match(extension, string(".res"))){
+            }else if(string_match(extension, string(".res")) || string_match(extension, string(".rc"))){
                 print("Warning: Ignoring resource file '%.*s'.\n", path.size, path.data);
                 continue;
             }
@@ -3557,7 +3557,7 @@ int main(int argc, char *argv[]){
         }
         
         print("Error: No input files specified.\n");
-        return 1;
+        return 0;
     }
     
     if(!sll_is_empty(object_files.list)){
