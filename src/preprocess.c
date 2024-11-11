@@ -3433,6 +3433,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     b32 is_varargs = false;
                     if(peek_token_eat_raw(context, TOKEN_open_paren)){
                         is_function_like = true;
+                        eat_whitespace_and_comments(context);
+                        
                         if(!peek_token_eat_raw(context, TOKEN_closed_paren)){
                             do{
                                 eat_whitespace_and_comments(context);

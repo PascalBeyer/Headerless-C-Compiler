@@ -1,0 +1,6 @@
+
+
+#define macro(   )
+
+int main(){
+}
