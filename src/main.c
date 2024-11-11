@@ -4251,7 +4251,9 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     }
     
     if(globals.cli_options.MP){
-        thread_count = system_info.dwNumberOfProcessors;
+        // For not limit the amount of threads to the amount of compilation units.
+        // This is maybe wrong, but right now it prevents some race conditions when compiling with CMAKE that require big refactors to fix.
+        thread_count = (files_to_parse.amount < system_info.dwNumberOfProcessors) ? files_to_parse.amount : system_info.dwNumberOfProcessors;
     }
     
     // @note: thread '0' is the main thread
