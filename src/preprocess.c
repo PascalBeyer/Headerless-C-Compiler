@@ -1802,7 +1802,7 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
         }
         
         if(sll_is_empty(define->arguments)){
-            // @cleanup: what about whitespace?
+            eat_whitespace_and_comments(context);
             
             if(!peek_token_eat_raw(context, TOKEN_closed_paren)){
                 tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Function-like define takes zero arguments. Expected ')'.");
