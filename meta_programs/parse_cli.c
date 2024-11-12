@@ -952,7 +952,7 @@ int main(int argc, char *argv[]){
             "        for(char *it = option_cstring; *it; it++){\n"
             "            if(*it == '-' || *it == '_') continue;\n"
             "            if(*it == '=' || *it == ':' || *it == ' '){\n"
-            "                if(!option_argument) option_argument = it + 1;\n"
+            "                if(!option_argument && *(it+1)) option_argument = it + 1;\n"
             "                break;\n"
             "            }\n"
             "            if(canonicalized_option_size == sizeof(canonicalized_option_data)){\n"

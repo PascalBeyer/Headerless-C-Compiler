@@ -295,7 +295,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
         for(char *it = option_cstring; *it; it++){
             if(*it == '-' || *it == '_') continue;
             if(*it == '=' || *it == ':' || *it == ' '){
-                if(!option_argument) option_argument = it + 1;
+                if(!option_argument && *(it+1)) option_argument = it + 1;
                 break;
             }
             if(canonicalized_option_size == sizeof(canonicalized_option_data)){
