@@ -2643,7 +2643,11 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
             
             [STATIC_IF_EVALUATE_parenthesized_expression] = PRECEDENCE_parenthesized_expression,
             
-            // [STATIC_IF_EVALUATE_conditional_expression] = PRECEDENCE_ternary, // right-to-left associative @cleanup should these two be supported?
+            
+            // ternary:
+            //     <expr> ? <parenthesized> : <ternary>
+            [STATIC_IF_EVALUATE_ternary_condition] = PRECEDENCE_parenthesized_expression,
+            [STATIC_IF_EVALUATE_ternary_if_true] = PRECEDENCE_ternary, // right-to-left associative
             // [STATIC_IF_EVALUATE_comma_expression] = PRECEDENCE_comma,
         };
         
@@ -2653,6 +2657,9 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
         enum precedence token_precedence     = token_to_precedence[binary_expression->type];
         
         if(token_precedence && operation_precedence > token_precedence) break;
+        
+        // Ternaries are right associative.
+        if(operation_precedence == token_precedence && operation_precedence == PRECEDENCE_ternary) break;
         
         static_if_stack_pop(context);
         
@@ -2744,6 +2751,27 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
                 goto resume_for_parenthesized_expression;
             }break;
             
+            case STATIC_IF_EVALUATE_ternary_condition:{
+                
+                if(binary_expression->type != TOKEN_colon){
+                    static_if_report_error(context, binary_expression, context->macro_expansion_token, directive, "Expected a ':'.");
+                    return 0;
+                }
+                
+                static_if_stack_push(context, current->token, STATIC_IF_EVALUATE_ternary_condition, current->value, current->is_unsigned);
+                static_if_stack_push(context, binary_expression, STATIC_IF_EVALUATE_ternary_if_true, value, is_unsigned);
+                goto retry;
+            }break;
+            
+            case STATIC_IF_EVALUATE_ternary_if_true:{
+                struct static_if_evaluate_stack_node *if_true   = current;
+                struct static_if_evaluate_stack_node *condition = static_if_stack_pop(context);
+                
+                assert(if_true->operation == STATIC_IF_EVALUATE_ternary_if_true && condition->operation == STATIC_IF_EVALUATE_ternary_condition);
+                
+                value = condition->value ? if_true->value : value;
+            }break;
+            
             invalid_default_case();
         }
     }
@@ -2794,27 +2822,7 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
         default: break;
     }
     
-    if(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_ternary_condition){
-        
-        if(test->type != TOKEN_colon){
-            static_if_report_error(context, test, context->macro_expansion_token, directive, "Expected a ':'.");
-            return 0;
-        }
-        
-        static_if_stack_push(context, test, STATIC_IF_EVALUATE_ternary_if_true, value, is_unsigned);
-        goto retry;
-    }
     
-    
-    while(static_if_stack_current(context)->operation == STATIC_IF_EVALUATE_ternary_if_true){
-        struct static_if_evaluate_stack_node *if_true   = static_if_stack_pop(context);
-        struct static_if_evaluate_stack_node *condition = static_if_stack_pop(context);
-        
-        assert(if_true->operation == STATIC_IF_EVALUATE_ternary_if_true && condition->operation == STATIC_IF_EVALUATE_ternary_condition);
-        
-        value = condition->value ? if_true->value : value;
-    }
-
     assert(context->static_if_stack_at == 0);
     end_counter(context, static_if_evaluate);
     
