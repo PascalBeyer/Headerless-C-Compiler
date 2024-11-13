@@ -2530,17 +2530,20 @@ __declspec(inline_asm) __m128i _mm_sll_epi64(__m128i a, __m128i count){
 
 
 __declspec(inline_asm) __m128i _mm_slli_epi16(__m128i a, int imm8){
-    psllw a, imm8
+    movd xmm0, imm8
+    psllw a, xmm0
     return a
 }
 
 __declspec(inline_asm) __m128i _mm_slli_epi32(__m128i a, int imm8){
-    pslld a, imm8
+    movd xmm0, imm8
+    pslld a, xmm0
     return a
 }
 
 __declspec(inline_asm) __m128i _mm_slli_epi64(__m128i a, int imm8){
-    psllq a, imm8
+    movd xmm0, imm8
+    psllq a, xmm0
     return a
 }
 
