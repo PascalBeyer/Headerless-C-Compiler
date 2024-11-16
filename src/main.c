@@ -3856,7 +3856,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         // For the time being, we are more or less working on that variant.
                         //                                                                             - 21.10.2024
                         "#define _MSC_BUILD 0\n"
-                        "#define _MSC_FUL_VER 192829336\n"
+                        "#define _MSC_FULL_VER 192829336\n"
                         "#define _MSC_VER 1928\n"
                         
                         "#define __assume(a) (void)0\n"
