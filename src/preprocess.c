@@ -598,8 +598,12 @@ enum string_kind string_prefix_to_kind(struct string prefix){
     return string_kind;
 }
 
+struct token_and_string{
+    struct token *token;
+    struct string string;
+};
 
-struct string escape_and_convert_string(struct context *context, struct token *token, struct string to_escape, enum string_kind string_kind){
+struct string escape_and_convert_string_array(struct context *context, struct token_and_string *strings, smm amount_of_strings, smm total_characters, enum string_kind string_kind){
     
     //
     // The source is assumed to be in utf8:
@@ -628,194 +632,208 @@ struct string escape_and_convert_string(struct context *context, struct token *t
     // utf32 is just a linear encoding of code points.
     //
     
-    
-    // We have at most one character for every character in the source string.
-    smm buf_size = to_escape.size; 
+    // :string_kind_is_element_size
+    u8 *buffer = push_struct_(context->arena, total_characters * string_kind, string_kind);
+    smm buf_size = total_characters; // We have at most one character for every character in the source string.
     smm buf_at = 0;
-    
-    struct string escaped_string = zero_struct;
     
     switch(string_kind){
 #define handle_escaping_out(c) { assert(buf_at < buf_size);  buf[buf_at++] = (c); }
         
-        
         case STRING_KIND_utf8:{
-            u8 *buf = push_uninitialized_data(context->arena, u8, buf_size);
+            u8 *buf = buffer;
             
-            while(to_escape.size){
+            for(u32 string_index = 0; string_index < amount_of_strings; string_index++){
                 
-                if(to_escape.data[0] != '\\'){
-                    //
-                    // For utf8 we don't want to do any real processing.
-                    // If the user wants his invalid utf8 in there, let them have it.
-                    // Just process escapes.
-                    //
-                    handle_escaping_out(to_escape.data[0]);
-                    string_eat_front(&to_escape, 1);
-                    continue;
-                }
+                struct token *token     = strings[string_index].token;
+                struct string to_escape = strings[string_index].string;
                 
-                string_eat_front(&to_escape, 1);
-                
-                // Handle escaped newlines.
-                if(string_eat_newline(&to_escape)) continue;
-                
-                // @note: We know the string cannot end in a backslash, 
-                //        so the next character is fine to read.
-                
-                // The escapes \u and \U need reencoding.
-                int needs_encoding = (to_escape.data[0]|32) == 'u';
-                
-                u32 codepoint = eat_escape_from_string_and_return_codepoint(context, token, &to_escape, 0xff);
-                
-                if(needs_encoding){
-                    if(codepoint < 0x80){
-                        handle_escaping_out((u8)codepoint);
+                while(to_escape.size){
+                    
+                    if(to_escape.data[0] != '\\'){
+                        //
+                        // For utf8 we don't want to do any real processing.
+                        // If the user wants his invalid utf8 in there, let them have it.
+                        // Just process escapes.
+                        //
+                        handle_escaping_out(to_escape.data[0]);
+                        string_eat_front(&to_escape, 1);
                         continue;
                     }
                     
-                    // 
-                    // Figure out how many bits are set.
-                    u32 bit_size = 32 - count_leading_zeros32(codepoint);
+                    string_eat_front(&to_escape, 1);
                     
-                    // 
-                    // We can fit 6-bits per byte of utf-8, except the first one.
-                    // We calculate the minimum amount of trailing bytes, 
-                    // and how many bits do not fit.
-                    // 
-                    u32 utf8_bytes = bit_size / 6;
-                    u32 utf8_bits  = bit_size % 6;
+                    // Handle escaped newlines.
+                    if(string_eat_newline(&to_escape)) continue;
                     
-                    // 
-                    // utf8 sets one bit per byte in the leading byte, plus we need one zero.
-                    if((utf8_bytes + /*count the leading byte*/1) + /*need a separating zero*/1 + utf8_bits > 8){
-                        // We could not fit the utf8_bits.
-                        utf8_bytes += 1;
+                    // @note: We know the string cannot end in a backslash, 
+                    //        so the next character is fine to read.
+                    
+                    // The escapes \u and \U need reencoding.
+                    int needs_encoding = (to_escape.data[0]|32) == 'u';
+                    
+                    u32 codepoint = eat_escape_from_string_and_return_codepoint(context, token, &to_escape, 0xff);
+                    
+                    if(needs_encoding){
+                        if(codepoint < 0x80){
+                            handle_escaping_out((u8)codepoint);
+                            continue;
+                        }
+                        
+                        // 
+                        // Figure out how many bits are set.
+                        u32 bit_size = 32 - count_leading_zeros32(codepoint);
+                        
+                        // 
+                        // We can fit 6-bits per byte of utf-8, except the first one.
+                        // We calculate the minimum amount of trailing bytes, 
+                        // and how many bits do not fit.
+                        // 
+                        u32 utf8_bytes = bit_size / 6;
+                        u32 utf8_bits  = bit_size % 6;
+                        
+                        // 
+                        // utf8 sets one bit per byte in the leading byte, plus we need one zero.
+                        if((utf8_bytes + /*count the leading byte*/1) + /*need a separating zero*/1 + utf8_bits > 8){
+                            // We could not fit the utf8_bits.
+                            utf8_bytes += 1;
+                        }
+                        
+                        // The 'size_mask' has one bit set per byte in the encoding, including the leading byte.
+                        // The mask is shifted to be the top bits of the leading byte.
+                        u8 size_mask = ((1 << (utf8_bytes + 1)) - 1) << (8 - (utf8_bytes + 1));
+                        
+                        
+                        //
+                        // The leading character contains the "top" bits of the codepoint.
+                        // The last byte contains the lowest bits of the codepoint.
+                        // Each byte after the leading character contains 6 bits of the codepoint.
+                        //
+                        u8 leading_byte = (u8)(size_mask | (codepoint >> (6 * utf8_bytes)));
+                        handle_escaping_out(leading_byte);
+                        
+                        u32 shift = 6 * (utf8_bytes - 1);
+                        for(u32 index = 0; index < utf8_bytes; index++, shift -= 6){
+                            u8 bits = 0x80 | ((codepoint >> shift) & 0b00111111);
+                            handle_escaping_out(bits);
+                        }
+                    }else{
+                        // Allow for specifying invalid utf8 with \x<hex> and \0<octal>
+                        handle_escaping_out((u8)codepoint);
                     }
-                    
-                    // The 'size_mask' has one bit set per byte in the encoding, including the leading byte.
-                    // The mask is shifted to be the top bits of the leading byte.
-                    u8 size_mask = ((1 << (utf8_bytes + 1)) - 1) << (8 - (utf8_bytes + 1));
-                    
-                    
-                    //
-                    // The leading character contains the "top" bits of the codepoint.
-                    // The last byte contains the lowest bits of the codepoint.
-                    // Each byte after the leading character contains 6 bits of the codepoint.
-                    //
-                    u8 leading_byte = (u8)(size_mask | (codepoint >> (6 * utf8_bytes)));
-                    handle_escaping_out(leading_byte);
-                    
-                    u32 shift = 6 * (utf8_bytes - 1);
-                    for(u32 index = 0; index < utf8_bytes; index++, shift -= 6){
-                        u8 bits = 0x80 | ((codepoint >> shift) & 0b00111111);
-                        handle_escaping_out(bits);
-                    }
-                }else{
-                    // Allow for specifying invalid utf8 with \x<hex> and \0<octal>
-                    handle_escaping_out((u8)codepoint);
                 }
             }
-            
-            escaped_string = (struct string){.data = buf, .size = buf_at };
         }break;
         
         case STRING_KIND_utf16:{
-            u16 *buf = push_uninitialized_data(context->arena, u16, buf_size);
+            u16 *buf = (u16 *)buffer;
             
-            while(to_escape.size){
-                if(to_escape.data[0] != '\\'){
-                    u32 codepoint = utf8_read_codepoint(context, token, &to_escape);
-                    
-                    if(0xD800 <= codepoint && codepoint < 0xE000){
-                        // invalid unicode range for utf-16... Its fine, noone will ever see this message
-                        report_error(context, token, "This contains codepoint 0x%x, which is not encodable in utf-16.", codepoint);
-                    }
-                    
-                    if(codepoint < 0x10000){
-                        handle_escaping_out((u16)codepoint);
-                    }else{
-                        codepoint = codepoint - 0x10000;
-                        assert(codepoint < 0x100000);
+            for(u32 string_index = 0; string_index < amount_of_strings; string_index++){
+                
+                struct token *token     = strings[string_index].token;
+                struct string to_escape = strings[string_index].string;
+                
+                while(to_escape.size){
+                    if(to_escape.data[0] != '\\'){
+                        u32 codepoint = utf8_read_codepoint(context, token, &to_escape);
                         
-                        // first the high bits, then the low bits
-                        handle_escaping_out(0xD800 | ((codepoint >> 10) & 0b1111111111));
-                        handle_escaping_out(0xDD00 | ((codepoint >>  0) & 0b1111111111));
-                    }
-                    continue;
-                }
-                
-                string_eat_front(&to_escape, 1);
-                
-                // Handle escaped newlines.
-                if(string_eat_newline(&to_escape)) continue;
-                
-                // @note: We know the string cannot end in a backslash, 
-                //        so the next character is fine to read.
-                
-                // The escapes \u and \U need reencoding.
-                int needs_encoding = (to_escape.data[0]|32) == 'u';
-                
-                u32 codepoint = eat_escape_from_string_and_return_codepoint(context, token, &to_escape, 0xffff);
-                
-                if(needs_encoding){
-                    // 
-                    // @cleanup: copy and paste from above.
-                    // 
-                    
-                    if(0xD800 <= codepoint && codepoint < 0xE000){
-                        // invalid unicode range for utf-16... Its fine, noone will ever see this message
-                        report_error(context, token, "This contains codepoint 0x%x, which is not encodable in utf-16.", codepoint);
-                    }
-                    
-                    if(codepoint < 0x10000){
-                        handle_escaping_out((u16)codepoint);
-                    }else{
-                        codepoint = codepoint - 0x10000;
-                        assert(codepoint < 0x100000);
+                        if(0xD800 <= codepoint && codepoint < 0xE000){
+                            // invalid unicode range for utf-16... Its fine, noone will ever see this message
+                            report_error(context, token, "This contains codepoint 0x%x, which is not encodable in utf-16.", codepoint);
+                        }
                         
-                        // first the high bits, then the low bits
-                        handle_escaping_out(0xD800 | ((codepoint >> 10) & 0b1111111111));
-                        handle_escaping_out(0xDD00 | ((codepoint >>  0) & 0b1111111111));
+                        if(codepoint < 0x10000){
+                            handle_escaping_out((u16)codepoint);
+                        }else{
+                            codepoint = codepoint - 0x10000;
+                            assert(codepoint < 0x100000);
+                            
+                            // first the high bits, then the low bits
+                            handle_escaping_out(0xD800 | ((codepoint >> 10) & 0b1111111111));
+                            handle_escaping_out(0xDD00 | ((codepoint >>  0) & 0b1111111111));
+                        }
+                        continue;
                     }
-                }else{
-                    // Allow the user to specify invalid utf-16 through escapes!
-                    handle_escaping_out((u16)codepoint);
+                    
+                    string_eat_front(&to_escape, 1);
+                    
+                    // Handle escaped newlines.
+                    if(string_eat_newline(&to_escape)) continue;
+                    
+                    // @note: We know the string cannot end in a backslash, 
+                    //        so the next character is fine to read.
+                    
+                    // The escapes \u and \U need reencoding.
+                    int needs_encoding = (to_escape.data[0]|32) == 'u';
+                    
+                    u32 codepoint = eat_escape_from_string_and_return_codepoint(context, token, &to_escape, 0xffff);
+                    
+                    if(needs_encoding){
+                        // 
+                        // @cleanup: copy and paste from above.
+                        // 
+                        
+                        if(0xD800 <= codepoint && codepoint < 0xE000){
+                            // invalid unicode range for utf-16... Its fine, noone will ever see this message
+                            report_error(context, token, "This contains codepoint 0x%x, which is not encodable in utf-16.", codepoint);
+                        }
+                        
+                        if(codepoint < 0x10000){
+                            handle_escaping_out((u16)codepoint);
+                        }else{
+                            codepoint = codepoint - 0x10000;
+                            assert(codepoint < 0x100000);
+                            
+                            // first the high bits, then the low bits
+                            handle_escaping_out(0xD800 | ((codepoint >> 10) & 0b1111111111));
+                            handle_escaping_out(0xDD00 | ((codepoint >>  0) & 0b1111111111));
+                        }
+                    }else{
+                        // Allow the user to specify invalid utf-16 through escapes!
+                        handle_escaping_out((u16)codepoint);
+                    }
                 }
             }
-            
-            escaped_string = (struct string){.data = (u8 *)buf, .size = buf_at * sizeof(u16)};
         }break;
         
         case STRING_KIND_utf32:{
-            u32 *buf = push_uninitialized_data(context->arena, u32, buf_size);
+            u32 *buf = (void *)(buffer + buf_at * string_kind);
             
-            while(to_escape.size){
-                if(to_escape.data[0] != '\\'){
-                    u32 codepoint = utf8_read_codepoint(context, token, &to_escape);
-                    handle_escaping_out(codepoint);
-                    continue;
+            for(u32 string_index = 0; string_index < amount_of_strings; string_index++){
+                
+                struct token *token     = strings[string_index].token;
+                struct string to_escape = strings[string_index].string;
+                
+                while(to_escape.size){
+                    if(to_escape.data[0] != '\\'){
+                        u32 codepoint = utf8_read_codepoint(context, token, &to_escape);
+                        handle_escaping_out(codepoint);
+                        continue;
+                    }
+                    
+                    string_eat_front(&to_escape, 1);
+                    
+                    // Handle escaped newlines.
+                    if(string_eat_newline(&to_escape)) continue;
+                    
+                    u32 codepoint = eat_escape_from_string_and_return_codepoint(context, token, &to_escape, 0xffffffff);
+                    handle_escaping_out((u32)codepoint);
                 }
-                
-                string_eat_front(&to_escape, 1);
-                
-                // Handle escaped newlines.
-                if(string_eat_newline(&to_escape)) continue;
-                
-                u32 codepoint = eat_escape_from_string_and_return_codepoint(context, token, &to_escape, 0xffffffff);
-                handle_escaping_out((u32)codepoint);
             }
-            
-            escaped_string = (struct string){.data = (u8 *)buf, .size = buf_at * sizeof(u32)};
         }break;
         
         invalid_default_case();
 #undef handle_escaping_out
     }
     
+    // @cleanup: Decalloctate excess if possible?
+    struct string escaped_string = {
+        .data = buffer,
+        .size = buf_at * string_kind,
+    };
+    
     return escaped_string;
 }
-
 
 
 // return buffer is in 'context->scratch'
@@ -831,8 +849,13 @@ func struct escaped_string handle_escaping(struct context *context, struct token
     
     to_escape = strip_quotes(to_escape);
     
+    struct token_and_string token_and_string = {
+        .string = to_escape,
+        .token  = token,
+    };
+    
     struct escaped_string ret = {
-        .string = escape_and_convert_string(context, token, to_escape, string_kind),
+        .string = escape_and_convert_string_array(context, &token_and_string, 1, to_escape.size, string_kind),
         .string_kind = string_kind,
     };
     

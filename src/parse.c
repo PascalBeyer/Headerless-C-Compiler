@@ -4274,21 +4274,38 @@ case NUMBER_KIND_##type:{ \
         }break;
         
         case TOKEN_string_literal:{
-            struct ast_string_literal *lit = parser_ast_push(context, get_current_token(context), string_literal);
+            struct ast_string_literal *lit = parser_ast_push(context, next_token(context), string_literal);
             
-            enum   string_kind composed_string_kind    = STRING_KIND_invalid;
-            struct string      composed_string_literal = zero_struct;
+            struct token_and_string *string_base = 0, one_string_storage;
+            smm total_string_size = 0;
+            smm amount_of_strings = 0;
+            enum string_kind composed_string_kind = STRING_KIND_invalid;
             
-            {
+            if(!peek_token(context, TOKEN_string_literal)){
+                
+                // 
+                // Only a single string literal.
+                // 
+                
+                struct string string = token_get_string(lit->base.token);
+                struct string prefix = eat_until_char(&string, '"', /*eat_delimiter*/false);
+                string = strip_quotes(string);
+                
+                composed_string_kind    = string_prefix_to_kind(prefix);
+                one_string_storage.string = string;
+                one_string_storage.token  = lit->base.token;
+                string_base = &one_string_storage;
+                amount_of_strings = 1;
+                total_string_size = string.size;
+            }else{
                 // 
                 // We have to concatinate adjacent string literals.
                 // First we figure out the 'string_kind' and all the strings.
                 // 
                 
-                struct string *string_base = push_uninitialized_data(&context->scratch, struct string, 0);
-                smm total_string_size = 0;
+                string_base = push_uninitialized_data(&context->scratch, struct token_and_string, 0);
                 
-                for(struct token *string_literal = next_token(context); string_literal; string_literal = peek_token_eat(context, TOKEN_string_literal)){
+                for(struct token *string_literal = lit->base.token; string_literal; string_literal = peek_token_eat(context, TOKEN_string_literal)){
                     
                     // 
                     // Each string literal is of the form:
@@ -4308,31 +4325,17 @@ case NUMBER_KIND_##type:{ \
                     // 
                     if(string_kind > composed_string_kind) composed_string_kind = string_kind;
                     
-                    *push_uninitialized_struct(&context->scratch, struct string) = string;
+                    struct token_and_string *ref = push_uninitialized_struct(&context->scratch, struct token_and_string);
+                    ref->string = string;
+                    ref->token  = string_literal;
+                    
                     total_string_size += string.size;
                 }
                 
-                smm amount_of_strings = push_uninitialized_data(&context->scratch, struct string, 0) - string_base;
-                
-                if(amount_of_strings == 1){
-                    composed_string_literal = string_base[0];
-                }else{
-                    composed_string_literal.size = total_string_size;
-                    composed_string_literal.data = push_uninitialized_data(context->arena, u8, total_string_size);
-                    
-                    for(smm string_index = 0, string_at = 0; string_index < amount_of_strings; string_index++){
-                        struct string string = string_base[string_index];
-                        
-                        memcpy(composed_string_literal.data + string_at, string.data, string.size);
-                        string_at += string.size;
-                    }
-                }
+                amount_of_strings = push_uninitialized_data(&context->scratch, struct token_and_string, 0) - string_base;
             }
             
-            // @cleanup: How do we handle tokens here. It feels like the escaping code should 
-            //           build a very specific "token" for the escape, instead of us specifying it here.
-            //           Hence, for now I am going to ignore the issue and report the error at the first string literal.
-            struct string string = escape_and_convert_string(context, lit->base.token, composed_string_literal, composed_string_kind);
+            struct string string = escape_and_convert_string_array(context, string_base, amount_of_strings, total_string_size, composed_string_kind);
             
             struct ast_type *element_type = null;
             switch(composed_string_kind){
