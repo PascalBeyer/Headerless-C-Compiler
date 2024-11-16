@@ -1063,6 +1063,8 @@ func void work_queue_append_list(struct work_queue *queue, struct work_queue_ent
     
     struct work_queue_entry *end;
     
+    int queue_was_empty = 0;
+    
     while(true){
         end = atomic_load(struct work_queue_entry *, queue->end);
         if(!end){ // queue is empty
@@ -1070,7 +1072,10 @@ func void work_queue_append_list(struct work_queue *queue, struct work_queue_ent
             mem.begin = list_begin;
             mem.end = list_end;
             b32 success = atomic_compare_and_swap_128(&queue->mem, mem.mem, &(m128)zero_struct);
-            if(success) goto end;
+            if(success){
+                queue_was_empty = 1;
+                goto end;
+            }
             continue;
         }
         if(atomic_compare_and_swap(&queue->end, list_end, end) == end) break;
@@ -1081,7 +1086,7 @@ func void work_queue_append_list(struct work_queue *queue, struct work_queue_ent
     
     end:;
     
-    if(globals.wake_event){
+    if(queue_was_empty && globals.wake_event){
         //log_print("wake up!");
         SetEvent(globals.wake_event);
         ResetEvent(globals.wake_event);
