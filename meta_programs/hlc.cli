@@ -175,6 +175,14 @@ Example:
 Equivalent to
 > hlc main.c user32.lib
 
+/quiet | /no_logo - Print as little as necessary.
+
+For everyone that enjoys their silence.
+
+/EP - Print the preprocessed file to stdout.
+
+This is very incomplete and mostly here to make build-systems happy.
+
 # Hidden
 
 /no_discard - Emit all functions and declarations.

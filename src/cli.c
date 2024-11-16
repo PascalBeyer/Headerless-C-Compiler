@@ -34,6 +34,8 @@ enum cli_option_kind{
     CLI_OPTION_incremental,
     CLI_OPTION_MF,
     CLI_OPTION_l,
+    CLI_OPTION_quiet,
+    CLI_OPTION_EP,
     CLI_OPTION_no_discard,
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
@@ -95,14 +97,17 @@ struct cli_option_hash_table_entry{
     [55] = {{11, (u8 *)"incremental"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_incremental, 0},
     [56] = {{2, (u8 *)"mf"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_MF, 0},
     [17] = {{1, (u8 *)"l"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_l, 0},
+    [15] = {{5, (u8 *)"quiet"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
+    [51] = {{6, (u8 *)"nologo"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
+    [58] = {{2, (u8 *)"ep"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_EP, -1},
     [60] = {{9, (u8 *)"nodiscard"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_discard, -1},
     [27] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [61] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
     [42] = {{6, (u8 *)"ignore"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_ignore, 0},
-    [51] = {{4, (u8 *)"link"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_link, -1},
+    [52] = {{4, (u8 *)"link"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_link, -1},
     [59] = {{7, (u8 *)"warning"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
-    [15] = {{8, (u8 *)"warnings"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
+    [18] = {{8, (u8 *)"warnings"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
 };
 
 enum subsystem{
@@ -182,6 +187,8 @@ struct cli_options{
     enum incremental incremental; // Does nothing, here for MSVC cli-compatibility.
     struct string MF; // Currently ignored, is supposed to produce a .dep file?
     struct string_list l; // Link to the specified library.
+    int quiet; // Print as little as necessary.
+    int EP; // Print the preprocessed file to stdout.
     int no_discard; // Emit all functions and declarations.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
@@ -668,6 +675,18 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "> hlc main.c user32.lib\n"
                             "", 136);
                 }break;
+                case CLI_OPTION_quiet:{
+                    print("-quiet | Print as little as necessary.\n\n");
+                    os_print_string(
+                            "For everyone that enjoys their silence.\n"
+                            "", 40);
+                }break;
+                case CLI_OPTION_EP:{
+                    print("-EP | Print the preprocessed file to stdout.\n\n");
+                    os_print_string(
+                            "This is very incomplete and mostly here to make build-systems happy.\n"
+                            "", 69);
+                }break;
                 case CLI_OPTION_no_discard:{
                     print("-no_discard | Emit all functions and declarations.\n\n");
                     os_print_string(
@@ -791,7 +810,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -incremental <enum>         | Does nothing, here for MSVC cli-compatibility.\n"
                             "  -MF <file>                  | Currently ignored, is supposed to produce a .dep file?\n"
                             "  -l <library>                | Link to the specified library.\n"
-                    , 1834);
+                            "  -quiet                      | Print as little as necessary.\n"
+                            "  -EP                         | Print the preprocessed file to stdout.\n"
+                    , 1967);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -971,6 +992,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_l:{
                 string_list_postfix(&cli_options->l, arena, argument_string);
             }break;
+            case CLI_OPTION_quiet: cli_options->quiet = 1; break;
+            case CLI_OPTION_EP: cli_options->EP = 1; break;
             case CLI_OPTION_no_discard: cli_options->no_discard = 1; break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
             

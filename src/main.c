@@ -937,25 +937,6 @@ func void print_token(struct context *context, struct token *token, b32 print_wh
     print_string(push_token_string(context, token, print_whitespace_and_comments));
 }
 
-func void pretty_print_token_array(struct context *context, struct token_array array){
-    int depth = 0;
-    for(smm i = 0; i < array.amount; i++){
-        struct token *token = &array.data[i];
-        print_token(context, token, 1);
-        if(token->type == TOKEN_open_curly){
-            depth++;
-            print("\n%*s", depth * 4, "");
-        }else if(token->type == TOKEN_closed_curly){
-            depth--;
-            print("\n%*s", depth * 4, "");
-        }else if(token->type == TOKEN_semicolon){
-            print("\n%*s", depth * 4, "");
-        }else{
-            print(" ");
-        }
-    }
-} 
-
 //_____________________________________________________________________________________________________________________
 #include "ar.c"
 //_____________________________________________________________________________________________________________________
@@ -2456,12 +2437,12 @@ func void reset_context(struct context *context){
     context->current_statement_returns_a_value = 0;
 }
 
-func void worker_tokenize_file(struct context *context, struct work_queue_entry *work){
+func void worker_preprocess_file(struct context *context, struct work_queue_entry *work){
     
     struct work_tokenize_file *work_tokenize_file = cast(struct work_tokenize_file *)work->data;
     context->current_compilation_unit = work_tokenize_file->compilation_unit;
     
-    log_print("tokenizing file %.*s", work_tokenize_file->absolute_file_path.amount, work_tokenize_file->absolute_file_path.data);
+    if(!globals.cli_options.quiet) print("   [%lld] %.*s\n", context->current_compilation_unit->index, work_tokenize_file->absolute_file_path.size, work_tokenize_file->absolute_file_path.data);
     
     {
         memset(&context->define_table, 0, sizeof(context->define_table));
@@ -2516,6 +2497,53 @@ func void worker_tokenize_file(struct context *context, struct work_queue_entry 
     
     if(context->error) return;
     if(tokenized_file.amount == 0) return; // nothing to do if the file is empty
+    
+    if(globals.cli_options.EP){
+        
+        {
+            char buffer[0x100];
+            int length = snprintf(buffer, sizeof(buffer), "%.*s\n", (int)work_tokenize_file->absolute_file_path.size, work_tokenize_file->absolute_file_path.data);
+            
+            DWORD chars_written;
+            HANDLE stderr = GetStdHandle(STD_ERROR_HANDLE);
+            WriteFile(stderr, buffer, (u32)length, &chars_written, 0);
+        }
+        
+        smm line   = 1;
+        smm column = 1;
+        smm last_line   = 0;
+        smm last_column = 0;
+        
+        for(smm token_index = 0; token_index < tokenized_file.amount; token_index++){
+            struct token *token = &tokenized_file.data[token_index];
+            
+            if(token->line != line){ 
+                print("\n");
+                line += 1;
+                column = 1;
+                if(line != token->line){
+                    print("\n");
+                    line = token->line;
+                    column = 1;
+                }
+            }
+            
+            if(column < token->column){
+                print("%*s", token->column - column, "");
+                column = token->column;
+            }else if(token->line == last_line && token->column == last_column){
+                // We assume the token was from a macro expansion.
+                print(" ");
+            }
+            
+            last_column = token->column;
+            last_line   = token->line;
+            
+            column += print("%.*s", token->string.size, token->string.data);
+        }
+        print("\n");
+        return;
+    }
     
     // :chunk the file
     begin_token_array(context, tokenized_file);
@@ -3066,7 +3094,7 @@ func u32 work_thread_proc(void *param){
             struct work_queue *queue;
             void (*worker)(struct context *context, struct work_queue_entry *work);
         } stage_data[COMPILE_STAGE_count] = {
-            [COMPILE_STAGE_tokenize_files]             = {.queue = &globals.work_queue_tokenize_files,             .worker = worker_tokenize_file },
+            [COMPILE_STAGE_tokenize_files]             = {.queue = &globals.work_queue_tokenize_files,             .worker = worker_preprocess_file },
             [COMPILE_STAGE_parse_global_scope_entries] = {.queue = &globals.work_queue_parse_global_scope_entries, .worker = worker_parse_global_scope_entry },
             [COMPILE_STAGE_parse_function]             = {.queue = &globals.work_queue_parse_functions,            .worker = worker_parse_function },
             [COMPILE_STAGE_emit_code]                  = {.queue = &globals.work_queue_emit_code,                  .worker = worker_emit_code },
@@ -3342,6 +3370,8 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
 
 
 
+int system(char *);
+
 // :main
 int main(int argc, char *argv[]){
     
@@ -3382,16 +3412,6 @@ int main(int argc, char *argv[]){
     compiler_path.data = compiler_path_buffer;
     GetModuleFileNameA(null, (char *)compiler_path.data, (u32)(compiler_path.size + 1));
     canonicalize_slashes(compiler_path);
-
-#if PRINT_COMMAND_LINE
-    print("\n");
-    print("command line is: \n    ");
-    for(int i = 0; i < argc; i++){
-        print("%s ", argv[i]);
-    }
-    print("\n");
-    print("\n");
-#endif
     
     // 
     // Parse the command line arguments.
@@ -3400,6 +3420,18 @@ int main(int argc, char *argv[]){
     int cli_parse_options_success = cli_parse_options(&globals.cli_options, arena, argc, argv);
     if(!cli_parse_options_success) return 1;
     
+#if PRINT_COMMAND_LINE
+    if(!globals.cli_options.quiet){
+        print("\n");
+        print("command line is: \n    ");
+        for(int i = 0; i < argc; i++){
+            print("%s ", argv[i]);
+        }
+        print("\n");
+        print("\n");
+    }
+#endif
+    
     // 
     // Check some random arguments.
     // 
@@ -3407,6 +3439,8 @@ int main(int argc, char *argv[]){
     if(globals.cli_options.seed_specified && globals.cli_options.seed == 0){
         globals.cli_options.seed = __rdtsc(); // @cleanup: Maybe get some better "random" here?
     }
+    
+    if(globals.cli_options.EP) globals.cli_options.quiet = 1;
     
     // 
     // Deduce the files we have to parse.
@@ -3552,7 +3586,6 @@ int main(int argc, char *argv[]){
                 string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", lib_file->string.size, lib_file->string.data));
             }
             
-            int system(char *);
             return system((char*)string_list_flatten(command, arena).data);
         }
         
@@ -3564,7 +3597,6 @@ int main(int argc, char *argv[]){
         print("Error: Currently linking to .obj files are not implemented.\n");
         return 1;
     }
-    
     
     for(struct string_list_node *dir = globals.cli_options.I.list.first; dir; dir = dir->next){
         
@@ -3710,9 +3742,11 @@ int main(int argc, char *argv[]){
     if(!no_standard_library) add_system_include_directory(arena, windows_kits_include_base, string("/ucrt"),   false);
     
 #ifdef PRINT_SYSTEM_INCLUDE_PATHS
-    print("\nSystem include directories:\n");
-    for(struct string_list_node *include = globals.system_include_directories.list.first; include; include = include->next){
-        print("    %.*s\n", include->string.size, include->string.data);
+    if(!globals.cli_options.quiet){
+        print("\nSystem include directories:\n");
+        for(struct string_list_node *include = globals.system_include_directories.list.first; include; include = include->next){
+            print("    %.*s\n", include->string.size, include->string.data);
+        }
     }
 #endif
     
@@ -4095,11 +4129,13 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     }
     
 #if PRINT_ADDITIONAL_INCLUDE_DIRECTORIES
-    print("\nSystem include directories:\n");
-    for(struct string_list_node *node = globals.system_include_directories.list.first; node; node = node->next){
-        print("    %.*s\n", node->string.amount, node->string.data);
+    if(!globals.cli_options.quiet){
+        print("\nSystem include directories:\n");
+        for(struct string_list_node *node = globals.system_include_directories.list.first; node; node = node->next){
+            print("    %.*s\n", node->string.amount, node->string.data);
+        }
+        print("\n");
     }
-    print("\n");
 #endif
     
 #if 1
@@ -4110,7 +4146,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         struct system_include_file_entry *entries = push_data(arena, struct system_include_file_entry, capacity);
         
         for(struct string_list_node *node = globals.system_include_directories.list.first; node; node = node->next){
-            // print("    %.*s\n", node->string.amount, node->string.data);
             
             struct file_path_entry{
                 struct file_path_entry *next;
@@ -4256,6 +4291,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         thread_count = (files_to_parse.amount < system_info.dwNumberOfProcessors) ? files_to_parse.amount : system_info.dwNumberOfProcessors;
     }
     
+    if(globals.cli_options.EP) thread_count = 1;
+    
     // @note: thread '0' is the main thread
     struct thread_info *thread_infos = push_data(arena, struct thread_info, thread_count);
     globals.thread_infos = thread_infos;
@@ -4294,10 +4331,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             
             struct work_tokenize_file *work = entry->data;
             work->compilation_unit = unit;
-            
-            print("   [%lld] %.*s\n", unit->index, work->absolute_file_path.size, work->absolute_file_path.data);
         }
-        print("\n");
+        
         assert(index == files_to_parse.amount);
     }
     
@@ -4321,7 +4356,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         os_create_thread(work_thread_proc, &thread_infos[thread_index]);
     }
     
-    while(globals.work_queue_tokenize_files.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_tokenize_files, worker_tokenize_file);
+    while(globals.work_queue_tokenize_files.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_tokenize_files, worker_preprocess_file);
     
     // Ensure that all thread wrote in `thread_infos[thread_index].context`.
     for(u32 thread_index = 1; thread_index < thread_count; thread_index++){
@@ -4330,6 +4365,10 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     assert(globals.work_queue_tokenize_files.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
+    
+    
+    // We have printed the preprocessed files in `worker_preprocess_file`
+    if(globals.cli_options.EP) return 0;
     
 #if 0
     for(smm compilation_unit_index = 0; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
@@ -4452,7 +4491,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                     struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
                     work_entry->data  = work;
                     
-                    worker_tokenize_file(context, work_entry); // This preprocesses the file and then adds things into the work_queue below.
+                    worker_preprocess_file(context, work_entry); // This preprocesses the file and then adds things into the work_queue below.
                     
                     // Parse the new file.
                     while(globals.work_queue_parse_global_scope_entries.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_parse_global_scope_entries, worker_parse_global_scope_entry);
@@ -5018,10 +5057,10 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     f64 end_time = os_get_time_in_seconds();
     f64 time_in_seconds = (end_time - begin_time);
-    print("\nTotal Lines: %lld | Total Lines Preprocessed %lld | Time: %.3fs\n", amount_of_lines, amount_of_lines_preprocessed, time_in_seconds);
+    if(!globals.cli_options.quiet) print("\nTotal Lines: %lld | Total Lines Preprocessed %lld | Time: %.3fs\n", amount_of_lines, amount_of_lines_preprocessed, time_in_seconds);
     
     f64 overhead = time_in_seconds - (stage_one_tokenize_and_preprocess_time + stage_two_parse_functions_time + stage_three_emit_code_time + stage_four_linking);
-    print("preprocessing %.3fs (%.3f%%) | compiling %.3fs (%.3f%%) | code gen %.3fs (%.3f%%) | linking %.3fs (%.3f%%) | overhead %.3fs (%.3f%%)\n", 
+    if(!globals.cli_options.quiet) print("preprocessing %.3fs (%.3f%%) | compiling %.3fs (%.3f%%) | code gen %.3fs (%.3f%%) | linking %.3fs (%.3f%%) | overhead %.3fs (%.3f%%)\n", 
             stage_one_tokenize_and_preprocess_time,  100.0 * stage_one_tokenize_and_preprocess_time/time_in_seconds,
             stage_two_parse_functions_time,          100.0 * stage_two_parse_functions_time/time_in_seconds,
             stage_three_emit_code_time,              100.0 * stage_three_emit_code_time/time_in_seconds,

@@ -4245,12 +4245,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     
                     begin_token_array(context, token_array);
                     
-#if 0
-                    print("#%.*s ", postponed_directive.directive->string.size, postponed_directive.directive->string.data);
-                    pretty_print_token_array(context, token_array);
-                    print("\n");
-#endif
-                    
                     //
                     // We now use the usual (non-raw) version of *_token procedures to evaluate the directive.
                     //
