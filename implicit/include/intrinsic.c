@@ -1754,17 +1754,17 @@ __declspec(inline_asm) __m128d _mm_cmple_sd(__m128d a, __m128d b){
 
 __declspec(inline_asm) __m128i _mm_cmplt_epi8(__m128i a, __m128i b){
     pcmpgtb b, a
-    return a
+    return b
 }
 
 __declspec(inline_asm) __m128i _mm_cmplt_epi16(__m128i a, __m128i b){
     pcmpgtw b, a
-    return a
+    return b
 }
 
 __declspec(inline_asm) __m128i _mm_cmplt_epi32(__m128i a, __m128i b){
     pcmpgtd b, a
-    return a
+    return b
 }
 
 __declspec(inline_asm) __m128d _mm_cmplt_pd(__m128d a, __m128d b){
