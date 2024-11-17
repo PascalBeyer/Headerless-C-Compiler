@@ -3261,6 +3261,7 @@ func void add_system_include_directory(struct memory_arena *arena, struct string
     string_list_add_uniquely(&globals.system_include_directories, arena, directory_path);
 }
 
+#pragma comment(lib, "Advapi32.lib")
 __declspec(dllimport) u32 RegOpenKeyExA(HANDLE key, char *sub_key, u32 option, u32 desired_access, HANDLE *out_key);
 __declspec(dllimport) u32 RegQueryValueExA(HANDLE key, char *value_name, u32 *reserved, u32 *opt_out_type, u8 *opt_out_data, u32 *opt_out_length);
 __declspec(dllimport) u32 RegEnumKeyExA(HANDLE key, u32 index, char *out_sub_key_name, u32 *in_out_sub_key_name_size, u32 *reserved, char *opt_in_out_class, u32 *opt_in_out_class_size, void *last_write_time);
