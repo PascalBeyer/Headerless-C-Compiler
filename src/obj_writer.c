@@ -775,7 +775,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     if(globals.cli_options.MTd) crtlib = string("/DEFAULTLIB:\"LIBCMTD\" ");
     
     string_list_postfix(&directives, scratch, crtlib);
-    string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\"OLDNAMES\" /STACK:0x100000,0x100000 "));
+    string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\"OLDNAMES\" /STACK:0x1000000,0x1000000 "));
     
     for(struct library_node *library_node = globals.libraries.first; library_node; library_node = library_node->next){
         struct string file_name = strip_file_path(library_node->path);
