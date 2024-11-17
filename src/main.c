@@ -3448,6 +3448,12 @@ int main(int argc, char *argv[]){
     
     if(globals.cli_options.EP) globals.cli_options.quiet = 1;
     
+    // @cleanup: Warn when we compile to an .exe that none of these options are valid.
+    if(globals.cli_options.MD + globals.cli_options.MDd + globals.cli_options.MT + globals.cli_options.MTd > 1){
+        print("Error: More than one of the command line options /MD /MDd /MT /MTd are specified.\n");
+        return 1;
+    }
+    
     // 
     // Deduce the files we have to parse.
     // The files parsed in are expected to be '.c', '.lib', '.obj', '.dll', '.exe',
@@ -3844,7 +3850,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 
                 // We cannot simply patch up the value of the predefine node, as it would leave the total string size wrong.
                 struct string define = push_format_string(arena, "#define %.*s %.*s\n", to_define.size, to_define.data, define_to.size, define_to.data);
-                string_list_prefix(&predefines, arena, define);
+                string_list_postfix_no_copy(&predefines, arena, define);
             }
             
             if(!globals.cli_options.no_predefines){
@@ -3868,14 +3874,17 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         "#define __assume(a) (void)0\n"
                         
                         "#define __STDC_VERSION__ 201112L\n"
-                        // "#define __STDC__ 1\n" @note: Don't define this as some Microsoft headers work differantly if this is specified.
+                        // "#define __STDC__ 1\n" @note: Don't define this as some Microsoft headers work differently if this is specified.
                         "#define __STDC_NO_COMPLEX__ 1\n"
                         "#define __STDC_NO_THREADS__ 1\n"
                         "#define __STDC_NO_VLA__     1\n"
                         // "#define __STDC_NO_ATOMICS__ 1\n"
                         );
+                string_list_postfix_no_copy(&predefines, arena, hardcoded_predefines);
                 
-                string_list_prefix(&predefines, arena, hardcoded_predefines);
+                if(globals.cli_options.MD || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _DLL 1\n"));
+                if(globals.cli_options.MT || globals.cli_options.MTd || globals.cli_options.MD || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _MT 1\n"));
+                if(globals.cli_options.MTd || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _DEBUG 1\n"));
                 
                 SYSTEMTIME LocalTime;
                 GetLocalTime(&LocalTime); // @cleanup: local time?
@@ -3883,14 +3892,16 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 const char months[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
                 struct string date_define = push_format_string(arena, "#define __DATE__ \"%s %.2d %.4d\"\n", months[LocalTime.wMonth-1], LocalTime.wDay, LocalTime.wYear);
                 
-                string_list_prefix(&predefines, arena, date_define);
+                string_list_postfix_no_copy(&predefines, arena, date_define);
                 
                 struct string time_define = push_format_string(arena, "#define __TIME__ \"%.2d:%.2d:%.2d\"\n", LocalTime.wHour, LocalTime.wMinute, LocalTime.wSecond); 
-                string_list_prefix(&predefines, arena, time_define);
+                string_list_postfix_no_copy(&predefines, arena, time_define);
                 
                 if(globals.output_file_type == OUTPUT_FILE_obj){
-                    string_list_prefix(&predefines, arena, string("#define __HLC_COMPILE_TO_OBJECT__ 1\n"));
+                    string_list_postfix_no_copy(&predefines, arena, string("#define __HLC_COMPILE_TO_OBJECT__ 1\n"));
                 }
+                
+                
             }
             
             struct string predefines_string = string_list_flatten(predefines, arena);

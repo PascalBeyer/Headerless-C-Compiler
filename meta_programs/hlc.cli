@@ -106,7 +106,7 @@ For example:
 > __declspec(dllexport) int export;
 >
 
-/dll | /LD - Produce a Dynamic Link Library.
+/dll | /LD | /LDd - Produce a Dynamic Link Library.
 
 This option is used to set the output file type to be a DLL.
 If the program is using a DllMain
@@ -182,6 +182,23 @@ For everyone that enjoys their silence.
 /EP - Print the preprocessed file to stdout.
 
 This is very incomplete and mostly here to make build-systems happy.
+
+/MD - Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.
+
+See https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170.
+
+/MDd - Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.
+
+See https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170.
+
+/MT - Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.
+ 
+https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170
+
+/MTd - Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.
+ 
+https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170
+
 
 # Hidden
 

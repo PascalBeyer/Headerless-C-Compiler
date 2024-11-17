@@ -765,7 +765,17 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     struct ast_list selectany_variables      = zero_struct;
     
     struct string_list directives = zero_struct;
-    string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\"LIBCMT\" /DEFAULTLIB:\"OLDNAMES\" /STACK:0x100000,0x100000 "));
+    
+    // Options to control the crt:
+    //     https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170
+    struct string crtlib = string("/DEFAULTLIB:\"LIBCMTD\" ");
+    if(globals.cli_options.MD)  crtlib = string("/DEFAULTLIB:\"MSVCRT\" ");
+    if(globals.cli_options.MDd) crtlib = string("/DEFAULTLIB:\"MSVCRTD\" ");
+    if(globals.cli_options.MT)  crtlib = string("/DEFAULTLIB:\"LIBCMT\" ");
+    if(globals.cli_options.MTd) crtlib = string("/DEFAULTLIB:\"LIBCMTD\" ");
+    
+    string_list_postfix(&directives, scratch, crtlib);
+    string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\"OLDNAMES\" /STACK:0x100000,0x100000 "));
     
     for(struct library_node *library_node = globals.libraries.first; library_node; library_node = library_node->next){
         struct string file_name = strip_file_path(library_node->path);

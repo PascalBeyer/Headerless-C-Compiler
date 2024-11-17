@@ -36,6 +36,10 @@ enum cli_option_kind{
     CLI_OPTION_l,
     CLI_OPTION_quiet,
     CLI_OPTION_EP,
+    CLI_OPTION_MD,
+    CLI_OPTION_MDd,
+    CLI_OPTION_MT,
+    CLI_OPTION_MTd,
     CLI_OPTION_no_discard,
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
@@ -64,50 +68,55 @@ struct cli_option_hash_table_entry{
     enum cli_argument_type argument_type;
     enum cli_option_kind option_kind;
     int argument_is_optional;
-} cli_option_hash_table[0x40] = {
-    [46] = {{4, (u8 *)"help"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
+} cli_option_hash_table[0x80] = {
+    [110] = {{4, (u8 *)"help"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
     [13] = {{1, (u8 *)"h"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
-    [36] = {{1, (u8 *)"?"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
-    [37] = {{8, (u8 *)"nostdlib"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_stdlib, -1},
+    [100] = {{1, (u8 *)"?"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
+    [101] = {{8, (u8 *)"nostdlib"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_stdlib, -1},
     [7] = {{12, (u8 *)"nopredefines"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_predefines, -1},
     [41] = {{7, (u8 *)"nodebug"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_debug, -1},
-    [34] = {{13, (u8 *)"nodynamicbase"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_dynamic_base, -1},
+    [98] = {{13, (u8 *)"nodynamicbase"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_dynamic_base, -1},
     [35] = {{9, (u8 *)"imagebase"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_image_base, 0},
-    [29] = {{12, (u8 *)"showincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_show_includes, -1},
+    [93] = {{12, (u8 *)"showincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_show_includes, -1},
     [20] = {{9, (u8 *)"subsystem"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_subsystem, 0},
-    [30] = {{3, (u8 *)"out"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
+    [29] = {{3, (u8 *)"out"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
     [21] = {{1, (u8 *)"o"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
-    [16] = {{2, (u8 *)"fe"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
-    [26] = {{2, (u8 *)"fo"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
-    [23] = {{5, (u8 *)"entry"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_entry, 0},
-    [22] = {{7, (u8 *)"noentry"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_entry, -1},
+    [80] = {{2, (u8 *)"fe"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
+    [90] = {{2, (u8 *)"fo"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
+    [87] = {{5, (u8 *)"entry"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_entry, 0},
+    [84] = {{7, (u8 *)"noentry"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_entry, -1},
     [33] = {{3, (u8 *)"dll"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
-    [24] = {{2, (u8 *)"ld"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
+    [22] = {{2, (u8 *)"ld"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
+    [25] = {{3, (u8 *)"ldd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
     [32] = {{3, (u8 *)"obj"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
     [8] = {{1, (u8 *)"c"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
-    [6] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
-    [2] = {{2, (u8 *)"mp"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MP, -1},
+    [70] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
+    [66] = {{2, (u8 *)"mp"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MP, -1},
     [14] = {{1, (u8 *)"i"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [9] = {{1, (u8 *)"d"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_D, 0},
-    [25] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
+    [23] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
     [12] = {{5, (u8 *)"wnone"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wnone, -1},
     [28] = {{1, (u8 *)"w"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_W, 0},
     [57] = {{3, (u8 *)"wno"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_Wno, 0},
     [0] = {{2, (u8 *)"wd"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_Wno, 0},
-    [55] = {{11, (u8 *)"incremental"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_incremental, 0},
+    [119] = {{11, (u8 *)"incremental"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_incremental, 0},
     [56] = {{2, (u8 *)"mf"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_MF, 0},
     [17] = {{1, (u8 *)"l"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_l, 0},
     [15] = {{5, (u8 *)"quiet"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
     [51] = {{6, (u8 *)"nologo"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
     [58] = {{2, (u8 *)"ep"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_EP, -1},
+    [54] = {{2, (u8 *)"md"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MD, -1},
+    [91] = {{3, (u8 *)"mdd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MDd, -1},
+    [71] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
+    [106] = {{3, (u8 *)"mtd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MTd, -1},
     [60] = {{9, (u8 *)"nodiscard"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_discard, -1},
-    [27] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
+    [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
-    [61] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
+    [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
     [42] = {{6, (u8 *)"ignore"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_ignore, 0},
     [52] = {{4, (u8 *)"link"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_link, -1},
-    [59] = {{7, (u8 *)"warning"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
-    [18] = {{8, (u8 *)"warnings"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
+    [123] = {{7, (u8 *)"warning"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
+    [78] = {{8, (u8 *)"warnings"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
 };
 
 enum subsystem{
@@ -189,6 +198,10 @@ struct cli_options{
     struct string_list l; // Link to the specified library.
     int quiet; // Print as little as necessary.
     int EP; // Print the preprocessed file to stdout.
+    int MD; // Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.
+    int MDd; // Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.
+    int MT; // Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.
+    int MTd; // Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.
     int no_discard; // Emit all functions and declarations.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
@@ -207,7 +220,7 @@ static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 struct warning_table_entry{
     struct string canonicalized_name;
     enum warning warning_kind;
-} warning_table[0x40] = {
+} warning_table[0x80] = {
     [15] = {{28, (u8 *)"missingnewlineafterbackslash"}, WARNING_missing_newline_after_backslash},
     [46] = {{18, (u8 *)"junkafterdirective"}, WARNING_junk_after_directive},
     [17] = {{19, (u8 *)"compiletimeoverflow"}, WARNING_compile_time_overflow},
@@ -687,6 +700,33 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "This is very incomplete and mostly here to make build-systems happy.\n"
                             "", 69);
                 }break;
+                case CLI_OPTION_MD:{
+                    print("-MD | Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.\n\n");
+                    os_print_string(
+                            "See https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170.\n"
+                            "", 103);
+                }break;
+                case CLI_OPTION_MDd:{
+                    print("-MDd | Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.\n\n");
+                    os_print_string(
+                            "See https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170.\n"
+                            "", 103);
+                }break;
+                case CLI_OPTION_MT:{
+                    print("-MT | Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.\n\n");
+                    os_print_string(
+                            " \n"
+                            "https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170\n"
+                            "", 100);
+                }break;
+                case CLI_OPTION_MTd:{
+                    print("-MTd | Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.\n\n");
+                    os_print_string(
+                            " \n"
+                            "https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170\n"
+                            "\n"
+                            "", 101);
+                }break;
                 case CLI_OPTION_no_discard:{
                     print("-no_discard | Emit all functions and declarations.\n\n");
                     os_print_string(
@@ -812,7 +852,11 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -l <library>                | Link to the specified library.\n"
                             "  -quiet                      | Print as little as necessary.\n"
                             "  -EP                         | Print the preprocessed file to stdout.\n"
-                    , 1967);
+                            "  -MD                         | Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.\n"
+                            "  -MDd                        | Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.\n"
+                            "  -MT                         | Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.\n"
+                            "  -MTd                        | Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.\n"
+                    , 2432);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -994,6 +1038,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             case CLI_OPTION_quiet: cli_options->quiet = 1; break;
             case CLI_OPTION_EP: cli_options->EP = 1; break;
+            case CLI_OPTION_MD: cli_options->MD = 1; break;
+            case CLI_OPTION_MDd: cli_options->MDd = 1; break;
+            case CLI_OPTION_MT: cli_options->MT = 1; break;
+            case CLI_OPTION_MTd: cli_options->MTd = 1; break;
             case CLI_OPTION_no_discard: cli_options->no_discard = 1; break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
             
