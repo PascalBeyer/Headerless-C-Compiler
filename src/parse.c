@@ -3961,14 +3961,6 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                     context->in_lhs_expression = true;
                     goto skip_primary_expression_because_we_got_a_struct_literal;
                 }else{
-                    if(type_to_cast_to.type->kind == AST_union){
-                        report_error(context, open_paren, "Cast to union is illegal.");
-                        return invalid_ast(context);
-                    }
-                    if(type_to_cast_to.type->kind == AST_struct){
-                        report_error(context, open_paren, "Cast to struct is illegal.");
-                        return invalid_ast(context);
-                    }
                     if(type_to_cast_to.type->kind == AST_array_type){
                         report_error(context, open_paren, "Cast to array is illegal.");
                         return invalid_ast(context);
@@ -5419,27 +5411,40 @@ case NUMBER_KIND_##type:{ \
                 operand = maybe_load_address_for_array_or_function(context, operand);
                 operand = maybe_insert_cast_from_special_int_to_int(context, operand);
                 
+                enum ast_kind type_to_cast_to = op->base.resolved_type->kind;
+                
+                if(type_to_cast_to == AST_union || type_to_cast_to == AST_struct){
+                    if(!types_are_equal(op->base.resolved_type, operand->resolved_type)){
+                        struct string operand_type_string = push_type_string(context->arena, &context->scratch, operand->resolved_type);
+                        struct string cast_to_type_string = push_type_string(context->arena, &context->scratch, op->base.resolved_type);
+                        
+                        report_error(context, operand->token, "Cast of '%.*s' to '%.*s' is illegal.", operand_type_string.length, operand_type_string.data, cast_to_type_string.length, cast_to_type_string.data);
+                    }
+                    // @note: Do not set `operand = prefix`.
+                    break;
+                }
+                
                 if(operand->resolved_type == &globals.typedef_void){
-                    if(op->base.resolved_type != &globals.typedef_void){
+                    if(type_to_cast_to != AST_void_type){
                         report_error(context, operand->token, "cast of 'void' to 'non-void'.");
                         return operand;
                     }
                 }else if(operand->resolved_type->kind == AST_integer_type){
                     // @note: these are fine, can cast to everything
                 }else if(operand->resolved_type->kind == AST_float_type){
-                    if(op->base.resolved_type->kind == AST_pointer_type){
+                    if(type_to_cast_to == AST_pointer_type){
                         report_error(context, operand->token, "Cast from float to pointer is illegal.");
                         return operand;
                     }
                 }else if(operand->resolved_type->kind == AST_pointer_type){
-                    if(op->base.resolved_type->kind == AST_float_type){
+                    if(type_to_cast_to == AST_float_type){
                         report_error(context, operand->token, "Cast from pointer to float is illegal.");
                         return operand;
                     }
                 }else{
-                    if(op->base.resolved_type != &globals.typedef_void){
+                    if(type_to_cast_to != AST_void_type){
                         struct string type_string = push_type_string(context->arena, &context->scratch, operand->resolved_type);
-                        report_error(context, operand->token, "Cannot cast operand of type '%.*s' to something other than 'void'.", type_string.length, type_string.data);
+                        report_error(context, operand->token, "Cannot cast operand of type '%.*s' to something other than 'void' or itself.", type_string.length, type_string.data);
                         return operand;
                     }
                 }
