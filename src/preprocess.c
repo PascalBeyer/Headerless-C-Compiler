@@ -2628,7 +2628,7 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
         
         [TOKEN_question_mark] = PRECEDENCE_ternary,
         
-        [TOKEN_comma] = PRECEDENCE_comma, // ?
+        // [TOKEN_comma] = PRECEDENCE_comma, // ?
     };
     
     struct token *binary_expression = next_token(context);
@@ -2712,7 +2712,7 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
             case STATIC_IF_EVALUATE_div:{
                 is_unsigned |= current->is_unsigned;
                 if(value == 0){
-                    static_if_report_error(context, static_if_stack_current(context)->token, static_if_stack_current(context)->macro_expansion_token, directive, "Divide by zero.");
+                    static_if_report_error(context, get_current_token_for_error_report(context), static_if_stack_current(context)->macro_expansion_token, directive, "Divide by zero."); // @cleanup: More context if identifier was undefined.
                     return 0;
                 }
                 value = is_unsigned ? ((u64)current->value / (u64)value) : ((s64)current->value / (s64)value);
@@ -2721,7 +2721,7 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
             case STATIC_IF_EVALUATE_mod:{
                 is_unsigned |= current->is_unsigned;
                 if(value == 0){
-                    static_if_report_error(context, static_if_stack_current(context)->token, static_if_stack_current(context)->macro_expansion_token, directive, "Mod with zero.");
+                    static_if_report_error(context, get_current_token_for_error_report(context), static_if_stack_current(context)->macro_expansion_token, directive, "Mod with zero."); // @cleanup: More context if identifier was undefined.
                     return 0;
                 }
                 value = is_unsigned ? ((u64)current->value % (u64)value) : ((s64)current->value % (s64)value);
