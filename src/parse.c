@@ -2255,6 +2255,8 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             }
         }
         
+        int at_end = peek_token(context, TOKEN_closed_curly) != 0;
+        
         while(true){
             struct designator_node *node = designator_stack.first;
             struct ast_type *type = node->lhs->resolved_type;
@@ -2272,7 +2274,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 }
                 node->member_at += 1;
                 
-                if(node->member_at < compound->amount_of_members) break;
+                if(!at_end && (node->member_at < compound->amount_of_members)) break;
                 
             }else if(type->kind == AST_union){
                 // pop the union! Only ever initialize one member of the union.
@@ -2299,7 +2301,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                     trailing_initializer_size = max_of(trailing_initializer_size, array_size);
                     break;
                 }
-                if(node->array_at < array->amount_of_elements) break;
+                if(!at_end && (node->array_at < array->amount_of_elements)) break;
             }
             
             sll_pop_front(designator_stack);
@@ -2315,6 +2317,8 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
         //
         
     } while(peek_token_eat(context, TOKEN_comma));
+    
+    
     
     expect_token(context, TOKEN_closed_curly, "Expected '}' at the end of initializer list.");
     
