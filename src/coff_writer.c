@@ -2581,7 +2581,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         end_counter(context, write_exe);
         
         if(success){
-            print("Wrote file: '%s'\n", exe_name);
+            if(!globals.cli_options.quiet) print("Wrote file: '%s'\n", exe_name);
         }else{
             print("Error: Unable to write file '%s'.\n", exe_name);
             globals.an_error_has_occurred = true;
@@ -4325,7 +4325,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         end_counter(context, write_pdb);
         
         if(success){
-            print("Wrote file: '%s'\n", pdb_name);
+            if(!globals.cli_options.quiet) print("Wrote file: '%s'\n", pdb_name);
         }else{
             print("Error: Unable to write file '%s'.\n", pdb_name);
             globals.an_error_has_occurred = true;
