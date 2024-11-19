@@ -477,6 +477,7 @@ static struct{
     struct atom keyword_stdcall;
     struct atom keyword_dllimport;
     struct atom keyword_dllexport;
+    struct atom keyword_thread;
     struct atom keyword_align;
     struct atom keyword_noreturn;
     struct atom keyword_noinline;
@@ -585,7 +586,6 @@ static struct{
     
     struct ast_type typedef_poison;
     
-    
     struct ast_type *typedef_void_pointer;
     struct ast_type *typedef_u8_pointer;
     struct ast_type *typedef_s8_pointer;
@@ -600,6 +600,8 @@ static struct{
     struct token *invalid_identifier_token;
     struct token invalid_token;
     struct ast_declaration *poison_declaration;
+    
+    struct ast_declaration *tls_index_declaration;
     
 } globals;
 
@@ -856,6 +858,7 @@ enum patch_kind{
     PATCH_none,
     PATCH_absolute,
     PATCH_rip_relative,
+    PATCH_section_offset, // used for thread local storage.
     PATCH_count,
 };
 
@@ -2030,8 +2033,18 @@ func b32 evaluate_static_address(struct context *context, struct ast *rhs, struc
             struct ast_declaration *decl = identifier->decl;
             
             if(!(decl->flags & (DECLARATION_FLAGS_is_global|DECLARATION_FLAGS_is_local_persist))){
+                begin_error_report(context);
                 report_error(context, rhs->token, "Referencing non-constant variable in constant initializer.");
+                report_error(context, decl->base.token, "... Here is the referenced declaration.");
+                end_error_report(context);
                 return 1;
+            }
+            
+            if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                begin_error_report(context);
+                report_error(context, rhs->token, "Cannot reference _Thread_local declaration in constant initializer.");
+                report_error(context, decl->base.token, "... Here is the referenced declaration.");
+                end_error_report(context);
             }
             
             patch_ast = &identifier->decl->base;
@@ -3912,6 +3925,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         globals.keyword_dllimport   = atom_for_string(string("dllimport"));
         globals.keyword_dllexport   = atom_for_string(string("dllexport"));
+        globals.keyword_thread      = atom_for_string(string("thread"));
         globals.keyword_align       = atom_for_string(string("align"));
         globals.keyword_noreturn    = atom_for_string(string("noreturn"));
         globals.keyword_noinline    = atom_for_string(string("noinline"));
@@ -4143,6 +4157,17 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         struct declarator_return poison_declarator = {.ident = globals.invalid_identifier_token, .type = &globals.typedef_poison };
         globals.poison_declaration = push_declaration_for_declarator(context, poison_declarator);
         
+        // 
+        // Special _Linker_ declarations. @cleanup _ImageBase.
+        // 
+        
+        struct declarator_return _tls_index_declarator = {
+            .ident = push_dummy_token(arena, atom_for_string(string("_tls_index")), TOKEN_identifier),
+            .type  = &globals.typedef_u32,
+        };
+        globals.tls_index_declaration = push_declaration_for_declarator(context, _tls_index_declarator);
+        globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern;
+        ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->base, globals.tls_index_declaration->base.token);
     }
     
 #if PRINT_ADDITIONAL_INCLUDE_DIRECTORIES

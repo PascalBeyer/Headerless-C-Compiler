@@ -158,6 +158,7 @@ enum token_type{
     TOKEN_embed, // Synthetic token coming from #embed.
     
     TOKEN_generic, // C11 _Generic
+    TOKEN_thread_local, // C11 _Thread_local
     
     TOKEN_count,
     TOKEN_one_past_last_keyword = TOKEN_count,
@@ -235,6 +236,7 @@ static struct{
     {const_string("_Static_assert"), TOKEN_static_assert},
     
     {const_string("_Generic"), TOKEN_generic},
+    {const_string("_Thread_local"), TOKEN_thread_local},
 };
 
 enum preprocessor_directive{
@@ -527,6 +529,7 @@ struct ast_list{
 
 #define DECLARATION_FLAGS_is_extern                                0x1000
 #define DECLARATION_FLAGS_is_unnamed                               0x2000 // Used for struct and array literals, to not emit a symbol for them.
+#define DECLARATION_FLAGS_is_thread_local                          0x4000
 
 struct declaration_node{
     struct declaration_node *next;

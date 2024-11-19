@@ -763,6 +763,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     struct ast_list zero_initialized_statics = zero_struct;
     struct ast_list defined_variables        = zero_struct;
     struct ast_list selectany_variables      = zero_struct;
+    struct ast_list tls_variables            = zero_struct;
     
     struct string_list directives = zero_struct;
     
@@ -833,6 +834,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     if(decl->flags & DECLARATION_FLAGS_is_selectany){
                         ast_list_append(&selectany_variables, scratch, &decl->base);
                         selectany_sections += 1; // @cleanup: .debug$S ?
+                        continue;
+                    }
+                    
+                    if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                        ast_list_append(&tls_variables, scratch, &decl->base);
                         continue;
                     }
                     
@@ -913,6 +919,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
             ast_list_append(&defined_variables, arena, &compound_literal->decl->base);
         }
+    }
+    
+    if(tls_variables.count){
+        // If there were tls variables, the index was referenced.
+        ast_list_append(&external_variables, scratch, &globals.tls_index_declaration->base);
     }
     
     
@@ -1037,6 +1048,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     struct coff_section_header *text  = null;
     struct coff_section_header *data  = null;
     struct coff_section_header *rdata = null;
+    struct coff_section_header *tls   = null;
     struct coff_section_header *bss   = null;
     struct coff_section_header *xdata = null;
     struct coff_section_header *pdata = null;
@@ -1257,7 +1269,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     
     {
         
-        push_zero_align(arena, 16);
+        push_zero_align(arena, 0x10); // @hack: This is because of the alignment thing below. 
         u8 *rdata_base = arena_current(arena);
         
         struct{
@@ -1430,6 +1442,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     if(defined_variables.count){
         data = section_headers + section_header_count++;
         
+        push_zero_align(arena, 0x10); // @hack: This is because of the alignment thing below. 
         u8 *data_base = arena_current(arena);
         
         smm section_alignment = 1;
@@ -1465,6 +1478,45 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         data->characteristics     = /*INITIALIZED_DATA*/0x00000040 | /*ALIGN_*BYTES*/alignment_flag | /*MEM_READ*/0x40000000 | /*MEM_WRITE*/0x80000000;
     }
     
+    if(tls_variables.count){
+        tls = section_headers + section_header_count++;
+        
+        push_zero_align(arena, 0x10); // @hack: This is because of the alignment thing below. 
+        
+        u8 *tls_base = arena_current(arena);
+        
+        smm section_alignment = 1;
+        
+        for_ast_list(tls_variables){
+            struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+            
+            smm alignment = get_declaration_alignment(decl);
+            smm decl_size = get_declaration_size(decl);
+            
+            push_zero_align(arena, alignment); // @cleanup: This seems wrong... We want to align the offset from the base.
+            
+            section_alignment = max_of(section_alignment, alignment);
+            
+            u8 *mem = push_uninitialized_data(arena, u8, decl_size);
+            
+            if(decl->assign_expr){
+                assert(decl->memory_location);
+                memcpy(mem, decl->memory_location, decl_size);
+            }else{
+                memset(mem, 0, decl_size);
+            }
+            
+            decl->memory_location = mem;
+            decl->relative_virtual_address = (u32)(mem - tls_base);
+        }
+        
+        u32 alignment_flag = ((count_trailing_zeros64(section_alignment)+1) << 20);
+        
+        memcpy(tls, ".tls$", sizeof(".tls$"));
+        tls->pointer_to_raw_data = (u32)(tls_base - obj_base_address);
+        tls->size_of_raw_data    = (u32)(arena_current(arena) - tls_base);
+        tls->characteristics     = /*INITIALIZED_DATA*/0x00000040 | /*ALIGN_*BYTES*/alignment_flag | /*MEM_READ*/0x40000000 | /*MEM_WRITE*/0x80000000;
+    }
     
     u32 defined_function_func_id_base = 0;
     {
@@ -2299,7 +2351,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                             u16 section_id;
                             u8  identifier[];
                         } *data_symbol = push_struct_(arena, offset_in_type(struct codeview_data32, identifier) + (decl->identifier->length + 1), 4);
-                        data_symbol->kind = (decl->flags & DECLARATION_FLAGS_is_static) ? /* S_LDATA32 */ 0x110c : /* S_GDATA32 */ 0x110d;
+                        
+                        u16 kind = ((decl->flags & DECLARATION_FLAGS_is_thread_local) ? /*S_LTHREAD32*/0x1112 : /* S_LDATA32 */ 0x110c) + ((decl->flags & DECLARATION_FLAGS_is_static) != 0);
+                        data_symbol->kind = kind;
                         data_symbol->type_index = decl->type->pdb_type_index;
                         memcpy(data_symbol->identifier, decl->identifier->data, decl->identifier->length);
                         data_symbol->identifier[decl->identifier->length] = 0;
@@ -2639,6 +2693,27 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         record->type = 0;
     }
     
+    for_ast_list(tls_variables){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        decl->symbol_table_index = (arena_current(arena) - (u8 *)symbol_table_base)/18;
+        
+        struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
+        struct string name = decl->identifier->string;
+        
+        if(name.size <= 8){
+            memcpy(record->short_name, name.data, name.size);
+        }else{
+            record->string_table_offset = (u32)coff_string_table_at;
+            coff_string_table_at += name.size + 1;
+            string_list_postfix(&long_name_strings, scratch, name);
+        }
+        
+        record->value = (s32)decl->relative_virtual_address;
+        record->section_number = (s16)((tls - section_headers) + 1);
+        record->storage_class = (decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist)) ? /*IMAGE_SYM_CLASS_STATIC*/3 : /*IMAGE_SYM_CLASS_EXTERNAL*/2;
+        record->type = 0;
+    }
+    
     for_ast_list(selectany_variables){
         struct ast_declaration *decl = (struct ast_declaration *)it->value;
         
@@ -2747,9 +2822,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     
     struct patch_node *text_patches = null;
     struct patch_node *data_patches = null;
+    struct patch_node *tls_patches  = null;
     
     smm amount_of_text_patches = 0;
     smm amount_of_data_patches = 0;
+    smm amount_of_tls_patches = 0;
     
     for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
         struct context *thread_context = globals.thread_infos[thread_index].context;
@@ -2774,9 +2851,16 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 amount_of_text_patches += 1;
             }else{
                 assert(dest_declaration->base.kind == AST_declaration);
-                patch->next = data_patches;
-                data_patches = patch;
-                amount_of_data_patches += 1;
+                
+                if(dest_declaration->flags & DECLARATION_FLAGS_is_thread_local){
+                    patch->next = tls_patches;
+                    tls_patches = patch;
+                    amount_of_tls_patches += 1;
+                }else{
+                    patch->next = data_patches;
+                    data_patches = patch;
+                    amount_of_data_patches += 1;
+                }
             }
             
             patch = next;
@@ -2814,26 +2898,33 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         
         smm index = 0;
         for(struct patch_node *patch = text_patches; patch; patch = patch->next){
-            assert(patch->kind == PATCH_rip_relative); // There should only be rip-relative patches to the .text section.
+            
+            assert(patch->kind == PATCH_rip_relative || patch->kind == PATCH_section_offset); // There should only be rip-relative patches to the .text section.
             
             struct ast_function *function = (struct ast_function *)patch->dest_declaration;
             
             smm destination_offset = (function->offset_in_text_section + function->size_of_prolog + patch->location_offset_in_dest_declaration);
             
             struct coff_relocation *relocation = (void *)(text_relocations_data + 10 * index++);
-            relocation->relocation_type = /*REL32*/4;
+            
             relocation->destination_offset_in_section = (u32)destination_offset;
             
-            // 
-            // For instructions like:
-            //     c705 05000000 00010000 mov dword ptr [rip+5], 0x100
-            // The 'rip_at' is offset from 'destination_offset + 4'.
-            // Hence, we have to write a value, which produces the correct value once the patch is applied.
-            // 
-            s32 value_to_write = (s32)((patch->location_offset_in_dest_declaration  + 4) - patch->rip_at + patch->location_offset_in_source_declaration);
-            if(value_to_write){
-                u8 *memory_location = function->memory_location + patch->location_offset_in_dest_declaration + function->size_of_prolog;
-                *(s32 *)memory_location = value_to_write;
+            if(patch->kind == PATCH_rip_relative){
+                relocation->relocation_type = /*REL32*/4;
+                
+                // 
+                // For instructions like:
+                //     c705 05000000 00010000 mov dword ptr [rip+5], 0x100
+                // The 'rip_at' is offset from 'destination_offset + 4'.
+                // Hence, we have to write a value, which produces the correct value once the patch is applied.
+                // 
+                s32 value_to_write = (s32)((patch->location_offset_in_dest_declaration + 4) - patch->rip_at + patch->location_offset_in_source_declaration);
+                if(value_to_write){
+                    u8 *memory_location = function->memory_location + patch->location_offset_in_dest_declaration + function->size_of_prolog;
+                    *(s32 *)memory_location = value_to_write;
+                }
+            }else{
+                relocation->relocation_type = /*SECREL*/0xB;
             }
             
             enum ast_kind source_kind = patch->source->kind;
@@ -2914,6 +3005,61 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         }
         assert(index == amount_of_data_patches);
     }
+    
+    
+    // @cleanup: STOP the copy and paste!
+    if(amount_of_tls_patches){
+        tls->pointer_to_relocations = (u32)(arena_current(arena) - obj_base_address);
+        
+        if(amount_of_tls_patches <= 0xffff){
+            tls->number_of_relocations = (u16)amount_of_tls_patches;
+        }else{
+            assert(amount_of_tls_patches < 0xffffffff);
+            
+            tls->characteristics |= /*IMAGE_SCN_LNK_NRELOC_OVFL*/0x01000000;
+            tls->number_of_relocations = 0xffff;
+            
+            // If the number of relocations is to big to fit in a u16, 
+            // the actual number of relocations is contained in the 
+            // VirtualAddress (destination_offset_in_section) field of the first relocation.
+            
+            struct coff_relocation *relocation = (void *)push_data(arena, u8, 10);
+            relocation->relocation_type = 0; // The relocation is ignored.
+            relocation->destination_offset_in_section = (u32)(amount_of_tls_patches + 1);
+        }
+        
+        u8 *tls_relocations_data = push_data(arena, u8, 10 * amount_of_tls_patches);
+        
+        smm index = 0;
+        for(struct patch_node *patch = tls_patches; patch; patch = patch->next){
+            assert(patch->kind == PATCH_absolute); // There should only be absolute patches to .data
+            
+            struct ast_declaration *declaration = (struct ast_declaration *)patch->dest_declaration;
+            assert(declaration->base.kind == AST_declaration);
+            
+            struct coff_relocation *relocation = (void *)(tls_relocations_data + 10 * index++);
+            relocation->relocation_type = /*ADDR64*/1;
+            relocation->destination_offset_in_section = (u32)(declaration->relative_virtual_address + patch->location_offset_in_dest_declaration);
+            
+            // @note: We need the source offset to already be applied to the data.
+            *(u64 *)(declaration->memory_location + patch->location_offset_in_dest_declaration) = patch->location_offset_in_source_declaration;
+            
+            enum ast_kind source_kind = patch->source->kind;
+            
+            if(source_kind == AST_function || source_kind == AST_declaration){
+                struct ast_declaration *source = (struct ast_declaration *)patch->source;
+                
+                relocation->source_symbol_table_index = (u32)source->symbol_table_index;
+            }else{
+                assert(source_kind == AST_string_literal);
+                struct ast_string_literal *source = (struct ast_string_literal *)patch->source;
+                
+                relocation->source_symbol_table_index = (u32)(string_symbol_base + source->symbol_table_index);
+            }
+        }
+        assert(index == amount_of_tls_patches);
+    }
+    
     
     if(defined_functions.count){
         // .pdata reloations:

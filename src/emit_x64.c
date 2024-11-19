@@ -696,7 +696,7 @@ func u8 make_modrm(u8 mod, u8 reg, u8 rm){
     return ((mod << 6) | (reg << 3) | (rm << 0));
 }
 
-// follows modrm if rm == 8
+// follows modrm if rm == REGISTER_SIB_EXTENSION (4)
 // scale index base
 func s8 make_sib(u8 shift, s8 index, s8 base){
     assert(shift < 4);
@@ -2501,10 +2501,48 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 return emit_location_immediate(context, integer_literal_to_bytes(decl->assign_expr), decl->assign_expr->resolved_type->size);
             }
             
+            enum register_kind register_kind = get_register_kind_for_type(decl->type);
+            smm decl_size = decl->type->size;
+            
             struct emit_location *ret = null;
-            if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)){
-                enum register_kind register_kind = get_register_kind_for_type(decl->type);
+            if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                // 
+                // Loading thread locals:
+                // 
+                //     mov eax, offset(<var>)
+                //     mov ecx, [_tls_index]
+                //     mov rdx, gs:[58h]
+                //     mov rcx, [rdx + rcx*8]
+                //     return [rcx + rax]
+                // 
                 
+                // mov <offset_reg>, offset_in_tls(<decl>)
+                struct emit_location *offset_reg = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), 4);
+                if(register_is_extended(offset_reg->loaded_register)) emit(REXB);
+                emit(MOVE_REG_IMMEDIATE + (offset_reg->loaded_register & 7));
+                smm byte_offset = emit_u32(0);
+                smm rip_at = get_bytes_emitted(context);
+                emit_patch(context, PATCH_section_offset, &decl->base, 0, &context->current_function->as_decl, byte_offset, rip_at);
+                
+                struct emit_location *tls_index = emit_location_rip_relative(context, &globals.tls_index_declaration->base, REGISTER_KIND_gpr, 4);
+                
+                // mov <tls_slots>, gs:[58h]
+                struct emit_location *tls_slots = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), 8);
+                emit(LEGACY_GS_SEGMENT_OVERRIDE_PREFIX);
+                if(register_is_extended(tls_slots->loaded_register)) emit(REXW | REXR); else emit(REXW);
+                emit(MOVE_REG_REGM);
+                emit(make_modrm(MODRM_REGM, (/*reg*/tls_slots->loaded_register & 7), REGISTER_SIB_EXTENSION));
+                emit(make_sib(0, /*no-index*/REGISTER_SP, /*no-base*/REGISTER_BP));
+                emit_u32(0x58);
+                
+                // mov tls_slot, [rdx + rcx*8]
+                struct emit_location *tls_slot_register_relative = emit_location_register_relative(context, REGISTER_KIND_gpr, tls_slots, tls_index, /*offset*/0, /*size*/8);
+                tls_slot_register_relative->log_index_scale = 3;
+                struct emit_location *tls_slot = emit_load(context, tls_slot_register_relative);
+                
+                ret = emit_location_register_relative(context, register_kind, tls_slot, offset_reg, 0, decl_size);
+            }else if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)){
+                    
                 if(decl->flags & DECLARATION_FLAGS_is_dllimport){
                     // :dllimport_loading
                     // 
@@ -2517,9 +2555,9 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     //                                                                              -08.08.2021
                     
                     struct emit_location *address = emit_location_rip_relative(context, &decl->base, register_kind, 8);
-                    ret = emit_location_register_relative(context, register_kind, address, 0, 0, decl->type->size);
+                    ret = emit_location_register_relative(context, register_kind, address, 0, 0, decl_size);
                 }else{
-                    ret = emit_location_rip_relative(context, &decl->base, register_kind, decl->type->size);
+                    ret = emit_location_rip_relative(context, &decl->base, register_kind, decl_size);
                 }
             }else{
                 
@@ -2528,9 +2566,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 // stack memory locations might be negative if the declaration is an argument, but they can never be -1.
                 assert(decl->offset_on_stack != -1);
                 
-                enum register_kind register_kind = get_register_kind_for_type(decl->type);
-                smm size = decl->type->size;
-                
                 if(decl->flags & DECLARATION_FLAGS_is_big_function_argument){
                     // :PassingStructArguments
                     // 
@@ -2538,9 +2573,9 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     // we emit '[[stack_location]]' here. (register relative to register relative
                     
                     struct emit_location *stack_location = emit_location_stack_relative(context, REGISTER_KIND_gpr, decl->offset_on_stack, 8);
-                    ret = emit_location_register_relative(context, register_kind, stack_location, 0, 0, size);
+                    ret = emit_location_register_relative(context, register_kind, stack_location, 0, 0, decl_size);
                 }else{
-                    ret = emit_location_stack_relative(context, register_kind, decl->offset_on_stack, size);
+                    ret = emit_location_stack_relative(context, register_kind, decl->offset_on_stack, decl_size);
                 }
             }
             

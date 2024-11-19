@@ -1022,29 +1022,29 @@ enum declaration_specifier_flag{
     SPECIFIER_static   = 0x4,
     SPECIFIER_register = 0x8,
     // SPECIFIER_auto
-    // SPECIFIER_thread_local
+    SPECIFIER_thread_local = 0x10,
     
     // 
     // __declspec storage-class specifiers.
     // 
-    SPECIFIER_dllimport = 0x10,
-    SPECIFIER_dllexport = 0x20,
-    SPECIFIER_selectany = 0x40,
+    SPECIFIER_dllimport = 0x20,
+    SPECIFIER_dllexport = 0x40,
+    SPECIFIER_selectany = 0x80,
     
-    SPECIFIER_packed    = 0x80,
+    SPECIFIER_packed    = 0x100,
     
     // 
     // function-specifiers.
     // 
-    SPECIFIER_inline     = 0x100,
-    SPECIFIER_noreturn   = 0x200,
-    SPECIFIER_noinline   = 0x400,
+    SPECIFIER_inline     = 0x200,
+    SPECIFIER_noreturn   = 0x400,
+    SPECIFIER_noinline   = 0x800,
     
     // 
     // HLC-specific declspecs.
     // 
-    SPECIFIER_inline_asm = 0x800,
-    SPECIFIER_printlike  = 0x1000,
+    SPECIFIER_inline_asm = 0x1000,
+    SPECIFIER_printlike  = 0x2000,
     
 };
 
@@ -6568,6 +6568,9 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             case TOKEN_register:{
                 check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_register, token, "register");
             }break;
+            case TOKEN_thread_local:{
+                check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_thread_local, token, "thread_local");
+            }break;
             
             //
             // Function specifiers (inline, _Noreturn) @cleanup: these should only be allowed for functions
@@ -6714,6 +6717,8 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                     report_error(context, directive, "A declaration cannot be '__declspec(packed)'. Please declare a __declspec(packed)-type instead. (I.e please use 'struct __declspec(packed) packed_type' instead of '__declspec(packed) struct packed_type'.");
                 }else if(atoms_match(directive_string, globals.keyword_printlike)){
                     check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_printlike, directive, "__declspec(printlike)");
+                }else if(atoms_match(directive_string, globals.keyword_thread)){
+                    check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_thread_local, directive, "__declspec(thread)");
                 }else{
                     skip = true;
                     report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
@@ -6923,6 +6928,8 @@ case TOKEN_##type_name:{                                                 \
                         struct declaration_specifiers struct_specifiers = parse_declaration_specifiers(context, null, null);
                         struct ast_type *lhs_type    = struct_specifiers.type_specifier;
                         struct ast *lhs_defined_type = struct_specifiers.defined_type_specifier;
+                        
+                        // @cleanup: Disallow extern typedef static register thread_local...
                         
                         // :unresolved_types
                         // 
@@ -7839,6 +7846,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(specifiers.specifier_flags & SPECIFIER_dllimport) decl->flags |= DECLARATION_FLAGS_is_dllimport;
             if(specifiers.specifier_flags & SPECIFIER_dllexport) decl->flags |= DECLARATION_FLAGS_is_dllexport;
+            
+            if(specifiers.specifier_flags & SPECIFIER_thread_local) decl->flags |= DECLARATION_FLAGS_is_thread_local;
             
             if(!context->current_scope) decl->flags |= DECLARATION_FLAGS_is_global;
             

@@ -1603,6 +1603,7 @@ func void emit_pdb_line_info_for_function(struct pdb_write_context *context, str
 struct symbol_context{
     struct ast_list initialized_declarations;
     struct ast_list uninitialized_declarations;
+    struct ast_list tls_declarations;
     
     struct ast_list functions_with_a_body;
     struct ast_list typedefs;
@@ -1698,6 +1699,13 @@ func void add_declarations_for_ast_table(struct symbol_context *symbol_context, 
             struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
             if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
             
+            // @cleanup: dllimports?
+            
+            if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                ast_list_append(&symbol_context->tls_declarations, arena, node->ast);
+                continue;
+            }
+            
             if(decl->assign_expr){
                 ast_list_append(&symbol_context->initialized_declarations, arena, node->ast);
             }else{
@@ -1751,10 +1759,16 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     struct ast_list *initialized_declarations   = &symbol_context.initialized_declarations;
     struct ast_list *uninitialized_declarations = &symbol_context.uninitialized_declarations;
+    struct ast_list *tls_declarations           = &symbol_context.tls_declarations;
     struct ast_list *functions_with_a_body = &symbol_context.functions_with_a_body;
     struct ast_list *dll_function_stubs    = &symbol_context.dll_function_stubs;
     struct ast_list *typedefs   = &symbol_context.typedefs;
     struct ast_list *dllexports = &symbol_context.dllexports;
+    
+    if(tls_declarations->count){
+        ast_list_append(uninitialized_declarations, arena, &globals.tls_index_declaration->base);
+    }
+    
     
     struct string root_file_name = strip_file_extension(output_file_path);
     struct string exe_full_path = push_format_string(arena, "%.*s",  output_file_path.size, output_file_path.data);
@@ -1914,7 +1928,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     }
     
     IMAGE_SECTION_HEADER *reloc = null;
-    if(!globals.cli_options.no_dynamic_base && globals.have_absolute_patch){ 
+    if(!globals.cli_options.no_dynamic_base && (globals.have_absolute_patch || tls_declarations->count)){ 
         reloc = write_section_header(exe, arena, ".reloc", SECTION_read | SECTION_initialized_data | SECTION_discardable);
     }
     
@@ -2026,6 +2040,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         exe->header->SizeOfUninitializedData += bss_size;
     }
     
+    u32 tls_data_rva = 0;
     
     if(rdata){
         
@@ -2298,6 +2313,62 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 i++;
             }
         }
+        
+        if(tls_declarations->count){
+            {
+                // Calculate the start of the tls section.
+                struct ast_declaration *first_tls_decl = (struct ast_declaration *)tls_declarations->first->value;
+                smm alignment = get_declaration_alignment(first_tls_decl);
+                push_align(arena, (u32)alignment); // @cleanup: why does push align take a u32?
+                tls_data_rva = make_relative_virtual_address(section_writer, arena_current(arena));
+            }
+            
+            for_ast_list(*tls_declarations){
+                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+                
+                smm alignment = get_declaration_alignment(decl);
+                smm decl_size = get_declaration_size(decl);
+                
+                push_zero_align(arena, alignment);
+                
+                u8 *mem = push_uninitialized_data(arena, u8, decl_size);
+                
+                if(decl->memory_location){
+                    memcpy(mem, decl->memory_location, decl_size);
+                }else{
+                    memset(mem, 0, decl_size);
+                }
+                
+                decl->memory_location = mem;
+                decl->relative_virtual_address = make_relative_virtual_address(section_writer, mem);
+            }
+            
+            u32 tls_data_end_rva = make_relative_virtual_address(section_writer, arena_current(arena));
+            
+            u64 *tls_callbacks = push_struct(arena, u64); // zero-terminated
+            
+            assert(globals.tls_index_declaration->relative_virtual_address >= 0); // This thing is in .bss
+            
+            push_align(arena, 0x40); // Align the tls_directory so it is guarateed to be on one page, for the base relocation hack.
+            struct tls_directory{
+                u64 raw_data_start;
+                u64 raw_data_end;
+                u64 address_of_index;
+                u64 address_of_callbacks;
+                u32 size_of_zero_fill;
+                u32 characteristics; // @cleanup: alignment.
+            } *tls_directory = push_struct(arena, struct tls_directory);
+            tls_directory->raw_data_start = exe->header->ImageBase + tls_data_rva;
+            tls_directory->raw_data_end   = exe->header->ImageBase + tls_data_end_rva;
+            tls_directory->address_of_callbacks = exe->header->ImageBase + make_relative_virtual_address(section_writer, tls_callbacks);
+            tls_directory->address_of_index     = exe->header->ImageBase + globals.tls_index_declaration->relative_virtual_address;
+            tls_directory->characteristics = /*IMAGE_SCN_ALIGN_4096BYTES*/0x00D00000;
+            
+            // Fill in the .tls directory.
+            exe->header->DataDirectory[9].VirtualAddress = make_relative_virtual_address(section_writer, tls_directory);
+            exe->header->DataDirectory[9].Size = sizeof(*tls_directory);
+        }
+        
         end_section(section_writer);
         
         exe->header->SizeOfInitializedData += rdata->SizeOfRawData;
@@ -2352,6 +2423,27 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         smm count;
     } relocation_blocks = zero_struct;
     
+    // @hack: We manually add the relocation block for the tls section here.
+    //        Once we re-write this whole backend, we can think about how to do this properly.
+    if(tls_declarations->count){
+        u32 tls_base_rva = exe->header->DataDirectory[9].VirtualAddress;
+        
+        smm page_rva = tls_base_rva & ~((1ull << 12) - 1);
+        smm offset   = tls_base_rva &  ((1ull << 12) - 1);
+        
+        struct base_relocation_block *block = push_struct(scratch, struct base_relocation_block);
+        block->page_rva = page_rva;
+        sll_push_back(relocation_blocks, block);
+        relocation_blocks.count++;
+        
+        // Push base relocations for `raw_data_start`, `raw_data_end`, `address_of_index`, `address_of_callbacks`.
+        for(u32 index = 0; index < 4; index++){
+            struct relocation_node *node = push_struct(scratch, struct relocation_node);
+            node->offset_in_page = offset + index * 8;
+            sll_push_back(block->relocations, node);
+            block->relocations.count++;
+        }
+    }
     
     // :patch :patches
     begin_counter(timing, patch);
@@ -2405,9 +2497,9 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     smm source_location = f->relative_virtual_address;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
                 }else{
-                    
                     if(patch->source->kind != AST_string_literal){
                         report_internal_compiler_error(patch->source->token, "Not a string literal, but %d\n", patch->source->kind);
+                        continue;
                     }
                     
                     assert(patch->source->kind == AST_string_literal);
@@ -2419,8 +2511,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     smm rip_at = dest_location + patch->rip_at;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
                 }
-            }else{
-                assert(patch->kind == PATCH_absolute);
+            }else if(patch->kind == PATCH_absolute){
                 assert(patch->dest_declaration->base.kind == AST_declaration);
                 
                 smm source_location;
@@ -2466,6 +2557,14 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     sll_push_back(block->relocations, node);
                     block->relocations.count++;
                 }
+            }else{
+                assert(patch->kind == PATCH_section_offset);
+                struct ast_declaration *source_declaration = cast(struct ast_declaration *)patch->source;
+                assert(source_declaration->flags & DECLARATION_FLAGS_is_thread_local);
+                
+                u32 source_location = (u32)(source_declaration->relative_virtual_address - tls_data_rva);
+                
+                *cast(u32 *)memory_location = source_location;
             }
         }
     }
