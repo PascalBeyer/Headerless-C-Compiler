@@ -241,14 +241,23 @@ wchar_t *wcsrchr(wchar_t *haystack, wchar_t needle){
 // The sad side of it is that for now here is an ugly hack.
 // 
 
+#ifdef strdup
+#undef strdup
+#endif
 __declspec(dllimport) char *_strdup(char *str);
 char *strdup(char *str){ return _strdup(str); }
 
+#ifdef getcwd
+#undef getcwd
+#endif
 __declspec(dllimport) char *_getcwd(char *buffer, int maxlen);
 char *getcwd(char *buffer, int maxlen){
     return getcwd(buffer, maxlen);
 }
 
+#ifdef rmdir
+#undef rmdir
+#endif
 __declspec(dllimport) int _rmdir(const char *dirname);
 int rmdir(const char *dirname){
     return _rmdir(dirname);
