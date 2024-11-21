@@ -3089,7 +3089,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         
 #if IMPLEMENT_HASH_VALUE_BUFFER
         // a map 'type_index' -> type_hash
-        for(u32 i = 0; i < tpi.hash_value_buffer_length; i+= tpi.hash_key_size){
+        
+        struct page_list_node *current_page = context->page_list[STREAM_TPI].first;
+        smm offset_at = sizeof(struct tpi_stream);
+        for(u32 type_index = tpi.minimal_type_index; type_index < tpi.maximal_type_index; type_index += 1){
             // hashing a type_record: (LF_STRUCTURE, LF_UNION, LF_ENUM):
             // if(!forward_ref && !is_anonymous){
             //    if(!scoped || has_unique_name){
@@ -3098,18 +3101,44 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             // }
             // return string CRC32(serialized);
             
-            assert(i/tpi.hash_key_size + tpi.minimal_type_index < context->maximal_amount_of_type_indices);
-            struct pdb_type_info *info = get_type_info_for_type_index(
-                    context, i/tpi.hash_key_size + tpi.minimal_type_index);
+            assert((offset_at & 3) == 0);
+            struct{
+                u16 length;
+                u16 kind;
+            } tpi_record_header;
+            memcpy(&tpi_record_header, pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream), sizeof(tpi_record_header));
             
-            if(info->type && (info->type->kind == AST_struct || info->type->kind == TOKEN_union ||
-                    info->type->kind == AST_enum)){
+            assert(type_index < context->maximal_amount_of_type_indices);
+            struct pdb_type_info *info = get_type_info_for_type_index(context, type_index);
+            
+            if(info->type && /*skip predecls*/type_index == info->type->pdb_type_index && (info->type->kind == AST_struct || info->type->kind == AST_union || info->type->kind == AST_enum) && !atoms_match(((struct ast_compound_type *)info->type)->identifier, globals.unnamed_tag)){
                 struct ast_compound_type *compound = cast(struct ast_compound_type *)info->type;
                 u32 hash = pdb_string_hash(compound->identifier.string);
                 
                 out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32); // could make this tpi.hash_key_size
+                
+                offset_at += tpi_record_header.length + sizeof(tpi_record_header.length);
+                while(current_page->offset_in_stream + 0x1000 < offset_at) current_page = current_page->next;
             }else{
-                out_int(0, u32);
+                
+                u32 length = tpi_record_header.length + sizeof(tpi_record_header.length);
+                smm end_offset = offset_at + length;
+                
+                u32 hash = 0;
+                while(offset_at != end_offset){
+                    smm page_end = 0x1000 - (offset_at - current_page->offset_in_stream);
+                    
+                    u8 *at   = pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream);
+                    smm size = length < page_end ? length : page_end;
+                    
+                    hash = crc32(hash, at, size);
+                    
+                    offset_at += size;
+                    length -= (u32)size;
+                    if(offset_at == current_page->offset_in_stream + 0x1000) current_page = current_page->next;
+                }
+                
+                out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32);
             }
             
         }
@@ -3258,7 +3287,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 out_struct("-command -line -arguments");
             }end_symbol();
             
-            build_info_symbol = begin_symbol(0x1603);{ // BUILDINFO
+            build_info_symbol = begin_symbol(0x1603);{ // LF_BUILDINFO
                 out_int(5, u16); // count
                 
                 //  a list of code item id's
@@ -3304,9 +3333,62 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // look at hashTypeRecord
         // the hashes are computed via a CRC. Do we actually have to use their hash algorithm?
         // and crc32.h
+        
 #if IMPLEMENT_HASH_VALUE_BUFFER
-        for(u32 i = 0; i < ipi.hash_value_buffer_length; i+= ipi.hash_key_size){
-            out_int(1, u32); // could make this ipi.hash_key_size
+        // a map 'type_index' -> type_hash
+        
+        struct page_list_node *current_page = context->page_list[STREAM_IPI].first;
+        smm offset_at = sizeof(struct tpi_stream);
+        for(u32 type_index = ipi.minimal_type_index; type_index < ipi.maximal_type_index; type_index += 1){
+            // hashing a type_record: (LF_STRUCTURE, LF_UNION, LF_ENUM):
+            // if(!forward_ref && !is_anonymous){
+            //    if(!scoped || has_unique_name){
+            //        return pdb_string_hash(name);
+            //    }
+            // }
+            // return string CRC32(serialized);
+            
+            assert((offset_at & 3) == 0);
+            struct{
+                u16 length;
+                u16 kind;
+            } ipi_record_header;
+            memcpy(&ipi_record_header, pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream), sizeof(ipi_record_header));
+            
+            if(ipi_record_header.kind == /*LF_UDT_SRC_LINE*/0x1606 || ipi_record_header.kind == /*LF_UDT_MOD_SRC_LINE*/0x1607){
+                
+                u8 *type_index_data = pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream) + 4;
+                if(((offset_at + 4) & 0xfff) == 0){
+                    type_index_data = pdb_page_from_index(context, current_page->page_index + 1);
+                }
+                
+                u32 hash = pdb_string_hash(create_string(type_index_data, /*sizeof(type_index_t)*/4));
+                out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32); // could make this tpi.hash_key_size
+                
+                offset_at += ipi_record_header.length + sizeof(ipi_record_header.length);
+                while(current_page->offset_in_stream + 0x1000 < offset_at) current_page = current_page->next;
+            }else{
+                
+                u32 length = ipi_record_header.length + sizeof(ipi_record_header.length);
+                smm end_offset = offset_at + length;
+                
+                u32 hash = 0;
+                while(offset_at != end_offset){
+                    smm page_end = 0x1000 - (offset_at - current_page->offset_in_stream);
+                    
+                    u8 *at   = pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream);
+                    smm size = length < page_end ? length : page_end;
+                    
+                    hash = crc32(hash, at, size);
+                    
+                    offset_at += size;
+                    length -= (u32)size;
+                    if(offset_at == current_page->offset_in_stream + 0x1000) current_page = current_page->next;
+                }
+                
+                out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32);
+            }
+            
         }
 #endif
         
@@ -3319,7 +3401,12 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     // stream 5: Link Info stream
     { // :link_info_stream
-        set_current_stream(context, STREAM_link_info);
+        
+        // @cleanup: Dummy node.
+        struct page_list_node *node = push_struct(context->scratch, struct page_list_node);
+        
+        sll_push_back(context->page_list[STREAM_link_info], node);
+        // set_current_stream(context, STREAM_link_info);
         // yes, this appears to be empty... not sure if we need it?
     }
     

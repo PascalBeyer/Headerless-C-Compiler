@@ -3945,8 +3945,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         globals.keyword__VA_ARGS__ = atom_for_string(string("__VA_ARGS__"));
         
-        globals.unnamed_tag        = atom_for_string(string("<unnamed tag>"));
-        globals.unnamed_enum       = atom_for_string(string("<unnamed enum>"));
+        globals.unnamed_tag        = atom_for_string(string("<unnamed-tag>"));
+        globals.unnamed_enum       = atom_for_string(string("<unnamed-enum>"));
         globals.invalid_identifier = atom_for_string(string("<invalid identifier>"));
         
         // :hlc_extension
