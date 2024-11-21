@@ -7677,6 +7677,11 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 // We check that this declaration is actually contained in some dll only for the ones 
                 // we actually use. This is done in 'explain.c'.
                 function->as_decl.flags |= DECLARATION_FLAGS_is_dllimport;
+                
+                if(context->current_scope){
+                    // @incomplete: For now disallow __declspec(dllimport) at local scope.
+                    report_error(context, function->base.token, "@incomplete: Currently, __declspec(dllimport) is not allowed inside a function.");
+                }
             }
             
             if(specifiers.specifier_flags & SPECIFIER_printlike){
@@ -7856,6 +7861,11 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             // If the declaration is not explicitly extern, it cannot have unresolved type.
             if(!(specifiers.specifier_flags & SPECIFIER_extern) && !(specifiers.specifier_flags & SPECIFIER_typedef)){
                 if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) goto end;
+            }
+            
+            if(context->current_scope && specifiers.specifier_flags & SPECIFIER_dllimport){
+                // @incomplete: For now disallow __declspec(dllimport) at local scope.
+                report_error(context, decl->base.token, "@incomplete: Currently, __declspec(dllimport) is not allowed inside a function.");
             }
             
             // 

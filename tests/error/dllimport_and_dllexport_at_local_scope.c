@@ -6,6 +6,7 @@
 // reject "Error at 'extern_initialized_dllimport_variable'"
 // reject "Error at 'extern_initialized_dllexport_variable'"
 // fail
+// broken
 
 int main(){
     static __declspec(dllimport) int static_uninitialized_dllimport_variable; // Error: cannot be static
