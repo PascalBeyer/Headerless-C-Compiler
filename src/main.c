@@ -1762,6 +1762,15 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     
                     assert(!decl->assign_expr);
                     return redecl;
+                }else{
+                    struct string   decl_type = push_type_string(context->arena, &context->scratch,   decl->type);
+                    struct string redecl_type = push_type_string(context->arena, &context->scratch, redecl->type);
+                    
+                    begin_error_report(context);
+                    report_error(context, decl->base.token, "[%lld] Redeclaration with mismatching type '%.*s'.", decl->compilation_unit->index, decl_type.size, decl_type.data);
+                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration of type '%.*s'.", redecl->compilation_unit->index, redecl_type.size, redecl_type.data);
+                    end_error_report(context);
+                    return decl;
                 }
             }else if(redecl->base.kind == AST_typedef && decl->base.kind == AST_typedef){
                 if(types_are_equal(redecl->type, decl->type)){
@@ -1771,8 +1780,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     struct string redecl_type = push_type_string(context->arena, &context->scratch, redecl->type);
                     
                     begin_error_report(context);
-                    report_error(context, decl->base.token, "[%lld] Redeclaration of typedef with mismatching type (%.*s vs %.*s).", decl->compilation_unit->index, decl_type.size, decl_type.data, redecl_type.size, redecl_type.data);
-                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous typedef.", redecl->compilation_unit->index);
+                    report_error(context, decl->base.token, "[%lld] Redeclaration of typedef with mismatching type '%.*s'.", decl->compilation_unit->index, decl_type.size, decl_type.data);
+                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous typedef of type '%.*s'.", redecl->compilation_unit->index, redecl_type.size, redecl_type.data);
                     end_error_report(context);
                     return decl;
                 }
@@ -1786,8 +1795,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     
                     begin_error_report(context);
                     // :Error maybe print compilation units
-                    report_error(context, decl->base.token, "[%lld] Redeclaration of function with different type (%.*s vs %.*s).", decl->compilation_unit->index, decl_type.size, decl_type.data, redecl_type.size, redecl_type.data);
-                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration.", redecl->compilation_unit->index);
+                    report_error(context, decl->base.token, "[%lld] Redeclaration of function with different type '%.*s'.", decl->compilation_unit->index, decl_type.size, decl_type.data);
+                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration with type '%.*s'.", redecl->compilation_unit->index, redecl_type.size, redecl_type.data);
                     end_error_report(context);
                     return decl;
                 }
@@ -1807,11 +1816,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 return redecl;
             }
             
-            begin_error_report(context);
-            report_error(context, decl->base.token, "[%lld] Redeclaration.", decl->compilation_unit->index);
-            report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration.", redecl->compilation_unit->index);
-            end_error_report(context);
-            return decl;
+            invalid_code_path;
         }
         
         struct sleeper_table *sleeper_table = declaration_is_static ? &compilation_unit->static_sleeper_table : &globals.declaration_sleeper_table;
