@@ -5,68 +5,6 @@ enum error_report_node_kind{
     REPORT_warning,
 };
 
-#if 0
-enum warning_type{
-    WARNING_none,
-    
-    //
-    // Preprocessor warnings:
-    //
-    WARNING_missing_newline_after_backslash,
-    WARNING_junk_after_directive,
-    WARNING_compile_time_overflow,
-    WARNING_compile_time_multiplication_by_zero,
-    
-    WARNING_shadowing_local,
-    WARNING_shadowing_global,
-    WARNING_shadowing_in_same_scope,
-    
-    WARNING_type_mismatch,
-    WARNING_compile_time_truncation,
-    WARNING_unsigned_negation,
-    WARNING_unsupported_declspec,
-    WARNING_function_alignment,
-    WARNING_ret_in_asm_block,
-    WARNING_does_not_declare_anything,
-    WARNING_undefined_static_if_operand,
-    WARNING_undef_on_undefined,
-    WARNING_unsupported_pragma,
-    WARNING_function_declared_but_never_defined,
-    WARNING_function_defined_but_unreachable,
-    
-    WARNING_unused_local_variable,
-    WARNING_local_variable_only_ever_written,
-    
-    WARNING_casting_u64_to_float,
-    WARNING_double_specifier,
-    
-    WARNING_incorrect_format_specifier,
-    WARNING_unknown_format_specifier,
-    
-    WARNING_atomic_ignored,
-    
-    WARNING_assignment_in_condition,
-    
-    WARNING_extension_used,
-    WARNING_unusual_entry_point,
-    
-    WARNING_array_of_unknown_size_never_filled_in,
-    
-    WARNING_missing_return,
-    WARNING_return_in_noreturn_function,
-    
-    WARNING_redefining_declaration_from_extern_to_static,
-    WARNING_inline_function_is_implicitly_external,
-    
-    WARNING_function_is_implicitly_dllimport,
-    WARNING_unreachable_declaration,
-    
-    WARNING_imported_function_is_also_defined,
-    
-    WARNING_count, 
-};
-#endif
-
 static u8 warning_enabled[WARNING_count] = {
     [WARNING_compile_time_overflow]               = 1, 
     [WARNING_missing_newline_after_backslash]     = 1, 
@@ -105,9 +43,6 @@ static u8 warning_enabled[WARNING_count] = {
     
     [WARNING_extraneous_semicolon] = 1,
 };
-
-
-
 
 struct error_report_node{
     struct error_report_node *next;
