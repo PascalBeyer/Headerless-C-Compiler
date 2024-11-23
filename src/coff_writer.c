@@ -1631,21 +1631,6 @@ func void insert_function_into_the_right_list(struct symbol_context *symbol_cont
         return;
     }
     
-    if(function->as_decl.flags & DECLARATION_FLAGS_is_dll_import_with_missing_declspec){
-        // :dllimports_with_missing_declspec
-        // 
-        // if we have a function like
-        //     extern double asin(double a);
-        // but we found it in 'ucrtbased.dll', then we allow that, but we have to insert an
-        // additional indirection, as all functions expect to call this directly.
-        // MSVC (or more so link.exe) also does this and the CRT relies on this feature.
-        //                                                              -20.09.2020
-        
-        ast_list_append(&symbol_context->dll_function_stubs, scratch, &function->base);
-        ast_list_append(&symbol_context->dll_imports, scratch, &function->base);
-        return;
-    }
-    
     // Once, we got through the dllimports, we can be sure that all functions are defined.
     assert(function->scope);
     
@@ -2105,16 +2090,9 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 u8 *memory_location = dll_import_node->memory_location;
                 smm relative_virtual_address = make_relative_virtual_address(section_writer, memory_location);
                 
-                if(function->as_decl.flags & DECLARATION_FLAGS_is_dll_import_with_missing_declspec){
-                    smm dest = relative_virtual_address;
-                    smm from = function->relative_virtual_address + 6;
-                    s32 rel =  save_truncate_smm_to_s32(dest - from);
-                    memcpy(function->memory_location + 2, &rel, sizeof(s32));
-                }else{
-                    // the other functions are relative to
-                    function->memory_location = memory_location;
-                    function->relative_virtual_address = relative_virtual_address;
-                }
+                // the other functions are relative to
+                function->memory_location = memory_location;
+                function->relative_virtual_address = relative_virtual_address;
             }
         }
         
@@ -4040,16 +4018,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             smm rva;
             begin_symbol(0x110e);{                              // PUB32
                 out_int(0, u32);                                // flags
-                if(function->as_decl.flags & DECLARATION_FLAGS_is_dll_import_with_missing_declspec){
-                    // @cleanup: @bigsigh reconstructing the rva of the import address table entry...
-                    u32 relative_from_rva = *(u32 *)(function->memory_location + 2);
-                    u32 import_rva = save_truncate_smm_to_s32(relative_from_rva + function->relative_virtual_address + 6);
-                    out_int(import_rva - rdata->VirtualAddress, u32); // offset in segment
-                    rva = import_rva;
-                }else{
-                    out_int(function->relative_virtual_address - rdata->VirtualAddress, u32); // offset in segment
-                    rva = function->relative_virtual_address;
-                }
+                
+                out_int(function->relative_virtual_address - rdata->VirtualAddress, u32); // offset in segment
+                rva = function->relative_virtual_address;
+                
                 out_int(section_id_for_section(exe, rdata), u16);                 // segment
                 out_string(name);                               // name
             }end_symbol();

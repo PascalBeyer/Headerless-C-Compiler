@@ -385,8 +385,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     }
     
     if(declaration->base.kind == AST_declaration){
-        // @incomplete:
-        report_error(context, declaration->base.token, "Currently no __declspec(dllimport) for data declarations?");
+        report_error(context, declaration->base.token, "@incomplete: Currently no __declspec(dllimport) for data declarations?");
         return;
     }
     
@@ -436,19 +435,8 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
             report_warning(context, WARNING_function_is_implicitly_dllimport, declaration->base.token, "%s is treated as dllimport, but was not declared '__declspec(dllimport)'.", Function_or_Declaration);
         }
         
-        function->as_decl.flags |= DECLARATION_FLAGS_is_dll_import_with_missing_declspec;
+        function->as_decl.flags |= DECLARATION_FLAGS_is_dllimport;
         function->dll_import_node = import_node;
     }
-}
-
-void resolve_dll_import_node_or_report_error_for_referenced_unresolved_function(struct context *context, struct ast_function *function, struct token *token_that_referenced_this_function){
-    
-    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
-        report_error(context, function->base.token, "A referenced function marked '__declspec(dllexport)' must be defined."); // :Error
-        report_error(context, token_that_referenced_this_function, "... Here the function was referenced.");
-        return;
-    }
-    
-    lookup_declaration_in_libraries(context, &function->as_decl, token_that_referenced_this_function);
 }
 

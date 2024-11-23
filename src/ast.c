@@ -519,7 +519,6 @@ struct ast_list{
 #define DECLARATION_FLAGS_is_big_function_argument                 0x4
 #define DECLARATION_FLAGS_is_local_persist                         0x8
 
-#define DECLARATION_FLAGS_is_dll_import_with_missing_declspec      0x20
 #define DECLARATION_FLAGS_is_reachable_from_entry                  0x40
 #define DECLARATION_FLAGS_is_static                                0x80
 
