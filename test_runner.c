@@ -1154,7 +1154,7 @@ int main(int argument_count, char *argument_values[]){
     print("\n");
     print("%d tests run.\n", amount_of_tests - work.skipped);
     print("%d tests failed.\n", work.failed_tests);
-    print("%d tests broken test skipped.\n", work.broken_tests);
+    print("%d tests marked broken skipped.\n", work.broken_tests);
     
     return 0;
 }
