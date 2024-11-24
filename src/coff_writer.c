@@ -3036,6 +3036,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 
                 file_count++;
                 node->offset_in_names = pdb_current_offset_from_location(context, string_buffer_start);
+                
+                for(char *c = node->absolute_file_path; *c; c++){
+                    if(*c == '/') *c = '\\';
+                }
+                
                 out_string(string_from_cstring(node->absolute_file_path));
             }
         }

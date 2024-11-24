@@ -1870,7 +1870,10 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 file->offset_in_names = (u32)(arena_current(arena) - string_table_start);
                 
-                push_zero_terminated_string_copy(arena, string_from_cstring(file->absolute_file_path));
+                struct string string = push_zero_terminated_string_copy(arena, string_from_cstring(file->absolute_file_path));
+                for(smm index = 0; index < string.size; index++){
+                    if(string.data[index] == '/') string.data[index] = '\\';
+                }
             }
             
             *subsection_size = (u32)(arena_current(arena) - (u8 *)(subsection_size + 1));
