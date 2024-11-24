@@ -519,6 +519,7 @@ struct ast_list{
 #define DECLARATION_FLAGS_is_big_function_argument                 0x4
 #define DECLARATION_FLAGS_is_local_persist                         0x8
 
+#define DECLARATION_FLAGS_need_dllimport_stub_function             0x20
 #define DECLARATION_FLAGS_is_reachable_from_entry                  0x40
 #define DECLARATION_FLAGS_is_static                                0x80
 
@@ -858,15 +859,7 @@ struct ast_function{
     u32 debug_symbol_offset;
     u32 pushed_register_mask; // (1 << REGISTER_XXX) is set if we pushed that register in the prolog
     
-    // dll stuff:
-    struct dll_import_node *dll_import_node; // filled in in 'explain.c'
-    
-    struct {
-        struct function_node *first;
-        struct function_node *last;
-    } called_functions;
-    struct token *token_that_referenced_this_function;
-    
+    struct dll_import_node *dll_import_node;
 };
 
 struct ast_for{

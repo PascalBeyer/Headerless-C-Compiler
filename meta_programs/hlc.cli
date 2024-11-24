@@ -487,3 +487,27 @@ Example:
 > 18446744073709551615ll;
 > 18446744073709551615l;
 > 18446744073709551615;
+
+-> reference_to_dllimport_inserts_stub - A __declspec(dllimport) function was referenced in a constant initializer.
+
+Example:
+> __declspec(dllimport) void *malloc(unsigned long long size);
+> void *(*func)(unsigned long long size) = malloc; // Warning: 
+
+The PE format does not support loading the address of a `__declspec(dllimport)`-function at program load time.
+This means we insert a stub function with an indirect jump. The code generated for the above would be:
+
+> malloc_stub:
+>    jmp [__imp_malloc]  ; __imp_malloc is in the import address table.
+>
+> func:
+>    dq malloc_stub
+
+This might cause problems when comparing `func` to `malloc`, e.g.:
+
+> int main(){
+>     if(func != malloc) return 1; // This will return `1`.
+> }
+
+This will compare `func` aka `malloc_stub` to the address of `malloc` and hence they will compare unequal.
+

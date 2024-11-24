@@ -2597,6 +2597,30 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         record->section_number = 0; // section is _not yet_ defined.
         record->storage_class = /*IMAGE_SYM_CLASS_EXTERNAL*/2;
         record->type = (function->as_decl.flags & DECLARATION_FLAGS_is_dllimport) ? 0 : /*function*/0x20;
+        
+        if(function->as_decl.flags & DECLARATION_FLAGS_need_dllimport_stub_function){
+            // 
+            // :dll_import_function_stubs_have_symbol_index_plus_one.
+            // 
+            // We also have to signal to the object, that we need a reference to the dllimport.
+            // Hence, we make a symbol table entry for it here which we can use for relocations.
+            // 
+            record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
+            name = function->identifier->string;
+            
+            if(name.size <= 8){
+                memcpy(record->short_name, name.data, name.size);
+            }else{
+                record->string_table_offset = (u32)coff_string_table_at;
+                coff_string_table_at += name.size + 1;
+                string_list_postfix(&long_name_strings, scratch, name);
+            }
+            
+            record->value = 0;
+            record->section_number = 0; // section is _not yet_ defined.
+            record->storage_class = /*IMAGE_SYM_CLASS_EXTERNAL*/2;
+            record->type = /*function*/0x20;
+        }
     }
     
     for_ast_list(external_variables){
@@ -2995,7 +3019,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             if(source_kind == AST_function || source_kind == AST_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
                 
-                relocation->source_symbol_table_index = (u32)source->symbol_table_index;
+                u32 is_reference_to_stub = (source->flags & DECLARATION_FLAGS_need_dllimport_stub_function) != 0;
+                relocation->source_symbol_table_index = (u32)source->symbol_table_index + is_reference_to_stub;
             }else{
                 assert(source_kind == AST_string_literal);
                 struct ast_string_literal *source = (struct ast_string_literal *)patch->source;
@@ -3049,7 +3074,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             if(source_kind == AST_function || source_kind == AST_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
                 
-                relocation->source_symbol_table_index = (u32)source->symbol_table_index;
+                u32 is_reference_to_stub = (source->flags & DECLARATION_FLAGS_need_dllimport_stub_function) != 0;
+                relocation->source_symbol_table_index = (u32)source->symbol_table_index + is_reference_to_stub;
             }else{
                 assert(source_kind == AST_string_literal);
                 struct ast_string_literal *source = (struct ast_string_literal *)patch->source;

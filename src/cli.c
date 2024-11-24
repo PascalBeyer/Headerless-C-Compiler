@@ -168,6 +168,7 @@ enum warning{
     WARNING_incompatible_redefinition_of_macro           = 35, // Redefined a macro with different replacement-list or arguments.
     WARNING_extraneous_semicolon                         = 36, // We found an extraneous semicolon in a structure or at global scope.
     WARNING_integer_literal_too_large_to_be_signed       = 37, // We found an integer literal that exceeds the maximum for a signed value.
+    WARNING_reference_to_dllimport_inserts_stub          = 38, // A __declspec(dllimport) function was referenced in a constant initializer.
 };
 
 struct cli_options{
@@ -213,7 +214,7 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 38
+#define WARNING_count 39
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -258,6 +259,7 @@ struct warning_table_entry{
     [3] = {{31, (u8 *)"incompatibleredefinitionofmacro"}, WARNING_incompatible_redefinition_of_macro},
     [60] = {{19, (u8 *)"extraneoussemicolon"}, WARNING_extraneous_semicolon},
     [1] = {{32, (u8 *)"integerliteraltoolargetobesigned"}, WARNING_integer_literal_too_large_to_be_signed},
+    [54] = {{31, (u8 *)"referencetodllimportinsertsstub"}, WARNING_reference_to_dllimport_inserts_stub},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -805,7 +807,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "incompatible_redefinition_of_macro (35) | Redefined a macro with different replacement-list or arguments.\n"
                                 "extraneous_semicolon (36)               | We found an extraneous semicolon in a structure or at global scope.\n"
                                 "integer_literal_too_large_to_be_signed (37)| We found an integer literal that exceeds the maximum for a signed value.\n"
-                                , 3853);
+                                "reference_to_dllimport_inserts_stub (38)| A __declspec(dllimport) function was referenced in a constant initializer.\n"
+                                , 3970);
                     }
                 }break;
                 invalid_default_case();

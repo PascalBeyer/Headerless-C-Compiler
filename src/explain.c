@@ -425,9 +425,8 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         // :dllimports_with_missing_declspec
         // 
         // Apparently, MSVC does note require 'dllimport'. 
-        // It appears to be a keyword that gets rid of one indirection that we (or link.exe)
-        // have to insert. Hence, we generate a call to a rip relative jump, i.e.
-        //     jmp [rip + <offset_off_dll_import_in_import_table>]
+        // We report a warning and then simply mark the declaration as being dllimport.
+        // This works fine, because we do this before we emit code for functions.
         // 
         
         if(!globals.file_table.data[declaration->base.token->file_index]->is_system_include){ // @note: Manually shut this warning up, as we are currently in a big error_report.

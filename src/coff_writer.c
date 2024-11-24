@@ -1628,6 +1628,7 @@ func void insert_function_into_the_right_list(struct symbol_context *symbol_cont
     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
         assert(function->dll_import_node);
         ast_list_append(&symbol_context->dll_imports, scratch, &function->base);
+        if(function->as_decl.flags & DECLARATION_FLAGS_need_dllimport_stub_function) ast_list_append(&symbol_context->dll_function_stubs, scratch, &function->base);
         return;
     }
     
@@ -1972,18 +1973,17 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
         
         for_ast_list(*dll_function_stubs){
-            // :dllimports_with_missing_declspec
-            // we emit a 'jmp [rip + offset]' here for the dll imports.
-            // MSVC does the same.
+            
+            // Emit a stub for every dllimport that needs it.
             struct ast_function *function = cast(struct ast_function *)it->value;
+            struct dll_import_node *dll_import_node = function->dll_import_node;
             
             u8 *memory_for_stub = push_uninitialized_data(arena, u8, 6);
             
             memory_for_stub[0] = 0xff;
             memory_for_stub[1] = 0x25; // jmp [rip + offset_32bit]
-            function->offset_in_text_section = memory_for_stub - section_writer->section_memory_location;
-            function->memory_location = memory_for_stub;
-            function->relative_virtual_address = make_relative_virtual_address(section_writer, memory_for_stub);
+            dll_import_node->stub_relative_virtual_address = make_relative_virtual_address(section_writer, memory_for_stub);
+            dll_import_node->stub_memory_location = memory_for_stub;
         }
         
         end_section(section_writer);
@@ -2064,7 +2064,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 
                 u32 import_address_table_index = 0;
                 for(struct dll_import_node *import_node = dll_node->import_list.first; import_node; import_node = import_node->next){
-                    u16 *hint = push_struct(arena, u16); // we do not care right now @incomplete:
+                    u16 *hint = push_struct(arena, u16);
                     *hint = import_node->ordinal_hint;
                     push_cstring_from_string(arena, import_node->import_name);
                     
@@ -2093,6 +2093,16 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 // the other functions are relative to
                 function->memory_location = memory_location;
                 function->relative_virtual_address = relative_virtual_address;
+            }
+            
+            for_ast_list(*dll_function_stubs){
+                struct ast_function *function = cast(struct ast_function *)it->value;
+                struct dll_import_node *dll_import_node = function->dll_import_node;
+                
+                u32 import_address_table_entry    = (u32)function->relative_virtual_address;
+                u32 stub_relative_virtual_address = dll_import_node->stub_relative_virtual_address;
+                s32 relative_offset = (s32)(import_address_table_entry - (stub_relative_virtual_address + 6));
+                memcpy(dll_import_node->stub_memory_location + /*ff 25*/2, &relative_offset, sizeof(relative_offset));
             }
         }
         
@@ -2496,9 +2506,17 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 if(patch->source->kind == AST_function || patch->source->kind == AST_declaration){
                     struct ast_declaration *decl = cast(struct ast_declaration *)patch->source;
                     
-                    assert(decl->relative_virtual_address);
-                    source_location = decl->relative_virtual_address + exe->header->ImageBase;
-                    source_location += patch->location_offset_in_source_declaration;
+                    if(decl->flags & DECLARATION_FLAGS_is_dllimport){
+                        assert(decl->base.kind == AST_function);
+                        struct ast_function *function = (struct ast_function *)decl;
+                        struct dll_import_node *import_node = function->dll_import_node;
+                        source_location = import_node->stub_relative_virtual_address + exe->header->ImageBase;
+                        source_location += patch->location_offset_in_source_declaration;
+                    }else{
+                        assert(decl->relative_virtual_address);
+                        source_location = decl->relative_virtual_address + exe->header->ImageBase;
+                        source_location += patch->location_offset_in_source_declaration;
+                    }
                 }else{
                     assert(patch->source->kind == AST_string_literal);
                     struct ast_string_literal *lit = cast(struct ast_string_literal *)patch->source;
@@ -4008,7 +4026,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }
         }
         
-        // emit a 'S_PUB32' for every
+        // Emit a 'S_PUB32' for every dllimport.
         for_ast_list(symbol_context.dll_imports){
             struct ast_function *function = (struct ast_function *)it->value;
             
@@ -4029,6 +4047,30 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             psi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(psi_hash_table, scratch, ref_offset, rva, name);
             psi_amount_of_global_symbols += 1;
         }
+        
+        // Emit a 'S_PUB32' for every dllimport stub.
+        for_ast_list(*dll_function_stubs){
+            struct ast_function *function = (struct ast_function *)it->value;
+            struct dll_import_node *dll_import_node = function->dll_import_node;
+            
+            struct string name = function->identifier->string;
+            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+            
+            smm rva;
+            begin_symbol(0x110e);{                              // PUB32
+                out_int(0, u32);                                // flags
+                
+                out_int(dll_import_node->stub_relative_virtual_address - text->VirtualAddress, u32); // offset in segment
+                rva = dll_import_node->stub_relative_virtual_address;
+                
+                out_int(section_id_for_section(exe, text), u16);                 // segment
+                out_string(name);                               // name
+            }end_symbol();
+            
+            psi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(psi_hash_table, scratch, ref_offset, rva, name);
+            psi_amount_of_global_symbols += 1;
+        }
+        
         
         // emit a 'S_CONSTANT' for every enum member @cleanup: dumb loop, but maybe okay
         for(u64 i = 0; i < globals.compound_types.capacity; i++){

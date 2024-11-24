@@ -280,8 +280,12 @@ struct dll_import_node{
     struct dll_import_node *next;
     
     struct string import_name;
-    u16 ordinal_hint;
     u8 *memory_location;
+    u16 ordinal_hint;
+    
+    // If the declaration has the DECLARATION_FLAGS_need_dllimport_stub_function flag set, we have to emit a stub as well.
+    u32 stub_relative_virtual_address;
+    u8 *stub_memory_location;
 };
 
 struct dll_node{
@@ -2036,19 +2040,36 @@ func b32 evaluate_static_address(struct context *context, struct ast *rhs, struc
             struct ast_identifier *identifier = (struct ast_identifier *)rhs;
             struct ast_declaration *decl = identifier->decl;
             
+            // @cleanup: This is currently called from main inside of an error_report.
+            //           In the future this should not happen on the main thread and then
+            //           we should bring back the error report.
+            
             if(!(decl->flags & (DECLARATION_FLAGS_is_global|DECLARATION_FLAGS_is_local_persist))){
-                begin_error_report(context);
+                // begin_error_report(context);
                 report_error(context, rhs->token, "Referencing non-constant variable in constant initializer.");
                 report_error(context, decl->base.token, "... Here is the referenced declaration.");
-                end_error_report(context);
+                // end_error_report(context);
                 return 1;
             }
             
             if(decl->flags & DECLARATION_FLAGS_is_thread_local){
-                begin_error_report(context);
+                // begin_error_report(context);
                 report_error(context, rhs->token, "Cannot reference _Thread_local declaration in constant initializer.");
                 report_error(context, decl->base.token, "... Here is the referenced declaration.");
-                end_error_report(context);
+                // end_error_report(context);
+            }
+            
+            if(decl->flags & DECLARATION_FLAGS_is_dllimport){
+                // begin_error_report(context);
+                if(decl->base.kind == AST_declaration){
+                    report_error(context, rhs->token, "Cannot reference __declspec(dllimport) declaration in constant initializer.");
+                    report_error(context, decl->base.token, "... Here is the referenced declaration.");
+                }else if(decl->base.kind == AST_function){
+                    report_warning(context, WARNING_reference_to_dllimport_inserts_stub, rhs->token, "Constant reference of __declspec(dllimport)-function '%.*s' causes a stub to be generated. This causes `==` to potentially produce undesired results.", decl->identifier->size, decl->identifier->data);
+                    report_warning(context, WARNING_reference_to_dllimport_inserts_stub, decl->base.token, "... Here is the referenced declaration.");
+                    if(!(decl->flags & DECLARATION_FLAGS_need_dllimport_stub_function)) decl->flags |= DECLARATION_FLAGS_need_dllimport_stub_function;
+                }else invalid_code_path;
+                // end_error_report(context);
             }
             
             patch_ast = &identifier->decl->base;
