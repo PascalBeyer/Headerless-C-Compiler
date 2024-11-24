@@ -826,7 +826,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 if(decl->flags & DECLARATION_FLAGS_is_dllexport){
                     string_list_postfix(&directives, scratch, push_format_string(scratch, "/EXPORT:%.*s,DATA ", decl->identifier->size, decl->identifier->data));
                     
-                    ast_list_append(&defined_variables, scratch, &decl->base);
+                    if(decl->assign_expr){
+                        ast_list_append(&defined_variables, scratch, &decl->base);
+                    }else{
+                        ast_list_append(&external_variables, scratch, &decl->base);
+                    }
                     continue;
                 }
                 
