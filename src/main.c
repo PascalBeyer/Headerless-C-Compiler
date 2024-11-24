@@ -1730,6 +1730,34 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 }
             }
             
+            u64   decl_extended_attributes =   decl->flags & (DECLARATION_FLAGS_is_dllimport | DECLARATION_FLAGS_is_selectany | DECLARATION_FLAGS_is_thread_local);
+            u64 redecl_extended_attributes = redecl->flags & (DECLARATION_FLAGS_is_dllimport | DECLARATION_FLAGS_is_selectany | DECLARATION_FLAGS_is_thread_local);
+            
+            if(decl_extended_attributes != redecl_extended_attributes){
+                
+                char *attribute = "";
+                if((decl->flags & DECLARATION_FLAGS_is_dllimport) != (redecl->flags & DECLARATION_FLAGS_is_dllimport)){
+                    attribute = "__declspec(dllimport)";
+                }else if((decl->flags & DECLARATION_FLAGS_is_selectany) != (redecl->flags & DECLARATION_FLAGS_is_selectany)){
+                    attribute = "__declspec(selectany)";
+                }else if((decl->flags & DECLARATION_FLAGS_is_thread_local) != (redecl->flags & DECLARATION_FLAGS_is_thread_local)){
+                    attribute = "_Thread_local";
+                }
+                
+                begin_error_report(context);
+                report_error(context, decl->base.token, "[%lld] Redeclaration differs in %s attribute.", decl->compilation_unit->index, attribute);
+                report_error(context, redecl->base.token, "[%lld] ... Here was the previous declaration.", redecl->compilation_unit->index);
+                end_error_report(context);
+            }
+            
+            if((decl->flags & DECLARATION_FLAGS_is_dllexport) != (redecl->flags & DECLARATION_FLAGS_is_dllexport)){
+                begin_error_report(context);
+                report_warning(context, WARNING_declaration_differs_in_dllexport_attribute, decl->base.token, "[%lld] Redeclaration differs in __declspec(dllexport) attribute.", decl->compilation_unit->index);
+                report_warning(context, WARNING_declaration_differs_in_dllexport_attribute, redecl->base.token, "[%lld] ... Here was the previous declaration.", redecl->compilation_unit->index);
+                end_error_report(context);
+                if(!(redecl->flags & DECLARATION_FLAGS_is_dllexport)) redecl->flags |= DECLARATION_FLAGS_is_dllexport;
+            }
+            
             if(redecl->base.kind == AST_declaration && decl->base.kind == AST_declaration){
                 
                 if((redecl->flags & DECLARATION_FLAGS_is_enum_member) && (decl->flags & DECLARATION_FLAGS_is_enum_member)){

@@ -169,6 +169,7 @@ enum warning{
     WARNING_extraneous_semicolon                         = 36, // We found an extraneous semicolon in a structure or at global scope.
     WARNING_integer_literal_too_large_to_be_signed       = 37, // We found an integer literal that exceeds the maximum for a signed value.
     WARNING_reference_to_dllimport_inserts_stub          = 38, // A __declspec(dllimport) function was referenced in a constant initializer.
+    WARNING_declaration_differs_in_dllexport_attribute   = 39, // One but not all declarations of a variable is marked __declspec(dllexport).
 };
 
 struct cli_options{
@@ -214,7 +215,7 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 39
+#define WARNING_count 40
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -260,6 +261,7 @@ struct warning_table_entry{
     [60] = {{19, (u8 *)"extraneoussemicolon"}, WARNING_extraneous_semicolon},
     [1] = {{32, (u8 *)"integerliteraltoolargetobesigned"}, WARNING_integer_literal_too_large_to_be_signed},
     [54] = {{31, (u8 *)"referencetodllimportinsertsstub"}, WARNING_reference_to_dllimport_inserts_stub},
+    [24] = {{38, (u8 *)"declarationdiffersindllexportattribute"}, WARNING_declaration_differs_in_dllexport_attribute},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -808,7 +810,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "extraneous_semicolon (36)               | We found an extraneous semicolon in a structure or at global scope.\n"
                                 "integer_literal_too_large_to_be_signed (37)| We found an integer literal that exceeds the maximum for a signed value.\n"
                                 "reference_to_dllimport_inserts_stub (38)| A __declspec(dllimport) function was referenced in a constant initializer.\n"
-                                , 3970);
+                                "declaration_differs_in_dllexport_attribute (39)| One but not all declarations of a variable is marked __declspec(dllexport).\n"
+                                , 4095);
                     }
                 }break;
                 invalid_default_case();

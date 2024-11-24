@@ -511,3 +511,12 @@ This might cause problems when comparing `func` to `malloc`, e.g.:
 
 This will compare `func` aka `malloc_stub` to the address of `malloc` and hence they will compare unequal.
 
+-> declaration_differs_in_dllexport_attribute - One but not all declarations of a variable is marked __declspec(dllexport).
+
+Example:
+> int a;
+> __declspec(dllexport) int a; // warning: Redeclaration differs int __declspec(dllexport) attribute.
+> __declspec(dllexport) int b;
+> int b;                       // warning: Redeclaration differs int __declspec(dllexport) attribute.
+
+In either case, the variable is treated as an export.
