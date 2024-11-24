@@ -4470,11 +4470,7 @@ case NUMBER_KIND_##type:{ \
                 return &ident->base;
             }
             
-            if(context->current_scope){
-                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &lookup->type)){ // @cleanup: Can we ever get here?
-                    return &ident->base;
-                }
-            }
+            maybe_resolve_unresolved_type(&lookup->type);
             
             if(lookup->base.kind == AST_function || (lookup->base.kind == AST_declaration && (lookup->flags & DECLARATION_FLAGS_is_global))){
                 struct ast_declaration *outer_declaration = context->current_function ? &context->current_function->as_decl : context->current_declaration;
@@ -4776,6 +4772,12 @@ case NUMBER_KIND_##type:{ \
                     goto treat_dot_as_arrow_because_allow_dot_as_arrow_was_set_and_we_got_a_pointer_type_for_a_dot;
                 }
                 
+                if(operand->resolved_type->kind == AST_unresolved_type){
+                    if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &operand->resolved_type)){
+                        return operand;
+                    }
+                }
+                
                 if(operand->resolved_type->kind != AST_struct && operand->resolved_type->kind != AST_union){
                     report_error(context, test, "Left of '.' needs to be of struct or union type.");
                     return operand;
@@ -4796,6 +4798,12 @@ case NUMBER_KIND_##type:{ \
                 treat_dot_as_arrow_because_allow_dot_as_arrow_was_set_and_we_got_a_pointer_type_for_a_dot:;
                 
                 operand = maybe_load_address_for_array_or_function(context, operand); // Apperantly, you can use '->' on arrays.
+                
+                if(operand->resolved_type->kind == AST_unresolved_type){
+                    if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &operand->resolved_type)){
+                        return operand;
+                    }
+                }
                 
                 struct ast_type *type = operand->resolved_type;
                 
