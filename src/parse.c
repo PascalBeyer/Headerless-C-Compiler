@@ -474,7 +474,7 @@ func struct ast *push_cast(struct context *context, struct ast_type *cast_to, st
             cast = cast_what;
             set_resolved_type(cast, cast_to, cast_to_defined_type);
         }else{
-            assert(cast_to->kind == AST_bitfield_type || cast_to->kind == AST_void_type);
+            assert(cast_to->kind == AST_void_type);
         }
     }else if(cast_what->kind == AST_pointer_literal){
         if(cast_to == &globals.typedef_Bool){
@@ -5519,6 +5519,10 @@ case NUMBER_KIND_##type:{ \
                     op->lhs = maybe_load_address_for_array_or_function(context, op->lhs);
                     op->rhs = maybe_load_address_for_array_or_function(context, op->rhs);
                     
+                    op->lhs = maybe_insert_cast_from_special_int_to_int(context, op->lhs);
+                    op->rhs = maybe_insert_cast_from_special_int_to_int(context, op->rhs);
+                    
+                    
                     struct ast *handled = null;
                     // @cleanup: interger + pointer is legal, integer - pointer is not.
                     if(op->lhs->resolved_type->kind == AST_pointer_type && op->rhs->resolved_type->kind == AST_integer_type){
@@ -6049,6 +6053,7 @@ case NUMBER_KIND_##type:{ \
             case AST_minus_assignment:{
                 struct ast_binary_op *assignment = cast(struct ast_binary_op *)ast_stack_pop(context);
                 assignment->rhs = maybe_load_address_for_array_or_function(context, operand);
+                assignment->rhs = maybe_insert_cast_from_special_int_to_int(context, assignment->rhs);
                 
                 if(!check_binary_for_basic_types(context, assignment, CHECK_basic)) return operand;
                 
