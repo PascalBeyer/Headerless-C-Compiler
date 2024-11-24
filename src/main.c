@@ -4902,10 +4902,9 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                                     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
                                         report_error(context, function->base.token, "A referenced function marked '__declspec(dllexport)' must be defined."); // :Error
                                         report_error(context, node->at->token, "... Here the function was referenced.");
-                                        return;
+                                    }else{
+                                        lookup_declaration_in_libraries(context, &function->as_decl, node->at->token);
                                     }
-                                    
-                                    lookup_declaration_in_libraries(context, &function->as_decl, node->at->token);
                                 }
                             }else if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
                                 work_queue_push_work(context, &globals.work_queue_emit_code, function);
