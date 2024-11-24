@@ -2,7 +2,6 @@
 #pragma once
 
 #define __CRTDECL
-#define _VCRTIMP __declspec(dllimport)
 
 #include <sal.h>
 #include <stdarg.h>
@@ -21,7 +20,26 @@
 #define _CRT_WIDE_INTERNAL(a) L##a
 #define _CRT_WIDE(a) _CRT_WIDE_INTERNAL(a)
 
-#define _CRT_DECLARE_NONSTDC_NAMES 1
+#ifdef __HLC_COMPILE_TO_OBJECT__
+
+#ifdef _DLL
+#define _VCRTIMP __declspec(dllimport)
+#else 
+#define _VCRTIMP
+#endif
+
+#else // !__HLC_COMPILE_TO_OBJECT__
+
+// We don't want them to declared the old names things as we want to define them in
+// `runtime.c`, which is #pragma compilation_unit from `vcruntime_string.h`.
+#define _CRT_DECLARE_NONSTDC_NAMES 0
+
+// We want to import all things when we compiling to an exe.
+// Otherwise, let the normal crt code paths decide.
+#define _ACRTIMP __declspec(dllimport)
+#define _VCRTIMP __declspec(dllimport)
+#define _DCRTIMP __declspec(dllimport)
+#endif
 
 #define __crt_countof(array) (sizeof(array) / sizeof((array)[0]))
 
