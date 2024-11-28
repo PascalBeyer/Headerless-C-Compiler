@@ -4538,7 +4538,7 @@ case NUMBER_KIND_##type:{ \
             
             struct ast *choice = parse_expression(context, /*skip_comma_expression*/1);
             choice = maybe_load_address_for_array_or_function(context, choice);
-            choice = maybe_insert_cast_from_special_int_to_int(context, choice); // @note: For now, do not do this for _Atomic integer types, as I currently use _Atomic integer types in <stdatomic.h>.
+            choice = maybe_insert_cast_from_special_int_to_int(context, choice);
             
             struct ast *default_expression = null;
             struct ast *choosen_expression = null;
