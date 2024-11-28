@@ -30,10 +30,6 @@
 
 #else // !__HLC_COMPILE_TO_OBJECT__
 
-// We don't want them to declared the old names things as we want to define them in
-// `runtime.c`, which is #pragma compilation_unit from `vcruntime_string.h`.
-#define _CRT_DECLARE_NONSTDC_NAMES 0
-
 // We want to import all things when we compiling to an exe.
 // Otherwise, let the normal crt code paths decide.
 #define _ACRTIMP __declspec(dllimport)

@@ -1736,9 +1736,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
             if(decl_extended_attributes != redecl_extended_attributes){
                 
                 char *attribute = null;
-                if((decl_extended_attributes & DECLARATION_FLAGS_is_dllimport) != (redecl_extended_attributes & DECLARATION_FLAGS_is_dllimport)){
-                    attribute = "__declspec(dllimport)";
-                }else if((decl_extended_attributes & DECLARATION_FLAGS_is_thread_local) != (redecl_extended_attributes & DECLARATION_FLAGS_is_thread_local)){
+                
+                if((decl_extended_attributes & DECLARATION_FLAGS_is_thread_local) != (redecl_extended_attributes & DECLARATION_FLAGS_is_thread_local)){
                     attribute = "_Thread_local";
                 }
                 
@@ -1752,15 +1751,21 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                         attribute = "__declspec(selectany)";
                     }else if((decl_extended_attributes & DECLARATION_FLAGS_is_dllexport) != (redecl_extended_attributes & DECLARATION_FLAGS_is_dllexport)){
                         attribute = "__declspec(dllexport)";
+                    }else if((decl_extended_attributes & DECLARATION_FLAGS_is_dllimport) != (redecl_extended_attributes & DECLARATION_FLAGS_is_dllimport)){
+                        attribute = "__declspec(dllimport)";
                     }
                     
-                    assert(attribute);
-                    begin_error_report(context);
-                    report_warning(context, WARNING_declaration_differs_in_attribute, decl->base.token, "[%lld] Redeclaration differs in %s attribute.", decl->compilation_unit->index, attribute);
-                    report_warning(context, WARNING_declaration_differs_in_attribute, redecl->base.token, "[%lld] ... Here was the previous declaration.", redecl->compilation_unit->index);
-                    end_error_report(context);
                     
-                    redecl->flags |= decl_extended_attributes;
+                    if(attribute){
+                        begin_error_report(context);
+                        report_warning(context, WARNING_declaration_differs_in_attribute, decl->base.token, "[%lld] Redeclaration differs in %s attribute.", decl->compilation_unit->index, attribute);
+                        report_warning(context, WARNING_declaration_differs_in_attribute, redecl->base.token, "[%lld] ... Here was the previous declaration.", redecl->compilation_unit->index);
+                        end_error_report(context);
+                        
+                        redecl->flags |= decl_extended_attributes;
+                    }
+                    
+                    if((decl_extended_attributes & DECLARATION_FLAGS_is_dllimport) != (redecl_extended_attributes & DECLARATION_FLAGS_is_dllimport)) redecl->flags &= ~DECLARATION_FLAGS_is_dllimport;
                 }
             }
             
