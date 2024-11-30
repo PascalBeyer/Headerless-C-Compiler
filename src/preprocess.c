@@ -4066,28 +4066,38 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         
                         eat_whitespace_and_comments(context);
                         struct token *pragma_comment_directive = expect_token_raw(context, pragma_directive, TOKEN_identifier, "Expected a directive after '#pragma comment('.");
+                        
+                        struct token *string_literal = null;
+                        
+                        eat_whitespace_and_comments(context);
+                        if(peek_token_eat_raw(context, TOKEN_comma)){
+                            
+                            eat_whitespace_and_comments(context);
+                            string_literal = expect_token_raw(context, pragma_comment_directive, TOKEN_string_literal, "Expected a string literal after '#pragma comment(lib, '.");
+                            if(string_literal->type != TOKEN_string_literal) string_literal = null;
+                            
+                            eat_whitespace_and_comments(context);
+                        }
+                        
+                        expect_token_raw(context, pragma_comment_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma comment(<comment-type>, \"<comment>\"'.");
+                        
+                        
                         if(string_match(pragma_comment_directive->string, string("lib"))){
                             
                             // e.g.: #pragma comment(lib, "Shell32.lib")
                             
-                            eat_whitespace_and_comments(context);
-                            expect_token_raw(context, pragma_comment_directive, TOKEN_comma, "Expected a ',' after '#pragma comment(lib'.");
-                            
-                            eat_whitespace_and_comments(context);
-                            struct token *string_literal = expect_token_raw(context, pragma_comment_directive, TOKEN_string_literal, "Expected a string literal after '#pragma comment(lib, '.");
-                            
-                            eat_whitespace_and_comments(context);
-                            expect_token_raw(context, pragma_comment_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma comment(lib, \"<.lib>\"'.");
-                            
-                            if(string_literal->type == TOKEN_string_literal){
+                            // peek_token_eat_raw(context, pragma_comment_directive, TOKEN_comma, "Expected a ',' after '#pragma comment(lib'.")
+                            if(!string_literal){
+                                report_error(context, pragma_comment_directive, "Expected a comment argument for #pragma comment(lib, \"<comment-argument>\").");
+                            }else{
                                 struct string library = strip_prefix_and_quotes(string_literal->string);
                                 
                                 if(!string_match(get_file_extension(library), string(".lib"))){
                                     library = string_concatenate(context->arena, library, string(".lib"));
                                 }
                                 
-                                static struct ticket_spinlock pragma_comment_spinlock = {0};
-                                ticket_spinlock_lock(&pragma_comment_spinlock);
+                                static struct ticket_spinlock pragma_comment_lib_spinlock = {0};
+                                ticket_spinlock_lock(&pragma_comment_lib_spinlock);
                                 
                                 int found = 0;
                                 for(struct library_node *library_node = globals.libraries.first; library_node; library_node = library_node->next){
@@ -4126,9 +4136,57 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                         report_error(context, string_literal, "Failed to parse library '%.*s'.", full_library_path.size, full_library_path.data);
                                     }
                                 }
-                                ticket_spinlock_unlock(&pragma_comment_spinlock);
+                                ticket_spinlock_unlock(&pragma_comment_lib_spinlock);
                             }
                             
+                        }else if(string_match(pragma_comment_directive->string, string("linker"))){
+                            
+                            if(!string_literal){
+                                report_error(context, pragma_comment_directive, "Expected a comment argument for #pragma comment(linker, \"<comment-argument>\").");
+                            }else{
+                                struct string linker_line = strip_prefix_and_quotes(string_literal->string);
+                                eat_whitespaces(&linker_line);
+                                
+                                struct string linker_switch = eat_until_char(&linker_line, ':', /*eat_delimiter*/1);
+                                if(!string_match_case_insensitive(linker_switch, string("/ALTERNATENAME:"))){
+                                    report_warning(context, WARNING_unsupported_pragma, string_literal, "Unsupported linker switch %.*s ignored.", linker_switch.size, linker_switch.data);
+                                }else{
+                                    eat_whitespaces(&linker_line);
+                                    
+                                    struct atom identifier = atom_for_string(eat_identifier(&linker_line));
+                                    if(!linker_line.size || linker_line.data[0] != '='){
+                                        report_error(context, string_literal, "Could not find '=' after '%.*s' in /ALTERNATENAME linker switch.", identifier.size, identifier.data);
+                                    }else{
+                                        string_eat_front(&linker_line, 1);
+                                        
+                                        struct atom alias = atom_for_string(eat_identifier(&linker_line));
+                                        if(linker_line.size){
+                                            report_warning(context, WARNING_unsupported_pragma, string_literal, "Junk '%.*s' after linker switch %.*s%.*s=%.*s ignored.", linker_line.size, linker_line.data, linker_switch.size, linker_switch.data, identifier.size, identifier.data, alias.size, alias.data);
+                                        }
+                                        
+                                        static struct ticket_spinlock pragma_comment_linker_spinlock = {0};
+                                        ticket_spinlock_lock(&pragma_comment_linker_spinlock);
+                                        
+                                        struct alternate_name *name = globals.alternate_names.first;
+                                        for(; name; name = name->next){
+                                            if(atoms_match(name->source, identifier) && atoms_match(name->destination, alias)){
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if(!name){
+                                            name = push_struct(context->arena, struct alternate_name);
+                                            name->token = string_literal;
+                                            name->source = identifier;
+                                            name->destination = alias;
+                                            
+                                            sll_push_back(globals.alternate_names, name);
+                                        }
+                                        
+                                        ticket_spinlock_unlock(&pragma_comment_linker_spinlock);
+                                    }
+                                }
+                            }
                         }else{
                             report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsupported '#pragma comment(%.*s, ...)' ignored.", pragma_comment_directive->string.size, pragma_comment_directive->string.data);
                         }

@@ -781,9 +781,17 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     for(struct library_node *library_node = globals.libraries.first; library_node; library_node = library_node->next){
         struct string file_name = strip_file_path(library_node->path);
         
-        string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\""));
-        string_list_postfix(&directives, scratch, file_name);
-        string_list_postfix(&directives, scratch, string("\" "));
+        string_list_postfix_no_copy(&directives, scratch, string("/DEFAULTLIB:\""));
+        string_list_postfix_no_copy(&directives, scratch, file_name);
+        string_list_postfix_no_copy(&directives, scratch, string("\" "));
+    }
+    
+    for(struct alternate_name *alternate_name = globals.alternate_names.first; alternate_name; alternate_name = alternate_name->next){
+        string_list_postfix_no_copy(&directives, scratch, string("/ALTERNATENAME:"));
+        string_list_postfix_no_copy(&directives, scratch, alternate_name->source.string);
+        string_list_postfix_no_copy(&directives, scratch, string("="));
+        string_list_postfix_no_copy(&directives, scratch, alternate_name->destination.string);
+        string_list_postfix_no_copy(&directives, scratch, string(" "));
     }
     
     // :DeclarationTableLoop

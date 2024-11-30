@@ -318,7 +318,6 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     // remember that, but keep on searching.
     // 
     
-    struct string identifier = declaration->identifier->string;
     struct string object_file_library_name = {0};
     struct string import_library_name = {0};
     
@@ -326,24 +325,43 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     struct coff_file_header *coff_file_header = 0;
     u64 coff_file_size = 0;
     
-    for(struct library_node *library = globals.libraries.first; library; library = library->next){
-        
-        struct ar_symbol_lookup found = ar_lookup_symbol(library, identifier);
-        if(found.lookup_result == AR_SYMBOL_LOOKUP_failed) continue;
-        
-        if(found.lookup_result == AR_SYMBOL_LOOKUP_import_header){
-            ar_import_header = found.ar_import_header;
-            import_library_name = library->path;
-            break;
-        }else{
-            object_file_library_name = library->path;
-            if(!is_dll_import){
-                coff_file_header = found.coff_file_header;
-                coff_file_size = found.file_size;
+    struct atom identifier = declaration->identifier->atom;
+    
+    
+    while(true){
+        for(struct library_node *library = globals.libraries.first; library; library = library->next){
+            
+            struct ar_symbol_lookup found = ar_lookup_symbol(library, identifier.string);
+            if(found.lookup_result == AR_SYMBOL_LOOKUP_failed) continue;
+            
+            if(found.lookup_result == AR_SYMBOL_LOOKUP_import_header){
+                ar_import_header = found.ar_import_header;
+                import_library_name = library->path;
                 break;
+            }else{
+                object_file_library_name = library->path;
+                if(!is_dll_import){
+                    coff_file_header = found.coff_file_header;
+                    coff_file_size = found.file_size;
+                    break;
+                }
             }
         }
+        
+        if(!ar_import_header && !object_file_library_name.data){
+            struct alternate_name *alternate_name = globals.alternate_names.first;
+            for(; alternate_name; alternate_name = alternate_name->next){
+                if(atoms_match(alternate_name->source, identifier)){ // @cleanup: Cycles?
+                    identifier = alternate_name->destination;
+                    break;
+                }
+            }
+            if(alternate_name == null) break;  // @cleanup: In the below also report on alternate names being used.
+        }else{
+            break;
+        }
     }
+    
     
     if(!ar_import_header && !object_file_library_name.data){
         // We have not found the symbol.
@@ -413,7 +431,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     //        lookup table.
     
     struct dll_import_node *import_node = push_struct(context->arena, struct dll_import_node);
-    import_node->import_name  = identifier;
+    import_node->import_name  = identifier.string;
     import_node->ordinal_hint = ar_import_header->ordinal_hint;
     
     sll_push_back(dll_node->import_list, import_node);

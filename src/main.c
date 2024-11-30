@@ -338,6 +338,14 @@ struct compilation_unit{
     
 };
 
+// for #pragma comment(linker, "/ALTERNATENAME:strdup=_strdup")
+struct alternate_name{
+    struct alternate_name *next;
+    struct token *token;
+    struct atom source;
+    struct atom destination;
+};
+
 struct keyword_table_entry{
     struct atom keyword;
     enum token_type type;
@@ -405,6 +413,11 @@ static struct{
         struct library_node *last;
         smm amount;
     } libraries;
+    
+    struct {
+        struct alternate_name *first;
+        struct alternate_name *last;
+    } alternate_names; // maybe weak aliases?
     
     struct string_list library_paths;
     
@@ -4512,6 +4525,39 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     assert(globals.work_queue_parse_global_scope_entries.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
+    
+    // #pragma comment(linker, "/ALTERNATENAME:strdup=_strdup").
+    for(struct alternate_name *alternate_name = globals.alternate_names.first; alternate_name; alternate_name = alternate_name->next){
+        struct ast_declaration *source = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->source);
+        
+        // @cleanup: Maybe we cannot error on this, and don't really need it.
+        // if(!source){
+        //     report_error(context, alternate_name->token, "Could not find source symbol '%.*s' in /ALTERNATENAME directive.", alternate_name->source.size, alternate_name->source.data);
+        //     continue;
+        // }
+        
+        struct ast_declaration *destination = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->destination);
+        if(source && destination){
+            if(!types_are_equal(source->type, destination->type)){
+                struct string source_type = push_type_string(context->arena, &context->scratch, source->type);
+                struct string destination_type = push_type_string(context->arena, &context->scratch, destination->type);
+                
+                begin_error_report(context);
+                report_error(context, alternate_name->token, "/ALTERNATENAME source and destination have mismatching type.", alternate_name->source.size, alternate_name->source.data);
+                report_error(context, source->identifier, "Source has type '%.*s'.", source_type.size, source_type.data);
+                report_error(context, destination->identifier, "Destination has type '%.*s'.", destination_type.size, destination_type.data);
+                end_error_report(context);
+            }
+        }
+        
+        if(destination && destination->assign_expr){
+            begin_error_report(context);
+            report_error(context, alternate_name->token, "/ALTERNATENAME currently does not support linking to defined identifiers.");
+            report_error(context, destination->assign_expr->token, "Here, the destination '%.*s' was defined.", alternate_name->destination.size, alternate_name->destination.data);
+            end_error_report(context);
+            continue;
+        }
+    }
     
     if(!globals.cli_options.no_entry){
         

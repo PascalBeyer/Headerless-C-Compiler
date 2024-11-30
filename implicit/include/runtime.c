@@ -222,45 +222,4 @@ wchar_t *wcsrchr(wchar_t *haystack, wchar_t needle){
     return end >= haystack ? end : 0;
 }
 
-//_____________________________________________________________________________________________________________________
-// Old names:
-// 
-// This is another fun Microsoft special.
-// They have an 'oldnames.lib' to remap a bunch of functions to versions,
-// that start with an underscore:
-// 
-//     strdup -> _strdup
-//     
-// This is because, after C was standardized, they changed all of the unix/posix functions
-// they had, but that did not make it into the C standard.
-// To do this remapping (prefixing with an underscore) they use a library, which (of cause)
-// ships with the compiler and not the ucrt.
-// 
-// Hence, we cannot use this library and are forced to do the remapping ourselves.
-// The bright side of this is that it will make me reimplement the headers myself.
-// The sad side of it is that for now here is an ugly hack.
-// 
-
-#ifdef strdup
-#undef strdup
-#endif
-__declspec(dllimport) char *_strdup(char *str);
-char *strdup(char *str){ return _strdup(str); }
-
-#ifdef getcwd
-#undef getcwd
-#endif
-__declspec(dllimport) char *_getcwd(char *buffer, int maxlen);
-char *getcwd(char *buffer, int maxlen){
-    return getcwd(buffer, maxlen);
-}
-
-#ifdef rmdir
-#undef rmdir
-#endif
-__declspec(dllimport) int _rmdir(const char *dirname);
-int rmdir(const char *dirname){
-    return _rmdir(dirname);
-}
-
 #endif

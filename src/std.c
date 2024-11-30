@@ -1222,12 +1222,13 @@ func struct string eat_whitespaces_and_newlines(struct string *a){
 func struct string eat_identifier(struct string *a){
     smm i = 0;
     for(; i < a->length; i++){
-        int is_ascii_letter = ('a' <= a->data[i] && a->data[i] < 'z') || ('A' <= a->data[i] && a->data[i] < 'Z');
-        int is_number       = ('0' <= a->data[i] && a->data[i] < '9');
+        int is_ascii_letter = ('a' <= a->data[i] && a->data[i] <= 'z') || ('A' <= a->data[i] && a->data[i] <= 'Z');
+        int is_number       = ('0' <= a->data[i] && a->data[i] <= '9');
         int is_underscore   = a->data[i] == '_';
+        int is_doller       = a->data[i] == '$';
         int is_unicode      = a->data[i] >= 128;
         
-        if(!is_ascii_letter && !is_number && !is_underscore && !is_unicode) break;
+        if(!is_ascii_letter && !is_number && !is_underscore && !is_doller && !is_unicode) break;
     }
     struct string ret = create_string(a->data, i);
     string_eat_front(a, i);
