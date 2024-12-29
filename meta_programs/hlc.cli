@@ -524,3 +524,10 @@ Example:
 > int d;                       // warning: Redeclaration differs int __declspec(selectany) attribute.
 
 In either case, the variable is treated as an export.
+
+-> ALTERNATENAME_type_mismatch - Mismatching types between the source and destination of a /ALTERNATENAME.
+
+Example:
+> void a(int);
+> void b(float);
+> #pragma comment(linker, "/ALTERNATENAME:a=b")

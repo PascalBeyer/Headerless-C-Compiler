@@ -862,7 +862,7 @@ int main(int argc, char *argv[]){
     print("struct warning_table_entry{\n");
     print("    struct string canonicalized_name;\n");
     print("    enum warning warning_kind;\n");
-    print("} warning_table[0x%llx] = {\n", option_table_capacity);
+    print("} warning_table[0x%llx] = {\n", warning_table_capacity);
     
     for(struct enum_member *warning = warning_option->enum_members; warning; warning = warning->next){
         char *canonicalized_name_data = malloc(warning->name.size + 1);

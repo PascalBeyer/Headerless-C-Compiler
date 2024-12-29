@@ -170,6 +170,7 @@ enum warning{
     WARNING_integer_literal_too_large_to_be_signed       = 37, // We found an integer literal that exceeds the maximum for a signed value.
     WARNING_reference_to_dllimport_inserts_stub          = 38, // A __declspec(dllimport) function was referenced in a constant initializer.
     WARNING_declaration_differs_in_attribute             = 39, // One but not all declarations of a variable is marked with an extended attribute.
+    WARNING_ALTERNATENAME_type_mismatch                  = 40, // Mismatching types between the source and destination of a /ALTERNATENAME.
 };
 
 struct cli_options{
@@ -215,14 +216,14 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 40
+#define WARNING_count 41
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
 struct warning_table_entry{
     struct string canonicalized_name;
     enum warning warning_kind;
-} warning_table[0x80] = {
+} warning_table[0x40] = {
     [15] = {{28, (u8 *)"missingnewlineafterbackslash"}, WARNING_missing_newline_after_backslash},
     [46] = {{18, (u8 *)"junkafterdirective"}, WARNING_junk_after_directive},
     [17] = {{19, (u8 *)"compiletimeoverflow"}, WARNING_compile_time_overflow},
@@ -262,6 +263,7 @@ struct warning_table_entry{
     [1] = {{32, (u8 *)"integerliteraltoolargetobesigned"}, WARNING_integer_literal_too_large_to_be_signed},
     [54] = {{31, (u8 *)"referencetodllimportinsertsstub"}, WARNING_reference_to_dllimport_inserts_stub},
     [61] = {{29, (u8 *)"declarationdiffersinattribute"}, WARNING_declaration_differs_in_attribute},
+    [30] = {{25, (u8 *)"alternatenametypemismatch"}, WARNING_ALTERNATENAME_type_mismatch},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -811,7 +813,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "integer_literal_too_large_to_be_signed (37)| We found an integer literal that exceeds the maximum for a signed value.\n"
                                 "reference_to_dllimport_inserts_stub (38)| A __declspec(dllimport) function was referenced in a constant initializer.\n"
                                 "declaration_differs_in_attribute (39)   | One but not all declarations of a variable is marked with an extended attribute.\n"
-                                , 4093);
+                                "ALTERNATENAME_type_mismatch (40)        | Mismatching types between the source and destination of a /ALTERNATENAME.\n"
+                                , 4209);
                     }
                 }break;
                 invalid_default_case();

@@ -4530,22 +4530,16 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     for(struct alternate_name *alternate_name = globals.alternate_names.first; alternate_name; alternate_name = alternate_name->next){
         struct ast_declaration *source = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->source);
         
-        // @cleanup: Maybe we cannot error on this, and don't really need it.
-        // if(!source){
-        //     report_error(context, alternate_name->token, "Could not find source symbol '%.*s' in /ALTERNATENAME directive.", alternate_name->source.size, alternate_name->source.data);
-        //     continue;
-        // }
-        
         struct ast_declaration *destination = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->destination);
-        if(source && destination){
+        if(warning_enabled[WARNING_ALTERNATENAME_type_mismatch] && source && destination){
             if(!types_are_equal(source->type, destination->type)){
                 struct string source_type = push_type_string(context->arena, &context->scratch, source->type);
                 struct string destination_type = push_type_string(context->arena, &context->scratch, destination->type);
                 
                 begin_error_report(context);
-                report_error(context, alternate_name->token, "/ALTERNATENAME source and destination have mismatching type.", alternate_name->source.size, alternate_name->source.data);
-                report_error(context, source->identifier, "Source has type '%.*s'.", source_type.size, source_type.data);
-                report_error(context, destination->identifier, "Destination has type '%.*s'.", destination_type.size, destination_type.data);
+                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, alternate_name->token, "/ALTERNATENAME source and destination have mismatching type.", alternate_name->source.size, alternate_name->source.data);
+                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, source->identifier, "Source has type '%.*s'.", source_type.size, source_type.data);
+                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, destination->identifier, "Destination has type '%.*s'.", destination_type.size, destination_type.data);
                 end_error_report(context);
             }
         }
