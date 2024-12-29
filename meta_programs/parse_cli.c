@@ -1170,8 +1170,16 @@ int main(int argc, char *argv[]){
     for(struct option *option = options; option; option = option->next){
         
         if(option->option_argument_type == CLI_ARGUMENT_TYPE_none){
-            // This was a flag style argument.
-            print("            case CLI_OPTION_%.*s: cli_options->%.*s = 1; break;\n", option->option_name.size, option->option_name.data, option->option_name.size, option->option_name.data);
+            
+            
+            if(string_match(option->option_name, string("Wall"))){
+                print("            case CLI_OPTION_%.*s: memset(warning_enabled, 1, sizeof(warning_enabled)); break;\n", option->option_name.size, option->option_name.data);
+            }else if(string_match(option->option_name, string("Wnone"))){
+                print("            case CLI_OPTION_%.*s: memset(warning_enabled, 0, sizeof(warning_enabled)); break;\n", option->option_name.size, option->option_name.data);
+            }else{
+                // This was a flag style argument.
+                print("            case CLI_OPTION_%.*s: cli_options->%.*s = 1; break;\n", option->option_name.size, option->option_name.data, option->option_name.size, option->option_name.data);
+            }
             continue;
         }
         

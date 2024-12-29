@@ -930,8 +930,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_D:{
                 string_list_postfix(&cli_options->D, arena, argument_string);
             }break;
-            case CLI_OPTION_Wall: cli_options->Wall = 1; break;
-            case CLI_OPTION_Wnone: cli_options->Wnone = 1; break;
+            case CLI_OPTION_Wall: memset(warning_enabled, 1, sizeof(warning_enabled)); break;
+            case CLI_OPTION_Wnone: memset(warning_enabled, 0, sizeof(warning_enabled)); break;
             
             case CLI_OPTION_W:{
                 int is_number = 1;
