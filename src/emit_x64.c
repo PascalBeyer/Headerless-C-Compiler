@@ -2818,6 +2818,20 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 assert(loc->size == 8);
                 struct emit_location *immediate = emit_location_immediate(context, size, is_big ? 4 : 1);
                 emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(inst), reg_inst, loc, immediate);
+            }else if(op->base.resolved_type == &globals.typedef_Bool){
+                
+                // 
+                // For _Bool we want the following:
+                //  ++arst: mov [arst], 1
+                //  --arst: xor [arst], 1
+                
+                struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
+                
+                if(ast->kind == AST_unary_predec){
+                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM8_IMMIDIATE8), REG_OPCODE_XOR, loc, immediate);
+                }else{
+                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(MOVE_REGM8_IMMEDIATE8), 0, loc, immediate);
+                }
             }else if(op->base.resolved_type->kind == AST_integer_type){
                 u8 inst = (ast->kind == AST_unary_preinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
                 u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
@@ -2866,6 +2880,8 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             
             return emit_load(context, loc);
         }break;
+        
+        // @cleanup: This should be unified with the pre{*} case.
         case AST_unary_postdec:
         case AST_unary_postinc:{
             struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
@@ -2888,6 +2904,20 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 assert(loc->size == 8);
                 struct emit_location *immediate = emit_location_immediate(context, size, is_big ? 4 : 1);
                 emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(inst), reg_inst, loc, immediate);
+            }else if(op->base.resolved_type == &globals.typedef_Bool){
+                
+                // 
+                // For _Bool we want the following:
+                //  ++arst: mov [arst], 1
+                //  --arst: xor [arst], 1
+                
+                struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
+                
+                if(ast->kind == AST_unary_postdec){
+                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM8_IMMIDIATE8), REG_OPCODE_XOR, loc, immediate);
+                }else{
+                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(MOVE_REGM8_IMMEDIATE8), 0, loc, immediate);
+                }
             }else if(op->base.resolved_type->kind == AST_integer_type){
                 u8 inst = (ast->kind == AST_unary_postinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
                 u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;

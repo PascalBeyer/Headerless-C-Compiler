@@ -4603,13 +4603,6 @@ case NUMBER_KIND_##type:{ \
         struct token *test = next_token(context);
         switch(test->type){
             case TOKEN_increment:{
-                if(operand->resolved_type == &globals.typedef_Bool){
-                    // :Error 
-                    // @cleanup: C allows these.
-                    report_error(context, test, "Operand of type '_Bool' cannot be incremented.");
-                    return operand;
-                }
-                
                 struct ast *inc = ast_push_unary_expression(context, AST_unary_postinc, test, operand);
                 if(!check_unary_for_basic_types(context, operand, CHECK_basic, test)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand, "++")) return operand;
@@ -4620,13 +4613,6 @@ case NUMBER_KIND_##type:{ \
                 context->in_lhs_expression = false;
             }break;
             case TOKEN_decrement:{
-                if(operand->resolved_type == &globals.typedef_Bool){
-                    // :Error
-                    // @cleanup: C allows these.
-                    report_error(context, test, "Operand of type '_Bool' cannot be decremented.");
-                    return operand;
-                }
-                
                 struct ast *dec = ast_push_unary_expression(context, AST_unary_postdec, test, operand);
                 if(!check_unary_for_basic_types(context, operand, CHECK_basic, test)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand, "--")) return operand;
@@ -5115,14 +5101,6 @@ case NUMBER_KIND_##type:{ \
             case AST_unary_preinc:{
                 struct ast *prefix = ast_stack_pop(context);
                 struct ast_unary_op *op = (struct ast_unary_op *)prefix;
-                
-                // @note: no need to integer promote
-                if(operand->resolved_type == &globals.typedef_Bool){
-                    // :Error
-                    char *operation_string = (prefix->kind == AST_unary_preinc) ? "incremented" : "decremented";
-                    report_error(context, prefix->token, "Operand of type _Bool cannot be %s.", operation_string);
-                    return operand;
-                }
                 
                 if(!check_unary_for_basic_types(context, operand, CHECK_basic, op->base.token)) return operand;
                 char *token_string = (prefix->kind == AST_unary_preinc) ? "++" : "--";
