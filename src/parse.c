@@ -165,9 +165,9 @@ func struct ast *ast_push_u64_literal(struct context *context, struct token *tok
     lit->_u64 = value;
     
     struct ast *defined_type = null;
-    if(value < max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
-    else if(value < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
-    else if(value < max_u32) defined_type = (struct ast *)&globals.typedef_u32;
+    if(value <= max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
+    else if(value <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+    else if(value <= max_u32) defined_type = (struct ast *)&globals.typedef_u32;
     
     set_resolved_type(&lit->base, &globals.typedef_u64, defined_type);
     return &lit->base;
@@ -181,8 +181,8 @@ func struct ast *ast_push_s32_literal(struct context *context, struct token *tok
     lit->_s32 = (s32)value;
     
     struct ast *defined_type = null;
-    if(value < max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
-    else if(value < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+    if(value <= max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
+    else if(value <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
     
     set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
     return &lit->base;
@@ -2547,9 +2547,9 @@ switch(op->base.kind){                                                         \
 #undef __perform_integer_operation
     
     struct ast *defined_type = null;
-    if(value < max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
-    else if(value < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
-    else if(value < max_u32) defined_type = (struct ast *)&globals.typedef_u32;
+    if(value <= max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
+    else if(value <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+    else if(value <= max_u32) defined_type = (struct ast *)&globals.typedef_u32;
     
     set_resolved_type(&lhs->base, promoted_type, defined_type);
     return &lhs->base;
@@ -4143,8 +4143,8 @@ case NUMBER_KIND_##type:{ \
                     if(val <= max_s32){
                         struct ast *defined_type = 0;
                         
-                        if(val < max_u8) defined_type = (struct ast *)&globals.typedef_u8;
-                        else if(val < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+                        if(val <= max_u8) defined_type = (struct ast *)&globals.typedef_u8;
+                        else if(val <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
                         
                         lit->_s32 = (s32)val;
                         set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
@@ -4152,7 +4152,7 @@ case NUMBER_KIND_##type:{ \
                     }
                 } // fallthrough
                 case NUMBER_KIND_long_long:{
-                    if(val < max_s64){
+                    if(val <= max_s64){
                         lit->_s64 = (s64)val;
                         set_resolved_type(&lit->base, &globals.typedef_s64, null);
                         break;
@@ -4224,8 +4224,8 @@ case NUMBER_KIND_##type:{ \
                     if(val <= max_s32){
                         
                         struct ast *defined_type = 0;
-                        if(val < max_u8) defined_type = (struct ast *)&globals.typedef_u8;
-                        else if(val < max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+                        if(val <= max_u8) defined_type = (struct ast *)&globals.typedef_u8;
+                        else if(val <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
                         
                         lit->_s32 = (s32)val;
                         set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
