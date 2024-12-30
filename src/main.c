@@ -1686,7 +1686,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
     if(scope){
         parser_register_declaration_in_scope(context, scope, decl);
         
-        if((warning_enabled[WARNING_shadowing_local] || warning_enabled[WARNING_shadowing_global]) && should_report_warning_for_token(context, decl->base.token)){
+        if((warning_enabled[WARNING_shadowing_local] || warning_enabled[WARNING_shadowing_global]) && !(scope->flags & SCOPE_FLAG_is_function_scope) && should_report_warning_for_token(context, decl->base.token)){
             struct ast_declaration *redecl = lookup_declaration(scope->parent, context->current_compilation_unit, decl->identifier->atom);
             
             if(redecl){
