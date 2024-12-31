@@ -1801,6 +1801,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                         report_error(context, decl->base.token, "[%lld] Redeclaration of enum value as '%d'.", decl->compilation_unit->index, decl_lit->_s32);
                         report_error(context, redecl->base.token, "[%lld] ... Here was the previous declaration of value '%d'.", redecl->compilation_unit->index, redecl_lit->_s32);
                         end_error_report(context);
+                        return redecl;
                     }
                 }else if(types_are_equal(redecl->type, decl->type)){
                     
