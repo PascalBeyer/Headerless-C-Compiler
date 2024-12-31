@@ -331,6 +331,7 @@ struct token_array{
 };
 
 struct token_stack_node{
+    // WARNING: We explicitly initialize all of the members of this struct in some places instead of zero initializing it.
     struct token_stack_node *next;
     struct token_array tokens;
     smm at;
@@ -772,6 +773,11 @@ struct compound_member{
     struct token *name;
     struct ast_type *type;
     struct ast *defined_type;
+    
+    // :next_member_increment
+    // 
+    // Sigh, because of :member_list_contains_both_linear_and_nested and designated initializer that might initialize union members we have to keep track of the next member that is to be initialized.
+    smm next_member_increment; 
     union{
         smm offset_in_type;
         smm enum_value;

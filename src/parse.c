@@ -1233,7 +1233,7 @@ func struct compound_member *find_member_in_compound(struct ast_compound_type *c
         }
     }
     
-    // This can probably happen for empty compounds.
+    // The ident is not part of the compound.
     return null;
 }
 
@@ -2265,14 +2265,10 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 struct ast_compound_type *compound = (struct ast_compound_type *)type;
                 struct compound_member *member = &compound->members[node->member_at];
                 
-                if(member->name == globals.invalid_identifier_token){
-                    // :member_list_contains_both_linear_and_nested
-                    // 
-                    // Skip the linear members once we are done with the nested type.
-                    struct ast_compound_type *nested_compound = (struct ast_compound_type *)member->type;
-                    node->member_at += nested_compound->amount_of_members;
-                }
-                node->member_at += 1;
+                // :next_member_increment and :member_list_contains_both_linear_and_nested
+                // 
+                // Skip the linear members once we are done with the nested type.
+                node->member_at += member->next_member_increment;
                 
                 if(!at_end && (node->member_at < compound->amount_of_members)) break;
                 
@@ -7121,17 +7117,16 @@ case TOKEN_##type_name:{                                                 \
                                         report_error(context, ident, "Redeclaration of member '%.*s'.", ident->size, ident->data);
                                     }
                                     
-                                    register_compound_member(context, compound, ident, declarator.type, offset_in_type);
+                                    register_compound_member(context, compound, ident, declarator.type, offset_in_type, /*next_member_increment*/1);
                                 }else if(declarator.type->kind != AST_struct && declarator.type->kind != AST_union){
                                     report_error(context, ident, "Declaration does not declare anything.");
                                 }else{
+                                    struct ast_compound_type *nested_compound = (struct ast_compound_type *)declarator.type;
+                                    
                                     // :member_list_contains_both_linear_and_nested
                                     // 
-                                    // First register the "anonymous" nested member, 
-                                    // then each of the members of the substructure.
-                                    register_compound_member(context, compound, declarator.ident, declarator.type, offset_in_type);
-                                    
-                                    struct ast_compound_type *nested_compound = (struct ast_compound_type *)declarator.type;
+                                    // First register the "anonymous" nested member, then each of the members of the substructure.
+                                    register_compound_member(context, compound, declarator.ident, declarator.type, offset_in_type, nested_compound->amount_of_members + /*the nested compound itself*/1);
                                     
                                     for(u32 member_index = 0; member_index < nested_compound->amount_of_members; member_index++){
                                         struct compound_member *member = &nested_compound->members[member_index];
@@ -7143,7 +7138,8 @@ case TOKEN_##type_name:{                                                 \
                                             }
                                         }
                                         
-                                        register_compound_member(context, compound, member->name, member->type, offset_in_type + member->offset_in_type);
+                                        smm next_member_increment = (nested_compound->base.kind == AST_union) ? nested_compound->amount_of_members - member_index : 1;
+                                        register_compound_member(context, compound, member->name, member->type, offset_in_type + member->offset_in_type, next_member_increment);
                                     }
                                 }
                                 
@@ -7272,7 +7268,7 @@ case TOKEN_##type_name:{                                                 \
                         
                         decl = register_declaration(context, decl);
                         
-                        register_compound_member(context, ast_enum, ident, &ast_enum->base, current_value);
+                        register_compound_member(context, ast_enum, ident, &ast_enum->base, current_value, /*next_member_increment*/0);
                         
                         current_value++;
                     }while(peek_token_eat(context, TOKEN_comma));

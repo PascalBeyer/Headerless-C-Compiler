@@ -1581,7 +1581,7 @@ func void patch_array_size(struct context *context, struct ast_array_type *array
     array_of_unknown_size->is_of_unknown_size = false;
 }
 
-func void register_compound_member(struct context *context, struct ast_compound_type *compound, struct token *ident, struct ast_type *type, smm offset_in_type){
+func void register_compound_member(struct context *context, struct ast_compound_type *compound, struct token *ident, struct ast_type *type, smm offset_in_type, smm next_member_increment){
     
     if(compound->amount_of_members == compound->current_max_amount_of_members){
         u32 new_max = max_of(2 * compound->current_max_amount_of_members, 8);
@@ -1598,6 +1598,7 @@ func void register_compound_member(struct context *context, struct ast_compound_
     compound->members[index].name = ident;
     compound->members[index].type = type;
     compound->members[index].offset_in_type = offset_in_type;
+    compound->members[index].next_member_increment = next_member_increment;
 }
 
 func void parser_register_declaration_in_scope(struct context *context, struct ast_scope *scope, struct ast_declaration *decl){
