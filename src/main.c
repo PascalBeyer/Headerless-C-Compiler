@@ -1801,7 +1801,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                         report_error(context, decl->base.token, "[%lld] Redeclaration of enum value as '%d'.", decl->compilation_unit->index, decl_lit->_s32);
                         report_error(context, redecl->base.token, "[%lld] ... Here was the previous declaration of value '%d'.", redecl->compilation_unit->index, redecl_lit->_s32);
                         end_error_report(context);
-                        return redecl;
+                        return decl;
                     }
                 }else if(types_are_equal(redecl->type, decl->type)){
                     
@@ -1873,7 +1873,11 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 return redecl;
             }
             
-            invalid_code_path;
+            begin_error_report(context);
+            report_error(context, decl->base.token, "[%lld] Redeclaration.", decl->compilation_unit->index);
+            report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration.", redecl->compilation_unit->index);
+            end_error_report(context);
+            return decl;
         }
         
         struct sleeper_table *sleeper_table = declaration_is_static ? &compilation_unit->static_sleeper_table : &globals.declaration_sleeper_table;
