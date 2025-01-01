@@ -3235,10 +3235,9 @@ func struct ast_function *get_entry_point_or_error(struct context *context){
     struct atom entry_point = globals.entry_point_name; // @cleanup: there is no reason for the entry_point to be stored in globals...
     
     struct ast_function *function = cast(struct ast_function *)ast_table_get(&globals.global_declarations, entry_point);
-    log_print("amount of global declarations %d\n", globals.global_declarations.amount_of_nodes);
+    
     if(!function){
-        char *specified_or_default = string_match(entry_point.string, string("_start")) ? "Default" : "Specified";
-        report_error(context, null, "Error: %s entry point '%.*s' not found.", specified_or_default, entry_point.length, entry_point.data);
+        report_error(context, null, "Error: Specified entry point '%.*s' not found.", entry_point.length, entry_point.data);
         globals.an_error_has_occurred = true;
         os_debug_break();
         return null;
