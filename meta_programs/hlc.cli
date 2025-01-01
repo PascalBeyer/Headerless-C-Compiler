@@ -133,6 +133,10 @@ This is the "whatever" throw some cores at it option.
 
 This makes it possible to use your own headers in <>-includes.
 
+/LIBPATH <dir_list> - Specify an additional seach path for .lib files.
+
+@incomplete:
+
 /D <name[=<text>]:string_list> - Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
 
 /Wall   - Enable all warnings.
@@ -201,10 +205,6 @@ https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-libr
 
 
 # Hidden
-
-/no_discard - Emit all functions and declarations.
-
-This option is designed for fuzzing.
 
 /dont_print_the_files - Don't print the files because we are in a test suite.
 

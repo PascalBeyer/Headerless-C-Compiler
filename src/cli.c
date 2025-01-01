@@ -26,6 +26,7 @@ enum cli_option_kind{
     CLI_OPTION_thread_count,
     CLI_OPTION_MP,
     CLI_OPTION_I,
+    CLI_OPTION_LIBPATH,
     CLI_OPTION_D,
     CLI_OPTION_Wall,
     CLI_OPTION_Wnone,
@@ -40,7 +41,6 @@ enum cli_option_kind{
     CLI_OPTION_MDd,
     CLI_OPTION_MT,
     CLI_OPTION_MTd,
-    CLI_OPTION_no_discard,
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
     CLI_OPTION_report_warnings_in_system_includes,
@@ -93,6 +93,7 @@ struct cli_option_hash_table_entry{
     [70] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
     [66] = {{2, (u8 *)"mp"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MP, -1},
     [14] = {{1, (u8 *)"i"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
+    [42] = {{7, (u8 *)"libpath"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_LIBPATH, 0},
     [9] = {{1, (u8 *)"d"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_D, 0},
     [23] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
     [12] = {{5, (u8 *)"wnone"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wnone, -1},
@@ -109,11 +110,10 @@ struct cli_option_hash_table_entry{
     [91] = {{3, (u8 *)"mdd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MDd, -1},
     [71] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
     [106] = {{3, (u8 *)"mtd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MTd, -1},
-    [60] = {{9, (u8 *)"nodiscard"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_discard, -1},
     [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
-    [42] = {{6, (u8 *)"ignore"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_ignore, 0},
+    [43] = {{6, (u8 *)"ignore"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_ignore, 0},
     [52] = {{4, (u8 *)"link"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_link, -1},
     [123] = {{7, (u8 *)"warning"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
     [78] = {{8, (u8 *)"warnings"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_warning, 0},
@@ -193,6 +193,7 @@ struct cli_options{
     u64 thread_count; // Sets the amount of threads to be used during compilation. Default: 1
     int MP; // Sets the amount of threads to the number of processors on the system.
     struct string_list I; // Specify an additional include directory.
+    struct string_list LIBPATH; // Specify an additional seach path for .lib files.
     struct string_list D; // Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
     int Wall; // Enable all warnings.
     int Wnone; // Disable all warnings.
@@ -205,7 +206,6 @@ struct cli_options{
     int MDd; // Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.
     int MT; // Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.
     int MTd; // Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.
-    int no_discard; // Emit all functions and declarations.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
@@ -633,6 +633,12 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "This makes it possible to use your own headers in <>-includes.\n"
                             "", 63);
                 }break;
+                case CLI_OPTION_LIBPATH:{
+                    print("-LIBPATH <dir_list> | Specify an additional seach path for .lib files.\n\n");
+                    os_print_string(
+                            "@incomplete:\n"
+                            "", 13);
+                }break;
                 case CLI_OPTION_D:{
                     print("-D <name[=<text>]> | Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.\n\n");
                 }break;
@@ -732,12 +738,6 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170\n"
                             "\n"
                             "", 101);
-                }break;
-                case CLI_OPTION_no_discard:{
-                    print("-no_discard | Emit all functions and declarations.\n\n");
-                    os_print_string(
-                            "This option is designed for fuzzing.\n"
-                            "", 37);
                 }break;
                 case CLI_OPTION_dont_print_the_files:{
                     print("-dont_print_the_files | Don't print the files because we are in a test suite.\n\n");
@@ -851,6 +851,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -thread_count <u64>         | Sets the amount of threads to be used during compilation. Default: 1\n"
                             "  -MP                         | Sets the amount of threads to the number of processors on the system.\n"
                             "  -I <dir_list>               | Specify an additional include directory.\n"
+                            "  -LIBPATH <dir_list>         | Specify an additional seach path for .lib files.\n"
                             "  -D <name[=<text>]>          | Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.\n"
                             "  -Wall                       | Enable all warnings.\n"
                             "  -Wnone                      | Disable all warnings.\n"
@@ -865,7 +866,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -MDd                        | Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.\n"
                             "  -MT                         | Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.\n"
                             "  -MTd                        | Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.\n"
-                    , 2432);
+                    , 2513);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -925,6 +926,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             
             case CLI_OPTION_I:{
                 string_list_postfix(&cli_options->I, arena, argument_string);
+            }break;
+            
+            case CLI_OPTION_LIBPATH:{
+                string_list_postfix(&cli_options->LIBPATH, arena, argument_string);
             }break;
             
             case CLI_OPTION_D:{
@@ -1051,7 +1056,6 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_MDd: cli_options->MDd = 1; break;
             case CLI_OPTION_MT: cli_options->MT = 1; break;
             case CLI_OPTION_MTd: cli_options->MTd = 1; break;
-            case CLI_OPTION_no_discard: cli_options->no_discard = 1; break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
             
             case CLI_OPTION_seed:{

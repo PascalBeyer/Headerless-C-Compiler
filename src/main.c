@@ -3694,7 +3694,9 @@ int main(int argc, char *argv[]){
                 string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", lib_file->string.size, lib_file->string.data));
             }
             
-            return system((char*)string_list_flatten(command, arena).data);
+            
+            
+            // return system((char*)string_list_flatten(command, arena).data);
         }
         
         print("Error: No input files specified.\n");
@@ -3769,6 +3771,9 @@ int main(int argc, char *argv[]){
     struct string um_library_path   = push_format_string(arena, "%.*s\\Lib\\%llu.%llu.%llu.%llu\\um\\x64\\",   windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
     struct string ucrt_library_path = push_format_string(arena, "%.*s\\Lib\\%llu.%llu.%llu.%llu\\ucrt\\x64\\", windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
     
+    
+    globals.library_paths = globals.cli_options.LIBPATH;
+    
     // @note: For now we always add the library paths, even if 'no_standard_library'.
     // @cleanup: There is no reason for library_paths to be global anymore.
     string_list_add_uniquely(&globals.library_paths, arena, working_directory);
@@ -3809,7 +3814,7 @@ int main(int argc, char *argv[]){
                     print("    %.*s\n", library_path_node->string.size, library_path_node->string.data);
                 }
                 print("\n");
-                // @cleanup: Adding to the 'library_paths'.
+                print("You can add your own library search paths using /LIBPATH option.\n");
                 return 1;
             }
         }
@@ -4559,6 +4564,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         }
     }
     
+    struct string_list attempted_entry_point_string_list = {};
+    
     if(!globals.cli_options.no_entry){
         
         // 
@@ -4593,6 +4600,12 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             if(globals.cli_options.entry.data && !string_match(table[index].entry_point_name, globals.cli_options.entry)) continue;
             
             struct atom atom = atom_for_string(table[index].entry_point_name);
+            
+            if(attempted_entry_point_string_list.amount_of_strings){
+                string_list_postfix(&attempted_entry_point_string_list, arena, string(", "));
+            }
+            string_list_postfix(&attempted_entry_point_string_list, arena, atom.string);
+            
             
             if(!globals.cli_options.entry.data){
                 struct ast_declaration *declaration = (struct ast_declaration *)ast_table_get(&globals.global_declarations, atom);
@@ -4666,10 +4679,10 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                 // For dlls it should be legal to not have an entry point.
                 globals.cli_options.no_entry = 1;
             }else{
-                // @cleanup: We cannot immediately report an error here, as we want to report undeclared identifiers and such.
-                //           We are only supposed to print this error after we made sure there are no other errors at global scope.
-                //           Hence, I am currently relying on the old system to produce an error message.
-                globals.entry_point_name = atom_for_string(string("_start"));
+                // :DelayCouldNotFindEntryPoint
+                // 
+                // We cannot immediately report an error here, as we want to report undeclared identifiers and such.
+                // We are only supposed to print this error after we made sure there are no other errors at global scope.
             }
         }
         
@@ -4756,272 +4769,252 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     // at this point all parsing is complete and there should not really be any errors anymore.
     
     globals.compile_stage = COMPILE_STAGE_emit_code;
-    if(globals.cli_options.no_discard){
-        // 
-        // Only really here for fuzzing...
-        // We emit code for every function.
-        // 
+    
+    // compute reachability information    :only_emit_functions_that_are_reachable_from_main
+    // 
+    // Do a depth first search on the call graph to compute
+    // what is reachable from 'entry_point'.        
+    // 
+    
+    if(!globals.cli_options.no_entry){
         
-        if(!globals.cli_options.no_entry){
-            globals.entry_point = get_entry_point_or_error(context);
-            if(globals.an_error_has_occurred) goto end;
+        struct atom entry_point = globals.entry_point_name;
+        
+        if(!entry_point.data){
+            // :DelayCouldNotFindEntryPoint
+            // 
+            // We have waited until here to report errors, because we wanted to possibly report undeclared identifiers 
+            // which were responsible for no entry point.
+            
+            
+            char *file_type;
+            switch(globals.output_file_type){
+                case OUTPUT_FILE_unset: file_type = "unspecified file type"; break;
+                case OUTPUT_FILE_exe: file_type = "file type '.exe'"; break;
+                case OUTPUT_FILE_dll: file_type = "file type '.dll'"; break;
+                case OUTPUT_FILE_efi: file_type = "file type '.efi'"; break;
+                default: file_type = "???"; break;
+            }
+            
+            char *subsystem;
+            switch((int)globals.subsystem){
+                case 0: subsystem = "unspecified 'subsystem'"; break;
+                case SUBSYSTEM_console: subsystem = "subsystem 'console'"; break;
+                case SUBSYSTEM_windows: subsystem = "subsystem 'windows'"; break;
+                case SUBSYSTEM_efi_application: subsystem = "subsystem 'efi application'"; break;
+                default: subsystem = (char *)push_format_string(arena, "subystem %d", globals.subsystem).data; break;
+            }
+            
+            begin_error_report(context);
+            report_error(context, null, "Error: Could not find a canonical \"main\" function for %s and %s.", file_type, subsystem);
+            
+            if(attempted_entry_point_string_list.amount_of_strings == 0){
+                report_error(context, null, "       Because of the combination of file types and subsystem we did not search for a canonical entry point.");
+            }else{
+                struct string attempted = string_list_flatten(attempted_entry_point_string_list, arena);
+                report_error(context, null, "       Attempted to find the following: %.*s.", attempted.size, attempted.data);
+            }
+            report_error(context, null, "       You can either add a pre-main file from the '%.*s/implicit' directory as a compilation unit,", compiler_path.size, compiler_path.data);
+            report_error(context, null, "       or you can specify an entry point for your program using the '/entry:<name>' command line option.");
+            
+            end_error_report(context);
+            globals.an_error_has_occurred = 1;
+            
+            goto end;
         }
         
-        // :DeclarationTableLoop
-        struct compilation_unit dummy_global_compilation_unit = {
-            .next = globals.compilation_units.first, 
-            .static_declaration_table = globals.global_declarations,
-        };
+        globals.entry_point = get_entry_point_or_error(context);
+        if(globals.an_error_has_occurred) goto end;
         
+        // @note: do this manually instead of calling 'add_potential_entry_point' as we are in a later 
+        //        compilation stage, and do not have to do it atomically.
+        struct declaration_reference_node *entry_point_node = push_struct(arena, struct declaration_reference_node);
+        entry_point_node->declaration = &globals.entry_point->as_decl;
+        entry_point_node->token       = globals.entry_point->base.token;
+        entry_point_node->next = globals.globally_referenced_declarations;
+        globals.globally_referenced_declarations = entry_point_node;
+    }
+    
+    if(globals.output_file_type == OUTPUT_FILE_obj){
+        // 
+        // For an .obj any external function is a potential entry point.
+        // 
         
-        for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+        for(u32 table_index = 0; table_index < globals.global_declarations.capacity; table_index++){
+            struct ast *ast = globals.global_declarations.nodes[table_index].ast;
+            if(!ast) continue;
             
-            struct ast_table *table = &compilation_unit->static_declaration_table;
-            
-            for(u64 table_index = 0; table_index < table->capacity; table_index++){
-                struct ast *ast = table->nodes[table_index].ast;
-                if(!ast) continue;
-                if(ast->kind != AST_function) continue;
-                
+            if(ast->kind == AST_function){    
                 struct ast_function *function = (struct ast_function *)ast;
+                assert(!(function->as_decl.flags & DECLARATION_FLAGS_is_static)); // These are 'global_declarations' they should not be static.
                 
-                function->as_decl.flags |= DECLARATION_FLAGS_is_reachable_from_entry;
+                // If the function is not defined, thats fine in an obj.
+                // Don't add a function_node as otherwise it would get marked as referenced 
+                // and hence we would emit a unresolved external, but we only want to do that,
+                // if it is actually used which we do in the depth first search below.
+                if(!function->scope) continue;
                 
-                if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport) continue;
-                if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic) continue;
+                assert(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic)); // Intrinsic functions should not have a scope.
+                
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
                 
-                if(!function->scope){
-                    // 
-                    // @hack: We emit an empty scope for each function which does not have one already,
-                    //        to not crash in 'emit_code_for_function'. 
-                    //        This might have as a consequence, that some code paths become unavailable to the fuzzer...
-                    // 
-                    function->scope = &parser_push_new_scope(context, function->base.token, SCOPE_FLAG_is_function_scope)->base;
-                }
+                struct declaration_reference_node *function_node = push_struct(arena, struct declaration_reference_node);
+                function_node->declaration = &function->as_decl;
+                function_node->next = globals.globally_referenced_declarations;
                 
-                work_queue_push_work(context, &globals.work_queue_emit_code, function);
+                globals.globally_referenced_declarations = function_node;
+            }else if(ast->kind == AST_declaration){
+                struct ast_declaration *decl = (struct ast_declaration *)ast;
+                assert(!(decl->flags & DECLARATION_FLAGS_is_static)); // These are 'global_declarations' they should not be static.
+                if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue; // Don't add enum members.
+                
+                // Don't add reference nodes for explictly external declarations.
+                if((decl->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport)) && !decl->assign_expr) continue;
+                
+                struct declaration_reference_node *declaration_node = push_struct(arena, struct declaration_reference_node);
+                declaration_node->declaration = decl;
+                declaration_node->next = globals.globally_referenced_declarations;
+                
+                globals.globally_referenced_declarations = declaration_node;
             }
         }
+    }
+    
+    struct temporary_memory temp = begin_temporary_memory(&context->scratch);
+    
+    begin_error_report(context);
+    
+    for(struct declaration_reference_node *entry = globals.globally_referenced_declarations; entry; entry = entry->next){
         
-        for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
-            struct context *thread_context = globals.thread_infos[thread_index].context;
-            
-            for_ast_list(thread_context->local_functions){
-                struct ast_function *function = (struct ast_function *)it->value;
-                assert(function->base.kind == AST_function);
-                
-                function->as_decl.flags |= DECLARATION_FLAGS_is_reachable_from_entry;
-                
-                if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport) continue;
-                if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic) continue;
-                if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
-                
-                work_queue_push_work(context, &globals.work_queue_emit_code, function);
-            }
-        }
+        struct ast_declaration *initial_declaration = entry->declaration;
         
-    }else{   
-        // compute reachability information    :only_emit_functions_that_are_reachable_from_main
         // 
-        // Do a depth first search on the call graph to compute
-        // what is reachable from 'entry_point'.        
+        // @cleanup: This seems bad, we have to do here essentially the same stuff for
+        //           root-level declarations, as we have to for all other declarations.
+        //           So we should find a way to handle the 'initial_declaration' in the same way 
+        //           as all the referenced declarations.
         // 
         
-        if(!globals.cli_options.no_entry){
-            globals.entry_point = get_entry_point_or_error(context);
-            if(globals.an_error_has_occurred) goto end;
-            
-            // @note: do this manually instead of calling 'add_potential_entry_point' as we are in a later 
-            //        compilation stage, and do not have to do it atomically.
-            struct declaration_reference_node *entry_point_node = push_struct(arena, struct declaration_reference_node);
-            entry_point_node->declaration = &globals.entry_point->as_decl;
-            entry_point_node->token       = globals.entry_point->base.token;
-            entry_point_node->next = globals.globally_referenced_declarations;
-            globals.globally_referenced_declarations = entry_point_node;
+        if(initial_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry) continue;
+        initial_declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
+        
+        if((initial_declaration->base.kind == AST_function) && initial_declaration->assign_expr){
+            // Queue the entry point, if it is a defined function.
+            work_queue_push_work(context, &globals.work_queue_emit_code, initial_declaration);
         }
         
-        if(globals.output_file_type == OUTPUT_FILE_obj){
-            // 
-            // For an .obj any external function is a potential entry point.
-            // 
-            
-            for(u32 table_index = 0; table_index < globals.global_declarations.capacity; table_index++){
-                struct ast *ast = globals.global_declarations.nodes[table_index].ast;
-                if(!ast) continue;
-                
-                if(ast->kind == AST_function){    
-                    struct ast_function *function = (struct ast_function *)ast;
-                    assert(!(function->as_decl.flags & DECLARATION_FLAGS_is_static)); // These are 'global_declarations' they should not be static.
-                    
-                    // If the function is not defined, thats fine in an obj.
-                    // Don't add a function_node as otherwise it would get marked as referenced 
-                    // and hence we would emit a unresolved external, but we only want to do that,
-                    // if it is actually used which we do in the depth first search below.
-                    if(!function->scope) continue;
-                    
-                    assert(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic)); // Intrinsic functions should not have a scope.
-                    
-                    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
-                    
-                    struct declaration_reference_node *function_node = push_struct(arena, struct declaration_reference_node);
-                    function_node->declaration = &function->as_decl;
-                    function_node->next = globals.globally_referenced_declarations;
-                    
-                    globals.globally_referenced_declarations = function_node;
-                }else if(ast->kind == AST_declaration){
-                    struct ast_declaration *decl = (struct ast_declaration *)ast;
-                    assert(!(decl->flags & DECLARATION_FLAGS_is_static)); // These are 'global_declarations' they should not be static.
-                    if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue; // Don't add enum members.
-                    
-                    // Don't add reference nodes for explictly external declarations.
-                    if((decl->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport)) && !decl->assign_expr) continue;
-                    
-                    struct declaration_reference_node *declaration_node = push_struct(arena, struct declaration_reference_node);
-                    declaration_node->declaration = decl;
-                    declaration_node->next = globals.globally_referenced_declarations;
-                    
-                    globals.globally_referenced_declarations = declaration_node;
-                }
-            }
+        if((initial_declaration->base.kind == AST_declaration) && initial_declaration->assign_expr){
+            // @cleanup: This should probably not happen on the main thread.
+            //           Furthermore, we also want to report errors for initializers that are non-constant but not referenced.
+            initial_declaration->memory_location = evaluate_static_initializer(context, initial_declaration);
         }
         
-        struct temporary_memory temp = begin_temporary_memory(&context->scratch);
+        // If this declaration does not reference any other declarations we are done.
+        if(!initial_declaration->referenced_declarations.first) continue;
         
-        begin_error_report(context);
+        struct{
+            struct reachability_stack_node{
+                struct reachability_stack_node *next;
+                struct ast_declaration *declaration;
+                struct declaration_reference_node *at;
+            } *first, *last;
+        } stack = zero_struct;
         
-        for(struct declaration_reference_node *entry = globals.globally_referenced_declarations; entry; entry = entry->next){
+        // Push the initial_declaration as the root of our search onto the stack.
+        struct reachability_stack_node initial_node = zero_struct;
+        initial_node.declaration = initial_declaration;
+        initial_node.at = initial_declaration->referenced_declarations.first;
+        
+        sll_push_front(stack, &initial_node);
+        
+        while(!sll_is_empty(stack)){
+            struct reachability_stack_node *node = stack.first;
             
-            struct ast_declaration *initial_declaration = entry->declaration;
-            
-            // 
-            // @cleanup: This seems bad, we have to do here essentially the same stuff for
-            //           root-level declarations, as we have to for all other declarations.
-            //           So we should find a way to handle the 'initial_declaration' in the same way 
-            //           as all the referenced declarations.
-            // 
-            
-            if(initial_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry) continue;
-            initial_declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
-            
-            if((initial_declaration->base.kind == AST_function) && initial_declaration->assign_expr){
-                // Queue the entry point, if it is a defined function.
-                work_queue_push_work(context, &globals.work_queue_emit_code, initial_declaration);
-            }
-            
-            if((initial_declaration->base.kind == AST_declaration) && initial_declaration->assign_expr){
-                // @cleanup: This should probably not happen on the main thread.
-                //           Furthermore, we also want to report errors for initializers that are non-constant but not referenced.
-                initial_declaration->memory_location = evaluate_static_initializer(context, initial_declaration);
-            }
-            
-            // If this declaration does not reference any other declarations we are done.
-            if(!initial_declaration->referenced_declarations.first) continue;
-            
-            struct{
-                struct reachability_stack_node{
-                    struct reachability_stack_node *next;
-                    struct ast_declaration *declaration;
-                    struct declaration_reference_node *at;
-                } *first, *last;
-            } stack = zero_struct;
-            
-            // Push the initial_declaration as the root of our search onto the stack.
-            struct reachability_stack_node initial_node = zero_struct;
-            initial_node.declaration = initial_declaration;
-            initial_node.at = initial_declaration->referenced_declarations.first;
-            
-            sll_push_front(stack, &initial_node);
-            
-            while(!sll_is_empty(stack)){
-                struct reachability_stack_node *node = stack.first;
+            if(!node->at){
+                // recurse up
+                sll_pop_front(stack);
+            }else{
+                // recurse down into 'node->at'
+                struct ast_declaration *declaration = node->at->declaration;
                 
-                if(!node->at){
-                    // recurse up
-                    sll_pop_front(stack);
-                }else{
-                    // recurse down into 'node->at'
-                    struct ast_declaration *declaration = node->at->declaration;
+                if(!(declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)){
+                    declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
                     
-                    if(!(declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)){
-                        declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
+                    if(declaration->base.kind == AST_function){
+                        // 
+                        // If the declaration is a defined function, queue it up.
+                        // It might not be defined, as it might be a dllimport with missing `__declspec(dllimport)`.
+                        // 
+                        struct ast_function *function = (struct ast_function *)declaration;
                         
-                        if(declaration->base.kind == AST_function){
-                            // 
-                            // If the declaration is a defined function, queue it up.
-                            // It might not be defined, as it might be a dllimport with missing `__declspec(dllimport)`.
-                            // 
-                            struct ast_function *function = (struct ast_function *)declaration;
-                            
-                            if(!function->scope){
-                                if(globals.output_file_type != OUTPUT_FILE_obj){
-                                    
-                                    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
-                                        report_error(context, function->base.token, "A referenced function marked '__declspec(dllexport)' must be defined."); // :Error
-                                        report_error(context, node->at->token, "... Here the function was referenced.");
-                                    }else{
-                                        lookup_declaration_in_libraries(context, &function->as_decl, node->at->token);
-                                    }
-                                }
-                            }else if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
-                                work_queue_push_work(context, &globals.work_queue_emit_code, function);
-                            }
-                        }else{
-                            
-                            // @cleanup: Maybe this should also be done and reported for unreachable declarations.
-                            if(type_is_array_of_unknown_size(declaration->type)){
-                                // 
-                                // From the c-spec:
-                                // 
-                                // "If at the end of the translation unit containing
-                                // 
-                                //     int i[];
-                                // 
-                                // the array i still has incomplete type, the implicit initializer causes it to have one element,
-                                // which is set to zero on program startup."
-                                // 
-                                
-                                report_warning(context, WARNING_array_of_unknown_size_never_filled_in, declaration->base.token, "Bounds for array of unknown size were never filled in. Assuming an array length of one.");
-                                patch_array_size(context, (struct ast_array_type *)declaration->type, 1, declaration->base.token);
-                            }
-                            
-                            if(declaration->assign_expr){
-                                // @cleanup: This should probably not happen on the main thread.
-                                //           Furthermore, we also want to report errors for initializers that are non-constant but not referenced.
-                                declaration->memory_location = evaluate_static_initializer(context, declaration);
-                            }
-                            
+                        if(!function->scope){
                             if(globals.output_file_type != OUTPUT_FILE_obj){
                                 
-                                if(!declaration->assign_expr && (declaration->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport))){
-                                    
-                                    lookup_declaration_in_libraries(context, declaration, node->at->token);
+                                if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
+                                    report_error(context, function->base.token, "A referenced function marked '__declspec(dllexport)' must be defined."); // :Error
+                                    report_error(context, node->at->token, "... Here the function was referenced.");
+                                }else{
+                                    lookup_declaration_in_libraries(context, &function->as_decl, node->at->token);
                                 }
                             }
+                        }else if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
+                            work_queue_push_work(context, &globals.work_queue_emit_code, function);
+                        }
+                    }else{
+                        
+                        // @cleanup: Maybe this should also be done and reported for unreachable declarations.
+                        if(type_is_array_of_unknown_size(declaration->type)){
+                            // 
+                            // From the c-spec:
+                            // 
+                            // "If at the end of the translation unit containing
+                            // 
+                            //     int i[];
+                            // 
+                            // the array i still has incomplete type, the implicit initializer causes it to have one element,
+                            // which is set to zero on program startup."
+                            // 
+                            
+                            report_warning(context, WARNING_array_of_unknown_size_never_filled_in, declaration->base.token, "Bounds for array of unknown size were never filled in. Assuming an array length of one.");
+                            patch_array_size(context, (struct ast_array_type *)declaration->type, 1, declaration->base.token);
                         }
                         
-                        if(declaration->referenced_declarations.first){
-                            // note: we only want to recurse once into any given function.
-                            struct reachability_stack_node *new_node = push_struct(&context->scratch, struct reachability_stack_node);
-                            new_node->declaration = declaration;
-                            new_node->at = declaration->referenced_declarations.first;
+                        if(declaration->assign_expr){
+                            // @cleanup: This should probably not happen on the main thread.
+                            //           Furthermore, we also want to report errors for initializers that are non-constant but not referenced.
+                            declaration->memory_location = evaluate_static_initializer(context, declaration);
+                        }
+                        
+                        if(globals.output_file_type != OUTPUT_FILE_obj){
                             
-                            sll_push_front(stack, new_node);
+                            if(!declaration->assign_expr && (declaration->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport))){
+                                
+                                lookup_declaration_in_libraries(context, declaration, node->at->token);
+                            }
                         }
                     }
                     
-                    node->at = node->at->next;
+                    if(declaration->referenced_declarations.first){
+                        // note: we only want to recurse once into any given function.
+                        struct reachability_stack_node *new_node = push_struct(&context->scratch, struct reachability_stack_node);
+                        new_node->declaration = declaration;
+                        new_node->at = declaration->referenced_declarations.first;
+                        
+                        sll_push_front(stack, new_node);
+                    }
                 }
+                
+                node->at = node->at->next;
             }
         }
-        
-        end_temporary_memory(temp);
-        end_error_report(context);
-        
-        if(context->error){
-            globals.an_error_has_occurred = 1;
-            goto end;
-        }
+    }
+    
+    end_temporary_memory(temp);
+    end_error_report(context);
+    
+    if(context->error){
+        globals.an_error_has_occurred = 1;
+        goto end;
     }
     
     while(globals.work_queue_emit_code.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_emit_code, worker_emit_code);
@@ -5093,6 +5086,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         }
         
         sll_sort(error_list, &context->scratch, error_node_smaller_function);
+        
+        if(error_list.first) print("\n");
         
         if(globals.an_error_has_occurred){
             //
