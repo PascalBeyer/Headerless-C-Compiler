@@ -3586,7 +3586,7 @@ int main(int argc, char *argv[]){
                 string_list_postfix(&object_files, arena, path);
                 continue;
             }else if(string_match(extension, string(".dll")) || string_match(extension, string(".exe"))){
-                print("Error: Currently linking to %.*s files are not implemented.\n", extension.size, extension.data);
+                print("Error: Currently linking to %.*s files is not implemented.\n", extension.size, extension.data);
                 return 1;
             }else if(string_match(extension, string(".res")) || string_match(extension, string(".rc"))){
                 print("Warning: Ignoring resource file '%.*s'.\n", path.size, path.data);
