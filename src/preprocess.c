@@ -348,8 +348,6 @@ func struct define_node *lookup_define(struct context *context, struct atom name
         }
     }
     
-    if(define && define->is_disabled) return null;
-    
     return define;
 }
 
@@ -1688,34 +1686,7 @@ func void eat_whitespace_comments_and_newlines(struct context *context){
 }
 
 
-func struct token *maybe_expand_current_token_or_eat(struct context *context){
-    
-    // If we expanded a token, we have to re-expand the expanded token,
-    // because it might itself be a define.
-    retry_because_we_expanded_a_token:
-    
-    // Get the 'macro_expansion_token' before we do anything, as we want to use it for errors.
-    // it could otherwise become null, e.g:
-    // #define a(...) b(...)
-    // #define c a
-    // c(...)
-    // would expand c to a, so we are in a macro expansion, but then when we read the '('
-    // we exit the macro expansion and would report errors for the wrong token
-    struct token *macro_expansion_site = context->macro_expansion_token;
-    
-    struct token *token_to_expand = next_token_raw(context);
-    if(token_to_expand->type != TOKEN_identifier) return token_to_expand;
-    
-    if(!macro_expansion_site) macro_expansion_site = token_to_expand;
-    
-    struct define_node *define = lookup_define(context, token_to_expand->atom);
-    
-    if(!define){
-        //
-        // Not a defined identifier, just return back the token!
-        // 
-        return token_to_expand;
-    }
+func struct token *expand_define(struct context *context, struct token *token_to_expand, struct define_node *define, struct token *macro_expansion_site){
     
     if(define->is_builtin){
         if(define->is___pragma){
@@ -1728,7 +1699,7 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
                 skip_until_tokens_are_balanced_raw(context, null, TOKEN_open_paren, TOKEN_closed_paren);
             }
             
-            goto retry_because_we_expanded_a_token;
+            return null;
         }
         
         if(define->is_defined){
@@ -1776,6 +1747,8 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
             //
             
             struct define_node *define_to_disable = lookup_define(context, identifier->atom);
+            if(define_to_disable && define_to_disable->is_disabled) define_to_disable = null;
+            
             if(define_to_disable){
                 context->define_depth++;
                 define_to_disable->is_disabled = true;
@@ -1817,12 +1790,8 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
     
     if(define->is_function_like){
         
-        // @cleanup: technically newlines?
-        eat_whitespace_and_comments(context); 
-        if(!peek_token_eat_raw(context, TOKEN_open_paren)){
-            // end_counter(context, expand_token);
-            return token_to_expand; // not the define.
-        }
+        struct token *open_paren = next_token_raw(context);
+        assert(open_paren->type == TOKEN_open_paren); // This should have been ensured by the outside.
         
         if(sll_is_empty(define->arguments)){
             eat_whitespace_and_comments(context);
@@ -2067,12 +2036,59 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
                     struct token *array = push_uninitialized_data(&context->scratch, struct token, capacity);
                     
                     while(!tokenizer_is_at_the_end_of_the_file(context)){
-                        struct token *token = maybe_expand_current_token_or_eat(context);
+                        struct token *token = next_token_raw(context);
+                        
+                        if(token->type == TOKEN_identifier){
+                            struct define_node *define_in_argument = lookup_define(context, token->atom);
+                            if(define_in_argument){
+                                
+                                int skip = 0;
+                                
+                                if(define_in_argument->is_function_like){
+                                    eat_whitespace_and_comments(context); 
+                                    if(!peek_token_raw(context, TOKEN_open_paren)){
+                                        skip = 1;
+                                    }
+                                }
+                                
+                                if(!skip){
+                                    if(define_in_argument->is_disabled){
+                                        dynarray_maybe_grow(struct token, &context->scratch, array, amount, capacity);
+                                        
+                                        // We have to prevent this identifier from being expanded again, after the define might be reenabled.
+                                        // For example:
+                                        // 
+                                        //     #define member a.member
+                                        //     #define def(m) m
+                                        //     def(member);
+                                        //     
+                                        // def(member) -> expand(a.member) -> a.member
+                                        // 
+                                        // This is because of the following passage from the c-spec:
+                                        // 
+                                        // "Furthermore, if any nested replacements encounter the name of the macro being replaced,
+                                        //  it is not replaced. These nonreplaced macro name preprocessing tokens are no longer
+                                        //  available for further replacement even if they are later (re)examined in contexts in which
+                                        //  that macro name preprocessing token would otherwise have been replaced.
+                                        // 
+                                        // We implement this by making these tokens not identifiers anymore.
+                                        // 
+                                        struct token *new_token = &array[amount++];
+                                        *new_token = *token;
+                                        new_token->type = TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro;
+                                        continue;
+                                    }else{
+                                        token = expand_define(context, token, define_in_argument, macro_expansion_site);
+                                        if(!token) continue; 
+                                    }
+                                } 
+                            }
+                        }
                         
                         if(token->type == TOKEN_invalid) break;
                         
                         dynarray_maybe_grow(struct token, &context->scratch, array, amount, capacity);
-                        array[amount++] = *token;   
+                        array[amount++] = *token;
                     }
                     
                     expanded_argument_tokens[arg->argument_index].data   = array;
@@ -2249,8 +2265,16 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
     //  The resulting token sequence is rescanned along with all subsequent preprocessing
     //  tokens of the source file, for more macro names to replace."
     
-    // during the rescan the define is disabled
     if(!sll_is_empty(new_nodes)){
+        
+        // Disable the define during the rescan.
+        // 
+        // "If the name of the macro being replaced is found during this scan of the replacement list
+        //  (not including the rest of the source file's preprocessing tokens), it is not replaced.
+        //  Furthermore, if any nested replacements encounter the name of the macro being replaced,
+        //  it is not replaced."
+        //  
+        
         define->is_disabled = true;
         new_nodes.last->define_to_reenable_on_exit = define;
         
@@ -2260,12 +2284,13 @@ func struct token *maybe_expand_current_token_or_eat(struct context *context){
         }
         context->define_depth++;
         
-        // set the current token marker to point at the beginning of the new_buckets, so we can rescan them
-        // apply_token_marker(context, new_buckets.first, 0);
+        // 
+        // Push the new_nodes to the front of the token_stack so we will re-scan them.
+        // 
         sll_push_front_list(context->token_stack, new_nodes);
     }
     
-    goto retry_because_we_expanded_a_token;
+    return null;
 }
 
 //_____________________________________________________________________________________________________________________
@@ -4294,8 +4319,34 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
         assert(!static_if_stack.first || static_if_stack.first->is_true);
         
         // Expand and emit tokens until we are not in a macro expansion anymore
+        struct token *macro_expansion_site = null;
         do{
-            struct token *token = maybe_expand_current_token_or_eat(context);
+            struct token *token = next_token_raw(context);
+            
+            if(token->type == TOKEN_identifier){
+                struct define_node *define = lookup_define(context, token->atom);
+                if(define && !define->is_disabled){
+                    
+                    int skip = 0;
+                    if(define->is_function_like){
+                        eat_whitespace_and_comments(context); 
+                        if(!peek_token_raw(context, TOKEN_open_paren)){
+                            skip = 1;
+                        }
+                    }
+                    
+                    if(!skip){
+                        if(!macro_expansion_site) macro_expansion_site = token;
+                        token = expand_define(context, token, define, macro_expansion_site);
+                        
+                        // We will only ever return a token for predefined identifiers.
+                        // Otherwise, we will expand the macro push the resulting tokens to the stack for rescanning 
+                        // and then return null.
+                        if(!token) continue;
+                    }
+                }
+            }
+            
             if(token->type == TOKEN_invalid) break; // @note: Only happens, if we are at the end of the token array, and the define expanded to nothing.
             
             assert(TOKEN_invalid < token->type && token->type < TOKEN_count);
@@ -4391,6 +4442,9 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 
                 continue;
             }
+            
+            if(token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) token->type = TOKEN_identifier; // We can patch the token as we know it's generated by a macro and hence noone else cares.
+            
             got_newline = false;
             
             if(emitted_tokens == committed_tokens){

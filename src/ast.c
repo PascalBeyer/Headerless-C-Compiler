@@ -26,6 +26,8 @@ enum token_type{
     TOKEN_string_literal, // has ""
     
     TOKEN_identifier,
+    TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro,
+    
     
     TOKEN_open_paren,     // (
     TOKEN_closed_paren,   // )
