@@ -6,8 +6,10 @@ struct {
 #define member a.member
 
 #define def(m) m
+#define def2(m) m + m
 
 int main(){
     int b = def(member);
-    return b;
+    int c = def2(member);
+    return b + c;
 }
