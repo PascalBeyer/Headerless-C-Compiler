@@ -2953,7 +2953,7 @@ struct file *load_or_get_source_file_by_absolute_path(struct context *context, c
     }
     
     file->file = os_file;
-    file->amount_of_times_included = 1;
+    file->amount_of_times_included = 0;
     
     // :newline_at_the_end_of_the_file
     // 
@@ -3127,6 +3127,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
         }
         
         struct file *main_file = load_or_get_source_file_by_absolute_path(context, (char *)initial_absolute_file_path.data, file_size, false);
+        atomic_preincrement(&main_file->amount_of_times_included);
         context->current_compilation_unit->main_file = main_file;
         
         struct token_array array = main_file->tokens;
