@@ -4547,7 +4547,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                 struct string destination_type = push_type_string(context->arena, &context->scratch, destination->type);
                 
                 begin_error_report(context);
-                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, alternate_name->token, "/ALTERNATENAME source and destination have mismatching type.", alternate_name->source.size, alternate_name->source.data);
+                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, alternate_name->token, "/ALTERNATENAME source (%.*s) and destination (%.*s) have mismatching type.", alternate_name->source.size, alternate_name->source.data, alternate_name->destination.size, alternate_name->destination.data);
                 report_warning(context, WARNING_ALTERNATENAME_type_mismatch, source->identifier, "Source has type '%.*s'.", source_type.size, source_type.data);
                 report_warning(context, WARNING_ALTERNATENAME_type_mismatch, destination->identifier, "Destination has type '%.*s'.", destination_type.size, destination_type.data);
                 end_error_report(context);
