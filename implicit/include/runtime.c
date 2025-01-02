@@ -176,7 +176,8 @@ char *strstr(char *haystack, char *needle){
 }
 
 char *strchr(char *haystack, int needle){
-    while(*haystack && *haystack != needle) haystack++;
+    while(*haystack && *haystack != (char)needle) haystack++;
+    if(needle == 0) return haystack;
     return *haystack ? haystack : 0;
 }
 
