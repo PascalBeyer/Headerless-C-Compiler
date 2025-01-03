@@ -2610,47 +2610,33 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
             WriteFile(stderr, buffer, (u32)length, &chars_written, 0);
         }
         
-        HANDLE handle = globals.preprocessed_file_handle;
-        
         struct token *last_token = &globals.invalid_token;
+        
+        char *preprocessed_file_start = (char *)arena_current(&context->scratch);
         
         for(smm token_index = 0; token_index < tokenized_file.amount; token_index++){
             struct token *token = &tokenized_file.data[token_index];
             
             if(token->line != last_token->line || token->file_index != last_token->file_index){ 
                 
-                WriteFile(handle, "\n", 1, NULL, NULL);
+                *push_uninitialized_struct(&context->scratch, char) = '\n';
                 if(token->line != last_token->line + 1){
-                    WriteFile(handle, "\n", 1, NULL, NULL);
+                    *push_uninitialized_struct(&context->scratch, char) = '\n';
                     // @cleanup: lines are still not correct...
                 }
                 
                 if(token->file_index != last_token->file_index){
-                    char buffer[50];
-                    int length = snprintf(buffer, sizeof(buffer), "#line %u \"", token->line);
-                    WriteFile(handle, buffer, length, NULL, NULL);
+                    char *filename = globals.file_table.data[token->file_index]->absolute_file_path;
+                    struct string line_directive = push_format_string(&context->scratch, "#line %u \"%s\"\n", token->line, filename);
                     
-                    char *file_name = globals.file_table.data[token->file_index]->absolute_file_path;
-                    smm filename_length = cstring_length(file_name);
-                    WriteFile(handle, file_name, (DWORD)filename_length, NULL, NULL);
-                    
-                    #if 0
-                    for(char *file_name = globals.file_table.data[token->file_index]->absolute_file_path; *file_name; file_name++){
-                        if(*file_name == '/'){
-                            WriteFile(handle, "\\\\", 2, NULL, NULL);
-                        }else{
-                            WriteFile(handle, file_name, 1, NULL, NULL);
-                        }
-                    }
-                    #endif
-                    
-                    WriteFile(handle, "\"\n", 2, NULL, NULL);
+                    // @hack: remove the zero-terminator.
+                    assert(context->scratch.current == line_directive.data + line_directive.size + 1);
+                    context->scratch.current -= 1;
                 }
                 
                 if(token->column){
-                    for(smm index = 0; index < token->column-1; index++){
-                        WriteFile(handle, " ", 1, NULL, NULL);
-                    }
+                    smm amount_of_spaces = token->column-1; // @note: column is one-based;
+                    memset(push_uninitialized_data(&context->scratch, char, amount_of_spaces), ' ', amount_of_spaces);
                 }
             }else{
                 int skip = 0;
@@ -2682,14 +2668,18 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 
                 if(token->type == TOKEN_semicolon) skip = 1;
                 
-                if(!skip) WriteFile(handle, " ", 1, NULL, NULL);
+                if(!skip) *push_uninitialized_struct(&context->scratch, char) = ' ';
             }
             
             last_token = token;
             
-            WriteFile(handle, token->string.data, (DWORD)token->string.size, NULL, NULL);
+            memcpy(push_uninitialized_data(&context->scratch, char, token->string.size), token->string.data, token->string.size);
         }
-        WriteFile(handle, "\n", 1, NULL, NULL);
+        *push_uninitialized_struct(&context->scratch, char) = '\n';
+        
+        smm preprocessed_file_size = (char *)arena_current(&context->scratch) - preprocessed_file_start;
+        
+        WriteFile(globals.preprocessed_file_handle, preprocessed_file_start, (DWORD)preprocessed_file_size, NULL, NULL);
         return;
     }
     
