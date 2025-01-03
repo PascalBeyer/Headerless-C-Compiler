@@ -82,7 +82,7 @@ typedef signed   __int64  intmax_t;
 
 #define INTMAX_MAX INT64_MAX
 #define INTMAX_MIN INT64_MIN
-#define UINTMAX_MIN UINT64_MAX
+#define UINTMAX_MAX UINT64_MAX
 
 #define INTPTR_MAX INT64_MAX
 #define INTPTR_MIN INT64_MIN
