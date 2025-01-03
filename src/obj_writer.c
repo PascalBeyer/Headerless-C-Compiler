@@ -837,7 +837,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     if(decl->assign_expr){
                         ast_list_append(&defined_variables, scratch, &decl->base);
                     }else{
-                        ast_list_append(&external_variables, scratch, &decl->base);
+                        ast_list_append(&automatic_variables, scratch, &decl->base);
                     }
                     continue;
                 }
