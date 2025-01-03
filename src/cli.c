@@ -37,6 +37,8 @@ enum cli_option_kind{
     CLI_OPTION_l,
     CLI_OPTION_quiet,
     CLI_OPTION_EP,
+    CLI_OPTION_P,
+    CLI_OPTION_Fi,
     CLI_OPTION_MD,
     CLI_OPTION_MDd,
     CLI_OPTION_MT,
@@ -106,6 +108,8 @@ struct cli_option_hash_table_entry{
     [15] = {{5, (u8 *)"quiet"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
     [51] = {{6, (u8 *)"nologo"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
     [58] = {{2, (u8 *)"ep"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_EP, -1},
+    [24] = {{1, (u8 *)"p"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_P, -1},
+    [85] = {{2, (u8 *)"fi"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_Fi, 0},
     [54] = {{2, (u8 *)"md"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MD, -1},
     [91] = {{3, (u8 *)"mdd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MDd, -1},
     [71] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
@@ -202,6 +206,8 @@ struct cli_options{
     struct string_list l; // Link to the specified library.
     int quiet; // Print as little as necessary.
     int EP; // Print the preprocessed file to stdout.
+    int P; // Print the preprocessed file to stdout.
+    struct string Fi; // Sets the output file name for the preprocessed file.
     int MD; // Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.
     int MDd; // Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.
     int MT; // Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.
@@ -402,6 +408,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }else if(string_front_match_eat(&option, "l")){
                 option_argument_type = CLI_ARGUMENT_TYPE_string_list;
                 option_kind          = CLI_OPTION_l;
+            }else if(string_front_match_eat(&option, "Fi")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_Fi;
             }
             
             if(option_kind == CLI_OPTION_none){
@@ -712,6 +721,19 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "This is very incomplete and mostly here to make build-systems happy.\n"
                             "", 69);
                 }break;
+                case CLI_OPTION_P:{
+                    print("-P | Print the preprocessed file to stdout.\n\n");
+                    os_print_string(
+                            "This is very incomplete and mostly here to make build-systems happy.\n"
+                            "", 69);
+                }break;
+                case CLI_OPTION_Fi:{
+                    print("-Fi <file> | Sets the output file name for the preprocessed file.\n\n");
+                    os_print_string(
+                            "Default is derived from the name of the first compilation unit.\n"
+                            "E.g.: For `hlc /E test.c` it would be `test.id`.\n"
+                            "", 113);
+                }break;
                 case CLI_OPTION_MD:{
                     print("-MD | Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.\n\n");
                     os_print_string(
@@ -862,11 +884,13 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -l <library>                | Link to the specified library.\n"
                             "  -quiet                      | Print as little as necessary.\n"
                             "  -EP                         | Print the preprocessed file to stdout.\n"
+                            "  -P                          | Print the preprocessed file to stdout.\n"
+                            "  -Fi <file>                  | Sets the output file name for the preprocessed file.\n"
                             "  -MD                         | Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.\n"
                             "  -MDd                        | Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.\n"
                             "  -MT                         | Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.\n"
                             "  -MTd                        | Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.\n"
-                    , 2513);
+                    , 2669);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1052,6 +1076,11 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             case CLI_OPTION_quiet: cli_options->quiet = 1; break;
             case CLI_OPTION_EP: cli_options->EP = 1; break;
+            case CLI_OPTION_P: cli_options->P = 1; break;
+            
+            case CLI_OPTION_Fi:{
+                cli_options->Fi = argument_string;
+            }break;
             case CLI_OPTION_MD: cli_options->MD = 1; break;
             case CLI_OPTION_MDd: cli_options->MDd = 1; break;
             case CLI_OPTION_MT: cli_options->MT = 1; break;

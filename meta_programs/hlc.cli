@@ -187,6 +187,15 @@ For everyone that enjoys their silence.
 
 This is very incomplete and mostly here to make build-systems happy.
 
+/P - Print the preprocessed file to stdout.
+
+This is very incomplete and mostly here to make build-systems happy.
+
+/Fi <file:string> - Sets the output file name for the preprocessed file.
+
+Default is derived from the name of the first compilation unit.
+E.g.: For `hlc /E test.c` it would be `test.id`.
+
 /MD - Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.
 
 See https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170.

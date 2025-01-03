@@ -431,6 +431,7 @@ static struct{
     smm directive_table_size;
     struct directive_table_entry *directive_table;
     
+    HANDLE preprocessed_file_handle;
     
 #define INTRINSIC_TABLE_CAPACITY 512
 #define INTRINSIC_TABLE_MASK (INTRINSIC_TABLE_CAPACITY - 1)
@@ -2007,7 +2008,6 @@ func void parser_emit_memory_location(struct context *context, struct ast_declar
 
 //_____________________________________________________________________________________________________________________
 
-// @cleanup: this should take an atom.
 func struct intrinsic_info *lookup_intrinsic(struct atom name){
     u64 hash = name.string_hash;
     struct intrinsic_info *info;
@@ -2599,9 +2599,9 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
     if(context->error) return;
     if(tokenized_file.amount == 0) return; // nothing to do if the file is empty
     
-    if(globals.cli_options.EP){
+    if(globals.preprocessed_file_handle){
         
-        {
+        if(globals.cli_options.EP){
             char buffer[0x100];
             int length = snprintf(buffer, sizeof(buffer), "%.*s\n", (int)work_tokenize_file->absolute_file_path.size, work_tokenize_file->absolute_file_path.data);
             
@@ -2610,39 +2610,86 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
             WriteFile(stderr, buffer, (u32)length, &chars_written, 0);
         }
         
-        smm line   = 1;
-        smm column = 1;
-        smm last_line   = 0;
-        smm last_column = 0;
+        HANDLE handle = globals.preprocessed_file_handle;
+        
+        struct token *last_token = &globals.invalid_token;
         
         for(smm token_index = 0; token_index < tokenized_file.amount; token_index++){
             struct token *token = &tokenized_file.data[token_index];
             
-            if(token->line != line){ 
-                print("\n");
-                line += 1;
-                column = 1;
-                if(line != token->line){
-                    print("\n");
-                    line = token->line;
-                    column = 1;
+            if(token->line != last_token->line || token->file_index != last_token->file_index){ 
+                
+                WriteFile(handle, "\n", 1, NULL, NULL);
+                if(token->line != last_token->line + 1){
+                    WriteFile(handle, "\n", 1, NULL, NULL);
+                    // @cleanup: lines are still not correct...
                 }
+                
+                if(token->file_index != last_token->file_index){
+                    char buffer[50];
+                    int length = snprintf(buffer, sizeof(buffer), "#line %u \"", token->line);
+                    WriteFile(handle, buffer, length, NULL, NULL);
+                    
+                    char *file_name = globals.file_table.data[token->file_index]->absolute_file_path;
+                    smm filename_length = cstring_length(file_name);
+                    WriteFile(handle, file_name, (DWORD)filename_length, NULL, NULL);
+                    
+                    #if 0
+                    for(char *file_name = globals.file_table.data[token->file_index]->absolute_file_path; *file_name; file_name++){
+                        if(*file_name == '/'){
+                            WriteFile(handle, "\\\\", 2, NULL, NULL);
+                        }else{
+                            WriteFile(handle, file_name, 1, NULL, NULL);
+                        }
+                    }
+                    #endif
+                    
+                    WriteFile(handle, "\"\n", 2, NULL, NULL);
+                }
+                
+                if(token->column){
+                    for(smm index = 0; index < token->column-1; index++){
+                        WriteFile(handle, " ", 1, NULL, NULL);
+                    }
+                }
+            }else{
+                int skip = 0;
+                
+                if(TOKEN_first_keyword <= last_token->type && last_token->type < TOKEN_one_past_last_keyword && token->type == TOKEN_open_paren) skip = 1;
+                if(TOKEN_first_keyword <= last_token->type && last_token->type < TOKEN_one_past_last_keyword && token->type == TOKEN_closed_paren) skip = 1;
+                if(TOKEN_float_literal <= last_token->type && last_token->type < TOKEN_string_literal && token->type == TOKEN_open_paren) skip = 1;
+                if(TOKEN_float_literal <= last_token->type && last_token->type < TOKEN_string_literal && token->type == TOKEN_closed_paren) skip = 1;
+                if(last_token->type == TOKEN_identifier && token->type == TOKEN_open_paren) skip = 1;
+                if(last_token->type == TOKEN_identifier && token->type == TOKEN_closed_paren) skip = 1;
+                
+                if(TOKEN_first_keyword <= token->type && token->type < TOKEN_one_past_last_keyword && last_token->type == TOKEN_open_paren) skip = 1;
+                if(TOKEN_float_literal <= token->type && token->type < TOKEN_string_literal && last_token->type == TOKEN_open_paren) skip = 1;
+                if(token->type == TOKEN_identifier && last_token->type == TOKEN_open_paren) skip = 1;
+                
+                if(last_token->type == TOKEN_identifier && token->type == TOKEN_comma) skip = 1;
+                
+                if(last_token->type == TOKEN_open_paren && token->type == TOKEN_closed_paren) skip = 1;
+                if(last_token->type == TOKEN_open_paren && token->type == TOKEN_open_paren) skip = 1;
+                if(last_token->type == TOKEN_closed_paren && token->type == TOKEN_closed_paren) skip = 1;
+                
+                if(last_token->type == TOKEN_increment && token->type == TOKEN_identifier) skip = 1;
+                if(last_token->type == TOKEN_identifier && token->type == TOKEN_increment) skip = 1;
+                if(last_token->type == TOKEN_decrement && token->type == TOKEN_identifier) skip = 1;
+                if(last_token->type == TOKEN_identifier && token->type == TOKEN_decrement) skip = 1;
+                
+                if(last_token->type == TOKEN_times && token->type == TOKEN_times) skip = 1;
+                if(last_token->type == TOKEN_times && token->type == TOKEN_identifier) skip = 1;
+                
+                if(token->type == TOKEN_semicolon) skip = 1;
+                
+                if(!skip) WriteFile(handle, " ", 1, NULL, NULL);
             }
             
-            if(column < token->column){
-                print("%*s", token->column - column, "");
-                column = token->column;
-            }else if(token->line == last_line && token->column == last_column){
-                // We assume the token was from a macro expansion.
-                print(" ");
-            }
+            last_token = token;
             
-            last_column = token->column;
-            last_line   = token->line;
-            
-            column += print("%.*s", token->string.size, token->string.data);
+            WriteFile(handle, token->string.data, (DWORD)token->string.size, NULL, NULL);
         }
-        print("\n");
+        WriteFile(handle, "\n", 1, NULL, NULL);
         return;
     }
     
@@ -4420,7 +4467,23 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         thread_count = (files_to_parse.amount < system_info.dwNumberOfProcessors) ? files_to_parse.amount : system_info.dwNumberOfProcessors;
     }
     
-    if(globals.cli_options.EP) thread_count = 1;
+    if(globals.cli_options.EP || globals.cli_options.P){
+        
+        
+        if(globals.cli_options.P){
+            struct string output_file_name = globals.cli_options.Fi;
+            
+            if(!output_file_name.data){
+                print("Error: @incomplete Currently you have to specify the file path using /Fi if you use /E.\n");
+                return 1;
+            }
+            
+            globals.preprocessed_file_handle = CreateFileA((char *)output_file_name.data, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, NULL);
+        }else{
+            globals.preprocessed_file_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        }
+        thread_count = 1;
+    }
     
     // @note: thread '0' is the main thread
     struct thread_info *thread_infos = push_data(arena, struct thread_info, thread_count);
@@ -4497,7 +4560,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     
     
     // We have printed the preprocessed files in `worker_preprocess_file`
-    if(globals.cli_options.EP) return 0;
+    if(globals.preprocessed_file_handle) return 0;
     
 #if 0
     for(smm compilation_unit_index = 0; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
