@@ -842,15 +842,15 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     continue;
                 }
                 
+                if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                    ast_list_append(&tls_variables, scratch, &decl->base);
+                    continue;
+                }
+                
                 if(decl->assign_expr){
                     if(decl->flags & DECLARATION_FLAGS_is_selectany){
                         ast_list_append(&selectany_variables, scratch, &decl->base);
                         selectany_sections += 1; // @cleanup: .debug$S ?
-                        continue;
-                    }
-                    
-                    if(decl->flags & DECLARATION_FLAGS_is_thread_local){
-                        ast_list_append(&tls_variables, scratch, &decl->base);
                         continue;
                     }
                     
