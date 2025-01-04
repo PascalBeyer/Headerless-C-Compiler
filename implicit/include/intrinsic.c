@@ -1222,12 +1222,18 @@ __declspec(inline_asm) __m128 _mm_cvtsi64_ss(__m128 a, __int64 b){
     return a
 }
 
+
 __declspec(inline_asm) float _mm_cvtss_f32(__m128 a){
     movss a, a
     return a
 }
 
 __declspec(inline_asm) int _mm_cvtss_si32(__m128 a){
+    cvtss2si eax, a
+    return eax
+}
+
+__declspec(inline_asm) int _mm_cvt_ss2si(__m128 a){
     cvtss2si eax, a
     return eax
 }
@@ -1322,6 +1328,15 @@ __declspec(inline_asm) __m128 _mm_min_ps(__m128 a, __m128 b){
 __declspec(inline_asm) __m128 _mm_min_ss(__m128 a, __m128 b){
     minss a, b
     return a
+}
+
+
+__declspec(inline_asm) __m128i _mm_move_epi64(__m128i a){
+    
+    // @cleanup: We currently do not support movq xmm1, xmm2
+    movdqa xmm1, a
+    bytes { f3 0f 7e c9 } // movq xmm1, xmm1
+    return xmm1
 }
 
 __declspec(inline_asm) __m128 _mm_move_ss(__m128 a, __m128 b){
@@ -1994,6 +2009,11 @@ __declspec(inline_asm) __m128d _mm_cvtsi32_sd(__m128d a, int b){
     return a
 }
 
+__declspec(inline_asm) __m128d _mm_cvtsi64_sd(__m128d a, __int64 b){
+    cvtsi2sd a, b
+    return a
+}
+
 __declspec(inline_asm) __m128i _mm_cvtsi64_si128(__int64 a){
     movq xmm0, a
     return xmm0
@@ -2009,9 +2029,10 @@ __declspec(inline_asm) __m128i _mm_cvtsi64x_si128(__int64 a){
     return xmm0
 }
 
-// __declspec(inline_asm) __m128d _mm_cvtss_sd(__m128d a, __m128 b){
-// cvtss2sd a, b < what is this ?
-// }
+__declspec(inline_asm) __m128d _mm_cvtss_sd(__m128d a, __m128 b){
+    cvtss2sd a, b
+    return a
+}
 
 __declspec(inline_asm) __m128i _mm_cvttpd_epi32(__m128d a){
     cvttpd2dq a, a
@@ -2095,21 +2116,34 @@ __declspec(inline_asm) __m128d _mm_load1_pd(double const* mem_addr){
     return xmm0
 }
 
-__declspec(inline_asm) __m128d _mm_loadh_pd(__m128d a, double const* mem_addr){
-    mov rcx, mem_addr
-    movhpd a, qword ptr [rcx]
-    return a
-}
-
 __declspec(inline_asm) __m128i _mm_loadl_epi64(__m128i const* mem_addr){
     mov rcx, mem_addr
     movq xmm0, qword ptr [rcx]
     return xmm0
 }
 
+__declspec(inline_asm) __m128d _mm_loadh_pd(__m128d a, double const* mem_addr){
+    mov rcx, mem_addr
+    movhpd a, qword ptr [rcx]
+    return a
+}
+
 __declspec(inline_asm) __m128d _mm_loadl_pd(__m128d a, double const* mem_addr){
     mov rcx, mem_addr
     movlpd a, qword ptr [rcx]
+    return a
+}
+
+
+__declspec(inline_asm) __m128 _mm_loadh_pi(__m128 a, __m64 const* mem_addr){
+    mov rcx, mem_addr
+    movhps a, qword ptr [rcx]
+    return a
+}
+
+__declspec(inline_asm) __m128 _mm_loadl_pi(__m128 a, __m64 const* mem_addr){
+    mov rcx, mem_addr
+    movlps a, qword ptr [rcx]
     return a
 }
 
@@ -2668,16 +2702,27 @@ __declspec(inline_asm) void _mm_storeh_pd(double* mem_addr, __m128d a){
     movhpd qword ptr[rcx], a
 }
 
+__declspec(inline_asm) void _mm_storel_pd(double* mem_addr, __m128d a){
+    mov rcx, mem_addr
+    movlpd qword ptr[rcx], a
+}
+
+__declspec(inline_asm) void _mm_storeh_pi(__m64* mem_addr, __m128 a){
+    mov rcx, mem_addr
+    movhps qword ptr[rcx], a
+}
+
+__declspec(inline_asm) void _mm_storel_pi(__m64* mem_addr, __m128 a){
+    mov rcx, mem_addr
+    movlps qword ptr[rcx], a
+}
+
+
 __declspec(inline_asm) void _mm_storel_epi64(__m128i* mem_addr, __m128i a){
     mov rcx, mem_addr
     movq qword ptr[rcx], a
 }
 
-
-__declspec(inline_asm) void _mm_storel_pd(double* mem_addr, __m128d a){
-    mov rcx, mem_addr
-    movlpd qword ptr[rcx], a
-}
 
 __declspec(inline_asm) void _mm_storer_pd(double* mem_addr, __m128d a){
     shufpd a, a, 1
