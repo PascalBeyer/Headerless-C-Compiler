@@ -4553,6 +4553,7 @@ case NUMBER_KIND_##type:{ \
                     if(!type_name.type){
                         report_error(context, get_current_token_for_error_report(context), "Expected a type-name or 'default' while parsing a _Generic association list.");
                         type_name.type = &globals.typedef_s32;
+                        skip_until_tokens_are_balanced(context, get_current_token(context), TOKEN_open_paren, TOKEN_closed_paren, "This error is never reported as we have an 'report_error' just before it.");
                     }
                     
                     expect_token(context, TOKEN_colon, "Expected ':' after the type-name while parsing a _Generic association list.");

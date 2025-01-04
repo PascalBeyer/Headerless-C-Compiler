@@ -84,7 +84,7 @@
         atomic_ulong*:   __atomic_compare_exchange_ulong,                            \
         atomic_ullong*:  __atomic_compare_exchange_ullong,                           \
                                                                                      \
-        default*:        __atomic_compare_exchange_pointer,                          \
+        default:        __atomic_compare_exchange_pointer,                           \
 )(object, expected, desired)
 
 #define atomic_compare_exchange_strong_explicit(object, expected, desired, order) atomic_compare_exchange_strong(object, expected, desired)
