@@ -408,6 +408,8 @@ static struct{
         smm amount;
     } dlls;
     
+    struct string_list library_paths;
+    struct string_list specified_libraries;
     struct{
         struct library_node *first;
         struct library_node *last;
@@ -418,8 +420,6 @@ static struct{
         struct alternate_name *first;
         struct alternate_name *last;
     } alternate_names; // maybe weak aliases?
-    
-    struct string_list library_paths;
     
     struct string_list pragma_compilation_units;
     
@@ -607,7 +607,6 @@ static struct{
     struct ast_type *typedef_void_pointer;
     struct ast_type *typedef_u8_pointer;
     struct ast_type *typedef_s8_pointer;
-    
     
     //
     // Invalid/Default values
@@ -2645,6 +2644,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 if(TOKEN_first_keyword <= last_token->type && last_token->type < TOKEN_one_past_last_keyword && token->type == TOKEN_closed_paren) skip = 1;
                 if(TOKEN_float_literal <= last_token->type && last_token->type < TOKEN_string_literal && token->type == TOKEN_open_paren) skip = 1;
                 if(TOKEN_float_literal <= last_token->type && last_token->type < TOKEN_string_literal && token->type == TOKEN_closed_paren) skip = 1;
+                if(TOKEN_float_literal <= last_token->type && last_token->type < TOKEN_string_literal && token->type == TOKEN_comma) skip = 1;
                 if(last_token->type == TOKEN_identifier && token->type == TOKEN_open_paren) skip = 1;
                 if(last_token->type == TOKEN_identifier && token->type == TOKEN_closed_paren) skip = 1;
                 
@@ -3598,7 +3598,6 @@ int main(int argc, char *argv[]){
         smm amount;
     } files_to_parse = zero_struct;
     
-    struct string_list libraries    = {0};
     struct string_list object_files = {0};
     
     for(struct string_list_node *file_name_node = globals.cli_options.files.list.first; file_name_node; file_name_node = file_name_node->next){
@@ -3613,7 +3612,7 @@ int main(int argc, char *argv[]){
             // Hence, in this loop we don't want to handle it in any way.
             // 
             if(string_match(extension, string(".lib"))){
-                string_list_add_uniquely(&libraries, arena, path);
+                string_list_add_uniquely(&globals.specified_libraries, arena, path);
                 continue;
             }else if(string_match(extension, string(".obj"))){
                 // @hack: This is a hack to handle linking for now.
@@ -3726,10 +3725,6 @@ int main(int argc, char *argv[]){
                 string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", object_file->string.size, object_file->string.data));
             }
             
-            for(struct string_list_node *lib_file = libraries.list.first; lib_file; lib_file = lib_file->next){
-                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", lib_file->string.size, lib_file->string.data));
-            }
-            
             
             
             // return system((char*)string_list_flatten(command, arena).data);
@@ -3822,47 +3817,15 @@ int main(int argc, char *argv[]){
         if(!string_match(get_file_extension(library), string(".lib"))){
             library = string_concatenate(arena, library, string(".lib"));
         }
-        string_list_add_uniquely(&libraries, arena, library);
-    }
-    
-    for(struct string_list_node *library_node = libraries.list.first; library_node; library_node = library_node->next){
-        
-        struct string full_library_path = zero_struct;
-        
-        if(path_is_absolute(library_node->string)){
-            full_library_path = push_zero_terminated_string_copy(arena, library_node->string);
-        }else{
-            for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
-                struct string file_path = concatenate_file_paths(arena, library_path_node->string, library_node->string);
-                struct os_file file = os_load_file((char *)file_path.data, 0, 0);
-                
-                if(!file.file_does_not_exist){
-                    full_library_path = file_path;
-                    break;
-                }
-            }
-            
-            if(!full_library_path.data){
-                print("Error: Could not find specified library '%.*s'.\n\n", library_node->string.size, library_node->string.data);
-                
-                print("Library paths:\n");
-                for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
-                    print("    %.*s\n", library_path_node->string.size, library_path_node->string.data);
-                }
-                print("\n");
-                print("You can add your own library search paths using /LIBPATH option.\n");
-                return 1;
-            }
-        }
-        
-        int parse_error = ar_parse_file((char *)full_library_path.data, arena);
-        if(parse_error) return 1;
+        string_list_add_uniquely(&globals.specified_libraries, arena, library);
     }
     
     if(globals.output_file_type != OUTPUT_FILE_obj && !no_standard_library){
         struct string ucrt_lib_path = push_format_string(arena, "%.*s\\ucrt.lib", ucrt_library_path.size, ucrt_library_path.data);
-        int ucrt_parse_error = ar_parse_file((char *)ucrt_lib_path.data, arena);
-        if(ucrt_parse_error){
+        string_list_add_uniquely(&globals.specified_libraries, arena, ucrt_lib_path);
+        
+        int ucrt_load_error = os_load_file((char *)ucrt_lib_path.data, null, 0).file_does_not_exist;
+        if(ucrt_load_error){
             // :Error mention Windows sdk.
             print("Error: Could not load '%.*s'.\n", ucrt_lib_path.size, ucrt_lib_path.data);
             print("       To compile without dynamically linking to the CRT, use \n");
@@ -3871,8 +3834,10 @@ int main(int argc, char *argv[]){
         }
         
         struct string kernel32_lib_path = push_format_string(arena, "%.*s\\kernel32.lib", um_library_path.size, um_library_path.data);
-        int kernel32_parse_error = ar_parse_file((char *)kernel32_lib_path.data, arena);
-        if(kernel32_parse_error){
+        string_list_add_uniquely(&globals.specified_libraries, arena, kernel32_lib_path);
+        
+        int kernel32_load_error = os_load_file((char *)kernel32_lib_path.data, null, 0).file_does_not_exist;
+        if(kernel32_load_error){
             // :Error mention Windows sdk.
             print("Error: Could not load '%.*s'.\n", kernel32_lib_path.size, kernel32_lib_path.data);
             print("       To compile without dynamically linking to kernel32.lib, use \n");
@@ -4810,17 +4775,66 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
     // which we have build while parsing. We walk this graph and queue all functions that are referenced
     // into the 'work_queue_stage_three'.
     // We then emit all of the code for these functions. At any point we could encounter a global identifier
-    // which we have not yet emitted. In this case we emit a 'patch' which then gets filled in during 
-    // 'print_coff'.
+    // which we have not yet emitted. In this case we emit a 'patch' which then gets filled in during  'print_coff'.
     
     log_print("start phase 3");
     
     stage_three_emit_code_time = os_get_time_in_seconds();
     
-    
-    // at this point all parsing is complete and there should not really be any errors anymore.
+    // At this point all parsing is complete and there should not really be any errors anymore.
     
     globals.compile_stage = COMPILE_STAGE_emit_code;
+    
+    if(globals.output_file_type != OUTPUT_FILE_obj){
+        // If we are not compiling to an object file, we should now be loading / parsing all of the libraries.
+        // In theory, we _could_ parse them lazily.
+        
+        // @cleanup: If the library came from a #pragma comment(lib, "library") we should have the token.
+        
+        for(struct string_list_node *node = globals.specified_libraries.list.first; node; node = node->next){
+            // @note: We always add the 'specified_libraries' as unique strings.
+            //        In theory, there could be two paths to the same library, but whatever.
+            struct string library = node->string;
+            struct string full_library_path = zero_struct;
+            
+            if(path_is_absolute(library)){
+                full_library_path = push_zero_terminated_string_copy(context->arena, library);
+            }else{
+                for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
+                    struct string file_path = concatenate_file_paths(context->arena, library_path_node->string, library);
+                    struct os_file file = os_load_file((char *)file_path.data, 0, 0);
+                    
+                    if(!file.file_does_not_exist){
+                        full_library_path = file_path;
+                        break;
+                    }
+                }
+                
+                if(!full_library_path.data){
+                    begin_error_report(context);
+                    report_error(context, null, "Error: Could not find specified library '%.*s'.\n\n", library.size, library.data);
+                    
+                    report_error(context, null, "Library paths:\n");
+                    for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
+                                report_error(context, null, "    %.*s\n", library_path_node->string.size, library_path_node->string.data);
+                    }
+                    report_error(context, null, "\n");
+                    report_error(context, null, "You can add your own library search paths using /LIBPATH option.\n");
+                    end_error_report(context);
+                    globals.an_error_has_occurred = true;
+                    continue;
+                }
+            }
+            
+            int parse_error = ar_parse_file(full_library_path, context->arena);
+            if(parse_error){
+                report_error(context, null, "Error: Failed to parse library '%.*s'.", full_library_path.size, full_library_path.data);
+                globals.an_error_has_occurred = true;
+            }
+        }
+        
+        if(globals.an_error_has_occurred) goto end;
+    }
     
     // compute reachability information    :only_emit_functions_that_are_reachable_from_main
     // 

@@ -4125,43 +4125,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 static struct ticket_spinlock pragma_comment_lib_spinlock = {0};
                                 ticket_spinlock_lock(&pragma_comment_lib_spinlock);
                                 
-                                int found = 0;
-                                for(struct library_node *library_node = globals.libraries.first; library_node; library_node = library_node->next){
-                                    if(string_match(get_file_name(library_node->path), library)){
-                                        found = 1;
-                                    }
-                                }
+                                string_list_add_uniquely(&globals.specified_libraries, context->arena, library);
                                 
-                                if(!found){
-                                    // 
-                                    // @cleanup: memory allocations.
-                                    // 
-                                    struct string full_library_path = {0};
-                                    
-                                    if(path_is_absolute(library)){
-                                        full_library_path = push_zero_terminated_string_copy(context->arena, library);
-                                    }else{
-                                        for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
-                                            struct string file_path = concatenate_file_paths(context->arena, library_path_node->string, library);
-                                            struct os_file file = os_load_file((char *)file_path.data, 0, 0);
-                                            
-                                            if(!file.file_does_not_exist){
-                                                full_library_path = file_path;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    
-                                    if(!full_library_path.data){
-                                        report_error(context, string_literal, "Could not find library '%.*s'.", library.size, library.data);
-                                    }
-                                    
-                                    // @cleanup: This should not have random prints in this state.
-                                    int parse_error = ar_parse_file((char *)full_library_path.data, context->arena);
-                                    if(parse_error){
-                                        report_error(context, string_literal, "Failed to parse library '%.*s'.", full_library_path.size, full_library_path.data);
-                                    }
-                                }
                                 ticket_spinlock_unlock(&pragma_comment_lib_spinlock);
                             }
                             

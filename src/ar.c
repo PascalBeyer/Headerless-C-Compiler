@@ -18,17 +18,17 @@
 // The third section is optionally '//', the long name data.
 // 
 // returns '1' on error.
-int ar_parse_file(char *file_name, struct memory_arena *arena){
+int ar_parse_file(struct string file_name, struct memory_arena *arena){
     
-    struct os_file file = load_file_into_arena(file_name, arena);
+    struct os_file file = load_file_into_arena((char *)file_name.data, arena);
     
     if(file.file_does_not_exist){
-        print("Error: Library '%s' does not exist.\n", file_name);
+        print("Error: Library '%s' does not exist.\n", (char *)file_name.data);
         return 1;
     }
     
     if(file.size < 8 || memcmp(file.data, "!<arch>\n", 8) != 0){
-        print("Error: Library '%s' is not an archive file (.lib, .a, .ar).\n", file_name);
+        print("Error: Library '%s' is not an archive file (.lib, .a, .ar).\n", (char *)file_name.data);
         return 1;
     }
     
@@ -36,7 +36,7 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
     u8 *file_end = file.data + file.size;
     
     if(file_at == file_end){
-        print("Warning: Library '%s' is empty.\n", file_name);
+        print("Warning: Library '%s' is empty.\n", (char *)file_name.data);
         return 0;
     }
     
@@ -93,7 +93,7 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
         int parse_size_success = 1;
         u64 file_size = string_to_u64(file_size_string, &parse_size_success);
         if(!parse_size_success || file_size > file.size || file_at + file_size > file_end){
-            print("Error: Failed to parse library '%s'.\n", file_name);
+            print("Error: Failed to parse library '%s'.\n", (char *)file_name.data);
             return 1;
         }
         
@@ -156,7 +156,7 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
     
     // Make sure the symbol index can contain the 'amount_of_members' and the string table is zero-terminated.
     if(little_endian_symbol_index_size < 4 || little_endian_symbol_index_base[little_endian_symbol_index_size-1] != 0){
-        print("Error: Failed to parse library '%s'.\n", file_name);
+        print("Error: Failed to parse library '%s'.\n", (char *)file_name.data);
         return 1;
     }
     
@@ -165,7 +165,7 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
     
     u32 amount_of_members = *symbol_index_at++;
     if(symbol_index_at + amount_of_members + 1 > (u32 *)symbol_index_end){
-        print("Error: Failed to parse library '%s'.\n", file_name);
+        print("Error: Failed to parse library '%s'.\n", (char *)file_name.data);
         return 1;
     }
     
@@ -174,14 +174,14 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
     
     u32 amount_of_symbols = *symbol_index_at++;
     if(amount_of_symbols == 0){
-        print("Warning: Library '%s' does not define any symbols.\n", file_name);
+        print("Warning: Library '%s' does not define any symbols.\n", (char *)file_name.data);
         return 0;
     }
     
     u16 *symbol_member_indices = (u16 *)symbol_index_at;
     
     if(symbol_member_indices + amount_of_symbols >= (u16 *)symbol_index_end || symbol_index_end[-1] != 0){ // @note: Equality so the string buffer is not empty.
-        print("Error: Failed to parse library '%s'.\n", file_name);
+        print("Error: Failed to parse library '%s'.\n", (char *)file_name.data);
         return 1;
     }
     
@@ -200,18 +200,18 @@ int ar_parse_file(char *file_name, struct memory_arena *arena){
     }
     
     if(amount_of_strings != (u64)amount_of_symbols){
-        print("Error: Failed to parse library '%s'.\n", file_name);
+        print("Error: Failed to parse library '%s'.\n", (char *)file_name.data);
         return 1;
     }
     
     u64 amount_of_import_symbols = push_data(arena, struct library_import_table_node, 0) - string_table;
     if(amount_of_import_symbols == 0){
-        print("Warning: Library '%s' does not export any symbols.\n", file_name);
+        print("Warning: Library '%s' does not export any symbols.\n", (char *)file_name.data);
         return 0;
     }
     
     struct library_node *library_node = push_struct(arena, struct library_node);
-    library_node->path = cstring_to_string(file_name);
+    library_node->path = file_name;
     library_node->file = file;
     library_node->amount_of_members     = amount_of_members;
     library_node->member_offsets        = member_offsets;
