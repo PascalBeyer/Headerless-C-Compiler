@@ -9,6 +9,12 @@ cd libpng || exit /b 1
 
 git clean -xdf
 
+where awk.exe > NUL
+if %errorlevel% == 0 (
+    echo ***** Warning: For whatever reason the build fails for me if it can find awk.
+    pause
+)
+
 cmake . -G Ninja -D CMAKE_C_COMPILER="%~dp0..\hlc.exe" -B build -D ZLIB_LIBRARY="%~dp0zlib\build\zlibstaticd.lib" -D ZLIB_INCLUDE_DIR="%~dp0zlib" || exit /b 1
 cd build
 ninja || exit /b 1
