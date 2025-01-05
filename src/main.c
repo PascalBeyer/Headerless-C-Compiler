@@ -724,7 +724,6 @@ struct context{
         int is_unsigned;
         u64 value;
         struct token *token;
-        struct token *macro_expansion_token;
         int should_skip_undefined_identifier;
     } static_if_evaluate_stack[1024];
     smm static_if_stack_at;
@@ -2555,35 +2554,42 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         
         struct define_node *defined_builtin = push_struct(&context->scratch, struct define_node);
         defined_builtin->name = atom_for_string(string("defined"));
-        defined_builtin->is_defined = 1;
+        defined_builtin->builtin_define_type = BUILTIN_DEFINE_defined;
         defined_builtin->is_builtin = 1;
         defined_builtin->defined_token = &globals.invalid_token;
         register_define(context, defined_builtin);
         
+        struct define_node *has_include_builtin = push_struct(&context->scratch, struct define_node);
+        has_include_builtin->name = atom_for_string(string("__has_include"));
+        has_include_builtin->builtin_define_type = BUILTIN_DEFINE_has_include;
+        has_include_builtin->is_builtin = 1;
+        has_include_builtin->defined_token = &globals.invalid_token;
+        register_define(context, has_include_builtin);
+        
         struct define_node *defined___pragma = push_struct(&context->scratch, struct define_node);
         defined___pragma->name = atom_for_string(string("__pragma"));
-        defined___pragma->is___pragma = 1;
+        defined___pragma->builtin_define_type = BUILTIN_DEFINE__pragma;
         defined___pragma->is_builtin  = 1;
         defined___pragma->defined_token = &globals.invalid_token;
         register_define(context, defined___pragma);
         
         struct define_node *defined__Pragma = push_struct(&context->scratch, struct define_node);
         defined__Pragma->name = atom_for_string(string("_Pragma"));
-        defined__Pragma->is___pragma = 1;
+        defined__Pragma->builtin_define_type = BUILTIN_DEFINE__pragma;
         defined__Pragma->is_builtin  = 1;
         defined__Pragma->defined_token = &globals.invalid_token;
         register_define(context, defined__Pragma);
         
         struct define_node *defined___FILE__ = push_struct(&context->scratch, struct define_node);
         defined___FILE__->name = atom_for_string(string("__FILE__"));
-        defined___FILE__->is___FILE__ = 1;
+        defined___FILE__->builtin_define_type = BUILTIN_DEFINE___FILE__;
         defined___FILE__->is_builtin  = 1;
         defined___FILE__->defined_token = &globals.invalid_token;
         register_define(context, defined___FILE__);
         
         struct define_node *defined___LINE__ = push_struct(&context->scratch, struct define_node);
         defined___LINE__->name = atom_for_string(string("__LINE__"));
-        defined___LINE__->is___LINE__ = 1;
+        defined___LINE__->builtin_define_type = BUILTIN_DEFINE___LINE__;
         defined___LINE__->is_builtin  = 1;
         defined___LINE__->defined_token = &globals.invalid_token;
         register_define(context, defined___LINE__);

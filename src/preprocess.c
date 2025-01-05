@@ -84,6 +84,14 @@ struct define_replacement_node{
     };
 };
 
+enum builtin_define_type{
+    BUILTIN_DEFINE_defined,
+    BUILTIN_DEFINE___FILE__,
+    BUILTIN_DEFINE___LINE__,
+    BUILTIN_DEFINE__pragma,
+    BUILTIN_DEFINE_has_include,
+};
+
 struct define_node{
     struct define_node *next;
     struct define_node *prev;
@@ -99,10 +107,7 @@ struct define_node{
     
     // 
     // Builtin defines:
-    u32 is_defined  : 1;
-    u32 is___pragma : 1;
-    u32 is___FILE__ : 1;
-    u32 is___LINE__ : 1;
+    u32 builtin_define_type  : 4;
     
     struct define_argument_list arguments;
     smm stringify_count; // The amount of arguments that have to be stringified when evaluating the define.
@@ -1689,99 +1694,107 @@ func void eat_whitespace_comments_and_newlines(struct context *context){
 func struct token *expand_define(struct context *context, struct token *token_to_expand, struct define_node *define, struct token *macro_expansion_site){
     
     if(define->is_builtin){
-        if(define->is___pragma){
-            
-            // :microsoft_extension
-            // for now unsupported, just skip all the tokens, such that they do not get emitted
-            
-            if(peek_token_raw(context, TOKEN_open_paren)){
-                // @incomplete: handle pragmas
-                skip_until_tokens_are_balanced_raw(context, null, TOKEN_open_paren, TOKEN_closed_paren);
-            }
-            
-            return null;
-        }
         
-        if(define->is_defined){
-            if(!context->in_static_if_condition) return token_to_expand;
-            
-            //
-            // defined() macro. We first parse the invokation, it should be 'defined <macro>' or 'defined (<macro>)'.
-            // if it is, disable '<macro>', push a token stack node with the '<macro>' or '(<macro>)' 
-            // and return the 'defined' token.
-            //                                                                                      14.06.2022
-            eat_whitespace_and_comments(context);
-            struct token *open_paren = peek_token_eat_raw(context, TOKEN_open_paren);
-            
-            eat_whitespace_and_comments(context);
-            struct token *identifier = peek_token_eat_raw(context, TOKEN_identifier);
-            if(!identifier){
-                tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Builtin macro 'defined' expected an identifier following it. Possible invokations are 'defined <identifier>' and 'defined(<identifer>)'.");
-                return token_to_expand;
-            }
-            
-            struct token *tokens = null;
-            smm amount_of_tokens = 0;
-            
-            if(open_paren){
+        switch(define->builtin_define_type){
+            case BUILTIN_DEFINE__pragma:{
+                // :microsoft_extension
+                // for now unsupported, just skip all the tokens, such that they do not get emitted
+                
+                if(peek_token_raw(context, TOKEN_open_paren)){
+                    // @incomplete: handle pragmas
+                    skip_until_tokens_are_balanced_raw(context, null, TOKEN_open_paren, TOKEN_closed_paren);
+                }
+                
+                return null;
+            }break;
+            case BUILTIN_DEFINE_defined:{
+                if(!context->in_static_if_condition) return token_to_expand;
+                
+                //
+                // defined() macro. We first parse the invokation, it should be 'defined <macro>' or 'defined (<macro>)'.
+                // if it is, disable '<macro>', push a token stack node with the '<macro>' or '(<macro>)' 
+                // and return the 'defined' token.
+                //                                                                                      14.06.2022
                 eat_whitespace_and_comments(context);
-                struct token *closed_paren = peek_token_eat_raw(context, TOKEN_closed_paren);
-                if(!closed_paren){
-                    tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Builtin macro 'defined' expected exactly one identifier in its argument list. Possible invokations are 'defined <identifier>' and 'defined(<identifier>)'.");
+                struct token *open_paren = peek_token_eat_raw(context, TOKEN_open_paren);
+                
+                eat_whitespace_and_comments(context);
+                struct token *identifier = peek_token_eat_raw(context, TOKEN_identifier);
+                if(!identifier){
+                    tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Builtin macro 'defined' expected an identifier following it. Possible invokations are 'defined <identifier>' and 'defined(<identifer>)'.");
                     return token_to_expand;
                 }
                 
-                // @cleanup: is there a reason to have the '(' and the ')'?
-                tokens = push_uninitialized_data(&context->scratch, struct token, 3);
-                tokens[0] = *open_paren;
-                tokens[1] = *identifier;
-                tokens[2] = *closed_paren;
-                amount_of_tokens = 3;
-            }else{
-                tokens = identifier;
-                amount_of_tokens = 1;
-            }
-            
-            //
-            // We are good, push a token stack node
-            //
-            
-            struct define_node *define_to_disable = lookup_define(context, identifier->atom);
-            if(define_to_disable && define_to_disable->is_disabled) define_to_disable = null;
-            
-            if(define_to_disable){
-                context->define_depth++;
-                define_to_disable->is_disabled = true;
-            }
-            
-            struct token_array token_array = {.data = tokens, .size = amount_of_tokens };
-            
-            struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-            node->define_to_reenable_on_exit = define_to_disable;
-            node->tokens = token_array;
-            
-            sll_push_front(context->token_stack, node);
-            
-            return token_to_expand;
-        }
-        
-        if(define->is___FILE__ || define->is___LINE__){
-            struct token *token = push_uninitialized_struct(&context->scratch, struct token);
-            *token = *macro_expansion_site;
-            
-            if(define->is___FILE__){
-                // @cleanup: This seems very slow.
-                struct string file_name = strip_file_path(string_from_cstring(globals.file_table.data[token->file_index]->absolute_file_path));
+                struct token *tokens = null;
+                smm amount_of_tokens = 0;
                 
-                token->type = TOKEN_string_literal;
-                token->string = push_format_string(context->arena, "\"%.*s\"", file_name.size, file_name.data);
-            }else{
-                token->type = TOKEN_base10_literal;
-                token->string = push_format_string(context->arena, "%u", token->line);
-            }
-            
-            return token;
+                if(open_paren){
+                    eat_whitespace_and_comments(context);
+                    struct token *closed_paren = peek_token_eat_raw(context, TOKEN_closed_paren);
+                    if(!closed_paren){
+                        tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Builtin macro 'defined' expected exactly one identifier in its argument list. Possible invokations are 'defined <identifier>' and 'defined(<identifier>)'.");
+                        return token_to_expand;
+                    }
+                    
+                    // @cleanup: is there a reason to have the '(' and the ')'?
+                    tokens = push_uninitialized_data(&context->scratch, struct token, 3);
+                    tokens[0] = *open_paren;
+                    tokens[1] = *identifier;
+                    tokens[2] = *closed_paren;
+                    amount_of_tokens = 3;
+                }else{
+                    tokens = identifier;
+                    amount_of_tokens = 1;
+                }
+                
+                //
+                // We are good, push a token stack node
+                //
+                
+                struct define_node *define_to_disable = lookup_define(context, identifier->atom);
+                if(define_to_disable && define_to_disable->is_disabled) define_to_disable = null;
+                
+                if(define_to_disable){
+                    context->define_depth++;
+                    define_to_disable->is_disabled = true;
+                }
+                
+                struct token_array token_array = {.data = tokens, .size = amount_of_tokens };
+                
+                struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
+                node->define_to_reenable_on_exit = define_to_disable;
+                node->tokens = token_array;
+                
+                sll_push_front(context->token_stack, node);
+                
+                return token_to_expand;
+            }break;
+            case BUILTIN_DEFINE_has_include:{
+                // Don't treat these as anything special, we handle it in the static if case.
+                // We need `#if defined(__has_include)` to be true.
+                return token_to_expand;
+            }break;
+            case BUILTIN_DEFINE___FILE__:
+            case BUILTIN_DEFINE___LINE__:{
+                struct token *token = push_uninitialized_struct(&context->scratch, struct token);
+                *token = *macro_expansion_site;
+                
+                if(define->builtin_define_type == BUILTIN_DEFINE___FILE__){
+                    // @cleanup: This seems very slow.
+                    struct string file_name = strip_file_path(string_from_cstring(globals.file_table.data[token->file_index]->absolute_file_path));
+                    
+                    token->type = TOKEN_string_literal;
+                    token->string = push_format_string(context->arena, "\"%.*s\"", file_name.size, file_name.data);
+                }else{
+                    token->type = TOKEN_base10_literal;
+                    token->string = push_format_string(context->arena, "%u", token->line);
+                }
+                
+                return token;
+            }break;
+            invalid_default_case();
         }
+        invalid_code_path;
     }
     
     struct token_array *argument_token_arrays    = null; // define->arguments.count long
@@ -2367,6 +2380,229 @@ func struct token *peek_token_eat(struct context *context, enum token_type type)
     return null;
 }
 
+//_____________________________________________________________________________________________________________________
+// Include string processing.
+
+// Used by both include parsing and __has_include.
+struct string parse_include_string_after_it_has_been_preprocessed(struct context *context, struct token *site, int *is_system_include){
+    struct string file_name = zero_struct;
+    
+    if(peek_token(context, TOKEN_string_literal)){
+        *is_system_include = false;
+        
+        file_name = strip_prefix_and_quotes(token_get_string(next_token(context)));
+    }else if(peek_token(context, TOKEN_smaller)){
+        *is_system_include = true;
+        
+        struct token *smaller = next_token(context);
+        
+        struct string_list include_string = zero_struct;
+        
+        while(!peek_token(context, TOKEN_bigger) && !peek_token(context, TOKEN_invalid)){
+            struct string token_string = push_token_string(context, next_token(context), true);
+            string_list_postfix(&include_string, &context->scratch, token_string);
+        }
+        
+        if(peek_token(context, TOKEN_invalid)){
+            report_error(context, smaller, "Newline in <>-include.");
+            return file_name;
+        }
+        
+        struct token *bigger = next_token(context);
+        
+        file_name = string_list_flatten(include_string, &context->scratch);
+        
+        assert(smaller->type == TOKEN_smaller && smaller->data);
+        assert(bigger->type  == TOKEN_bigger  && bigger->data);
+        
+    }else{
+        report_error(context, site, "Expected either \"\"-include or <>-include.");
+    }
+    return file_name;
+}
+
+func struct file *load_or_get_source_file_by_absolute_path(struct context *context, char *absolute_file_path, smm file_size, int is_system_include){
+    
+    smm file_name_hash = string_djb2_hash(string_from_cstring(absolute_file_path));
+    
+    struct temporary_memory temp = begin_temporary_memory(context->arena);
+    
+    struct file *file = push_struct(context->arena, struct file);
+    file->absolute_file_path = absolute_file_path;
+    file->is_system_include  = is_system_include;
+    atomic_store(int, file->in_progress, true);
+    
+    for(s32 table_index = 0; table_index < array_count(globals.file_table.data); table_index++){
+        s32 index = (table_index + file_name_hash) & (array_count(globals.file_table.data) - 1);
+        
+        struct file *other = globals.file_table.data[index];
+        
+        if(!other){
+            if(atomic_compare_and_swap(&globals.file_table.data[index], file, null) == null){
+                // 
+                // We are the ones who inserted this file!
+                // So load it from the disk.
+                // 
+                file->file_index = index;
+                smm size = atomic_postincrement(&globals.file_table.size);
+                (void)size;
+                // @cleanup report error on too many includes?
+                
+                solidify_temporary_memory(temp);
+                break;
+            }
+            other = globals.file_table.data[index];
+            assert(other);
+        }
+        
+        if(cstring_match(absolute_file_path, other->absolute_file_path)){
+            
+            // Wait for the file to be done.
+            while(atomic_load(smm, other->in_progress) == true) _mm_pause();
+            
+            end_temporary_memory(temp);
+            return other;
+        }
+    }
+    
+    begin_counter(context, load_file);
+    
+    // :padded_file_size
+    // 
+    // @WARNING: We have to add 128 padding bytes as we are using 'hash_md5_inplace' in coff_writer.c
+    // 
+    smm pad_size = 128;
+    smm padded_file_size = file_size + pad_size;
+    
+    u8 *file_buffer = push_uninitialized_data(context->arena, u8, padded_file_size);
+    
+    struct os_file os_file = os_load_file(absolute_file_path, file_buffer, padded_file_size);
+    
+    // 
+    // Clear the added padding, this will *really* zero-terminate the file.
+    // 
+    // memset(buf + file_size, 0, pad_size); 
+    // 
+    // @note: We do not have to clear the padding, as we never deallocate from 'arena'.
+    // 
+    
+    end_counter(context, load_file);
+    
+    if(os_file.amount != file_size){
+        report_error(context, 0, "Error: File '%s' changed during compilation.", absolute_file_path);
+        goto end;
+    }
+    
+    file->file = os_file;
+    file->amount_of_times_included = 0;
+    
+    // :newline_at_the_end_of_the_file
+    // 
+    // Put a newline at the very end of the file, this makes sure directives do not have to 
+    // worry about end of file.
+    // Put another newline there, so we don't have to wory about backslashes ruining our fun.
+    file_buffer[file_size] = '\n';
+    file_buffer[file_size + 1] = '\n';
+    
+    struct string file_contents = {
+        .data = os_file.data,
+        .size = os_file.size + 2,
+    };
+    
+    // 
+    // BOM (Byte Order Mark) handling.
+    // 
+    if(file_buffer[0] == 0xEF && file_buffer[1] == 0xBB && file_buffer[2] == 0xBF){
+        // UTF8-BOM
+        file_contents.data += 3;
+        file_contents.size -= 3;
+    }else if((file_buffer[0] == 0xEF && file_buffer[1] == 0xFF) || (file_buffer[0] == 0xFF && file_buffer[1] == 0xFE)){
+        // Big Endian UTF16
+        report_error(context, 0, "Error: File '%s' starts with a UTF-16 Byte Order Mark. UTF-16 source files are not supported at this point.", absolute_file_path);
+        goto end;
+    }
+    
+    file->tokens = tokenize_raw(context, file_contents, file->file_index, /* is_stupid_hack */ false, &file->lines);
+    
+    end:
+    atomic_store(int, file->in_progress, false);
+    
+    return file;
+}
+
+func struct file *get_or_load_file_for_include_string(struct context *context, struct token *directive, struct string include_string, int is_system_include){
+    
+    struct file *file = null;
+    
+    if(!is_system_include){
+        
+        //
+        // First check relative to this file.
+        //
+        struct file *parent_file = globals.file_table.data[directive->file_index];
+        
+        // For the purposes of reporting warnings we want to treat ""-includes in system include files the same as system includes.
+        if(parent_file->is_system_include) is_system_include = true;
+        
+        struct string path = strip_file_name(string_from_cstring(parent_file->absolute_file_path));
+        struct string absolute_file_path = canonicalize_slashes(concatenate_file_paths(&context->scratch, path, include_string));
+        struct os_file dummy = os_load_file((char *)absolute_file_path.data, 0, 0);
+        if(!dummy.file_does_not_exist){
+            // 
+            // The include was a relative ""-include.
+            // 
+            
+            file = load_or_get_source_file_by_absolute_path(context, push_cstring_from_string(context->arena, absolute_file_path), dummy.size, is_system_include);
+        }
+    }
+    
+    if(!file){
+        // 
+        // This is either a <>-include, or it failed the relative lookup.
+        // 
+        
+        smm capacity = globals.system_include_table.capacity;
+        struct system_include_file_entry *entries = globals.system_include_table.entries;
+        
+        u64 hash = string_djb2_hash(include_string);
+        
+        struct system_include_file_entry *entry = null;
+        
+        for(smm table_index = 0; table_index < capacity; table_index++){
+            smm index = (hash + table_index) & (capacity - 1);
+            
+            if(!entries[index].absolute_file_path) break;
+            
+            if(string_match(entries[index].include_string, include_string)){
+                entry = &entries[index];
+                break;
+            }
+        }
+        
+        if(!entry) return null;
+        
+        if(entry->in_progress == 0){
+            // 
+            // The file is not yet loaded, try to load it.
+            // 
+            
+            if(atomic_compare_and_swap_smm(&entry->in_progress, 1, 0) == 0){
+                // 
+                // We are the ones who are supposed to load the file.
+                // 
+                entry->file = load_or_get_source_file_by_absolute_path(context, entry->absolute_file_path, entry->file_size, is_system_include);
+            }
+        }
+        
+        // Wait for the file to be done.
+        while(atomic_load(smm, entry->in_progress) == 1) _mm_pause();
+        
+        file = entry->file;
+    }
+    
+    return file;
+}
+
 
 //_____________________________________________________________________________________________________________________
 // static if evaluation
@@ -2433,21 +2669,11 @@ func void static_if_stack_push(struct context *context, struct token *token, enu
     node->operation = operation;
     node->is_unsigned = is_unsigned;
     node->value     = value;
-    node->macro_expansion_token = context->macro_expansion_token;
     node->should_skip_undefined_identifier = context->static_if_evaluate_should_skip_undefined_identifier;
 }
 
-func void static_if_report_error(struct context *context, struct token *token, struct token *macro_expansion_token, struct token *directive, char *error){
-    
-    if(token->type == TOKEN_invalid){
-        report_error(context, directive, "File ends within '#if'.");
-    }else{
-        tokenizer_report_error(context, token, macro_expansion_token, error);
-    }
-}
-
 // directive is only here to report errors
-func s64 static_if_evaluate(struct context *context, struct token *directive){
+func s64 static_if_evaluate(struct context *context){
     
     
     // prevent the usage of the *token_raw routines
@@ -2494,7 +2720,7 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
                 case NUMBER_KIND_u16: value = (u16)parsed_integer.value; is_unsigned = 1; break;
                 case NUMBER_KIND_u32: value = (u32)parsed_integer.value; is_unsigned = 1; break;
                 case NUMBER_KIND_invalid:{
-                    static_if_report_error(context, test, context->macro_expansion_token, directive, "Invalid prefix on string literal.");
+                    report_error(context, test, "Invalid prefix on string literal.");
                 }break;
                 invalid_default_case();
             }
@@ -2560,34 +2786,37 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
                 
                 // We are gonna report an error, set the token.
                 if(token->type != TOKEN_identifier){ 
-                    static_if_report_error(context, test, context->macro_expansion_token, directive, "Expected an identifier after 'defined'.");
+                    report_error(context, get_current_token_for_error_report(context), "Expected an identifier after 'defined'.");
                     return 0;
                 }
                 
-                if(got_paren){
-                    test = next_token(context);
-                    
-                    if(test->type != TOKEN_closed_paren){
-                        static_if_report_error(context, test, context->macro_expansion_token, directive, "Expected a ')' after 'defined' identifier.");
-                        return 0;
-                    }
-                }
+                if(got_paren) expect_token(context, TOKEN_closed_paren, "Expected a ')' after 'defined(<identifier>'.");
                 
                 if(context->should_exit_statement) return 0;
                 
                 value = lookup_define(context, token->atom) != null;
                 is_unsigned = 0;
+            }else if(string_match(token_get_string(test), string("__has_include"))){
+                eat_whitespace_and_comments(context);
+                struct token *got_paren = peek_token_eat(context, TOKEN_open_paren);
+                
+                eat_whitespace_and_comments(context);
+                
+                int is_system_include;
+                struct string file_name = parse_include_string_after_it_has_been_preprocessed(context, test, &is_system_include);
+                
+                // @note: I assume that you will include the thing if you use __has_include on it... so we already load the thing here.
+                struct file *file = get_or_load_file_for_include_string(context, test, file_name, is_system_include);
+                
+                value = (file != null);
+                is_unsigned = 0;
+                
+                if(got_paren) expect_token(context, TOKEN_closed_paren, "Expected a ')' after '__has_include(<include-string>");
+                
+                if(context->should_exit_statement) return 0;
             }else{
                 if(!context->static_if_evaluate_should_skip_undefined_identifier){
-                    struct token *ret = push_uninitialized_struct(&context->scratch, struct token);
-                    *ret = *test;
-                    // :copy_expanded_location
-                    if(context->macro_expansion_token){
-                        ret->line   = context->macro_expansion_token->line;
-                        ret->column = context->macro_expansion_token->column;
-                        ret->file_index   = context->macro_expansion_token->file_index;
-                    }
-                    report_warning(context, WARNING_undefined_static_if_operand, ret, "Undefined identifier in '#if' operand gets evaluated to zero.");
+                    report_warning(context, WARNING_undefined_static_if_operand, test, "Undefined identifier in '#if' operand gets evaluated to zero.");
                 }
                 
                 value = 0;
@@ -2600,12 +2829,16 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
             
             resume_for_parenthesized_expression:;
             if(test->type != TOKEN_closed_paren){
-                static_if_report_error(context, test, context->macro_expansion_token, directive, "Expected ')' in '#if' argument."); // :Error
+                report_error(context, test, "Expected ')' in '#if' argument."); // :Error
                 return 0;
             }
         }break;
         default:{
-            static_if_report_error(context, test, context->macro_expansion_token, directive, "Unexpected token in '#if' operand.");
+            if(test == &globals.invalid_token){
+                report_error(context, get_current_token_for_error_report(context), "Unexpected end to '#if'.");
+            }else{
+                report_error(context, test, "Unexpected token in '#if' operand.");
+            }
             return 0;
         }break;   
     }
@@ -2737,7 +2970,7 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
             case STATIC_IF_EVALUATE_div:{
                 is_unsigned |= current->is_unsigned;
                 if(value == 0){
-                    static_if_report_error(context, get_current_token_for_error_report(context), static_if_stack_current(context)->macro_expansion_token, directive, "Divide by zero."); // @cleanup: More context if identifier was undefined.
+                    report_error(context, get_current_token_for_error_report(context), "Divide by zero."); // @cleanup: More context if identifier was undefined.
                     return 0;
                 }
                 value = is_unsigned ? ((u64)current->value / (u64)value) : ((s64)current->value / (s64)value);
@@ -2746,7 +2979,7 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
             case STATIC_IF_EVALUATE_mod:{
                 is_unsigned |= current->is_unsigned;
                 if(value == 0){
-                    static_if_report_error(context, get_current_token_for_error_report(context), static_if_stack_current(context)->macro_expansion_token, directive, "Mod with zero."); // @cleanup: More context if identifier was undefined.
+                    report_error(context, get_current_token_for_error_report(context), "Mod with zero."); // @cleanup: More context if identifier was undefined.
                     return 0;
                 }
                 value = is_unsigned ? ((u64)current->value % (u64)value) : ((s64)current->value % (s64)value);
@@ -2802,7 +3035,7 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
             case STATIC_IF_EVALUATE_ternary_condition:{
                 
                 if(binary_expression->type != TOKEN_colon){
-                    static_if_report_error(context, binary_expression, context->macro_expansion_token, directive, "Expected a ':'.");
+                    report_error(context, binary_expression, "Expected a ':'.");
                     return 0;
                 }
                 
@@ -2880,194 +3113,17 @@ func s64 static_if_evaluate(struct context *context, struct token *directive){
 
 //_____________________________________________________________________________________________________________________
 
-struct file *load_or_get_source_file_by_absolute_path(struct context *context, char *absolute_file_path, smm file_size, int is_system_include){
-    
-    smm file_name_hash = string_djb2_hash(string_from_cstring(absolute_file_path));
-    
-    struct temporary_memory temp = begin_temporary_memory(context->arena);
-    
-    struct file *file = push_struct(context->arena, struct file);
-    file->absolute_file_path = absolute_file_path;
-    file->is_system_include  = is_system_include;
-    atomic_store(int, file->in_progress, true);
-    
-    for(s32 table_index = 0; table_index < array_count(globals.file_table.data); table_index++){
-        s32 index = (table_index + file_name_hash) & (array_count(globals.file_table.data) - 1);
-        
-        struct file *other = globals.file_table.data[index];
-        
-        if(!other){
-            if(atomic_compare_and_swap(&globals.file_table.data[index], file, null) == null){
-                // 
-                // We are the ones who inserted this file!
-                // So load it from the disk.
-                // 
-                file->file_index = index;
-                smm size = atomic_postincrement(&globals.file_table.size);
-                (void)size;
-                // @cleanup report error on too many includes?
-                
-                solidify_temporary_memory(temp);
-                break;
-            }
-            other = globals.file_table.data[index];
-            assert(other);
-        }
-        
-        if(cstring_match(absolute_file_path, other->absolute_file_path)){
-            
-            // Wait for the file to be done.
-            while(atomic_load(smm, other->in_progress) == true) _mm_pause();
-            
-            end_temporary_memory(temp);
-            return other;
-        }
-    }
-    
-    begin_counter(context, load_file);
-    
-    // :padded_file_size
-    // 
-    // @WARNING: We have to add 128 padding bytes as we are using 'hash_md5_inplace' in coff_writer.c
-    // 
-    smm pad_size = 128;
-    smm padded_file_size = file_size + pad_size;
-    
-    u8 *file_buffer = push_uninitialized_data(context->arena, u8, padded_file_size);
-    
-    struct os_file os_file = os_load_file(absolute_file_path, file_buffer, padded_file_size);
-    
-    // 
-    // Clear the added padding, this will *really* zero-terminate the file.
-    // 
-    // memset(buf + file_size, 0, pad_size); 
-    // 
-    // @note: We do not have to clear the padding, as we never deallocate from 'arena'.
-    // 
-    
-    end_counter(context, load_file);
-    
-    if(os_file.amount != file_size){
-        report_error(context, 0, "Error: File '%s' changed during compilation.", absolute_file_path);
-        goto end;
-    }
-    
-    file->file = os_file;
-    file->amount_of_times_included = 0;
-    
-    // :newline_at_the_end_of_the_file
-    // 
-    // Put a newline at the very end of the file, this makes sure directives do not have to 
-    // worry about end of file.
-    // Put another newline there, so we don't have to wory about backslashes ruining our fun.
-    file_buffer[file_size] = '\n';
-    file_buffer[file_size + 1] = '\n';
-    
-    struct string file_contents = {
-        .data = os_file.data,
-        .size = os_file.size + 2,
-    };
-    
-    // 
-    // BOM (Byte Order Mark) handling.
-    // 
-    if(file_buffer[0] == 0xEF && file_buffer[1] == 0xBB && file_buffer[2] == 0xBF){
-        // UTF8-BOM
-        file_contents.data += 3;
-        file_contents.size -= 3;
-    }else if((file_buffer[0] == 0xEF && file_buffer[1] == 0xFF) || (file_buffer[0] == 0xFF && file_buffer[1] == 0xFE)){
-        // Big Endian UTF16
-        report_error(context, 0, "Error: File '%s' starts with a UTF-16 Byte Order Mark. UTF-16 source files are not supported at this point.", absolute_file_path);
-        goto end;
-    }
-    
-    file->tokens = tokenize_raw(context, file_contents, file->file_index, /* is_stupid_hack */ false, &file->lines);
-    
-    end:
-    atomic_store(int, file->in_progress, false);
-    
-    return file;
-}
-
-
 func int handle_include_directive(struct context *context, struct token *directive, int is_system_include, struct string include_string){
     begin_counter(context, handle_include);
     
     include_string = push_zero_terminated_string_copy(context->arena, include_string);
     hacky_canonicalize_file_for_case_insensitivity(&include_string);
     
-    struct file *file = null;
-    
-    if(!is_system_include){
-        
-        //
-        // First check relative to this file.
-        //
-        struct file *parent_file = globals.file_table.data[directive->file_index];
-        
-        // For the purposes of reporting warnings we want to treat ""-includes in system include files the same as system includes.
-        if(parent_file->is_system_include) is_system_include = true;
-        
-        struct string path = strip_file_name(string_from_cstring(parent_file->absolute_file_path));
-        struct string absolute_file_path = canonicalize_slashes(concatenate_file_paths(&context->scratch, path, include_string));
-        struct os_file dummy = os_load_file((char *)absolute_file_path.data, 0, 0);
-        if(!dummy.file_does_not_exist){
-            // 
-            // The include was a relative ""-include.
-            // 
-            
-            file = load_or_get_source_file_by_absolute_path(context, push_cstring_from_string(context->arena, absolute_file_path), dummy.size, is_system_include);
-        }
-    }
-    
+    struct file *file = get_or_load_file_for_include_string(context, directive, include_string, is_system_include);
     if(!file){
-        // 
-        // This is either a <>-include, or it failed the relative lookup.
-        // 
-        
-        smm capacity = globals.system_include_table.capacity;
-        struct system_include_file_entry *entries = globals.system_include_table.entries;
-        
-        u64 hash = string_djb2_hash(include_string);
-        
-        struct system_include_file_entry *entry = null;
-        
-        for(smm table_index = 0; table_index < capacity; table_index++){
-            smm index = (hash + table_index) & (capacity - 1);
-            
-            if(!entries[index].absolute_file_path) break;
-            
-            if(string_match(entries[index].include_string, include_string)){
-                entry = &entries[index];
-                break;
-            }
-        }
-        
-        if(!entry){
-            report_error(context, directive, "'%.*s' include file not found.", include_string.size, include_string.data);
-            return 1;
-        }
-        
-        if(entry->in_progress == 0){
-            // 
-            // The file is not yet loaded, try to load it.
-            // 
-            
-            if(atomic_compare_and_swap_smm(&entry->in_progress, 1, 0) == 0){
-                // 
-                // We are the ones who are supposed to load the file.
-                // 
-                entry->file = load_or_get_source_file_by_absolute_path(context, entry->absolute_file_path, entry->file_size, is_system_include);
-            }
-        }
-        
-        // Wait for the file to be done.
-        while(atomic_load(smm, entry->in_progress) == 1) _mm_pause();
-        
-        file = entry->file;
+        report_error(context, directive, "'%.*s' include file not found.", include_string.size, include_string.data);
+        return 1;
     }
-    
-    assert(file);
     
     //
     // Check if we are one of the files that contained a '#pragma once' in this compilation unit,
@@ -4353,46 +4409,14 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         // 
                         // @copy_and_paste from the non-expanded case.
                         // 
-                        struct string file_name = zero_struct;
+                        
                         int is_system_include = false;
-                        
-                        if(peek_token(context, TOKEN_string_literal)){
-                            is_system_include = false;
-                            
-                            file_name = strip_prefix_and_quotes(token_get_string(next_token(context)));
-                        }else if(peek_token(context, TOKEN_smaller)){
-                            is_system_include = true;
-                            
-                            struct token *smaller = next_token(context);
-                            
-                            struct string_list include_string = zero_struct;
-                            
-                            while(!peek_token(context, TOKEN_bigger) && !peek_token(context, TOKEN_invalid)){
-                                struct string token_string = push_token_string(context, next_token(context), true);
-                                string_list_postfix(&include_string, &context->scratch, token_string);
-                            }
-                            
-                            if(peek_token(context, TOKEN_invalid)){
-                                report_error(context, smaller, "Newline in <>-include.");
-                                goto end;
-                            }
-                            
-                            struct token *bigger = next_token(context);
-                            
-                            file_name = string_list_flatten(include_string, &context->scratch);
-                            
-                            assert(smaller->type == TOKEN_smaller && smaller->data);
-                            assert(bigger->type  == TOKEN_bigger  && bigger->data);
-                            
-                        }else{
-                            report_error(context, postponed_directive.directive, "Expected either \"\"-include or <>-include.");
-                            goto end;
-                        }
-                        
+                        struct string file_name = parse_include_string_after_it_has_been_preprocessed(context, postponed_directive.directive, &is_system_include);
+                                
                         int should_error = handle_include_directive(context, postponed_directive.directive, is_system_include, file_name);
                         if(should_error) goto end;
                     }else{
-                        static_if_stack.first->is_true = static_if_evaluate(context, postponed_directive.directive) != 0;
+                        static_if_stack.first->is_true = static_if_evaluate(context) != 0;
                         if(context->should_exit_statement) goto end;
                     }
                     
