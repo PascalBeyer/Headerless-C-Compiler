@@ -3140,7 +3140,7 @@ func int handle_include_directive(struct context *context, struct token *directi
     
     if(!skip_include){
         if(globals.cli_options.show_includes){
-            print("%s\n", file->absolute_file_path);
+            print("Note: including file: %s\n", file->absolute_file_path);
         }
         
         //
