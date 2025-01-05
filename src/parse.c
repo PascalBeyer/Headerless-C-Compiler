@@ -8850,17 +8850,6 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             
             struct ast_function_type *function = parser_type_push(context, open_paren, function_type);
             
-            
-            // @cleanup: This hack is not correct, complilers also handle 'int function(typedef_to_void)' the same.
-            if(peek_token_eat(context, TOKEN_void)){
-                if(peek_token(context, TOKEN_closed_paren)){
-                    // this is fine we will not pass the if below
-                }else{
-                    // if it is only (void) then we treat it as if there are no arguments
-                    prev_token(context);
-                }
-            }
-            
             // 
             // parameter-type-list:
             //     parameter-list
@@ -8924,6 +8913,19 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 expect_token(context, TOKEN_closed_paren, "Expected ')' ending function declarator.");
                 if(context->should_exit_statement) return ret;
             }
+            
+            if(function->argument_list.count == 1){
+                struct ast_declaration *argument = (struct ast_declaration *)function->argument_list.first->value;
+                if(argument->type->kind == AST_void_type && argument->identifier == globals.invalid_identifier_token){
+                    // 
+                    // Transform 'int arst(void);' into 'int arst();', furthermore, if we have typedef void VOID;
+                    // Also transform 'int arst(VOID);' into 'int arst();'.
+                    // 
+                    function->argument_list.first = function->argument_list.last = null;
+                    function->argument_list.count = 0;
+                }
+            }
+            
             
             struct post_type_node *post_type_node = push_struct(&context->scratch, struct post_type_node);
             
