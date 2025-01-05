@@ -1,4 +1,4 @@
-// compile -stdlib
+// compile
 
 #pragma once
 

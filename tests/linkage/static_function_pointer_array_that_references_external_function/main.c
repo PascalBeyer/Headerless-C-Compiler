@@ -1,4 +1,4 @@
-// compile -stdlib other.c
+// compile other.c
 // run
 // check "hi!"
 // check "bye!"

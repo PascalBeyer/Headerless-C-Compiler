@@ -1,4 +1,3 @@
-// compile -stdlib
 
 #include <math.h>
 #include <stdio.h>

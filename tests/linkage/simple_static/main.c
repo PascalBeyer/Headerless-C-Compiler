@@ -1,4 +1,4 @@
-// compile -stdlib other.c
+// compile other.c
 // run
 // check "static 1337"
 // check "other static 6969"

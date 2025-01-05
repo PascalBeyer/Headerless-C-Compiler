@@ -1,3 +1,4 @@
+// compile /std:c11
 // check "Redefinition of macro 'alignas'."
 
 #include <stdalign.h>

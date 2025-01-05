@@ -1,4 +1,4 @@
-// compile -stdlib
+// compile
 
 // Shows that all standart library headers "work", or at least compile.
 

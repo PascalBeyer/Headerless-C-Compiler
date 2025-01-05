@@ -1,4 +1,3 @@
-// compile -stdlib
 // run
 
 void _exit(int status);

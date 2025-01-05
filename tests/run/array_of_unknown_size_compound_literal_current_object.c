@@ -1,4 +1,3 @@
-// compile -stdlib
 // run
 // check "array[0] = {1.000000, 2.000000}"
 // check "array[1] = {3.000000, 4.000000}"

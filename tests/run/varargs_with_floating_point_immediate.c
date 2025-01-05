@@ -1,4 +1,3 @@
-// compile -stdlib
 // run
 
 #include <stdarg.h>

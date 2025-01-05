@@ -1,4 +1,3 @@
-// compile -stdlib
 // run
 // check "sizeof('\xff') = 4 (-1)"
 // check "sizeof('\xff\xff') = 4 (65535)"
