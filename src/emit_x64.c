@@ -3594,15 +3594,26 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             return emit_location_invalid(context);
         }break;
         case AST_case:{
-            struct ast_case *ast_case = cast(struct ast_case *)ast;
-            assert(ast_case->jump);
-            emit_end_jumps(*ast_case->jump);
-            
-            if(ast_case->statement){ 
-                struct emit_location *loc = emit_code_for_ast(context, ast_case->statement);
-                if(loc) free_emit_location(context, loc);
+            while(true){
+                struct ast_case *ast_case = cast(struct ast_case *)ast;
+                assert(ast_case->jump);
+                emit_end_jumps(*ast_case->jump);
+                
+                if(ast_case->statement){ 
+                    // Chain all case statements and do not recurse for them.
+                    // This avoids stack overflows and is faster.
+                    if(ast_case->statement->kind == AST_case){
+                        ast = ast_case->statement;
+                        ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
+                        continue;
+                    }
+                    
+                    struct emit_location *loc = emit_code_for_ast(context, ast_case->statement);
+                    if(loc) free_emit_location(context, loc);
+                }
+                
+                break;
             }
-            
             return emit_location_invalid(context);
         }break;
         case AST_do_while:
