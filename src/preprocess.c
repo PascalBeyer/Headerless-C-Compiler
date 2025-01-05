@@ -2045,7 +2045,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                                 int skip = 0;
                                 
                                 if(define_in_argument->is_function_like){
-                                    eat_whitespace_and_comments(context); 
+                                    eat_whitespace_comments_and_newlines(context); 
                                     if(!peek_token_raw(context, TOKEN_open_paren)){
                                         skip = 1;
                                     }
@@ -4295,7 +4295,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     
                     int skip = 0;
                     if(define->is_function_like){
-                        eat_whitespace_and_comments(context); 
+                        eat_whitespace_comments_and_newlines(context); 
                         if(!peek_token_raw(context, TOKEN_open_paren)){
                             skip = 1;
                         }
