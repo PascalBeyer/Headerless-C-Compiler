@@ -822,6 +822,15 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 assert(!(decl->flags & DECLARATION_FLAGS_is_local_persist));
                 
+                // 
+                // @cleanup: what if stuff has more than one?
+                // 
+                
+                if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                    ast_list_append(&tls_variables, scratch, &decl->base);
+                    continue;
+                }
+                
                 if(decl->flags & DECLARATION_FLAGS_is_static){
                     if(decl->assign_expr){
                         ast_list_append(&defined_variables, scratch, &decl->base);
@@ -839,11 +848,6 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     }else{
                         ast_list_append(&automatic_variables, scratch, &decl->base);
                     }
-                    continue;
-                }
-                
-                if(decl->flags & DECLARATION_FLAGS_is_thread_local){
-                    ast_list_append(&tls_variables, scratch, &decl->base);
                     continue;
                 }
                 
