@@ -922,19 +922,17 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         }
     }
     
+    struct ast_list global_struct_and_array_literals = zero_struct;
+    
     for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
         struct context *thread_context = globals.thread_infos[thread_index].context;
         
         // 
         // Append the declarations for 'global_struct_and_array_literals' to the 'initialized_declarations'.
-        // @cleanup: These should be pruned as well.
         // 
         
-        for_ast_list(thread_context->global_struct_and_array_literals){
-            struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)it->value;
-            
-            ast_list_append(&defined_variables, arena, &compound_literal->decl->base);
-        }
+        sll_push_back_list(global_struct_and_array_literals, thread_context->global_struct_and_array_literals);
+        global_struct_and_array_literals.count += thread_context->global_struct_and_array_literals.count;
     }
     
     if(tls_variables.count){
@@ -1455,7 +1453,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         }
     }
     
-    if(defined_variables.count){
+    if(defined_variables.count || global_struct_and_array_literals.count){
         data = section_headers + section_header_count++;
         
         push_zero_align(arena, 0x10); // @hack: This is because of the alignment thing below. 
@@ -1463,27 +1461,34 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         
         smm section_alignment = 1;
         
-        for_ast_list(defined_variables){
-            struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-            
-            smm alignment = get_declaration_alignment(decl);
-            smm decl_size = get_declaration_size(decl);
-            
-            push_zero_align(arena, alignment); // @cleanup: This seems wrong... We want to align the offset from the base.
-            
-            section_alignment = max_of(section_alignment, alignment);
-            
-            u8 *mem = push_uninitialized_data(arena, u8, decl_size);
-            
-            if(decl->assign_expr){
-                assert(decl->memory_location);
-                memcpy(mem, decl->memory_location, decl_size);
-            }else{
-                memset(mem, 0, decl_size); // @cleanup: I think 'uninitialized' is not a thing anymore.
+        struct ast_list lists[] = {
+            defined_variables,
+            global_struct_and_array_literals,
+        };
+        
+        for(u32 index = 0; index < array_count(lists); index++){
+            for_ast_list(lists[index]){
+                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+                
+                smm alignment = get_declaration_alignment(decl);
+                smm decl_size = get_declaration_size(decl);
+                
+                push_zero_align(arena, alignment); // @cleanup: This seems wrong... We want to align the offset from the base.
+                
+                section_alignment = max_of(section_alignment, alignment);
+                
+                u8 *mem = push_uninitialized_data(arena, u8, decl_size);
+                
+                if(decl->assign_expr){
+                    assert(decl->memory_location);
+                    memcpy(mem, decl->memory_location, decl_size);
+                }else{
+                    memset(mem, 0, decl_size); // @cleanup: I think 'uninitialized' is not a thing anymore.
+                }
+                
+                decl->memory_location = mem;
+                decl->relative_virtual_address = (u32)(mem - data_base);
             }
-            
-            decl->memory_location = mem;
-            decl->relative_virtual_address = (u32)(mem - data_base);
         }
         
         u32 alignment_flag = ((count_trailing_zeros64(section_alignment)+1) << 20);
@@ -2733,6 +2738,27 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         record->value = (s32)decl->relative_virtual_address;
         record->section_number = (s16)((data - section_headers) + 1);
         record->storage_class = (decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist)) ? /*IMAGE_SYM_CLASS_STATIC*/3 : /*IMAGE_SYM_CLASS_EXTERNAL*/2;
+        record->type = 0;
+    }
+    
+    for_ast_list(global_struct_and_array_literals){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        decl->symbol_table_index = (arena_current(arena) - (u8 *)symbol_table_base)/18;
+        
+        struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
+        struct string name = push_format_string(scratch, "$Slit%x", decl->symbol_table_index);
+        
+        if(name.size <= 8){
+            memcpy(record->short_name, name.data, name.size);
+        }else{
+            record->string_table_offset = (u32)coff_string_table_at;
+            coff_string_table_at += name.size + 1;
+            string_list_postfix(&long_name_strings, scratch, name);
+        }
+        
+        record->value = (s32)decl->relative_virtual_address;
+        record->section_number = (s16)((data - section_headers) + 1);
+        record->storage_class = /*IMAGE_SYM_CLASS_STATIC*/3;
         record->type = 0;
     }
     

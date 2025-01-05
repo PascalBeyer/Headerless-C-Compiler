@@ -2149,7 +2149,7 @@ func b32 evaluate_static_address(struct context *context, struct ast *rhs, struc
             
             // 
             // Add this compound literal to the list of unnamed global declarations.
-            ast_list_append(&context->global_struct_and_array_literals, context->arena, &compound_literal->base);
+            ast_list_append(&context->global_struct_and_array_literals, context->arena, &compound_literal->decl->base);
             
             patch_ast = &compound_literal->decl->base;
             should_loop = false;
@@ -5116,9 +5116,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         struct context *thread_context = globals.thread_infos[thread_index].context;
         
         for_ast_list(thread_context->global_struct_and_array_literals){
-            struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)it->value;
-            
-            compound_literal->decl->memory_location = evaluate_static_initializer(thread_context, compound_literal->decl);
+            struct ast_declaration *decl = (struct ast_declaration *)it->value;
+            decl->memory_location = evaluate_static_initializer(thread_context, decl);
         }
     }
     

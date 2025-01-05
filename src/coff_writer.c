@@ -1728,9 +1728,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // 
         
         for_ast_list(thread_context->global_struct_and_array_literals){
-            struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)it->value;
-            
-            ast_list_append(&symbol_context.initialized_declarations, arena, &compound_literal->decl->base);
+            ast_list_append(&symbol_context.initialized_declarations, arena, it->value);
         }
     }
     
