@@ -3971,6 +3971,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         
                         "#define _MSC_EXTENSIONS 1\n"
                         
+                        "#define _INTEGRAL_MAX_BITS 64\n"
+                        
                         // I will define these for now.
                         // In the future, these will only be defined by the "clang-cl.exe"-like variant of my compiler.
                         // For the time being, we are more or less working on that variant.
