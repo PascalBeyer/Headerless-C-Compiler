@@ -827,7 +827,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 // 
                 
                 if(decl->flags & DECLARATION_FLAGS_is_thread_local){
-                    ast_list_append(&tls_variables, scratch, &decl->base);
+                    if((decl->flags & DECLARATION_FLAGS_is_extern) && !decl->assign_expr){
+                        ast_list_append(&external_variables, scratch, &decl->base);
+                    }else{
+                        ast_list_append(&tls_variables, scratch, &decl->base);
+                    }
                     continue;
                 }
                 
