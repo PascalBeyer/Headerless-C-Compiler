@@ -43,6 +43,7 @@ enum cli_option_kind{
     CLI_OPTION_MDd,
     CLI_OPTION_MT,
     CLI_OPTION_MTd,
+    CLI_OPTION_std,
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
     CLI_OPTION_report_warnings_in_system_includes,
@@ -114,6 +115,7 @@ struct cli_option_hash_table_entry{
     [91] = {{3, (u8 *)"mdd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MDd, -1},
     [71] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
     [106] = {{3, (u8 *)"mtd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MTd, -1},
+    [112] = {{3, (u8 *)"std"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_std, 0},
     [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
@@ -132,6 +134,13 @@ enum subsystem{
 enum incremental{
     INCREMENTAL_yes =  1, // Does nothing, we do not support incremental linking.
     INCREMENTAL_no  =  2, // This is what we do anyway :)
+};
+
+enum std{
+    STD_c99 =  1, // Use c99 standard.
+    STD_c11 =  2, // Use c11 standard.
+    STD_c17 =  3, // Use c17 standard.
+    STD_c23 =  4, // Use c23 standard.
 };
 
 enum warning{
@@ -212,6 +221,7 @@ struct cli_options{
     int MDd; // Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.
     int MT; // Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.
     int MTd; // Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.
+    enum std std; // The standardt to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
@@ -411,6 +421,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }else if(string_front_match_eat(&option, "Fi")){
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_Fi;
+            }else if(string_front_match_eat(&option, "std")){
+                option_argument_type = CLI_ARGUMENT_TYPE_enum;
+                option_kind          = CLI_OPTION_std;
             }
             
             if(option_kind == CLI_OPTION_none){
@@ -758,8 +771,19 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                     os_print_string(
                             " \n"
                             "https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170\n"
-                            "\n"
-                            "", 101);
+                            "", 100);
+                }break;
+                case CLI_OPTION_std:{
+                    print("-std <standard> | The standardt to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n\n");
+                    if(option_argument){
+                    }else{
+                        os_print_string(
+                                "c99 (1)                                 | Use c99 standard.\n"
+                                "c11 (2)                                 | Use c11 standard.\n"
+                                "c17 (3)                                 | Use c17 standard.\n"
+                                "c23 (4)                                 | Use c23 standard.\n"
+                                , 240);
+                    }
                 }break;
                 case CLI_OPTION_dont_print_the_files:{
                     print("-dont_print_the_files | Don't print the files because we are in a test suite.\n\n");
@@ -890,7 +914,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -MDd                        | Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.\n"
                             "  -MT                         | Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.\n"
                             "  -MTd                        | Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.\n"
-                    , 2669);
+                            "  -std <standard>             | The standardt to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n"
+                    , 2807);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1085,6 +1110,21 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_MDd: cli_options->MDd = 1; break;
             case CLI_OPTION_MT: cli_options->MT = 1; break;
             case CLI_OPTION_MTd: cli_options->MTd = 1; break;
+            
+            case CLI_OPTION_std:{
+                if(string_match_case_insensitive(argument_string, string("c99"))){
+                    cli_options->std = STD_c99;
+                }else if(string_match_case_insensitive(argument_string, string("c11"))){
+                    cli_options->std = STD_c11;
+                }else if(string_match_case_insensitive(argument_string, string("c17"))){
+                    cli_options->std = STD_c17;
+                }else if(string_match_case_insensitive(argument_string, string("c23"))){
+                    cli_options->std = STD_c23;
+                }else{
+                    print("Error: Unhandled value '%.*s' for command line option '%s'.\n", argument_string.size, argument_string.data, option_cstring);
+                    return 0;
+                }
+            }break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
             
             case CLI_OPTION_seed:{

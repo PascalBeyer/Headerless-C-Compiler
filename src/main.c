@@ -3981,13 +3981,26 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         
                         "#define __assume(a) (void)0\n"
                         
-                        "#define __STDC_VERSION__ 201112L\n"
+                        // "#define __STDC_VERSION__ 201112L\n"
                         // "#define __STDC__ 1\n" @note: Don't define this as some Microsoft headers work differently if this is specified.
                         "#define __STDC_NO_COMPLEX__ 1\n"
                         "#define __STDC_NO_THREADS__ 1\n"
                         "#define __STDC_NO_VLA__     1\n"
                         // "#define __STDC_NO_ATOMICS__ 1\n"
                         );
+                
+                
+                if(globals.cli_options.std){
+                    static struct string version_strings[] = {
+                        [STD_c99] = const_string("#define __STDC_VERSION__ 199901L\n"),
+                        [STD_c11] = const_string("#define __STDC_VERSION__ 201112L\n"),
+                        [STD_c17] = const_string("#define __STDC_VERSION__ 201710L\n"),
+                        [STD_c17] = const_string("#define __STDC_VERSION__ 202311L\n"),
+                    };
+                    string_list_postfix_no_copy(&predefines, arena, string("#define __STDC__ 1\n"));
+                    string_list_postfix_no_copy(&predefines, arena, version_strings[globals.cli_options.std]);
+                }
+                
                 string_list_postfix_no_copy(&predefines, arena, hardcoded_predefines);
                 
                 if(globals.cli_options.MD || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _DLL 1\n"));
