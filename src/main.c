@@ -1634,7 +1634,7 @@ func void parser_register_declaration_in_scope(struct context *context, struct a
                 for(smm new_index = 0; new_index < new_max; new_index++){
                     smm index = (new_index + hash) & (new_max - 1);
                     if(!new_table[index]){
-                        new_table[index] = old_entry;
+                        new_table[index] = chain_decl;
                         break;
                     }
                 }
