@@ -2244,6 +2244,10 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     postfix_token = replacement->postfix_token;
                 }
                 
+                
+                // @note: GCC extension for ', ##  __VA_ARGS__'. And I allow this for any macro.
+                if(postfix_is_empty && !prefix_is_empty && prefix_token->type == TOKEN_comma) break;
+                
                 struct string prev_string = prefix_is_empty  ? string("") : token_get_string(prefix_token);
                 struct string next_string = postfix_is_empty ? string("") : token_get_string(postfix_token);
                 
