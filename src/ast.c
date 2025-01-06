@@ -236,6 +236,7 @@ static struct{
     {const_string("__FUNCSIG__"),  TOKEN___func__}, // wrong msvc-extension implementation.
     
     {const_string("_Static_assert"), TOKEN_static_assert},
+    {const_string("static_assert"), TOKEN_static_assert},
     
     {const_string("_Generic"), TOKEN_generic},
     {const_string("_Thread_local"), TOKEN_thread_local},

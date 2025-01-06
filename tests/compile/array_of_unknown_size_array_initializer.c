@@ -13,7 +13,7 @@ static const unsigned int array[] = {
 	[OTHER] = 4,
 };
 
-typedef int static_assert[ sizeof(array) / sizeof(*array) == NUM ? 1 : -1];
+typedef int _static_assert[ sizeof(array) / sizeof(*array) == NUM ? 1 : -1];
 
 int main(){
 }
