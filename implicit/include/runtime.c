@@ -156,7 +156,7 @@ void *memchr(void *mem, int c, size_t count){
 // String functions.
 
 char *strstr(char *haystack, char *needle){
-    if(*needle) return haystack;
+    if(!*needle) return haystack;
     
     while(*haystack){
         char *string1 = haystack;
@@ -164,10 +164,12 @@ char *strstr(char *haystack, char *needle){
         
         // @note: We cannot overrun string1, as the zero-terminator would cause us to break.
         while(*string2){
-            if(*string1++ != *string2++) break;
+            if(*string1 != *string2) break;
+            string1++;
+            string2++;
         }
         
-        if(*string2) return haystack;
+        if(!*string2) return haystack;
         
         haystack++;
     }
@@ -192,7 +194,7 @@ char *strrchr(char *haystack, int needle){
 // Wide-Character String functions
 
 wchar_t *wcsstr(wchar_t *haystack, wchar_t *needle){
-    if(*needle) return haystack;
+    if(!*needle) return haystack;
     
     while(*haystack){
         wchar_t *string1 = haystack;
@@ -203,7 +205,7 @@ wchar_t *wcsstr(wchar_t *haystack, wchar_t *needle){
             if(*string1++ != *string2++) break;
         }
         
-        if(*string2) return haystack;
+        if(!*string2) return haystack;
         
         haystack++;
     }
