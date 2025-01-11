@@ -2833,6 +2833,7 @@ func s64 static_if_evaluate(struct context *context){
             
             resume_for_parenthesized_expression:;
             if(test->type != TOKEN_closed_paren){
+                if(test->type == TOKEN_invalid) test = get_current_token_for_error_report(context);
                 report_error(context, test, "Expected ')' in '#if' argument."); // :Error
                 return 0;
             }
