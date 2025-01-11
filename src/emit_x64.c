@@ -3821,6 +3821,9 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     //           Maybe we should spitt the function pointer call case 
                     //           from the function call case.
                     struct ast_binary_op *comma = (struct ast_binary_op *)identifier_to_call;
+                    struct emit_location *ignored = emit_code_for_ast(context, comma->lhs);
+                    if(ignored) free_emit_location(context, ignored); 
+                    
                     identifier_to_call = (struct ast_identifier *)comma->rhs;
                 }
                 
