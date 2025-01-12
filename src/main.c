@@ -856,6 +856,11 @@ struct context{
     
     struct ast_list local_functions;
     
+    struct{
+        struct alloca_patch_node *first;
+        struct alloca_patch_node *last;
+    } alloca_patch_nodes;
+    
     //
     // Patching
     //
@@ -1715,6 +1720,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
         
         if(redecl){
             // @cleanup: I think one could cleanup this function really well..
+            
             
             if(redecl->type->kind == AST_array_type && decl->type->kind == AST_array_type){
                 struct ast_array_type *redecl_type = (struct ast_array_type *)redecl->type;
@@ -4254,6 +4260,42 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
         register_intrinsic(__va_start, va_start);
         
 #undef register_intrinsic
+        static struct compilation_unit hack_whatever = {
+            .index = -1,
+        };
+        
+        {
+            // 
+            // The `_alloca` function needs to be intrinsic, as it needs to know a stack offset
+            // that is only really known at compile time.
+            // 
+            
+            struct token *alloca_token = push_dummy_token(arena, atom_for_string(string("_alloca")), TOKEN_identifier);
+            struct token *size_token = push_dummy_token(arena, atom_for_string(string("size")), TOKEN_identifier);
+            
+            struct ast_function_type *alloca_type = parser_type_push(context, alloca_token, function_type);
+            alloca_type->return_type = &void_pointer->base;
+            alloca_type->flags |= FUNCTION_TYPE_FLAGS_is_intrinsic;
+            
+            struct declarator_return parameter_declarator = {
+                .type = &globals.typedef_u64,
+                .ident = size_token,
+            };
+            
+            struct ast_declaration *parameter_declaration = push_declaration_for_declarator(context, parameter_declarator);
+            parameter_declaration->compilation_unit = &hack_whatever;
+            ast_list_append(&alloca_type->argument_list, context->arena, &parameter_declaration->base);
+            set_resolved_type(&parameter_declaration->base, &globals.typedef_void, null);
+            
+            struct ast_function *alloca_declaration = parser_ast_push(context, alloca_token, function);
+            alloca_declaration->type = alloca_type;
+            alloca_declaration->offset_in_text_section = -1; // Set atomically when done emitting.
+            alloca_declaration->compilation_unit = &hack_whatever;
+            alloca_declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
+            set_resolved_type(&alloca_declaration->base, &globals.typedef_void, null);
+            
+            ast_table_add_or_return_previous_entry(&globals.global_declarations, &alloca_declaration->base, alloca_token);
+        }
         
         globals.empty_statement.kind = AST_empty_statement;
         globals.empty_statement.token = push_dummy_token(arena, atom_for_string(string(";")), TOKEN_semicolon);
@@ -4276,7 +4318,8 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             .type  = &globals.typedef_u32,
         };
         globals.tls_index_declaration = push_declaration_for_declarator(context, _tls_index_declarator);
-        globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern;
+        globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_intrinsic;
+        globals.tls_index_declaration->compilation_unit = &hack_whatever;
         ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->base, globals.tls_index_declaration->base.token);
     }
     
@@ -5034,7 +5077,12 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                         // 
                         struct ast_function *function = (struct ast_function *)declaration;
                         
-                        if(!function->scope){
+                        if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic){
+                            // 
+                            // Don't do anything for intrinsic functions.
+                            // 
+                        }else if(!function->scope){
+                            
                             if(globals.output_file_type != OUTPUT_FILE_obj){
                                 
                                 if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){

@@ -534,6 +534,7 @@ struct ast_list{
 #define DECLARATION_FLAGS_is_extern                                0x1000
 #define DECLARATION_FLAGS_is_unnamed                               0x2000 // Used for struct and array literals, to not emit a symbol for them.
 #define DECLARATION_FLAGS_is_thread_local                          0x4000
+#define DECLARATION_FLAGS_is_intrinsic                             0x8000
 
 struct declaration_node{
     struct declaration_node *next;

@@ -2372,9 +2372,74 @@ func void emit_inline_asm_binary_op(struct context *context, struct prefixes pre
 
 #include "emit_inline_asm_block.c"
 
+struct alloca_patch_node{
+    struct alloca_patch_node *next;
+    u8 *patch_location;
+};
+
 func struct emit_location *emit_intrinsic(struct context *context, struct ast_function_call *call){
     assert(call->identifier_expression->kind == AST_identifier);
     struct ast_identifier *ident = cast(struct ast_identifier *)call->identifier_expression;
+    
+    if(string_match(ident->base.token->string, string("_alloca"))){
+        // 
+        // Alloca stack setup:
+        //     
+        //     arguments
+        //     return_pointer
+        //     pushed_registers
+        //     old_rbp
+        //                                   < This is where RBP is pointing to.
+        //     declarations
+        //     temporary_stack               < This we collect in `temporary_stack_high_water_mark`.
+        //     <alloca-space>
+        //     function_arguments            < This we collect in `context->max_amount_of_function_call_arguments`.
+        //                                   < This is where RSP is pointing to.
+        //     stack of the next function
+        // 
+        // So `_alloca` should increment the stack by it's argument aligned to a 16-byte boundary, 
+        // and return rsp + `context->max_amount_of_function_call_arguments * 8`, aligned to a 16-byte boundary.
+        // Because `context->max_amount_of_function_call_arguments * 8` is not yet known, we need to emit a "patch".
+        // 
+        
+        struct emit_location *size = emit_load(context, emit_code_for_ast(context, call->call_arguments.first->value));
+        
+        // Align-up the size to a 16-byte boundary.
+        //    add size, 15
+        //    and size, ~15
+        emit_register_op__internal(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_IMMIDIATE), REG_OPCODE_ADD, size->loaded_register, /*size*/8);
+        emit_u32(15);
+        emit_register_op__internal(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_IMMIDIATE), REG_OPCODE_AND, size->loaded_register, /*size*/8);
+        emit_u32((u32)~15);
+        
+        // Subtract the size from rsp
+        //     sub rsp, size
+        emit_register_register(context, no_prefix(), one_byte_opcode(SUB_REG_REGM), context->register_sp, size);
+        
+        // Load the resulting rsp plus the size needed for `function_arguments`
+        //      lea return_register, [rsp + `context->max_amount_of_function_call_arguments * 8`]
+        enum register_encoding return_register = size->loaded_register;
+        enum rex_encoding rex = REXW;
+        if(register_is_extended(return_register)) rex |= REXR;
+        emit(rex);
+        emit(LOAD_ADDRESS_REG_MEMORY_LOCATION);
+        emit(make_modrm(MODRM_REGM32, (return_register & 7), REGISTER_SP));
+        emit(make_sib(0, REGISTER_SP, REGISTER_SP));
+        u8 *patch_location = context->emit_pool.current;
+        emit_u32(0x13371337);
+        
+        struct alloca_patch_node *patch_node = push_struct(&context->scratch, struct alloca_patch_node);
+        patch_node->patch_location = patch_location;
+        
+        sll_push_back(context->alloca_patch_nodes, patch_node);
+        
+        return size; // This is now the address.
+    }else{
+        invalid_code_path;
+    }
+    
+#if 0
+    
     struct intrinsic_info *info = lookup_intrinsic(ident->decl->identifier->atom);
     // smm sse_prefix = -1;
     
@@ -2404,7 +2469,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         
         invalid_default_case(return emit_location_invalid(context));
     }
-    
+#endif
 }
 
 // @cleanup: get rid of me once we actually do special stuff in the 'array_subscript' case
@@ -4647,9 +4712,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     }
     
     // deallocate stack memory
-    emit_reg_reg__(context, REXW, REG_EXTENDED_OPCODE_REGM_IMMIDIATE, REG_OPCODE_ADD, REGISTER_SP);
-    emit_u32(function->stack_space_needed);
-    
+    emit_reg_reg__(context, REXW, MOVE_REG_REGM, REGISTER_SP, REGISTER_BP);
     emit(POP_REGISTER_BP);
     
     // @cleanup: only do this if we have a memcpy
@@ -4661,6 +4724,14 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     for_ast_list(function->goto_list){
         struct ast_goto *ast_goto = cast(struct ast_goto *)it->value;
         jump_node_end_jump(ast_goto->jump_node, ast_goto->label_to_goto->byte_offset_in_function);
+    }
+    
+    if(context->alloca_patch_nodes.first){
+        for(struct alloca_patch_node *alloca_patch_node = context->alloca_patch_nodes.first; alloca_patch_node; alloca_patch_node = alloca_patch_node->next){
+            smm call_space_needed = 8 * (context->max_amount_of_function_call_arguments + (context->max_amount_of_function_call_arguments & 1));
+            *(u32 *)alloca_patch_node->patch_location = (u32)call_space_needed;
+        }
+        context->alloca_patch_nodes.first = context->alloca_patch_nodes.last = null;
     }
     
     function->byte_size_without_prolog = get_bytes_emitted(context);

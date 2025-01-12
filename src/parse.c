@@ -4929,12 +4929,14 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
+                #if 0
                 if(function_type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic){
                     struct ast *identifier = call->identifier_expression;
                     assert(identifier->kind == AST_identifier); // not sure @cleanup
                     struct ast *error = check_intrinsic_function_call(context, call, identifier);
                     if(error) return error; // not sure
                 }
+                #endif
                 
                 if((function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !context->in_conditional_expression){
                     context->current_statement_returns_a_value = 1;
