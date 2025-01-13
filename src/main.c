@@ -4288,6 +4288,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             set_resolved_type(&parameter_declaration->base, &globals.typedef_void, null);
             
             struct ast_function *alloca_declaration = parser_ast_push(context, alloca_token, function);
+            alloca_declaration->identifier = alloca_token;
             alloca_declaration->type = alloca_type;
             alloca_declaration->offset_in_text_section = -1; // Set atomically when done emitting.
             alloca_declaration->compilation_unit = &hack_whatever;
