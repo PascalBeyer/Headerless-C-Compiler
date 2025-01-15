@@ -1878,9 +1878,18 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 return redecl;
             }
             
+            char *redecl_kind = "declaration";
+            if(redecl->base.kind == AST_typedef) redecl_kind = "typedef";
+            if(redecl->base.kind == AST_function) redecl_kind = "function";
+            
+            
+            char *decl_kind = "declaration";
+            if(decl->base.kind == AST_typedef) decl_kind = "typedef";
+            if(decl->base.kind == AST_function) decl_kind = "function";
+            
             begin_error_report(context);
-            report_error(context, decl->base.token, "[%lld] Redeclaration.", decl->compilation_unit->index);
-            report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration.", redecl->compilation_unit->index);
+            report_error(context, decl->base.token, "[%lld] Redeclaration of different kind. It is a %s.", decl->compilation_unit->index, decl_kind);
+            report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration. It is a %s.", redecl->compilation_unit->index, redecl_kind);
             end_error_report(context);
             return decl;
         }
