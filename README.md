@@ -19,7 +19,7 @@ Currently, the compiler is designed to replace MSVC for my personal needs. This 
 It can produce executables (.exe), shared libraries (.dll) and associated debug information in the form of .pdb-files,
 as well as object files (.obj) containing CodeView debug information.
 
-While the compiler still needs a good amount of work, it is able to compile several real world projects like [curl](examples/curl.bat), [libpng](examples/libpng.bat), [glfw](examples/glfw.bat), and [more](examples)!
+While the compiler still needs a good amount of work, it is able to compile several real world projects like [curl](examples/curl.bat), [raylib](examples/raylib.bat), [glfw](examples/glfw.bat), and [more](examples)!
 
 There are some compiler-specific extensions, like a [type-inferring print](#`__declspec(printlike)`), (very incomplete) [inline-assembly](#`__asm__`-/-`__declspec(inline_asm)`), 
 local functions, slices, etc, but all of these should be considered in the "design"-stage and unstable.
