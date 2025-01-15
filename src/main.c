@@ -4307,6 +4307,28 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             ast_table_add_or_return_previous_entry(&globals.global_declarations, &alloca_declaration->base, alloca_token);
         }
         
+        {
+            // 
+            // The `__noop` function needs to be intrinsic, as it's arguments are not evaluated.
+            // 
+            struct token *noop_token = push_dummy_token(arena, atom_for_string(string("__noop")), TOKEN_identifier);
+            
+            struct ast_function_type *noop_type = parser_type_push(context, noop_token, function_type);
+            noop_type->return_type = &globals.typedef_s32;
+            noop_type->flags |= FUNCTION_TYPE_FLAGS_is_varargs | FUNCTION_TYPE_FLAGS_is_intrinsic;
+            
+            struct ast_function *noop_declaration = parser_ast_push(context, noop_token, function);
+            noop_declaration->identifier = noop_token;
+            noop_declaration->type = noop_type;
+            noop_declaration->offset_in_text_section = -1; // Set atomically when done emitting.
+            noop_declaration->compilation_unit = &hack_whatever;
+            noop_declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
+            set_resolved_type(&noop_declaration->base, &globals.typedef_void, null);
+            
+            ast_table_add_or_return_previous_entry(&globals.global_declarations, &noop_declaration->base, noop_token);
+        }
+        
+        
         globals.empty_statement.kind = AST_empty_statement;
         globals.empty_statement.token = push_dummy_token(arena, atom_for_string(string(";")), TOKEN_semicolon);
         set_resolved_type(&globals.empty_statement, &globals.typedef_void, null);

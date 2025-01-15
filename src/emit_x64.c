@@ -2434,6 +2434,8 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         sll_push_back(context->alloca_patch_nodes, patch_node);
         
         return size; // This is now the address.
+    }else if(string_match(ident->base.token->string, string("__noop"))){
+        return emit_location_immediate(context, 0, 4);
     }else{
         invalid_code_path;
     }
