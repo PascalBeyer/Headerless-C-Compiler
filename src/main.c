@@ -3746,9 +3746,12 @@ int main(int argc, char *argv[]){
                 string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", object_file->string.size, object_file->string.data));
             }
             
+            // 
+            // @hack: To allow hlc.exe to be used as a linker, we check if only object files are specified
+            //        and just call into system. In the future, we should just be a linker :)
+            // 
             
-            
-            // return system((char*)string_list_flatten(command, arena).data);
+            return system((char*)string_list_flatten(command, arena).data);
         }
         
         print("Error: No input files specified.\n");
