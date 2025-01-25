@@ -1,124 +1,632 @@
 
+//_____________________________________________________________________________________________________________________
+// Microsoft intrinsics
 
-enum{
-    _MM_HINT_NTA = 0,
-    _MM_HINT_T0 = 1,
-    _MM_HINT_T1 = 2,
-    _MM_HINT_T2 = 3,
-    
-    // 
-    // MxCsr bits:
-    // 
-    
-    _MM_EXCEPT_MASK     = 0x003f,
-    _MM_MASK_MASK       = 0x1f80,
-    _MM_ROUND_MASK      = 0x6000,
-    _MM_FLUSH_ZERO_MASK = 0x8000,
-    
-    _MM_EXCEPT_INVALID   = 0x0001,
-    _MM_EXCEPT_DENORM    = 0x0002,
-    _MM_EXCEPT_DIV_ZERO  = 0x0004,
-    _MM_EXCEPT_OVERFLOW  = 0x0008,
-    _MM_EXCEPT_UNDERFLOW = 0x0010,
-    _MM_EXCEPT_INEXACT   = 0x0020,
-    
-    _MM_MASK_INVALID   = 0x0080,
-    _MM_MASK_DENORM    = 0x0100,
-    _MM_MASK_DIV_ZERO  = 0x0200,
-    _MM_MASK_OVERFLOW  = 0x0400,
-    _MM_MASK_UNDERFLOW = 0x0800,
-    _MM_MASK_INEXACT   = 0x1000,
-    
-    _MM_ROUND_NEAREST     = 0x0000,
-    _MM_ROUND_DOWN        = 0x2000,
-    _MM_ROUND_UP          = 0x4000,
-    _MM_ROUND_TOWARD_ZERO = 0x6000,
-    
-    _MM_FLUSH_ZERO_ON  = 0x8000,
-    _MM_FLUSH_ZERO_OFF = 0x0000,
-};
+// Todo:
+// 
+//     _rotl8
+//     _rotl16
+//     _rotr8
+//     _rotr16
+//     _rotl
+//     _rotl64
+//     _rotr
+//     _rotr64
+//     _interlockedbittestandset
+//     _interlockedbittestandset64
+//     _interlockedbittestandreset
+//     _interlockedbittestandreset64
+//     
+//     _InterlockedAnd8
+//     _InterlockedAnd16
+//     _InterlockedAnd
+//     _InterlockedAnd64
+//         
+//     _InterlockedOr8
+//     _InterlockedOr16
+//     _InterlockedOr
+//     _InterlockedOr64
+//         
+//     _InterlockedXor8
+//     _InterlockedXor16
+//     _InterlockedXor
+//     _InterlockedXor64
+//     
+//     __readgsbyte
+//     __readgsword
+//     __readgsdword
+//     __readgsqword
+//     __writegsbyte
+//     __writegsword
+//     __writegsdword
+//     __writegsqword
+// 
+// 
 
-// @cleanup: For now I assume [rsp] is fair game.
-
-
-__declspec(inline_asm) void _mm_setcsr(unsigned int a){
-    mov [rsp], a
-    ldmxcsr [rsp]
+__declspec(inline_asm) unsigned __int8 _bittest(__int32 *to_test, __int32 bit_index){
+    // stores the bit at 'bit_index' and stores it in CF
+    mov rcx, to_test
+    bt [rcx], bit_index
+    
+    setc al
+    return al
 }
 
-__declspec(inline_asm) unsigned int _mm_getcsr(){
-    stmxcsr [rsp]
-    mov eax, [rsp]
+__declspec(inline_asm) unsigned __int8 _bittest64(__int64 *to_test, __int64 bit_index){
+    // stores the bit at 'bit_index' and stores it in CF
+    mov rcx, to_test
+    bt [rcx], bit_index
+    
+    setc al
+    return al
+}
+
+
+__declspec(inline_asm) unsigned __int8 _bittestandcomplement(__int32 *to_test, __int32 bit_index){
+    mov rcx, to_test
+    btc [rcx], bit_index
+    
+    setc al
+    return al
+}
+
+__declspec(inline_asm) unsigned __int8 _bittestandcomplement64(__int64 *to_test, __int64 bit_index){
+    mov rcx, to_test
+    btc [rcx], bit_index
+    
+    setc al
+    return al
+}
+
+
+__declspec(inline_asm) unsigned __int8 _bittestandreset(__int32 *to_test, __int32 bit_index){
+    // stores the bit at 'bit_index'(< 32) and stores it in CF
+    mov rcx, to_test
+    btr [rcx], bit_index
+    setc al
+    
+    return al
+}
+
+__declspec(inline_asm) unsigned __int8 _bittestandreset64(__int64 *to_test, __int64 bit_index){
+    // stores the bit at 'bit_index'(< 62) and stores it in CF
+    mov rcx, to_test
+    btr [rcx], bit_index
+    
+    setc al
+    return al
+}
+
+
+__declspec(inline_asm) unsigned __int8 _bittestandset(__int32 *to_test, __int32 bit_index){
+    // stores the bit at 'bit_index'(< 32) and stores it in CF
+    mov rcx, to_test
+    bts [rcx], bit_index
+    
+    setc al
+    return al
+}
+
+__declspec(inline_asm) unsigned __int8 _bittestandset64(__int64 *to_test, __int64 bit_index){
+    // stores the bit at 'bit_index'(< 62) and stores it in CF
+    mov rcx, to_test
+    bts [rcx], bit_index
+    
+    setc al
+    return al
+}
+
+__declspec(inline_asm) unsigned __int8 _BitScanForward(unsigned __int32 *out_bit_index, unsigned __int32 to_scan){
+    // searches 'to_scan', if 'to_scan' is not zero the index is stored in eax,
+    // otherwise otherwise the ZF is set
+    bsf eax, to_scan
+    
+    // set 'found' if the ZF was not set
+    setnz cl
+    
+    // save the index even if not found(in which case eax is undefined)
+    mov rdx, out_bit_index
+    mov [rdx], eax
+    
+    return cl
+}
+
+__declspec(inline_asm) unsigned __int8 _BitScanForward64(unsigned __int32 *out_bit_index, unsigned __int64 to_scan){
+    // searches 'to_scan', if 'to_scan' is not zero the index is stored in eax,
+    // otherwise otherwise the ZF is set
+    bsf rax, to_scan
+    
+    // set 'found' if the ZF was not set
+    setnz cl
+    
+    // save the index even if not found(in which case eax is undefined)
+    mov rdx, out_bit_index
+    mov [rdx], eax
+    
+    return cl
+}
+
+
+__declspec(inline_asm) unsigned __int8 _BitScanReverse(unsigned __int32 *out_bit_index, unsigned __int32 to_scan){
+    // searches 'to_scan', if 'to_scan' is not zero the index is stored in eax,
+    // otherwise otherwise the ZF is set
+    bsr eax, to_scan
+    
+    // set 'found' if the ZF was not set
+    setnz cl
+    
+    // save the index even if not found(in which case eax is undefined)
+    mov rdx, out_bit_index
+    mov [rdx], eax
+    
+    return cl
+}
+
+__declspec(inline_asm) unsigned __int8 _BitScanReverse64(unsigned __int32 *out_bit_index, unsigned __int64 to_scan){
+    // searches 'to_scan', if 'to_scan' is not zero the index is stored in eax,
+    // otherwise otherwise the ZF is set
+    bsr rax, to_scan
+    
+    // set 'found' if the ZF was not set
+    setnz cl
+    
+    // save the index even if not found(in which case eax is undefined)
+    mov rdx, out_bit_index
+    mov [rdx], eax
+    
+    return cl
+}
+
+// @cleanup: This maybe should not exist.
+__declspec(inline_asm) __int8 _InterlockedIncrement8(__int8 *to_increment){
+    // We need to return the incremented value, thus we have to use an xadd
+    // to fetch the memory and cannot use a 'lock inc'.
+    
+    // load the one we xadd.
+    mov edx, 1
+    
+    // add the one, the preincremented value will be in dl
+    mov rcx, to_increment
+    lock xadd [rcx], dl
+    
+    // increment dl such that we have the 'incremented_value'
+    inc dl
+    
+    // save the value
+    return dl
+}
+
+__declspec(inline_asm) __int16 _InterlockedIncrement16(__int16 *to_increment){
+    // We need to return the incremented value, thus we have to use an xadd
+    // to fetch the memory and cannot use a 'lock inc'.
+    
+    // load the one we xadd.
+    mov edx, 1
+    
+    // add the one, the preincremented value will be in dx
+    mov rcx, to_increment
+    lock xadd [rcx], dx
+    
+    // increment dl such that we have the 'incremented_value'
+    inc dx
+    
+    // save the value
+    return dx
+}
+
+__declspec(inline_asm) __int32 _InterlockedIncrement(__int32 *to_increment){
+    // We need to return the incremented value, thus we have to use an xadd
+    // to fetch the memory and cannot use a 'lock inc'.
+    
+    // load the one we xadd.
+    mov edx, 1
+    
+    // add the one, the preincremented value will be in edx
+    mov rcx, to_increment
+    lock xadd [rcx], edx
+    
+    // increment dl such that we have the 'incremented_value'
+    inc edx
+    
+    // save the value
+    return edx
+}
+
+
+__declspec(inline_asm) __int64 _InterlockedIncrement64(__int64 *to_increment){
+    // We need to return the incremented value, thus we have to use an xadd
+    // to fetch the memory and cannot use a 'lock inc'.
+    
+    // load the one we xadd.
+    mov edx, 1
+    
+    // add the one, the preincremented value will be in rdx
+    mov rcx, to_increment
+    lock xadd [rcx], rdx
+    
+    // increment dl such that we have the 'incremented_value'
+    inc rdx
+    
+    // save the value
+    return rdx
+}
+
+
+__declspec(inline_asm) __int8 _InterlockedDecrement8(__int8 *to_increment){
+    // We need to return the incremented value, thus we have to use an xadd
+    // to fetch the memory and cannot use a 'lock inc'.
+    
+    // load the one we xadd.
+    mov edx, -1
+    
+    // add the one, the preincremented value will be in dl
+    mov rcx, to_increment
+    lock xadd [rcx], dl
+    
+    // increment dl such that we have the 'incremented_value'
+    inc dl
+    
+    // save the value
+    return dl
+}
+
+__declspec(inline_asm) __int16 _InterlockedDecrement16(__int16 *to_increment){
+    // We need to return the incremented value, thus we have to use an xadd
+    // to fetch the memory and cannot use a 'lock inc'.
+    
+    // load the one we xadd.
+    mov edx, -1
+    
+    // add the one, the preincremented value will be in dx
+    mov rcx, to_increment
+    lock xadd [rcx], dx
+    
+    // increment dl such that we have the 'incremented_value'
+    inc dx
+    
+    // save the value
+    return dx
+}
+
+
+__declspec(inline_asm) __int32 _InterlockedDecrement(__int32 *to_increment){
+    // We need to return the incremented value, thus we have to use an xadd
+    // to fetch the memory and cannot use a 'lock inc'.
+    
+    // load the one we xadd.
+    mov edx, -1
+    
+    // add the one, the preincremented value will be in edx
+    mov rcx, to_increment
+    lock xadd [rcx], edx
+    
+    // increment dl such that we have the 'incremented_value'
+    inc edx
+    
+    // save the value
+    return edx
+}
+
+
+__declspec(inline_asm) __int64 _InterlockedDecrement64(__int64 *to_increment){
+    // We need to return the incremented value, thus we have to use an xadd
+    // to fetch the memory and cannot use a 'lock inc'.
+    
+    // load the one we xadd.
+    mov rdx, -1
+    
+    // add the one, the preincremented value will be in rdx
+    mov rcx, to_increment
+    lock xadd [rcx], rdx
+    
+    // increment dl such that we have the 'incremented_value'
+    inc rdx
+    
+    // save the value
+    return rdx
+}
+
+
+// @cleanup: This should maybe not exist.
+__declspec(inline_asm) __int8 _InterlockedCompareExchange8(__int8 *destination, __int8 exchange, __int8 comparand){
+    // cmpxchg compares al with the memory operand
+    movzx eax, comparand
+    
+    // check atomically if '*destintaion == al'(comparand), if true 'exchange' is stored in '*destination'
+    // otherwise *destination is stored in al
+    mov rcx, destination
+    lock cmpxchg [rcx], exchange
+    
+    // return the result(*destination) in either case
+    return al
+}
+
+
+__declspec(inline_asm) __int16 _InterlockedCompareExchange16(__int16 *destination, __int16 exchange, __int16 comparand){
+    
+    // cmpxchg compares ax with the memory operand
+    movzx eax, comparand
+    
+    // check atomically if '*destintaion == ax'(comparand), if true 'exchange' is stored in '*destination'
+    // otherwise *destination is stored in ax
+    mov rcx, destination
+    lock cmpxchg [rcx], exchange
+    
+    // return the result(*destination) in either case
+    return ax
+}
+
+__declspec(inline_asm) __int32 _InterlockedCompareExchange(__int32 *destination, __int32 exchange, __int32 comparand){
+    // cmpxchg compares eax with the memory operand
+    mov eax, comparand
+    
+    // check atomically if '*destintaion == eax'(comparand), if true 'exchange' is stored in '*destination'
+    // otherwise *destination is stored in eax
+    mov rcx, destination
+    lock cmpxchg [rcx], exchange
+    
+    // return the result(*destination) in either case
     return eax
 }
 
-__declspec(inline_asm) void _MM_SET_EXCEPTION_STATE(unsigned int mask){
-    stmxcsr [rsp]
-    and dword ptr [rsp], ~_MM_EXCEPT_MASK
-    or dword ptr [rsp], mask
-    ldmxcsr[rsp]
+__declspec(inline_asm) __int64 _InterlockedCompareExchange64(__int64 *destination, __int64 exchange, __int64 comparand){
+    
+    // cmpxchg compares rax with the memory operand
+    mov rax, comparand
+    
+    // check atomically if '*destintaion == rax'(comparand), if true 'exchange' is stored in '*destination'
+    // otherwise *destination is stored in rax
+    mov rcx, destination
+    lock cmpxchg [rcx], exchange
+    
+    // return the result(*destination) in either case
+    return rax
 }
 
-__declspec(inline_asm) void _MM_SET_EXCEPTION_MASK(unsigned int mask){
-    stmxcsr [rsp]
-    and dword ptr [rsp], ~_MM_MASK_MASK
-    or dword ptr [rsp], mask
-    ldmxcsr[rsp]
+__declspec(inline_asm) unsigned __int8 _InterlockedCompareExchange128(__int64 *destination, __int64 exchange_high, __int64 exchange_low, __int64 *inout_comparand_result){
+    
+    // cmpxchg16b compares the memory operand with rdx:rax
+    mov r9, inout_comparand_result
+    mov rdx, [r9 + 8]
+    mov rax, [r9 + 0]
+    
+    // on success cmpxchg16b places the value in rcx:rbx into the memory operand
+    mov rcx, exchange_high
+    mov rbx, exchange_low
+    
+    // on success the ZF is set and the destination is set to rcx:rdx, else ZF is cleared and
+    // rdx:rax receives the value fetched from '*destination'.
+    mov r8, destination
+    lock cmpxchg16b [r8]
+    
+    // ZF is set iff the operation succeeded
+    setz cl
+    
+    // whether or not we succeed we can write back rdx:rax to the result
+    mov [r9 + 8], rdx
+    mov [r9 + 0], rax
+    
+    return cl
 }
 
-__declspec(inline_asm) void _MM_SET_ROUNDING_MODE(unsigned int mask){
-    stmxcsr [rsp]
-    and dword ptr [rsp], ~_MM_ROUND_MASK
-    or dword ptr [rsp], mask
-    ldmxcsr[rsp]
+// as we only support x64 this is just the same version as '_InterlockedCompareExchange64'
+__declspec(inline_asm) void *_InterlockedCompareExchangePointer(void **destination, void *exchange, void *comparand){
+    
+    // cmpxchg compares rax with the memory operand
+    mov rax, comparand
+    
+    // check atomically if '*destintaion == rax'(comparand), if true 'exchange' is stored in '*destination'
+    // otherwise *destination is stored in rax
+    mov rcx, destination
+    lock cmpxchg [rcx], exchange
+    
+    // return the result(*destination) in either case
+    return rax
 }
 
-__declspec(inline_asm) void _MM_SET_FLUSH_ZERO_MODE(unsigned int mask){
-    stmxcsr [rsp]
-    and dword ptr [rsp], ~_MM_FLUSH_ZERO_MASK
-    or dword ptr [rsp], mask
-    ldmxcsr[rsp]
+
+__declspec(inline_asm) char _InterlockedExchange8(char *target, char value){
+    movzx eax, value
+    mov rcx, target
+    xchg al, [rcx]
+    return al
 }
 
-__declspec(inline_asm) unsigned int _MM_GET_EXCEPTION_STATE(void){
-    stmxcsr [rsp]
-    mov eax, [rsp]
-    and eax, _MM_EXCEPT_MASK
+__declspec(inline_asm) short _InterlockedExchange16(short *target, short value){
+    movzx eax, value
+    mov rcx, target
+    xchg ax, [rcx]
+    return ax
+}
+
+__declspec(inline_asm) long _InterlockedExchange(long *target, long value){
+    mov eax, value
+    mov rcx, target
+    xchg eax, [rcx]
     return eax
 }
 
-__declspec(inline_asm) unsigned int _MM_GET_EXCEPTION_MASK(void){
-    stmxcsr [rsp]
-    mov eax, [rsp]
-    and eax, _MM_MASK_MASK
+__declspec(inline_asm) __int64 _InterlockedExchange64(__int64 *target, __int64 value){
+    mov rax, value
+    mov rcx, target
+    xchg rax, [rcx]
+    return rax
+}
+
+__declspec(inline_asm) void *_InterlockedExchangePointer(void **target, void *value){
+    mov rax, value
+    mov rcx, target
+    xchg rax, [rcx]
+    return rax
+}
+
+
+__declspec(inline_asm) __int8 _InterlockedExchangeAdd8(__int8 *destination, __int8 to_add){
+    // load 'to_add' into dl explicitly even tho it is already probably in there.
+    mov dl, to_add
+    
+    // perform the atomic xadd, the preincremented '*destination' will be saved in dl
+    mov rcx, destination
+    lock xadd [rcx], dl
+    
+    // save the preincremented value in the 'result'
+    return dl
+}
+
+// @cleanup: Does this not exist?
+__declspec(inline_asm) __int16 _InterlockedExchangeAdd16(__int16 *destination, __int16 to_add){
+    // load 'to_add' into dx explicitly even tho it is already probably in there.
+    mov dx, to_add
+    
+    // perform the atomic xadd, the preincremented '*destination' will be saved in dx
+    mov rcx, destination
+    lock xadd [rcx], dx
+    
+    // save the preincremented value in the 'result'
+    return dx
+}
+
+
+__declspec(inline_asm) __int32 _InterlockedExchangeAdd(__int32 *destination, __int32 to_add){
+    // load 'to_add' into rdx explicitly even tho it is already probably in there.
+    mov edx, to_add
+    
+    // perform the atomic xadd, the preincremented '*destination' will be saved in edx
+    mov rcx, destination
+    lock xadd [rcx], edx
+    
+    // save the preincremented value in the 'result'
+    return edx
+}
+
+
+__declspec(inline_asm) __int64 _InterlockedExchangeAdd64(__int64 *destination, __int64 to_add){
+    // load 'to_add' into rdx explicitly even tho it is already probably in there.
+    mov rdx, to_add
+    
+    // perform the atomic xadd, the preincremented '*destination' will be saved in rdx
+    mov rcx, destination
+    lock xadd [rcx], rdx
+    
+    // save the preincremented value in the 'result'
+    return rdx
+}
+
+
+__declspec(inline_asm) void __stosb(unsigned __int8 *destination, unsigned __int8 _byte, unsigned __int64 number_of_bytes_to_set){
+    // stosb loads the byte in al into [rdi], rdi is incremented, rcx is decremented
+    mov   rcx, number_of_bytes_to_set
+    mov   rdi, destination
+    movzx eax, _byte
+    
+    rep stosb
+}
+
+__declspec(inline_asm) void __stosw(unsigned __int16 *destination, unsigned __int16 word, unsigned __int64 number_of_words_to_set){
+    // stosb loads the byte in al into [rdi], rdi is incremented, rcx is decremented
+    mov   rcx, number_of_words_to_set
+    mov   rdi, destination
+    movzx eax, word
+    
+    rep stosw
+}
+
+__declspec(inline_asm) void __stosd(unsigned __int32 *destination, unsigned __int32 dword, unsigned __int64 number_of_dwords_to_set){
+    // stosb loads the byte in al into [rdi], rdi is incremented, rcx is decremented
+    mov rcx, number_of_dwords_to_set
+    mov rdi, destination
+    mov eax, dword
+    
+    rep stosd
+}
+
+__declspec(inline_asm) void __stosq(unsigned __int64 *destination, unsigned __int64 qword, unsigned __int64 number_of_qwords_to_set){
+    mov rcx, number_of_qwords_to_set
+    mov rdi, destination
+    mov rax, qword
+    
+    rep stosq
+}
+
+
+__declspec(inline_asm) void __movsb(unsigned __int8 *destination, unsigned __int8 *source, unsigned __int64 number_of_bytes_to_copy){
+    mov rcx, number_of_bytes_to_copy
+    mov rdi, destination
+    mov rsi, source
+    
+    rep movsb
+}
+
+__declspec(inline_asm) void __movsw(unsigned __int16 *destination, unsigned __int16 *source, unsigned __int64 number_of_words_to_copy){
+    mov rcx, number_of_words_to_copy
+    mov rdi, destination
+    mov rsi, source
+    
+    rep movsw
+}
+
+
+__declspec(inline_asm) void __movsd(unsigned __int32 *destination, unsigned __int32 *source, unsigned __int64 number_of_dwords_to_copy){
+    mov rcx, number_of_dwords_to_copy
+    mov rdi, destination
+    mov rsi, source
+    
+    rep movsd
+}
+
+__declspec(inline_asm) void __movsq(unsigned __int64 *destination, unsigned __int64 *source, unsigned __int64 number_of_qwords_to_copy){
+    mov rcx, number_of_qwords_to_copy
+    mov rdi, destination
+    mov rsi, source
+    
+    rep movsq
+}
+
+__declspec(inline_asm) unsigned __int16 __popcnt16(unsigned __int16 value){
+    popcnt ax, value
+    return ax
+}
+
+__declspec(inline_asm) unsigned __int32 __popcnt(unsigned __int32 value){
+    popcnt eax, value
     return eax
 }
 
-__declspec(inline_asm) unsigned int _MM_GET_ROUNDING_MODE(void){
-    stmxcsr [rsp]
-    mov eax, [rsp]
-    and eax, _MM_ROUND_MASK
-    return eax
+__declspec(inline_asm) unsigned __int64 __popcnt64(unsigned __int64 value){
+    popcnt rax, value
+    return rax
 }
 
-__declspec(inline_asm) unsigned int _MM_GET_FLUSH_ZERO_MODE(void){
-    stmxcsr [rsp]
-    mov eax, [rsp]
-    and eax, _MM_FLUSH_ZERO_MASK
-    return eax
+__declspec(inline_asm) unsigned short __lzcnt16(unsigned short value){
+    lzcnt value, value
+    return value
 }
 
-__declspec(inline_asm) void _ReadWriteBarrier(){}
-
-
-__declspec(inline_asm) void __debugbreak(){
-    int3
+__declspec(inline_asm) unsigned int __lzcnt(unsigned int value){
+    lzcnt value, value
+    return value
 }
 
-__declspec(inline_asm) __declspec(noreturn) void __fastfail(unsigned int __exit_code){
-    mov ecx, __exit_code
-    int 0x29
+__declspec(inline_asm) unsigned __int64 __lzcnt64(unsigned __int64 value){
+    lzcnt value, value
+    return value
 }
+
+__declspec(inline_asm) unsigned __int64 _umul128(unsigned __int64 Multiplier, unsigned __int64 Multiplicand, unsigned __int64 *HighProduct){
+    mov rax, Multiplicand
+    mul Multiplier
+    mov [HighProduct], rdx
+    return rax
+}
+
+__declspec(inline_asm) unsigned __int64 _udiv128(unsigned __int64 highDividend, unsigned __int64 lowDividend, unsigned __int64 divisor, unsigned __int64 *remainder){
+    mov rdx, highDividend
+    mov rax, lowDividend
+    div divisor
+    mov [remainder], rdx
+    return rax
+}
+
 
 #if 0
 
@@ -171,6 +679,62 @@ __declspec(inline_asm) void __cpuidex(int cpuInfo[4], int function_id, int subfu
     mov [r8 + 12], edx
 }
 #endif
+
+
+
+__declspec(inline_asm) void __incgsbyte(unsigned __int32 offset){
+    mov eax, offset
+    inc byte ptr gs:[rax]
+}
+
+__declspec(inline_asm) void __incgsword(unsigned __int32 offset){
+    mov eax, offset
+    inc word ptr gs:[rax]
+}
+
+__declspec(inline_asm) void __incgsdword(unsigned __int32 offset){
+    mov eax, offset
+    inc dword ptr gs:[rax]
+}
+
+__declspec(inline_asm) void __incgsqword(unsigned __int32 offset){
+    mov eax, offset
+    inc qword ptr gs:[rax]
+}
+
+
+__declspec(inline_asm) void __addgsbyte(unsigned __int32 offset, unsigned __int8 byte_to_add){
+    mov eax, offset
+    add byte ptr gs:[rax], byte_to_add
+}
+
+__declspec(inline_asm) void __addgsword(unsigned __int32 offset, unsigned __int16 word_to_add){
+    mov eax, offset
+    add word ptr gs:[rax], word_to_add
+}
+
+__declspec(inline_asm) void __addgsdword(unsigned __int32 offset, unsigned __int32 dword_to_add){
+    mov eax, offset
+    add dword ptr gs:[rax], dword_to_add
+}
+
+__declspec(inline_asm) void __addgsqword(unsigned __int32 offset, unsigned __int64 qword_to_add){
+    mov eax, offset
+    add qword ptr gs:[rax], qword_to_add
+}
+
+
+__declspec(inline_asm) void _ReadWriteBarrier(){}
+
+
+__declspec(inline_asm) void __debugbreak(){
+    int3
+}
+
+__declspec(inline_asm) __declspec(noreturn) void __fastfail(unsigned int __exit_code){
+    mov ecx, __exit_code
+    int 0x29
+}
 
 __declspec(inline_asm) unsigned __int64 __rdtsc(){
     rdtsc
@@ -278,560 +842,9 @@ __declspec(inline_asm) unsigned __int8 _addcarry_u64(unsigned __int8 carry_in, u
     return cl
 }
 
-__declspec(inline_asm) void __addgsbyte(unsigned __int32 offset, unsigned __int8 byte_to_add){
-    mov eax, offset
-    add byte ptr gs:[rax], byte_to_add
-}
-
-__declspec(inline_asm) void __addgsword(unsigned __int32 offset, unsigned __int16 word_to_add){
-    mov eax, offset
-    add word ptr gs:[rax], word_to_add
-}
-
-__declspec(inline_asm) void __addgsdword(unsigned __int32 offset, unsigned __int32 dword_to_add){
-    mov eax, offset
-    add dword ptr gs:[rax], dword_to_add
-}
-
-__declspec(inline_asm) void __addgsqword(unsigned __int32 offset, unsigned __int64 qword_to_add){
-    mov eax, offset
-    add qword ptr gs:[rax], qword_to_add
-}
-
-__declspec(inline_asm) void __incgsbyte(unsigned __int32 offset){
-    mov eax, offset
-    inc byte ptr gs:[rax]
-}
-
-__declspec(inline_asm) void __incgsword(unsigned __int32 offset){
-    mov eax, offset
-    inc word ptr gs:[rax]
-}
-
-__declspec(inline_asm) void __incgsdword(unsigned __int32 offset){
-    mov eax, offset
-    inc dword ptr gs:[rax]
-}
-
-__declspec(inline_asm) void __incgsqword(unsigned __int32 offset){
-    mov eax, offset
-    inc qword ptr gs:[rax]
-}
-
-__declspec(inline_asm) unsigned __int8 _BitScanForward(unsigned __int32 *out_bit_index, unsigned __int32 to_scan){
-    // searches 'to_scan', if 'to_scan' is not zero the index is stored in eax,
-    // otherwise otherwise the ZF is set
-    bsf eax, to_scan
-    
-    // set 'found' if the ZF was not set
-    setnz cl
-    
-    // save the index even if not found(in which case eax is undefined)
-    mov rdx, out_bit_index
-    mov [rdx], eax
-    
-    return cl
-}
-
-__declspec(inline_asm) unsigned __int8 _BitScanForward64(unsigned __int32 *out_bit_index, unsigned __int64 to_scan){
-    // searches 'to_scan', if 'to_scan' is not zero the index is stored in eax,
-    // otherwise otherwise the ZF is set
-    bsf rax, to_scan
-    
-    // set 'found' if the ZF was not set
-    setnz cl
-    
-    // save the index even if not found(in which case eax is undefined)
-    mov rdx, out_bit_index
-    mov [rdx], eax
-    
-    return cl
-}
-
-
-__declspec(inline_asm) unsigned __int8 _BitScanReverse(unsigned __int32 *out_bit_index, unsigned __int32 to_scan){
-    // searches 'to_scan', if 'to_scan' is not zero the index is stored in eax,
-    // otherwise otherwise the ZF is set
-    bsr eax, to_scan
-    
-    // set 'found' if the ZF was not set
-    setnz cl
-    
-    // save the index even if not found(in which case eax is undefined)
-    mov rdx, out_bit_index
-    mov [rdx], eax
-    
-    return cl
-}
-
-__declspec(inline_asm) unsigned __int8 _BitScanReverse64(unsigned __int32 *out_bit_index, unsigned __int64 to_scan){
-    // searches 'to_scan', if 'to_scan' is not zero the index is stored in eax,
-    // otherwise otherwise the ZF is set
-    bsr rax, to_scan
-    
-    // set 'found' if the ZF was not set
-    setnz cl
-    
-    // save the index even if not found(in which case eax is undefined)
-    mov rdx, out_bit_index
-    mov [rdx], eax
-    
-    return cl
-}
-
-__declspec(inline_asm) unsigned __int8 _bittest(__int32 *to_test, __int32 bit_index){
-    // stores the bit at 'bit_index' and stores it in CF
-    mov rcx, to_test
-    bt [rcx], bit_index
-    
-    setc al
-    return al
-}
-
-__declspec(inline_asm) unsigned __int8 _bittest64(__int64 *to_test, __int64 bit_index){
-    // stores the bit at 'bit_index' and stores it in CF
-    mov rcx, to_test
-    bt [rcx], bit_index
-    
-    setc al
-    return al
-}
-
-__declspec(inline_asm) unsigned __int8 _bittestandcomplement(__int32 *to_test, __int32 bit_index){
-    mov rcx, to_test
-    btc [rcx], bit_index
-    
-    setc al
-    return al
-}
-
-__declspec(inline_asm) unsigned __int8 _bittestandcomplement64(__int64 *to_test, __int64 bit_index){
-    mov rcx, to_test
-    btc [rcx], bit_index
-    
-    setc al
-    return al
-}
-
-
-__declspec(inline_asm) unsigned __int8 _bittestandreset(__int32 *to_test, __int32 bit_index){
-    // stores the bit at 'bit_index'(< 32) and stores it in CF
-    mov rcx, to_test
-    btr [rcx], bit_index
-    setc al
-    
-    return al
-}
-
-__declspec(inline_asm) unsigned __int8 _bittestandreset64(__int64 *to_test, __int64 bit_index){
-    // stores the bit at 'bit_index'(< 62) and stores it in CF
-    mov rcx, to_test
-    btr [rcx], bit_index
-    
-    setc al
-    return al
-}
-
-
-__declspec(inline_asm) unsigned __int8 _bittestandset(__int32 *to_test, __int32 bit_index){
-    // stores the bit at 'bit_index'(< 32) and stores it in CF
-    mov rcx, to_test
-    bts [rcx], bit_index
-    
-    setc al
-    return al
-}
-
-__declspec(inline_asm) unsigned __int8 _bittestandset64(__int64 *to_test, __int64 bit_index){
-    // stores the bit at 'bit_index'(< 62) and stores it in CF
-    mov rcx, to_test
-    bts [rcx], bit_index
-    
-    setc al
-    return al
-}
-
-
-
-__declspec(inline_asm) __int8 _InterlockedCompareExchange8(__int8 *destination, __int8 exchange, __int8 comparand){
-    // cmpxchg compares al with the memory operand
-    movzx eax, comparand
-    
-    // check atomically if '*destintaion == al'(comparand), if true 'exchange' is stored in '*destination'
-    // otherwise *destination is stored in al
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
-    
-    // return the result(*destination) in either case
-    return al
-}
-
-
-__declspec(inline_asm) __int16 _InterlockedCompareExchange16(__int16 *destination, __int16 exchange, __int16 comparand){
-    
-    // cmpxchg compares ax with the memory operand
-    movzx eax, comparand
-    
-    // check atomically if '*destintaion == ax'(comparand), if true 'exchange' is stored in '*destination'
-    // otherwise *destination is stored in ax
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
-    
-    // return the result(*destination) in either case
-    return ax
-}
-
-__declspec(inline_asm) __int32 _InterlockedCompareExchange(__int32 *destination, __int32 exchange, __int32 comparand){
-    // cmpxchg compares eax with the memory operand
-    mov eax, comparand
-    
-    // check atomically if '*destintaion == eax'(comparand), if true 'exchange' is stored in '*destination'
-    // otherwise *destination is stored in eax
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
-    
-    // return the result(*destination) in either case
-    return eax
-}
-
-__declspec(inline_asm) __int64 _InterlockedCompareExchange64(__int64 *destination, __int64 exchange, __int64 comparand){
-    
-    // cmpxchg compares rax with the memory operand
-    mov rax, comparand
-    
-    // check atomically if '*destintaion == rax'(comparand), if true 'exchange' is stored in '*destination'
-    // otherwise *destination is stored in rax
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
-    
-    // return the result(*destination) in either case
-    return rax
-}
-
-__declspec(inline_asm) unsigned __int8 _InterlockedCompareExchange128(__int64 *destination, __int64 exchange_high, __int64 exchange_low, __int64 *inout_comparand_result){
-    
-    // cmpxchg16b compares the memory operand with rdx:rax
-    mov r9, inout_comparand_result
-    mov rdx, [r9 + 8]
-    mov rax, [r9 + 0]
-    
-    // on success cmpxchg16b places the value in rcx:rbx into the memory operand
-    mov rcx, exchange_high
-    mov rbx, exchange_low
-    
-    // on success the ZF is set and the destination is set to rcx:rdx, else ZF is cleared and
-    // rdx:rax receives the value fetched from '*destination'.
-    mov r8, destination
-    lock cmpxchg16b [r8]
-    
-    // ZF is set iff the operation succeeded
-    setz cl
-    
-    // whether or not we succeed we can write back rdx:rax to the result
-    mov [r9 + 8], rdx
-    mov [r9 + 0], rax
-    
-    return cl
-}
-
-// as we only support x64 this is just the same version as '_InterlockedCompareExchange64'
-__declspec(inline_asm) void *_InterlockedCompareExchangePointer(void **destination, void *exchange, void *comparand){
-    
-    // cmpxchg compares rax with the memory operand
-    mov rax, comparand
-    
-    // check atomically if '*destintaion == rax'(comparand), if true 'exchange' is stored in '*destination'
-    // otherwise *destination is stored in rax
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
-    
-    // return the result(*destination) in either case
-    return rax
-}
-
-__declspec(inline_asm) __int8 _InterlockedExchangeAdd8(__int8 *destination, __int8 to_add){
-    // load 'to_add' into dl explicitly even tho it is already probably in there.
-    mov dl, to_add
-    
-    // perform the atomic xadd, the preincremented '*destination' will be saved in dl
-    mov rcx, destination
-    lock xadd [rcx], dl
-    
-    // save the preincremented value in the 'result'
-    return dl
-}
-
-__declspec(inline_asm) __int16 _InterlockedExchangeAdd16(__int16 *destination, __int16 to_add){
-    // load 'to_add' into dx explicitly even tho it is already probably in there.
-    mov dx, to_add
-    
-    // perform the atomic xadd, the preincremented '*destination' will be saved in dx
-    mov rcx, destination
-    lock xadd [rcx], dx
-    
-    // save the preincremented value in the 'result'
-    return dx
-}
-
-
-__declspec(inline_asm) __int32 _InterlockedExchangeAdd(__int32 *destination, __int32 to_add){
-    // load 'to_add' into rdx explicitly even tho it is already probably in there.
-    mov edx, to_add
-    
-    // perform the atomic xadd, the preincremented '*destination' will be saved in edx
-    mov rcx, destination
-    lock xadd [rcx], edx
-    
-    // save the preincremented value in the 'result'
-    return edx
-}
-
-
-__declspec(inline_asm) __int64 _InterlockedExchangeAdd64(__int64 *destination, __int64 to_add){
-    // load 'to_add' into rdx explicitly even tho it is already probably in there.
-    mov rdx, to_add
-    
-    // perform the atomic xadd, the preincremented '*destination' will be saved in rdx
-    mov rcx, destination
-    lock xadd [rcx], rdx
-    
-    // save the preincremented value in the 'result'
-    return rdx
-}
-
 __declspec(inline_asm) long _InterlockedOr(long volatile *value, long mask){
     lock or [value], mask
     return mask // @cleanup: This is supposed to return the old value.
-}
-
-__declspec(inline_asm) __int8 _InterlockedIncrement8(__int8 *to_increment){
-    // We need to return the incremented value, thus we have to use an xadd
-    // to fetch the memory and cannot use a 'lock inc'.
-    
-    // load the one we xadd.
-    mov edx, 1
-    
-    // add the one, the preincremented value will be in dl
-    mov rcx, to_increment
-    lock xadd [rcx], dl
-    
-    // increment dl such that we have the 'incremented_value'
-    inc dl
-    
-    // save the value
-    return dl
-}
-
-__declspec(inline_asm) __int16 _InterlockedIncrement16(__int16 *to_increment){
-    // We need to return the incremented value, thus we have to use an xadd
-    // to fetch the memory and cannot use a 'lock inc'.
-    
-    // load the one we xadd.
-    mov edx, 1
-    
-    // add the one, the preincremented value will be in dx
-    mov rcx, to_increment
-    lock xadd [rcx], dx
-    
-    // increment dl such that we have the 'incremented_value'
-    inc dx
-    
-    // save the value
-    return dx
-}
-
-__declspec(inline_asm) __int32 _InterlockedIncrement(__int32 *to_increment){
-    // We need to return the incremented value, thus we have to use an xadd
-    // to fetch the memory and cannot use a 'lock inc'.
-    
-    // load the one we xadd.
-    mov edx, 1
-    
-    // add the one, the preincremented value will be in edx
-    mov rcx, to_increment
-    lock xadd [rcx], edx
-    
-    // increment dl such that we have the 'incremented_value'
-    inc edx
-    
-    // save the value
-    return edx
-}
-
-
-__declspec(inline_asm) __int64 _InterlockedIncrement64(__int64 *to_increment){
-    // We need to return the incremented value, thus we have to use an xadd
-    // to fetch the memory and cannot use a 'lock inc'.
-    
-    // load the one we xadd.
-    mov edx, 1
-    
-    // add the one, the preincremented value will be in rdx
-    mov rcx, to_increment
-    lock xadd [rcx], rdx
-    
-    // increment dl such that we have the 'incremented_value'
-    inc rdx
-    
-    // save the value
-    return rdx
-}
-
-__declspec(inline_asm) __int8 _InterlockedDecrement8(__int8 *to_increment){
-    // We need to return the incremented value, thus we have to use an xadd
-    // to fetch the memory and cannot use a 'lock inc'.
-    
-    // load the one we xadd.
-    mov edx, -1
-    
-    // add the one, the preincremented value will be in dl
-    mov rcx, to_increment
-    lock xadd [rcx], dl
-    
-    // increment dl such that we have the 'incremented_value'
-    inc dl
-    
-    // save the value
-    return dl
-}
-
-__declspec(inline_asm) __int16 _InterlockedDecrement16(__int16 *to_increment){
-    // We need to return the incremented value, thus we have to use an xadd
-    // to fetch the memory and cannot use a 'lock inc'.
-    
-    // load the one we xadd.
-    mov edx, -1
-    
-    // add the one, the preincremented value will be in dx
-    mov rcx, to_increment
-    lock xadd [rcx], dx
-    
-    // increment dl such that we have the 'incremented_value'
-    inc dx
-    
-    // save the value
-    return dx
-}
-
-
-__declspec(inline_asm) __int32 _InterlockedDecrement(__int32 *to_increment){
-    // We need to return the incremented value, thus we have to use an xadd
-    // to fetch the memory and cannot use a 'lock inc'.
-    
-    // load the one we xadd.
-    mov edx, -1
-    
-    // add the one, the preincremented value will be in edx
-    mov rcx, to_increment
-    lock xadd [rcx], edx
-    
-    // increment dl such that we have the 'incremented_value'
-    inc edx
-    
-    // save the value
-    return edx
-}
-
-
-__declspec(inline_asm) __int64 _InterlockedDecrement64(__int64 *to_increment){
-    // We need to return the incremented value, thus we have to use an xadd
-    // to fetch the memory and cannot use a 'lock inc'.
-    
-    // load the one we xadd.
-    mov rdx, -1
-    
-    // add the one, the preincremented value will be in rdx
-    mov rcx, to_increment
-    lock xadd [rcx], rdx
-    
-    // increment dl such that we have the 'incremented_value'
-    inc rdx
-    
-    // save the value
-    return rdx
-}
-
-__declspec(inline_asm) void __stosb(unsigned __int8 *destination, unsigned __int8 _byte, unsigned __int64 number_of_bytes_to_set){
-    // stosb loads the byte in al into [rdi], rdi is incremented, rcx is decremented
-    mov   rcx, number_of_bytes_to_set
-    mov   rdi, destination
-    movzx eax, _byte
-    
-    rep stosb
-}
-
-__declspec(inline_asm) void __stosw(unsigned __int16 *destination, unsigned __int16 word, unsigned __int64 number_of_words_to_set){
-    // stosb loads the byte in al into [rdi], rdi is incremented, rcx is decremented
-    mov   rcx, number_of_words_to_set
-    mov   rdi, destination
-    movzx eax, word
-    
-    rep stosw
-}
-
-__declspec(inline_asm) void __stosd(unsigned __int32 *destination, unsigned __int32 dword, unsigned __int64 number_of_dwords_to_set){
-    // stosb loads the byte in al into [rdi], rdi is incremented, rcx is decremented
-    mov rcx, number_of_dwords_to_set
-    mov rdi, destination
-    mov eax, dword
-    
-    rep stosd
-}
-
-__declspec(inline_asm) void __stosq(unsigned __int64 *destination, unsigned __int64 qword, unsigned __int64 number_of_qwords_to_set){
-    mov rcx, number_of_qwords_to_set
-    mov rdi, destination
-    mov rax, qword
-    
-    rep stosq
-}
-
-__declspec(inline_asm) void __movsb(unsigned __int8 *destination, unsigned __int8 *source, unsigned __int64 number_of_bytes_to_copy){
-    mov rcx, number_of_bytes_to_copy
-    mov rdi, destination
-    mov rsi, source
-    
-    rep movsb
-}
-
-__declspec(inline_asm) void __movsw(unsigned __int16 *destination, unsigned __int16 *source, unsigned __int64 number_of_words_to_copy){
-    mov rcx, number_of_words_to_copy
-    mov rdi, destination
-    mov rsi, source
-    
-    rep movsw
-}
-
-
-__declspec(inline_asm) void __movsd(unsigned __int32 *destination, unsigned __int32 *source, unsigned __int64 number_of_dwords_to_copy){
-    mov rcx, number_of_dwords_to_copy
-    mov rdi, destination
-    mov rsi, source
-    
-    rep movsd
-}
-
-__declspec(inline_asm) void __movsq(unsigned __int64 *destination, unsigned __int64 *source, unsigned __int64 number_of_qwords_to_copy){
-    mov rcx, number_of_qwords_to_copy
-    mov rdi, destination
-    mov rsi, source
-    
-    rep movsq
-}
-
-__declspec(inline_asm) unsigned __int16 __popcnt16(unsigned __int16 value){
-    popcnt ax, value
-    return ax
-}
-
-__declspec(inline_asm) unsigned __int32 __popcnt(unsigned __int32 value){
-    popcnt eax, value
-    return eax
-}
-
-__declspec(inline_asm) unsigned __int64 __popcnt64(unsigned __int64 value){
-    popcnt rax, value
-    return rax
 }
 
 #if 0
@@ -853,91 +866,14 @@ __declspec(inline_asm) unsigned __int64 _byteswap_uint64(unsigned __int64 val){
 
 #endif
 
-__declspec(inline_asm) char _InterlockedExchange8(char *target, char value){
-    movzx eax, value
-    mov rcx, target
-    xchg al, [rcx]
-    return al
-}
-
-__declspec(inline_asm) short _InterlockedExchange16(short *target, short value){
-    movzx eax, value
-    mov rcx, target
-    xchg ax, [rcx]
-    return ax
-}
-
-__declspec(inline_asm) long _InterlockedExchange(long *target, long value){
-    mov eax, value
-    mov rcx, target
-    xchg eax, [rcx]
-    return eax
-}
-
-__declspec(inline_asm) __int64 _InterlockedExchange64(__int64 *target, __int64 value){
-    mov rax, value
-    mov rcx, target
-    xchg rax, [rcx]
-    return rax
-}
-
-
-__declspec(inline_asm) void *_InterlockedExchangePointer(void **target, void *value){
-    mov rax, value
-    mov rcx, target
-    xchg rax, [rcx]
-    return rax
-}
-
-
-__declspec(inline_asm) unsigned __int64 _umul128(unsigned __int64 Multiplier, unsigned __int64 Multiplicand, unsigned __int64 *HighProduct){
-    mov rax, Multiplicand
-    mul Multiplier
-    mov [HighProduct], rdx
-    return rax
-}
-
-__declspec(inline_asm) unsigned __int64 _udiv128(unsigned __int64 highDividend, unsigned __int64 lowDividend, unsigned __int64 divisor, unsigned __int64 *remainder){
-    mov rdx, highDividend
-    mov rax, lowDividend
-    div divisor
-    mov [remainder], rdx
-    return rax
-}
 
 __declspec(inline_asm) void __faststorefence(void){
     lock or dword ptr [rsp], 0
 }
 
-__declspec(inline_asm) unsigned short __lzcnt16(unsigned short value){
-    lzcnt value, value
-    return value
-}
-
-__declspec(inline_asm) unsigned int __lzcnt(unsigned int value){
-    lzcnt value, value
-    return value
-}
-
-__declspec(inline_asm) unsigned __int64 __lzcnt64(unsigned __int64 value){
-    lzcnt value, value
-    return value
-}
-
-__declspec(inline_asm) unsigned int _lzcnt_u32(unsigned int value){
-    lzcnt value, value
-    return value
-}
-
-__declspec(inline_asm) unsigned __int64 _lzcnt_u64(unsigned __int64 value){
-    lzcnt value, value
-    return value
-}
-
-
-//
+//_____________________________________________________________________________________________________________________
 // GNU intrinsics
-//
+
 __declspec(inline_asm) int __builtin_ctz(unsigned int x){
     mov ecx, x
     bsf eax, ecx
@@ -978,6 +914,133 @@ __declspec(inline_asm) void __builtin_trap(void){
 __declspec(inline_asm) void __builtin_unreachable(void){
     bytes{0f 0b} // ud2
 }
+
+//_____________________________________________________________________________________________________________________
+// Intel intrinsics
+
+__declspec(inline_asm) unsigned int _lzcnt_u32(unsigned int value){
+    lzcnt value, value
+    return value
+}
+
+__declspec(inline_asm) unsigned __int64 _lzcnt_u64(unsigned __int64 value){
+    lzcnt value, value
+    return value
+}
+
+//_____________________________________________________________________________________________________________________
+// SSE intrinsics
+
+enum{
+    _MM_HINT_NTA = 0,
+    _MM_HINT_T0 = 1,
+    _MM_HINT_T1 = 2,
+    _MM_HINT_T2 = 3,
+    
+    // 
+    // MxCsr bits:
+    // 
+    
+    _MM_EXCEPT_MASK     = 0x003f,
+    _MM_MASK_MASK       = 0x1f80,
+    _MM_ROUND_MASK      = 0x6000,
+    _MM_FLUSH_ZERO_MASK = 0x8000,
+    
+    _MM_EXCEPT_INVALID   = 0x0001,
+    _MM_EXCEPT_DENORM    = 0x0002,
+    _MM_EXCEPT_DIV_ZERO  = 0x0004,
+    _MM_EXCEPT_OVERFLOW  = 0x0008,
+    _MM_EXCEPT_UNDERFLOW = 0x0010,
+    _MM_EXCEPT_INEXACT   = 0x0020,
+    
+    _MM_MASK_INVALID   = 0x0080,
+    _MM_MASK_DENORM    = 0x0100,
+    _MM_MASK_DIV_ZERO  = 0x0200,
+    _MM_MASK_OVERFLOW  = 0x0400,
+    _MM_MASK_UNDERFLOW = 0x0800,
+    _MM_MASK_INEXACT   = 0x1000,
+    
+    _MM_ROUND_NEAREST     = 0x0000,
+    _MM_ROUND_DOWN        = 0x2000,
+    _MM_ROUND_UP          = 0x4000,
+    _MM_ROUND_TOWARD_ZERO = 0x6000,
+    
+    _MM_FLUSH_ZERO_ON  = 0x8000,
+    _MM_FLUSH_ZERO_OFF = 0x0000,
+    
+};
+
+// @cleanup: For now I assume [rsp] is fair game.
+
+
+__declspec(inline_asm) void _mm_setcsr(unsigned int a){
+    mov [rsp], a
+    ldmxcsr [rsp]
+}
+
+__declspec(inline_asm) unsigned int _mm_getcsr(){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    return eax
+}
+
+__declspec(inline_asm) void _MM_SET_EXCEPTION_STATE(unsigned int mask){
+    stmxcsr [rsp]
+    and dword ptr [rsp], ~_MM_EXCEPT_MASK
+    or dword ptr [rsp], mask
+    ldmxcsr[rsp]
+}
+
+__declspec(inline_asm) void _MM_SET_EXCEPTION_MASK(unsigned int mask){
+    stmxcsr [rsp]
+    and dword ptr [rsp], ~_MM_MASK_MASK
+    or dword ptr [rsp], mask
+    ldmxcsr[rsp]
+}
+
+__declspec(inline_asm) void _MM_SET_ROUNDING_MODE(unsigned int mask){
+    stmxcsr [rsp]
+    and dword ptr [rsp], ~_MM_ROUND_MASK
+    or dword ptr [rsp], mask
+    ldmxcsr[rsp]
+}
+
+__declspec(inline_asm) void _MM_SET_FLUSH_ZERO_MODE(unsigned int mask){
+    stmxcsr [rsp]
+    and dword ptr [rsp], ~_MM_FLUSH_ZERO_MASK
+    or dword ptr [rsp], mask
+    ldmxcsr[rsp]
+}
+
+__declspec(inline_asm) unsigned int _MM_GET_EXCEPTION_STATE(void){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    and eax, _MM_EXCEPT_MASK
+    return eax
+}
+
+__declspec(inline_asm) unsigned int _MM_GET_EXCEPTION_MASK(void){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    and eax, _MM_MASK_MASK
+    return eax
+}
+
+__declspec(inline_asm) unsigned int _MM_GET_ROUNDING_MODE(void){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    and eax, _MM_ROUND_MASK
+    return eax
+}
+
+__declspec(inline_asm) unsigned int _MM_GET_FLUSH_ZERO_MODE(void){
+    stmxcsr [rsp]
+    mov eax, [rsp]
+    and eax, _MM_FLUSH_ZERO_MASK
+    return eax
+}
+
+
 typedef union __declspec(intrin_type) __declspec(align(8)) __m64 {
     unsigned __int64    m64_u64;
     float               m64_f32[2];
@@ -990,10 +1053,6 @@ typedef union __declspec(intrin_type) __declspec(align(8)) __m64 {
     unsigned __int32    m64_u32[2];
 } __m64;
 
-
-//
-// SSE intrinsics
-//
 
 typedef union __declspec(intrin_type) __declspec(align(16)) __m128 {
     float               m128_f32[4];
@@ -3010,6 +3069,32 @@ __declspec(inline_asm) __m128i _mm_alignr_epi8(__m128i a, __m128i b, int imm8){
 //
 // SSE4.2
 //
+
+enum{
+    _SIDD_UBYTE_OPS = 0,
+    _SIDD_UWORD_OPS = 1,
+    _SIDD_SBYTE_OPS = 2,
+    _SIDD_SWORD_OPS = 3,
+    
+    _SIDD_CMP_EQUAL_ANY    = 0 << 2,
+    _SIDD_CMP_RANGES       = 1 << 2,
+    _SIDD_CMP_EQUAL_EACH   = 2 << 2,
+    _SIDD_CMP_EQUAL_ORDERD = 3 << 2,
+    
+    _SIDD_POSITIVE_POLARITY         = 0 << 4,
+    _SIDD_NEGATIVE_POLARITY         = 1 << 4,
+    _SIDD_MASKED_POSITIVE_POLARITY  = 2 << 4, 
+    _SIDD_MASKED_NEGATIVE_POLARITY  = 3 << 4,
+  
+    
+    _SIDD_LEAST_SIGNIFICANT = 0 << 6,
+    _SIDD_MOST_SIGNIFICANT  = 1 << 6,
+    
+    _SIDD_BIT_MASK  = 0 << 6,
+    _SIDD_UNIT_MASK = 1 << 6,
+    
+};
+
 __declspec(inline_asm) int _mm_cmpistri(__m128i a, __m128i b, int imm8){
     movdqa  xmm0, a
     movdqa  xmm1, b
