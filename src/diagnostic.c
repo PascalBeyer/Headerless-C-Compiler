@@ -43,6 +43,7 @@ static u8 warning_enabled[WARNING_count] = {
     
     [WARNING_extraneous_semicolon] = 1,
     [WARNING_reference_to_dllimport_inserts_stub] = 1,
+    [WARNING_relative_include_is_treated_as_system_include] = 1,
 };
 
 struct error_report_node{

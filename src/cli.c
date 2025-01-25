@@ -144,46 +144,47 @@ enum std{
 };
 
 enum warning{
-    WARNING_missing_newline_after_backslash              =  1, // The preprocessor found a whitespace after a backslash.
-    WARNING_junk_after_directive                         =  2, // The preprocessor skipped tokens after a directive in a line.
-    WARNING_compile_time_overflow                        =  3, // A compile time computation caused an overflow.
-    WARNING_compile_time_multiplication_by_zero          =  4, // Detected a compile-time multiplication by 0.
-    WARNING_shadowing_local                              =  5, // A declaration hides a previous local declaration.
-    WARNING_shadowing_global                             =  6, // A declaration hides a previous global declaration.
-    WARNING_shadowing_in_same_scope                      =  7, // A declaration hides a previous declaration in the same scope.
-    WARNING_type_mismatch                                =  8, // Potentially erroneous operation between two mismatching types.
-    WARNING_compile_time_truncation                      =  9, // An integer was truncated at compile type.
-    WARNING_unsigned_negation                            = 10, // Applying '-' to an unsigned value results in an unsigned value.
-    WARNING_unsupported_declspec                         = 11, // Unsupported or unknown __declspec(<...>) invocations are ignored.
-    WARNING_ret_in_asm_block                             = 12, // A 'ret' opcode was detected in an __asm__-block.
-    WARNING_does_not_declare_anything                    = 13, // Potentially malformed declaration.
-    WARNING_undefined_static_if_operand                  = 14, // An undefined identifier in a #if expression gets evaluated to 0.
-    WARNING_undef_on_undefined                           = 15, // Using #undef on an undefined identifier.
-    WARNING_unsupported_pragma                           = 16, // Unsupported or unknown #pragma directives are ignored.
-    WARNING_function_declared_but_never_defined          = 17, // A function had a declaration, but was never defined.
-    WARNING_function_defined_but_unreachable             = 18, // The function is dead code and is removed from the executable.
-    WARNING_unused_local_variable                        = 19, // A local variable was never referenced.
-    WARNING_local_variable_only_ever_written             = 20, // A local variable that is only ever written is probably useless.
-    WARNING_casting_u64_to_float                         = 21, // Casting an unsigned 64-bit value to a floating point value is slow on x64.
-    WARNING_double_specifier                             = 22, // More than one of the same specifier for a declaration.
-    WARNING_incorrect_format_specifier                   = 23, // Wrong argument passed to a __declspec(printlike) procedure.
-    WARNING_unknown_format_specifier                     = 24, // Unknown format specifier to __declspec(printlike) procedure.
-    WARNING_assignment_in_condition                      = 25, // Using an assignments in a condition is a common mistake.
-    WARNING_extension_used                               = 26, // A hlc-specific extension was used. This is reported very inconsistently.
-    WARNING_missing_return                               = 27, // A function forgot to return a value.
-    WARNING_return_in_noreturn_function                  = 28, // A return statement inside a function declared _Noreturn.
-    WARNING_function_alignment                           = 29, // Currently, specifying alignment for functions is unimplemented.
-    WARNING_array_of_unknown_size_never_filled_in        = 30, // An array of unknown size without initializer (e.g: `int array[];`) that is never defined will implicitly have length 1.
-    WARNING_redefining_declaration_from_extern_to_static = 31, // First declaring a function as extern then as static is undefined behaviour.
-    WARNING_inline_function_is_implicitly_external       = 32, // First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.
-    WARNING_function_is_implicitly_dllimport             = 33, // Function was not declared with dllimport, but we could only find it as an import.
-    WARNING_imported_function_is_also_defined            = 34, // Function was both found in an import library an a static library.
-    WARNING_incompatible_redefinition_of_macro           = 35, // Redefined a macro with different replacement-list or arguments.
-    WARNING_extraneous_semicolon                         = 36, // We found an extraneous semicolon in a structure or at global scope.
-    WARNING_integer_literal_too_large_to_be_signed       = 37, // We found an integer literal that exceeds the maximum for a signed value.
-    WARNING_reference_to_dllimport_inserts_stub          = 38, // A __declspec(dllimport) function was referenced in a constant initializer.
-    WARNING_declaration_differs_in_attribute             = 39, // One but not all declarations of a variable is marked with an extended attribute.
-    WARNING_ALTERNATENAME_type_mismatch                  = 40, // Mismatching types between the source and destination of a /ALTERNATENAME.
+    WARNING_missing_newline_after_backslash               =  1, // The preprocessor found a whitespace after a backslash.
+    WARNING_junk_after_directive                          =  2, // The preprocessor skipped tokens after a directive in a line.
+    WARNING_compile_time_overflow                         =  3, // A compile time computation caused an overflow.
+    WARNING_compile_time_multiplication_by_zero           =  4, // Detected a compile-time multiplication by 0.
+    WARNING_shadowing_local                               =  5, // A declaration hides a previous local declaration.
+    WARNING_shadowing_global                              =  6, // A declaration hides a previous global declaration.
+    WARNING_shadowing_in_same_scope                       =  7, // A declaration hides a previous declaration in the same scope.
+    WARNING_type_mismatch                                 =  8, // Potentially erroneous operation between two mismatching types.
+    WARNING_compile_time_truncation                       =  9, // An integer was truncated at compile type.
+    WARNING_unsigned_negation                             = 10, // Applying '-' to an unsigned value results in an unsigned value.
+    WARNING_unsupported_declspec                          = 11, // Unsupported or unknown __declspec(<...>) invocations are ignored.
+    WARNING_ret_in_asm_block                              = 12, // A 'ret' opcode was detected in an __asm__-block.
+    WARNING_does_not_declare_anything                     = 13, // Potentially malformed declaration.
+    WARNING_undefined_static_if_operand                   = 14, // An undefined identifier in a #if expression gets evaluated to 0.
+    WARNING_undef_on_undefined                            = 15, // Using #undef on an undefined identifier.
+    WARNING_unsupported_pragma                            = 16, // Unsupported or unknown #pragma directives are ignored.
+    WARNING_function_declared_but_never_defined           = 17, // A function had a declaration, but was never defined.
+    WARNING_function_defined_but_unreachable              = 18, // The function is dead code and is removed from the executable.
+    WARNING_unused_local_variable                         = 19, // A local variable was never referenced.
+    WARNING_local_variable_only_ever_written              = 20, // A local variable that is only ever written is probably useless.
+    WARNING_casting_u64_to_float                          = 21, // Casting an unsigned 64-bit value to a floating point value is slow on x64.
+    WARNING_double_specifier                              = 22, // More than one of the same specifier for a declaration.
+    WARNING_incorrect_format_specifier                    = 23, // Wrong argument passed to a __declspec(printlike) procedure.
+    WARNING_unknown_format_specifier                      = 24, // Unknown format specifier to __declspec(printlike) procedure.
+    WARNING_assignment_in_condition                       = 25, // Using an assignments in a condition is a common mistake.
+    WARNING_extension_used                                = 26, // A hlc-specific extension was used. This is reported very inconsistently.
+    WARNING_missing_return                                = 27, // A function forgot to return a value.
+    WARNING_return_in_noreturn_function                   = 28, // A return statement inside a function declared _Noreturn.
+    WARNING_function_alignment                            = 29, // Currently, specifying alignment for functions is unimplemented.
+    WARNING_array_of_unknown_size_never_filled_in         = 30, // An array of unknown size without initializer (e.g: `int array[];`) that is never defined will implicitly have length 1.
+    WARNING_redefining_declaration_from_extern_to_static  = 31, // First declaring a function as extern then as static is undefined behaviour.
+    WARNING_inline_function_is_implicitly_external        = 32, // First declaraing a function as extern then defining it as inline will cause the resulting declaration to be 'extern inline'.
+    WARNING_function_is_implicitly_dllimport              = 33, // Function was not declared with dllimport, but we could only find it as an import.
+    WARNING_imported_function_is_also_defined             = 34, // Function was both found in an import library an a static library.
+    WARNING_incompatible_redefinition_of_macro            = 35, // Redefined a macro with different replacement-list or arguments.
+    WARNING_extraneous_semicolon                          = 36, // We found an extraneous semicolon in a structure or at global scope.
+    WARNING_integer_literal_too_large_to_be_signed        = 37, // We found an integer literal that exceeds the maximum for a signed value.
+    WARNING_reference_to_dllimport_inserts_stub           = 38, // A __declspec(dllimport) function was referenced in a constant initializer.
+    WARNING_declaration_differs_in_attribute              = 39, // One but not all declarations of a variable is marked with an extended attribute.
+    WARNING_ALTERNATENAME_type_mismatch                   = 40, // Mismatching types between the source and destination of a /ALTERNATENAME.
+    WARNING_relative_include_is_treated_as_system_include = 41, // ""-Include was not found and treated as <>-Include.
 };
 
 struct cli_options{
@@ -232,7 +233,7 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 41
+#define WARNING_count 42
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -280,6 +281,7 @@ struct warning_table_entry{
     [54] = {{31, (u8 *)"referencetodllimportinsertsstub"}, WARNING_reference_to_dllimport_inserts_stub},
     [61] = {{29, (u8 *)"declarationdiffersinattribute"}, WARNING_declaration_differs_in_attribute},
     [30] = {{25, (u8 *)"alternatenametypemismatch"}, WARNING_ALTERNATENAME_type_mismatch},
+    [44] = {{39, (u8 *)"relativeincludeistreatedassysteminclude"}, WARNING_relative_include_is_treated_as_system_include},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -860,7 +862,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "reference_to_dllimport_inserts_stub (38)| A __declspec(dllimport) function was referenced in a constant initializer.\n"
                                 "declaration_differs_in_attribute (39)   | One but not all declarations of a variable is marked with an extended attribute.\n"
                                 "ALTERNATENAME_type_mismatch (40)        | Mismatching types between the source and destination of a /ALTERNATENAME.\n"
-                                , 4209);
+                                "relative_include_is_treated_as_system_include (41)| ""-Include was not found and treated as <>-Include.\n"
+                                , 4313);
                     }
                 }break;
                 invalid_default_case();

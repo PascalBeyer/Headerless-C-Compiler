@@ -549,3 +549,16 @@ Example:
 > void a(int);
 > void b(float);
 > #pragma comment(linker, "/ALTERNATENAME:a=b")
+
+-> relative_include_is_treated_as_system_include - ""-Include was not found and treated as <>-Include.
+
+The C-Spec demands, that if a ""-Include does not find the included file, it is treated as a <>-Include.
+This is a warning, because you probably did not intend this behaviour, otherwise you would have used
+a <>-Include.
+
+Example:
+> // C:/src/main.c
+> #include "stdlib.h" // Warning: This ""-Include was not found relative to the source file "C:/src/main.c" and is therefore treated as a <>-Include. Include path is "stdlib.h".
+> #include <stdlib.h> // No Warning!
+
+

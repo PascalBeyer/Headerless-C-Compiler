@@ -2534,7 +2534,48 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
     return file;
 }
 
+// If the last include is null, this is called as a last resort in `get_or_load_file_for_include_string` otherwise it is called from #include_next.
+func struct file *get_or_load_file_by_walking_system_include_directories(struct context *context, struct string include_string, struct file *include_next){
+    
+    int found_last = (include_next == null); 
+    
+    for(struct string_list_node *node = globals.system_include_directories.list.first; node; node = node->next){
+        
+        struct string directory = node->string;
+        
+        if(!found_last){
+            // 
+            // Check if 'include_next->absolute_file_path' starts with 'node->string'.
+            // 
+            char *include_next_file_path = include_next->absolute_file_path;
+            
+            int skip = false;
+            
+            for(smm index = 0; index < directory.size && include_next_file_path[index]; index++){
+                if(directory.data[index] != include_next_file_path[index]){
+                    skip = true;
+                    break;
+                }
+            }
+            
+            if(!skip) found_last = true;
+            continue;
+        }
+        
+        struct string path = concatenate_file_paths(&context->scratch, directory, include_string);
+        struct os_file dummy = os_load_file((char *)path.data, 0, 0);
+        if(!dummy.file_does_not_exist){
+            return load_or_get_source_file_by_absolute_path(context, push_cstring_from_string(context->arena, path), dummy.size, /*is_system_include*/1);
+        }
+    }
+    
+    return null;
+}
+
 func struct file *get_or_load_file_for_include_string(struct context *context, struct token *directive, struct string include_string, int is_system_include){
+    
+    include_string = push_zero_terminated_string_copy(context->arena, include_string);
+    hacky_canonicalize_file_for_case_insensitivity(&include_string);
     
     struct file *file = null;
     
@@ -2557,6 +2598,8 @@ func struct file *get_or_load_file_for_include_string(struct context *context, s
             // 
             
             file = load_or_get_source_file_by_absolute_path(context, push_cstring_from_string(context->arena, absolute_file_path), dummy.size, is_system_include);
+        }else{
+            report_warning(context, WARNING_relative_include_is_treated_as_system_include, directive, "This \"\"-Include was not found relative to the source file \"%s\" and is therefore treated as a <>-Include. Include string is \"%.*s\".", parent_file->absolute_file_path, include_string.size, include_string.data);
         }
     }
     
@@ -2603,6 +2646,15 @@ func struct file *get_or_load_file_for_include_string(struct context *context, s
         
         file = entry->file;
     }
+    
+    if(!file){
+        // 
+        // Weapon of last resort, try to look it up by walking the system_include_directories.
+        // This has to be here for system includes that contain '..' in their path or '//' or something else non-cannonical.
+        // 
+        file = get_or_load_file_by_walking_system_include_directories(context, include_string, /*include_next*/null);
+    }
+    
     
     return file;
 }
@@ -3118,17 +3170,7 @@ func s64 static_if_evaluate(struct context *context){
 
 //_____________________________________________________________________________________________________________________
 
-func int handle_include_directive(struct context *context, struct token *directive, int is_system_include, struct string include_string){
-    begin_counter(context, handle_include);
-    
-    include_string = push_zero_terminated_string_copy(context->arena, include_string);
-    hacky_canonicalize_file_for_case_insensitivity(&include_string);
-    
-    struct file *file = get_or_load_file_for_include_string(context, directive, include_string, is_system_include);
-    if(!file){
-        report_error(context, directive, "'%.*s' include file not found.", include_string.size, include_string.data);
-        return 1;
-    }
+func void maybe_push_file_to_include_stack(struct context *context, struct file *file){
     
     //
     // Check if we are one of the files that contained a '#pragma once' in this compilation unit,
@@ -3161,13 +3203,6 @@ func int handle_include_directive(struct context *context, struct token *directi
             sll_push_front(context->token_stack, node);
         }
     }
-    
-    // @cleanup:
-    // don't report on junk, as we just pushed a new file... maybe report above!
-    end_counter(context, handle_include);
-    end_counter(context, handle_directive);
-    
-    return 0;
 }
 
 struct static_if_stack_node{
@@ -3927,7 +3962,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 }break;
                 
                 case DIRECTIVE_embed:
-                case DIRECTIVE_include:{
+                case DIRECTIVE_include:
+                case DIRECTIVE_include_next:{
                     
                     eat_whitespace_and_comments(context);
                     
@@ -3982,8 +4018,13 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             }
                             got_newline = true;
                             
-                            int error = handle_include_directive(context, directive, is_system_include, file_name);
-                            if(error) goto end;
+                            struct file *file = get_or_load_file_for_include_string(context, directive, file_name, is_system_include);
+                            if(!file){
+                                report_error(context, directive, "'%.*s' include file not found.", file_name.size, file_name.data);
+                                goto end;
+                            }
+                            
+                            maybe_push_file_to_include_stack(context, file);
                             
                             continue;
                         }else{
@@ -3999,8 +4040,29 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             have_postponed_directive = true;
                             continue;
                         }
+                    }else if(directive_kind == DIRECTIVE_include_next){
+                        
+                        if(!file_name.data){
+                            report_error(context, directive, "Expected a \"\"-Include or <>-Include string after #include_next (macros are currently not expanded).");
+                            goto end;
+                        }
+                        
+                        struct file *parent_file = globals.file_table.data[directive->file_index];
+                        
+                        struct file *next_include = get_or_load_file_by_walking_system_include_directories(context, file_name, parent_file);
+                        if(!next_include){
+                            report_error(context, directive, "'%.*s' include_next file not found.", file_name.size, file_name.data);
+                            goto end;
+                        }
+                        
+                        maybe_push_file_to_include_stack(context, next_include);
                     }else if(directive_kind == DIRECTIVE_embed){
                         assert(!have_postponed_directive); // @paranoid
+                        
+                        if(!file_name.data){
+                            report_error(context, directive, "Expected a \"\"-Include or <>-Include string after #embed (macros are currently not expanded).");
+                            goto end;
+                        }
                         
                         struct token_array prefix   = zero_struct;
                         struct token_array suffix   = zero_struct;
@@ -4418,8 +4480,13 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         int is_system_include = false;
                         struct string file_name = parse_include_string_after_it_has_been_preprocessed(context, postponed_directive.directive, &is_system_include);
                                 
-                        int should_error = handle_include_directive(context, postponed_directive.directive, is_system_include, file_name);
-                        if(should_error) goto end;
+                        struct file *file = get_or_load_file_for_include_string(context, postponed_directive.directive, file_name, is_system_include);
+                        if(!file){
+                            report_error(context, postponed_directive.directive, "'%.*s' include file not found.", file_name.size, file_name.data);
+                            goto end;
+                        }
+                        
+                        maybe_push_file_to_include_stack(context, file);
                     }else{
                         static_if_stack.first->is_true = static_if_evaluate(context) != 0;
                         if(context->should_exit_statement) goto end;
