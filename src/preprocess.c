@@ -2626,7 +2626,14 @@ func struct file *get_or_load_file_for_include_string(struct context *context, s
             }
         }
         
-        if(!entry) return null;
+        if(!entry){
+            // 
+            // Weapon of last resort, try to look it up by walking the system_include_directories.
+            // This has to be here for system includes that contain '..' in their path or '//' or something else non-cannonical.
+            // 
+            return get_or_load_file_by_walking_system_include_directories(context, include_string, /*include_next*/null);
+        }
+        
         
         if(entry->in_progress == 0){
             // 
@@ -2646,15 +2653,6 @@ func struct file *get_or_load_file_for_include_string(struct context *context, s
         
         file = entry->file;
     }
-    
-    if(!file){
-        // 
-        // Weapon of last resort, try to look it up by walking the system_include_directories.
-        // This has to be here for system includes that contain '..' in their path or '//' or something else non-cannonical.
-        // 
-        file = get_or_load_file_by_walking_system_include_directories(context, include_string, /*include_next*/null);
-    }
-    
     
     return file;
 }
