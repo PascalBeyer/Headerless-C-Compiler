@@ -190,6 +190,7 @@ static struct{
     {const_string("extern"),        TOKEN_extern},
     {const_string("register"),      TOKEN_register},
     {const_string("inline"),        TOKEN_inline},
+    {const_string("_inline"),       TOKEN_inline},
     {const_string("__inline"),      TOKEN_inline},
     {const_string("__forceinline"), TOKEN_forceinline}, 
     {const_string("_Noreturn"),     TOKEN_noreturn},
