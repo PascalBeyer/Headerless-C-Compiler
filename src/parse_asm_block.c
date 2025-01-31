@@ -133,6 +133,7 @@ enum memonic{
     MEMONIC_mov,
     MEMONIC_movzx, MEMONIC_movsx, MEMONIC_movsxd,
     MEMONIC_xchg,
+    MEMONIC_bswap,
     
     MEMONIC_lea,
     
@@ -412,10 +413,10 @@ enum memonic{
     
     MEMONIC_vpmovmskb,
     
+    MEMONIC_crc32,
+    
     MEMONIC_return_from_inline_asm_function,
     MEMONIC_bytes,
-    
-    MEMONIC_crc32,
     
     MEMONIC_count,
 };
@@ -507,6 +508,8 @@ static struct{
     
     [MEMONIC_div] = {.memonic = const_string("div"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
     [MEMONIC_mul] = {.memonic = const_string("mul"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
+    
+    [MEMONIC_bswap] = { .memonic = const_string("bswap"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_reg32 | ASM_OP_KIND_reg64 },
     
     [MEMONIC_seto]   = {.memonic = const_string("seto"),   .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_regm8 },
     [MEMONIC_setno]  = {.memonic = const_string("setno"),  .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_regm8 },

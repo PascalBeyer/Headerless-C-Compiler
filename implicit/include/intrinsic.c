@@ -847,10 +847,10 @@ __declspec(inline_asm) long _InterlockedOr(long volatile *value, long mask){
     return mask // @cleanup: This is supposed to return the old value.
 }
 
-#if 0
+
 
 __declspec(inline_asm) unsigned short _byteswap_ushort(unsigned short val){
-    bswap val
+    ror val, 8
     return val
 }
 
@@ -863,8 +863,6 @@ __declspec(inline_asm) unsigned __int64 _byteswap_uint64(unsigned __int64 val){
     bswap val
     return val
 }
-
-#endif
 
 
 __declspec(inline_asm) void __faststorefence(void){
