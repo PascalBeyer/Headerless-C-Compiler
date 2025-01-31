@@ -3,9 +3,6 @@ git clone --recursive --depth 1 --branch curl-8_11_0 https://github.com/curl/cur
 cd curl || exit /b 1
 
 git clean -xdf
-git checkout *
-
-echo #include ^<intrin.h^> // for _InterlockedExchange and _InterlockedCompareExchange >> src/tool_doswin.c
 
 mkdir build
 cd build
