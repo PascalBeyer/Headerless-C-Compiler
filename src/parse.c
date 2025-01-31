@@ -3856,52 +3856,6 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                 
                 context->maybe_in_cast = null;
                 
-                if(ast_stack_current(context)->kind == AST_alignof || ast_stack_current(context)->kind == AST_sizeof){
-                    struct ast *size_or_alignof = ast_stack_pop(context);
-                    b32 is_alignof = (size_or_alignof->kind == AST_alignof);
-                    struct ast_type *type = type_to_cast_to.type;
-                    
-                    if(type == &globals.typedef_void){
-                        report_error(context, size_or_alignof->token, "Type void has undefined %s.", is_alignof ? "alignment" : "size");
-                        return invalid_ast(context);
-                    }
-                    
-                    if(type->kind == AST_function_type){
-                        report_error(context, size_or_alignof->token, "Function type has undefined %s.", is_alignof ? "alignment" : "size");
-                        return invalid_ast(context);
-                    }
-                    
-                    if(!is_alignof && type_is_array_of_unknown_size(type)){
-                        report_error(context, size_or_alignof->token, "Array of unknown size has undefined size.");
-                    }
-                    
-                    // 
-                    // :sizeof/alignof threading bug
-                    // 
-                    // Copied from todo this is the reason why these now happen here instead of the alignof/sizeof cases.
-                    // 
-                    // threading bug at sizeof(type):
-                    // 
-                    // thread one parses the sizeof. sees type, its not yet known, so it goes back one token and we start parsing a 
-                    // prefix expression at '(type)'. now thread two finishes parsing 'type' and registers it.
-                    // thread one now parses '(type)' as a cast.
-                    
-                    
-                    u64 value = is_alignof ? type->alignment : type->size;
-                    
-                    // "The [..] type (an unsigned integer type) is 'size_t', defined in <stddef.h>."
-                    operand = ast_push_u64_literal(context, size_or_alignof->token, value);
-                    
-                    if(is_alignof){
-                        expect_token(context, TOKEN_closed_paren, "Expected ')' after 'alignof(type'.");
-                    }else{
-                        expect_token(context, TOKEN_closed_paren, "Expected ')' after 'sizeof(type'.");
-                    }
-                    context->in_lhs_expression = false;
-                    
-                    goto skip_primary_expression_because_we_got_a_sizeof_or_align_of_with_a_type;
-                }
-                
                 expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of a cast.");
                 if(peek_token(context, TOKEN_open_curly)){
                     // 
@@ -3956,15 +3910,61 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                     // struct literals should be assignable? msvc does that.
                     context->in_lhs_expression = true;
                     goto skip_primary_expression_because_we_got_a_struct_literal;
-                }else{
-                    if(type_to_cast_to.type->kind == AST_array_type){
-                        report_error(context, open_paren, "Cast to array is illegal.");
+                }
+                
+                // 
+                // @note: 'sizeof (struct a){0}.member' should be interpreted as 'sizeof((struct a){0}.member)'.
+                // 
+                
+                if(ast_stack_current(context)->kind == AST_alignof || ast_stack_current(context)->kind == AST_sizeof){
+                    struct ast *size_or_alignof = ast_stack_pop(context);
+                    b32 is_alignof = (size_or_alignof->kind == AST_alignof);
+                    struct ast_type *type = type_to_cast_to.type;
+                    
+                    if(type == &globals.typedef_void){
+                        report_error(context, size_or_alignof->token, "Type void has undefined %s.", is_alignof ? "alignment" : "size");
                         return invalid_ast(context);
                     }
-                    if(type_to_cast_to.type->kind == AST_function_type){
-                        report_error(context, open_paren, "Cast to function is illegal.");
+                    
+                    if(type->kind == AST_function_type){
+                        report_error(context, size_or_alignof->token, "Function type has undefined %s.", is_alignof ? "alignment" : "size");
                         return invalid_ast(context);
                     }
+                    
+                    if(!is_alignof && type_is_array_of_unknown_size(type)){
+                        report_error(context, size_or_alignof->token, "Array of unknown size has undefined size.");
+                    }
+                    
+                    // 
+                    // :sizeof/alignof threading bug
+                    // 
+                    // Copied from todo this is the reason why these now happen here instead of the alignof/sizeof cases.
+                    // 
+                    // threading bug at sizeof(type):
+                    // 
+                    // thread one parses the sizeof. sees type, its not yet known, so it goes back one token and we start parsing a 
+                    // prefix expression at '(type)'. now thread two finishes parsing 'type' and registers it.
+                    // thread one now parses '(type)' as a cast.
+                    
+                    
+                    u64 value = is_alignof ? type->alignment : type->size;
+                    
+                    // "The [..] type (an unsigned integer type) is 'size_t', defined in <stddef.h>."
+                    operand = ast_push_u64_literal(context, size_or_alignof->token, value);
+                    
+                    context->in_lhs_expression = false;
+                    
+                    goto skip_primary_expression_because_we_got_a_sizeof_or_align_of_with_a_type;
+                }
+                
+                if(type_to_cast_to.type->kind == AST_array_type){
+                    report_error(context, open_paren, "Cast to array is illegal.");
+                    return invalid_ast(context);
+                }
+                
+                if(type_to_cast_to.type->kind == AST_function_type){
+                    report_error(context, open_paren, "Cast to function is illegal.");
+                    return invalid_ast(context);
                 }
                 
                 ast_stack_push(context, push_cast(context, type_to_cast_to.type, type_to_cast_to.defined_type, null));
@@ -8869,6 +8869,8 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                         function->flags |= FUNCTION_TYPE_FLAGS_is_varargs;
                         break;
                     }
+                    
+                    if(peek_token(context, TOKEN_closed_paren)) break; // Allow trailling comma.
                     
                     // 
                     // parameter-declaration:
