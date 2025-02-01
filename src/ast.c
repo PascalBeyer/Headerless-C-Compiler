@@ -805,8 +805,8 @@ struct ast_compound_type{
 };
 
 #define FUNCTION_TYPE_FLAGS_is_varargs    0x1
-#define FUNCTION_TYPE_FLAGS_is_intrinsic  0x2
-#define FUNCTION_TYPE_FLAGS_is_printlike  0x4 // this acts, as if it was intrinsic in the front end, but not in the backend
+// #define FUNCTION_TYPE_FLAGS_is_intrinsic  0x2
+#define FUNCTION_TYPE_FLAGS_is_printlike  0x4
 #define FUNCTION_TYPE_FLAGS_is_inline_asm 0x8
 #define FUNCTION_TYPE_FLAGS_is_noreturn   0x10
 struct ast_function_type{
@@ -952,9 +952,5 @@ struct ast_embed{
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
-
-enum intrinsic_kind{
-    INTRINSIC_KIND_va_start,
-};
 
 

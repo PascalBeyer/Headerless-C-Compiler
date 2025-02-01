@@ -1622,7 +1622,7 @@ func void insert_function_into_the_right_list(struct symbol_context *symbol_cont
         return;
     }
     
-    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic)  return;
+    if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic)  return;
     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) return;
     
     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){

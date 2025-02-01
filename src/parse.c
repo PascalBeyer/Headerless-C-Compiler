@@ -3708,55 +3708,6 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
     return null;
 }
 
-func struct ast *check_intrinsic_function_call(struct context *context, struct ast_function_call *call, struct ast *operand){
-    struct intrinsic_info *intrinsic_info = lookup_intrinsic(operand->token->atom);
-    switch(intrinsic_info->kind){
-        case INTRINSIC_KIND_va_start:{
-            if(call->call_arguments.count != 2){
-                report_error(context, call->base.token, "Call to intrinsic function '__va_start' must have exactly two arguments.");
-                return operand;
-            }
-            
-            if(!context->current_function || !(context->current_function->type->flags & FUNCTION_TYPE_FLAGS_is_varargs)){
-                report_error(context, call->base.token, "Intrinsic function '__va_start' can only used in a varargs function.");
-                return operand;
-            }
-            
-            int should_error = 0;
-            
-            struct ast *format = call->call_arguments.last->value;
-            
-            // @cleanup: ignore casts... these might have been inserted by the argument promotions.
-            while(format->kind == AST_cast){
-                format = ((struct ast_unary_op *)format)->operand;
-            }
-            
-            if(format->kind != AST_identifier){
-                should_error = 1;
-            }else{
-                struct ast_identifier *ident = (struct ast_identifier *)format;
-                
-                struct ast_declaration *last_argument = (struct ast_declaration *)context->current_function->type->argument_list.last->value;
-                
-                if(ident->decl != last_argument){
-                    should_error = 1;
-                }
-            }
-            
-            if(should_error){
-                report_error(context, call->base.token, "Second argument to intrinsic function '__va_start' must be the last named argument of the varargs function.");
-                return operand;
-            }
-            
-            call->call_arguments.last->value = format;
-        }break;
-        default:{
-            // do nothing, if an intrinsic does not have a necessity for special call handling.
-        }break;
-    }
-    return null;
-}
-
 // :compound_assignments
 // This routine transforms 'a op= b' into '((unnamed) = &a,  *(unnamed) = *(unnamed) op b)'
 func struct ast_binary_op *punt_compound_assignment_with_unnamed_declaration(struct context *context, struct ast_binary_op *assignment, enum ast_kind AST_binary_op){
@@ -4928,15 +4879,6 @@ case NUMBER_KIND_##type:{ \
                     end_error_report(context);
                     return operand;
                 }
-                
-                #if 0
-                if(function_type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic){
-                    struct ast *identifier = call->identifier_expression;
-                    assert(identifier->kind == AST_identifier); // not sure @cleanup
-                    struct ast *error = check_intrinsic_function_call(context, call, identifier);
-                    if(error) return error; // not sure
-                }
-                #endif
                 
                 if((function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !context->in_conditional_expression){
                     context->current_statement_returns_a_value = 1;
@@ -6447,48 +6389,6 @@ case NUMBER_KIND_##type:{ \
     return operand;
 }
 
-func void validate_intrinsic(struct context *context, struct intrinsic_info *info, struct ast_function *function){
-    struct ast_function_type *type = function->type;
-    (void)info;
-    
-    //
-    // @cleanup: currently the only intrinsic function is 'va_start'...
-    //
-    
-    for_ast_list(type->argument_list){
-        assert(it->value->kind == AST_declaration);
-        struct ast_declaration *decl = (struct ast_declaration *)it->value;
-        
-        if(!maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return;
-    }
-    
-    if(type->flags & FUNCTION_TYPE_FLAGS_is_varargs){
-        if((info->kind != INTRINSIC_KIND_va_start)){
-            report_error(context, function->base.token, "Intrinsic function cannot be declared varargs.");
-            return;
-        }
-    }
-    
-#define arg_decl_to_type(a) (((struct ast_declaration *)(a))->type)
-    
-    // Check that the function matches what we expect.
-    switch(info->kind){
-        case INTRINSIC_KIND_va_start:{
-            if(type->return_type != &globals.typedef_void      ||
-                    type->argument_list.count != 1                  ||
-                    !(type->flags & FUNCTION_TYPE_FLAGS_is_varargs) ||
-                    (arg_decl_to_type(type->argument_list.first->value)->kind != AST_pointer_type)){
-                report_error(context, function->base.token,
-                        "Declaration of intrinsic function must match 'void __va_start(va_list* , ...)'.");
-            }
-        }break;
-        
-        invalid_default_case();
-    }
-    
-#undef arg_decl_to_type
-}
-
 func void check_and_set_declaration_specifier_flag(struct context *context, struct declaration_specifiers *specifiers, enum declaration_specifier_flag flag, struct token *site, char *error_name){
     if(specifiers->specifier_flags & flag){
         report_warning(context, WARNING_double_specifier, site, "Double '%s'.", error_name);
@@ -7623,26 +7523,12 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 function->type->flags |= FUNCTION_TYPE_FLAGS_is_inline_asm;
             }
             
-            // Check if this function is intrinsic.
-            struct intrinsic_info *function_is_intrinsic = lookup_intrinsic(function->identifier->atom);
-            if(function_is_intrinsic){
-                function->type->flags |= FUNCTION_TYPE_FLAGS_is_intrinsic;
-                
-                validate_intrinsic(context, function_is_intrinsic, function);
-                if(context->should_exit_statement) goto end;
-            }
-            
             if(specifiers.specifier_flags & SPECIFIER_noreturn)  function->type->flags |= FUNCTION_TYPE_FLAGS_is_noreturn;
             
             if(specifiers.specifier_flags & SPECIFIER_dllexport){
                 if(specifiers.specifier_flags & SPECIFIER_static){
                     // :error
                     report_error(context, function->base.token, "Cannot export static function.");
-                    goto end;
-                }
-                if(function_is_intrinsic){
-                    // :error
-                    report_error(context, function->base.token, "Cannot export intrinsic function.");
                     goto end;
                 }
                 
@@ -7658,11 +7544,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(specifiers.specifier_flags & SPECIFIER_dllimport){
                 if(specifiers.specifier_flags & SPECIFIER_static){
                     report_error(context, function->base.token, "Cannot '__declspec(dllimport)' a static function.");
-                    goto end;
-                }
-                
-                if(function_is_intrinsic){
-                    report_error(context, function->base.token, "Intrinsic function cannot be declared '__declspec(dllimport)'.");
                     goto end;
                 }
                 
@@ -7714,10 +7595,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             struct ast_scope *scope = null;
             if(peek_token(context, TOKEN_open_curly)){
-                if(function_is_intrinsic){
-                    report_error(context, get_current_token(context), "Intrinsic function cannot be defined.");
-                    goto end;
-                }
                 
                 if(specifiers.specifier_flags & SPECIFIER_dllimport){
                     report_error(context, function->base.token, "Cannot define a function that is declared '__declspec(dllimport)'.");

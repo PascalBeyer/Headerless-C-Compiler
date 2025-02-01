@@ -726,11 +726,6 @@ __declspec(inline_asm) void __addgsqword(unsigned __int32 offset, unsigned __int
 
 __declspec(inline_asm) void _ReadWriteBarrier(){}
 
-
-__declspec(inline_asm) void __debugbreak(){
-    int3
-}
-
 __declspec(inline_asm) __declspec(noreturn) void __fastfail(unsigned int __exit_code){
     mov ecx, __exit_code
     int 0x29

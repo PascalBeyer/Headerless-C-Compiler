@@ -433,16 +433,6 @@ static struct{
     
     HANDLE preprocessed_file_handle;
     
-#define INTRINSIC_TABLE_CAPACITY 512
-#define INTRINSIC_TABLE_MASK (INTRINSIC_TABLE_CAPACITY - 1)
-    struct intrinsic_table{
-        struct intrinsic_info{
-            struct atom name;
-            enum intrinsic_kind kind;
-        } *nodes;
-        debug_only(smm size;)
-    } intrinsic_table;
-    
     struct memonic_info{
         struct string string;
         enum memonic memonic;
@@ -1910,6 +1900,11 @@ func int parser_register_definition(struct context *context, struct ast_declarat
     // assert(!context->current_scope);
     // 
     
+    if(decl->flags & DECLARATION_FLAGS_is_intrinsic){
+        report_error(context, initializer->token, "Cannot define intrinsic declaration '%.*s'.", decl->identifier->size, decl->identifier->data);
+        return 0;
+    }
+    
     if(atomic_compare_and_swap(&decl->assign_expr, initializer, null) != null){
         // 
         // We failed to set the initializer.
@@ -2017,37 +2012,6 @@ func void parser_emit_memory_location(struct context *context, struct ast_declar
     // :MemoryLocations We currently emit '[rbp - offset]' so we want to return the offset
     //                  AFTER it is incremented.
     decl->offset_on_stack = context->current_emit_offset_of_rsp;
-}
-
-//_____________________________________________________________________________________________________________________
-
-func struct intrinsic_info *lookup_intrinsic(struct atom name){
-    u64 hash = name.string_hash;
-    struct intrinsic_info *info;
-    for(smm i = 0; i < INTRINSIC_TABLE_CAPACITY; i++){
-        info = globals.intrinsic_table.nodes + ((hash + i) & INTRINSIC_TABLE_MASK);
-        if(atoms_match(info->name, name)) break; // found it
-        if(!info->name.data) break; // did not find it
-    }
-    if(!info->name.data) return null;
-    return info;
-}
-
-func void register_intrinsic(struct atom name, enum intrinsic_kind kind){
-    u64 hash = name.string_hash;
-    
-    struct intrinsic_info *info;
-    for(u32 i = 0; i < INTRINSIC_TABLE_CAPACITY; i++){
-        info = globals.intrinsic_table.nodes + ((hash + i) & INTRINSIC_TABLE_MASK);
-        if(!info->name.data) break;
-        assert(!atoms_match(info->name, name)); // make sure we don't add anyone twice
-    }
-    assert(!info->name.data);
-    assert(globals.intrinsic_table.size < (INTRINSIC_TABLE_CAPACITY/2));
-    debug_only(globals.intrinsic_table.size++);
-    
-    info->name = name;
-    info->kind = kind;
 }
 
 //_____________________________________________________________________________________________________________________
@@ -3319,7 +3283,7 @@ func struct ast_function *get_entry_point_or_error(struct context *context){
         return null;
     }
     
-    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic){
+    if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic){
         report_error(context, function->base.token, "Entry point cannot be an intrinsic function.");
         globals.an_error_has_occurred = true;
         return null;
@@ -4261,17 +4225,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         if(globals.output_file_type == OUTPUT_FILE_obj) globals.external_declarations_at_function_scope = ast_table_create(1 << 8);
         globals.compound_types      = ast_table_create(1 << 8);
         
-        globals.intrinsic_table.nodes = push_data(arena, struct intrinsic_info, INTRINSIC_TABLE_CAPACITY);
         
-        // register_intrinsic(arena, name, intrinsic_kind, opcode);
-        
-#define register_intrinsic(name, kind) \
-register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
-        
-        // miscellaneous intrinsics
-        register_intrinsic(__va_start, va_start);
-        
-#undef register_intrinsic
         static struct compilation_unit hack_whatever = {
             .index = -1,
         };
@@ -4287,7 +4241,6 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             
             struct ast_function_type *alloca_type = parser_type_push(context, alloca_token, function_type);
             alloca_type->return_type = &void_pointer->base;
-            alloca_type->flags |= FUNCTION_TYPE_FLAGS_is_intrinsic;
             
             struct declarator_return parameter_declarator = {
                 .type = &globals.typedef_u64,
@@ -4302,7 +4255,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             struct ast_function *alloca_declaration = parser_ast_push(context, alloca_token, function);
             alloca_declaration->identifier = alloca_token;
             alloca_declaration->type = alloca_type;
-            alloca_declaration->offset_in_text_section = -1; // Set atomically when done emitting.
+            alloca_declaration->offset_in_text_section = -1;
             alloca_declaration->compilation_unit = &hack_whatever;
             alloca_declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
             set_resolved_type(&alloca_declaration->base, &globals.typedef_void, null);
@@ -4318,12 +4271,12 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             
             struct ast_function_type *noop_type = parser_type_push(context, noop_token, function_type);
             noop_type->return_type = &globals.typedef_s32;
-            noop_type->flags |= FUNCTION_TYPE_FLAGS_is_varargs | FUNCTION_TYPE_FLAGS_is_intrinsic;
+            noop_type->flags |= FUNCTION_TYPE_FLAGS_is_varargs;
             
             struct ast_function *noop_declaration = parser_ast_push(context, noop_token, function);
             noop_declaration->identifier = noop_token;
             noop_declaration->type = noop_type;
-            noop_declaration->offset_in_text_section = -1; // Set atomically when done emitting.
+            noop_declaration->offset_in_text_section = -1;
             noop_declaration->compilation_unit = &hack_whatever;
             noop_declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
             set_resolved_type(&noop_declaration->base, &globals.typedef_void, null);
@@ -4331,6 +4284,25 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
             ast_table_add_or_return_previous_entry(&globals.global_declarations, &noop_declaration->base, noop_token);
         }
         
+        {
+            // 
+            // While the `__debugbreak` function does not _need_ to be intrinsic, we want it to be intrinsic so you do not have to include anything.
+            // 
+            struct token *debugbreak_token = push_dummy_token(arena, atom_for_string(string("__debugbreak")), TOKEN_identifier);
+            
+            struct ast_function_type *debugbreak_type = parser_type_push(context, debugbreak_token, function_type);
+            debugbreak_type->return_type = &globals.typedef_void;
+            
+            struct ast_function *debugbreak_declaration = parser_ast_push(context, debugbreak_token, function);
+            debugbreak_declaration->identifier = debugbreak_token;
+            debugbreak_declaration->type = debugbreak_type;
+            debugbreak_declaration->offset_in_text_section = -1;
+            debugbreak_declaration->compilation_unit = &hack_whatever;
+            debugbreak_declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
+            set_resolved_type(&debugbreak_declaration->base, &globals.typedef_void, null);
+            
+            ast_table_add_or_return_previous_entry(&globals.global_declarations, &debugbreak_declaration->base, debugbreak_token);
+        }
         
         globals.empty_statement.kind = AST_empty_statement;
         globals.empty_statement.token = push_dummy_token(arena, atom_for_string(string(";")), TOKEN_semicolon);
@@ -5019,7 +4991,7 @@ register_intrinsic(atom_for_string(string(#name)), INTRINSIC_KIND_##kind)
                 // if it is actually used which we do in the depth first search below.
                 if(!function->scope) continue;
                 
-                assert(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic)); // Intrinsic functions should not have a scope.
+                assert(!(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic)); // Intrinsic functions should not have a scope.
                 
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
                 

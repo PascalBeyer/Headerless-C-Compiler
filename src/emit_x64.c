@@ -2436,42 +2436,12 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         return size; // This is now the address.
     }else if(string_match(ident->base.token->string, string("__noop"))){
         return emit_location_immediate(context, 0, 4);
+    }else if(string_match(ident->base.token->string, string("__debugbreak"))){
+        emit(0xcc);
+        return emit_location_invalid(context);
     }else{
         invalid_code_path;
     }
-    
-#if 0
-    
-    struct intrinsic_info *info = lookup_intrinsic(ident->decl->identifier->atom);
-    // smm sse_prefix = -1;
-    
-    switch(info->kind){
-        
-        case INTRINSIC_KIND_va_start:{
-            // preprocesses to '((void)(__va_start(&_ArgList,   _Format)))'
-            assert(call->call_arguments.count == 2);
-            struct ast *arglist = call->call_arguments.first->value;
-            assert(arglist->resolved_type->kind == AST_pointer_type);
-            
-            struct emit_location *lhs = emit_code_for_ast(context, arglist);
-            
-            struct ast *format = call->call_arguments.last->value;
-            assert(format->kind == AST_identifier);
-            struct emit_location *rhs = emit_code_for_ast(context, format);
-            assert(rhs->state == EMIT_LOCATION_register_relative);
-            rhs->offset += 8;
-            enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-            struct emit_location *addr = emit_load_address(context, rhs, reg);
-            
-            struct emit_location *store_in = emit_location_register_relative(context, REGISTER_KIND_gpr, lhs, null, 0, 8);
-            emit_store(context, store_in, addr);
-            
-            return store_in;
-        }break;
-        
-        invalid_default_case(return emit_location_invalid(context));
-    }
-#endif
 }
 
 // @cleanup: get rid of me once we actually do special stuff in the 'array_subscript' case
@@ -3831,7 +3801,15 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 
                 assert(identifier_to_call->base.kind == AST_identifier);
                 
-                if(!patch_call_source_declaration) patch_call_source_declaration = (struct ast_function *)identifier_to_call->decl;
+                patch_call_source_declaration = (struct ast_function *)identifier_to_call->decl;
+                
+                if(patch_call_source_declaration->as_decl.flags & DECLARATION_FLAGS_is_intrinsic){
+                    // 
+                    // We don't know what the intrinsic wants to do with its arguments,
+                    // for example `__noop` ignores them
+                    // 
+                    return emit_intrinsic(context, call);
+                }
                 
                 function_pointer_location = null;
             }else{
@@ -3842,11 +3820,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 
                 identifier_to_call = null;
                 function_pointer_location = emit_code_for_ast(context, call->identifier_expression);
-            }
-            
-            if(function_type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic){
-                // @note: no need to spill registers for intrinsics
-                return emit_intrinsic(context, call);
             }
             
             // spill all volitile registers, so they are saved

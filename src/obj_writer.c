@@ -883,7 +883,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
                 
-                if(function->type->flags & FUNCTION_TYPE_FLAGS_is_intrinsic)  continue;
+                if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic)  continue;
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
                 
                 if(function->scope){
