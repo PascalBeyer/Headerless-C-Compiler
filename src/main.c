@@ -21,6 +21,8 @@ struct parse_work{
     struct token *sleeping_ident; // the one who sleeps. can be null if we don't know yet. For error reporting
     struct compilation_unit *compilation_unit;
     
+    u64 pragma_alignment;
+    
     struct ast_function *function; // This is here to communicate between 'worker_parse_global_scope_entry' and 'worker_parse_function'.
 };
 
@@ -498,6 +500,7 @@ static struct{
     struct atom keyword_printlike;
     
     struct atom pragma_once;
+    struct atom pragma_pack;
     struct atom pragma_comment;
     struct atom pragma_compilation_unit; // hlc extension
     
@@ -736,6 +739,12 @@ struct context{
     u8 *low_stack_address;
     b32 in_lhs_expression;
     s64 ast_serializer;
+    
+    struct{
+        struct pragma_pack_node *first;
+        struct pragma_pack_node *last;
+    } pragma_pack_stack;
+    smm pragma_alignment;
     
     // :tracking_conditional_expression_depth_for_noreturn_functions
     // 
@@ -1411,6 +1420,7 @@ func struct parse_work *push_parse_work(struct context *context, struct token_ar
     parse_work->tokens = tokens;
     parse_work->compilation_unit = compilation_unit;
     parse_work->function = function;
+    parse_work->pragma_alignment = context->pragma_alignment;
     
     return parse_work;
 }
@@ -2493,8 +2503,8 @@ func void init_context(struct context *context, struct thread_info *info, struct
     context->emit_pool.end      = emit_pool_buf.memory;
     context->emit_pool.reserved = emit_pool_capacity;
     
+    context->pragma_alignment = 16;
 }
-
 
 func void reset_context(struct context *context){
     // :reset_context :zero_context :clear_context
@@ -2513,6 +2523,8 @@ func void reset_context(struct context *context){
     context->in_conditional_expression  = 0;
     context->in_static_if_condition     = 0;
     context->current_statement_returns_a_value = 0;
+    
+    context->pragma_pack_stack.first = context->pragma_pack_stack.last = null;
 }
 
 func void worker_preprocess_file(struct context *context, struct work_queue_entry *work){
@@ -2683,6 +2695,11 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
     begin_counter(context, chunking);
     while(in_current_token_array(context)){
         
+        // Handle top-level pragma pack
+        while(peek_token_eat(context, TOKEN_pragma_pack)){
+            parse_and_process_pragma_pack(context);
+        }
+        
         smm start_marker = context->token_at;
         
         b32 is_static = false;
@@ -2691,6 +2708,8 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         b32 got_type  = false;
         
         struct token *got_identifier = null;
+        
+        struct pragma_pack_node *start_pragma_pack_node = context->pragma_pack_stack.first;
         
         // pre-"parse" a global scope entry
         while(in_current_token_array(context)){
@@ -2860,6 +2879,9 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                         }else{
                             report_syntax_error(context, get_current_token(context), "__FUNCTION__ outside of a function");
                         }
+                    }else if(peek_token_eat(context, TOKEN_pragma_pack)){
+                        parse_and_process_pragma_pack(context);
+                        continue;
                     }
                     next_token(context);
                 }
@@ -2874,7 +2896,22 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
             }else if(token->type == TOKEN_open_index){
                 // this is a declaration like u32 asd[];
                 skip_until_tokens_are_balanced(context, token, TOKEN_open_index, TOKEN_closed_index, "Unmatched '[' at global scope.");
+            }else if(token->type == TOKEN_static_assert){
+                if(peek_token(context, TOKEN_open_paren)){
+                    skip_until_tokens_are_balanced(context, 0, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' at global scope.");
+                }
             }
+        }
+        
+        if(start_pragma_pack_node != context->pragma_pack_stack.first){
+            struct token *token = got_identifier;
+            if(!token) token = tokenized_file.data + start_marker;
+            
+            begin_error_report(context);
+            report_error(context, token, "Top of pragma pack stack changed within this global scope entry. This is not supported. E.g.: int main(){ __pragma(pack(pop)) }");
+            if(start_pragma_pack_node) report_error(context, start_pragma_pack_node->token, "... This was the pragma responsible for the previous top.");
+            if(context->pragma_pack_stack.first) report_error(context, context->pragma_pack_stack.first->token, "... This is the pragma responsible for the new top.");
+            end_error_report(context);
         }
         
         if(context->error) return;
@@ -2941,6 +2978,7 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
     
     struct parse_work *parse_work = (struct parse_work *)work->data;
     context->current_compilation_unit = parse_work->compilation_unit;
+    context->pragma_alignment = parse_work->pragma_alignment;
     
     begin_token_array(context, parse_work->tokens);
     
@@ -4032,6 +4070,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         // pragma directives
         globals.pragma_once    = atom_for_string(string("once"));
+        globals.pragma_pack    = atom_for_string(string("pack"));
         globals.pragma_comment = atom_for_string(string("comment"));
         globals.pragma_compilation_unit = atom_for_string(string("compilation_unit"));
         

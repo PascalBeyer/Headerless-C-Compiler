@@ -185,6 +185,7 @@ enum warning{
     WARNING_declaration_differs_in_attribute              = 39, // One but not all declarations of a variable is marked with an extended attribute.
     WARNING_ALTERNATENAME_type_mismatch                   = 40, // Mismatching types between the source and destination of a /ALTERNATENAME.
     WARNING_relative_include_is_treated_as_system_include = 41, // ""-Include was not found and treated as <>-Include.
+    WARNING_pragma_pack_show                              = 42, // The `#praga pack(show)` directive was used.
 };
 
 struct cli_options{
@@ -233,7 +234,7 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 42
+#define WARNING_count 43
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -282,6 +283,7 @@ struct warning_table_entry{
     [61] = {{29, (u8 *)"declarationdiffersinattribute"}, WARNING_declaration_differs_in_attribute},
     [30] = {{25, (u8 *)"alternatenametypemismatch"}, WARNING_ALTERNATENAME_type_mismatch},
     [44] = {{39, (u8 *)"relativeincludeistreatedassysteminclude"}, WARNING_relative_include_is_treated_as_system_include},
+    [2] = {{14, (u8 *)"pragmapackshow"}, WARNING_pragma_pack_show},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -863,7 +865,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "declaration_differs_in_attribute (39)   | One but not all declarations of a variable is marked with an extended attribute.\n"
                                 "ALTERNATENAME_type_mismatch (40)        | Mismatching types between the source and destination of a /ALTERNATENAME.\n"
                                 "relative_include_is_treated_as_system_include (41)| ""-Include was not found and treated as <>-Include.\n"
-                                , 4313);
+                                "pragma_pack_show (42)                   | The `#praga pack(show)` directive was used.\n"
+                                , 4399);
                     }
                 }break;
                 invalid_default_case();

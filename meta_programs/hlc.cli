@@ -561,4 +561,8 @@ Example:
 > #include "stdlib.h" // Warning: This ""-Include was not found relative to the source file "C:/src/main.c" and is therefore treated as a <>-Include. Include path is "stdlib.h".
 > #include <stdlib.h> // No Warning!
 
+-> pragma_pack_show - The `#praga pack(show)` directive was used.
+
+Example:
+> #pragma pack(show) // Current "pragma pack(show)"-value is 16.
 

@@ -6669,6 +6669,7 @@ case TOKEN_##type_name:{                                                 \
                 u64 declspec_alignment = 1;
                 b32 is_intrin_type = false;
                 b32 is_packed = false;
+                b32 has_declspec_alignment = false;
                 while(peek_token(context, TOKEN_declspec)){
                     next_token(context);
                     struct token *open = expect_token(context, TOKEN_open_paren, "Expected '(' to follow '__declspec'.");
@@ -6685,6 +6686,8 @@ case TOKEN_##type_name:{                                                 \
                             report_error(context, declspec, "Expected a constant expression in '__declspec(align(_))'.");
                         }else{
                             u64 value = integer_literal_as_u64(const_expr);
+                            
+                            has_declspec_alignment = true;
                             
                             //
                             // struct __declspec(align(0x100)) asd;
@@ -6779,7 +6782,7 @@ case TOKEN_##type_name:{                                                 \
                     if(name) compound->base.token = name;
                     
                     if(is_intrin_type) compound->base.flags |= TYPE_FLAG_is_intrin_type;
-                    
+                    if(has_declspec_alignment) compound->base.flags |= TYPE_FLAG_is_user_aligned;
                     compound->identifier = name ? name->atom : globals.unnamed_tag;
                     
                     smm size = 0;
@@ -6797,11 +6800,9 @@ case TOKEN_##type_name:{                                                 \
                             continue;
                         }
                         
-                        
                         if(!is_union && had_array_of_unknown_size){
                             report_error(context, had_array_of_unknown_size, "Array of unknown size has to be the last member of struct.");
                         }
-                        
                         
                         // 
                         // struct-declaration-list:
@@ -6985,8 +6986,14 @@ case TOKEN_##type_name:{                                                 \
                             }
                             
                             smm decl_alignment = declarator.type->alignment;
-                            if(is_packed) decl_alignment = 1; // If the struct is __declspec(packed), overwrite the _natural_ alignment.
-                            if(struct_specifiers.alignment) decl_alignment = struct_specifiers.alignment;
+                            if(struct_specifiers.alignment){ 
+                                decl_alignment = struct_specifiers.alignment; // Member specifiers are the most inner so they should take precedence.
+                                compound->base.flags |= TYPE_FLAG_is_user_aligned;
+                            }else if(is_packed){
+                                decl_alignment = 1; // If the struct is __declspec(packed), overwrite the _natural_ alignment.
+                            }else if(!(declarator.type->flags & TYPE_FLAG_is_user_aligned) && decl_alignment > context->pragma_alignment){
+                                decl_alignment = context->pragma_alignment;
+                            }
                             
                             smm offset_in_type;
                             
@@ -8968,5 +8975,139 @@ func struct declarator_return parse_declarator(struct context* context, struct a
     }
     
     return ret;
+}
+
+struct pragma_pack_node{
+    struct pragma_pack_node *next;
+    
+    struct string identifier;
+    u64 value;
+    struct token *token;
+};
+
+void parse_and_process_pragma_pack(struct context *context){
+    
+    expect_token(context, TOKEN_open_paren, "Expected a '(' after 'pragma pack'.");
+    
+    if(peek_token_eat(context, TOKEN_closed_paren)){
+        context->pragma_alignment = 16; // Default on x64.
+        return;
+    }
+    
+    int have_value = 0;
+    u64 value = 0;
+    
+    struct token *show_token = 0;
+    
+    enum pragma_pack_operation{
+        PRAGMA_PACK_set,
+        PRAGMA_PACK_push,
+        PRAGMA_PACK_pop,
+        PRAGMA_PACK_show,
+    } operation = PRAGMA_PACK_set;
+    
+    struct string pack_identifier = zero_struct;
+    
+    int should_break = 0;
+    while(!should_break){
+        struct token *token = next_token(context);
+        
+        switch(token->type){
+            case TOKEN_identifier:{
+                struct string identifier = token->string;
+                if(string_match(identifier, string("push"))){
+                    operation = PRAGMA_PACK_push;
+                    show_token = token;
+                }else if(string_match(identifier, string("pop"))){
+                    operation = PRAGMA_PACK_pop;
+                }else if(string_match(identifier, string("show"))){
+                    operation = PRAGMA_PACK_show;
+                    show_token = token;
+                }else{
+                    pack_identifier = identifier;
+                }
+            }break;
+            
+            case TOKEN_binary_literal:
+            case TOKEN_hex_literal:
+            case TOKEN_base10_literal:{
+                struct parsed_integer parsed_integer;
+                if(token->type == TOKEN_base10_literal){
+                    parsed_integer = parse_base10_literal(context, token);
+                }else if(token->type == TOKEN_hex_literal) {
+                    parsed_integer = parse_hex_literal(context, token);
+                }else{
+                    parsed_integer = parse_binary_literal(context, token);
+                }
+                
+                have_value = 1;
+                value = parsed_integer.value;
+            }break;
+            
+            default: should_break = 1; break;
+        }
+        
+        if(!peek_token_eat(context, TOKEN_comma)) break;
+    }
+    
+    expect_token(context, TOKEN_closed_paren, "Expected a ')' at then end of '#pragma pack(<arguments>'.");
+    
+    switch(operation){
+        case PRAGMA_PACK_set:{
+            if(have_value){
+                context->pragma_alignment = value;
+            }else{
+                context->pragma_alignment = 16; // Default on x64.
+            }
+        }break;
+        case PRAGMA_PACK_push:{
+            struct pragma_pack_node *node = push_struct(&context->scratch, struct pragma_pack_node);
+            node->value = context->pragma_alignment;
+            node->identifier = pack_identifier;
+            node->token = show_token;
+            
+            sll_push_front(context->pragma_pack_stack, node);
+            
+            if(have_value) context->pragma_alignment = value;
+        }break;
+        case PRAGMA_PACK_pop:{
+            if(pack_identifier.size){
+                int found = 0;
+                for(struct pragma_pack_node *node = context->pragma_pack_stack.first; node; node = node->next){
+                    if(string_match(node->identifier, pack_identifier)){
+                        context->pragma_pack_stack.first = node->next;
+                        context->pragma_alignment = node->value;
+                        found = 1;
+                        break;
+                    }
+                }
+                
+                if(!found){
+                    // @cleanup: make this its own warning value.
+                    report_warning(context, WARNING_pragma_pack_show, show_token, "Identifier '%.*s' is not on the pragma pack stack.", pack_identifier.size, pack_identifier.data);
+                }
+            }else{
+                if(context->pragma_pack_stack.first){
+                    context->pragma_pack_stack.first = context->pragma_pack_stack.first->next;
+                }
+            }
+            
+            if(have_value) context->pragma_alignment = value;
+        }break;
+        case PRAGMA_PACK_show:{
+            char *here_is_the_current_stack = "";
+            if(context->pragma_pack_stack.first) here_is_the_current_stack = " Here is the current stack:";
+            
+            begin_error_report(context);
+            report_warning(context, WARNING_pragma_pack_show, show_token, "Current \"pragma pack(show)\"-value is %llu.%s", context->pragma_alignment, here_is_the_current_stack);
+            int depth = 0;
+            for(struct pragma_pack_node *node = context->pragma_pack_stack.first; node; node = node->next){
+                char *identifier = "";
+                if(node->identifier.size) identifier = ", identifier: ";
+                report_warning(context, WARNING_pragma_pack_show, node->token, "[%d] Pack-alignment %llu%s%.*s.", depth++, node->value, identifier, node->identifier.size, node->identifier.data);
+            }
+            end_error_report(context);
+        }break;
+    }
 }
 

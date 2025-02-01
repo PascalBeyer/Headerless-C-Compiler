@@ -4202,6 +4202,25 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         node->file = globals.file_table.data[pragma_directive->file_index];
                         
                         sll_push_back(context->pragma_once_file_list, node);
+                    }else if(atoms_match(pragma_directive->atom, globals.pragma_pack)){
+                        
+                        if(emitted_tokens == committed_tokens){
+                            if(committed_tokens == reserved_tokens){
+                                report_error(context, directive, "Compilation exceeds current maximum amount of tokens per compilation unit (%lld).", reserved_tokens);
+                                goto end;
+                            }
+                            
+                            struct os_virtual_buffer committed = os_commit_memory(emitted_token_buffer + committed_tokens, TOKEN_EMIT_COMMIT_SIZE);
+                            assert(committed.committed == TOKEN_EMIT_COMMIT_SIZE);
+                            assert((struct token *)committed.base == emitted_token_buffer + committed_tokens);
+                            
+                            committed_tokens += TOKEN_EMIT_COMMIT_SIZE / sizeof(struct token);
+                        }
+                        
+                        struct token *pragma_pack_token = &emitted_token_buffer[emitted_tokens++];
+                        *pragma_pack_token = *pragma_directive;
+                        pragma_pack_token->type = TOKEN_pragma_pack;
+                        continue;
                     }else if(atoms_match(pragma_directive->atom, globals.pragma_comment)){
                         
                         // 

@@ -158,6 +158,7 @@ enum token_type{
     
     TOKEN_asm,
     TOKEN_embed, // Synthetic token coming from #embed.
+    TOKEN_pragma_pack, // Synthetic token coming from '#pragma pack(<...>)' or '__pragma(pack(<...>))'
     
     TOKEN_generic, // C11 _Generic
     TOKEN_thread_local, // C11 _Thread_local
@@ -493,6 +494,7 @@ enum type_flags{
     TYPE_FLAG_ends_in_array_of_unknown_size = 0x4,
     TYPE_FLAG_is_intrin_type = 0x8,
     TYPE_FLAG_is_atomic      = 0x10,
+    TYPE_FLAG_is_user_aligned = 0x20,
 };
 
 struct ast_type{
