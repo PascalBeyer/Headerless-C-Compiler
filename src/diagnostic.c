@@ -358,3 +358,54 @@ PRINTLIKE __declspec(noinline) func void report_internal_compiler_error(struct t
     os_panic(1);
 }
 
+void print_warning_or_error_reports(struct context *context){
+    
+    //
+    // Error reporting, this is the place where we actually print the errors!
+    //
+    begin_counter(context, print_errors_to_the_console);
+    
+    // Gather the errors that were reported
+    struct {
+        struct error_report_node *first;
+        struct error_report_node *last;
+    } error_list = zero_struct;
+    
+    for(u32 thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        sll_push_back_list(error_list, globals.thread_infos[thread_index].context->error_list);
+        globals.thread_infos[thread_index].context->error_list.first = globals.thread_infos[thread_index].context->error_list.last = null;
+    }
+    
+    sll_sort(error_list, &context->scratch, error_node_smaller_function);
+    
+    if(error_list.first) print("\n");
+    
+    if(globals.an_error_has_occurred){
+        //
+        // If there was an error, only report errors. This avoids warning spam, that you have to search through to find the error
+        //
+        u32 error_reported = false;
+        for(struct error_report_node *error_reports = error_list.first; error_reports; error_reports = error_reports->next){
+            
+            for(struct error_report_node *error = error_reports; error; error = error->sub_error){
+                if(error->kind != REPORT_warning){
+                    error_reported = true;
+                    print_one_error_node(error);
+                }
+            }
+        }
+        assert(error_reported);
+    }else{
+        //
+        // If there was no error, all should be warnings, report them!
+        //
+        for(struct error_report_node *error_reports = error_list.first; error_reports; error_reports = error_reports->next){
+            for(struct error_report_node *warning = error_reports; warning; warning = warning->sub_error){
+                assert(warning->kind == REPORT_warning);
+                print_one_error_node(warning);
+            }
+        }
+    }
+    
+    end_counter(context, print_errors_to_the_console);
+}
