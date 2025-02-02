@@ -397,6 +397,9 @@ static struct{
     
     struct string_list system_include_directories;     // full paths
     
+    
+    struct compilation_unit hacky_global_compilation_unit;
+    
     struct{
         struct compilation_unit *first;
         struct compilation_unit *last;
@@ -3279,6 +3282,9 @@ func u32 work_thread_proc(void *param){
 }
 
 
+//_____________________________________________________________________________________________________________________
+// Setup code needed by main
+
 func struct token *push_dummy_token(struct memory_arena *arena, struct atom token_atom, enum token_type token_type){
     
     struct token *token = push_struct(arena, struct token);
@@ -3289,6 +3295,19 @@ func struct token *push_dummy_token(struct memory_arena *arena, struct atom toke
     token->column = 1;
     
     return token;
+}
+
+func void register_intrinsic_function_declaration(struct context *context, struct token *token, struct ast_function_type *type){
+    
+    struct ast_function *declaration = parser_ast_push(context, token, function);
+    declaration->identifier = token;
+    declaration->type = type;
+    declaration->offset_in_text_section = -1;
+    declaration->compilation_unit = &globals.hacky_global_compilation_unit;
+    declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
+    set_resolved_type(&declaration->base, &globals.typedef_void, null);
+    
+    ast_table_add_or_return_previous_entry(&globals.global_declarations, &declaration->base, token);
 }
 
 
@@ -3531,7 +3550,6 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
     for(u32 index = 0; index < 4; index++) sdk_version[index] = highest_version[index];
     return push_zero_terminated_string_copy(arena, create_string(buffer, length));
 }
-
 
 
 int system(char *);
@@ -4267,10 +4285,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         if(globals.output_file_type == OUTPUT_FILE_obj) globals.external_declarations_at_function_scope = ast_table_create(1 << 8);
         globals.compound_types      = ast_table_create(1 << 8);
         
-        
-        static struct compilation_unit hack_whatever = {
-            .index = -1,
-        };
+        globals.hacky_global_compilation_unit.index = -1;
         
         {
             // 
@@ -4290,19 +4305,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
             };
             
             struct ast_declaration *parameter_declaration = push_declaration_for_declarator(context, parameter_declarator);
-            parameter_declaration->compilation_unit = &hack_whatever;
+            parameter_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
             ast_list_append(&alloca_type->argument_list, context->arena, &parameter_declaration->base);
             set_resolved_type(&parameter_declaration->base, &globals.typedef_void, null);
             
-            struct ast_function *alloca_declaration = parser_ast_push(context, alloca_token, function);
-            alloca_declaration->identifier = alloca_token;
-            alloca_declaration->type = alloca_type;
-            alloca_declaration->offset_in_text_section = -1;
-            alloca_declaration->compilation_unit = &hack_whatever;
-            alloca_declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
-            set_resolved_type(&alloca_declaration->base, &globals.typedef_void, null);
-            
-            ast_table_add_or_return_previous_entry(&globals.global_declarations, &alloca_declaration->base, alloca_token);
+            register_intrinsic_function_declaration(context, alloca_token, alloca_type);
         }
         
         {
@@ -4315,15 +4322,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             noop_type->return_type = &globals.typedef_s32;
             noop_type->flags |= FUNCTION_TYPE_FLAGS_is_varargs;
             
-            struct ast_function *noop_declaration = parser_ast_push(context, noop_token, function);
-            noop_declaration->identifier = noop_token;
-            noop_declaration->type = noop_type;
-            noop_declaration->offset_in_text_section = -1;
-            noop_declaration->compilation_unit = &hack_whatever;
-            noop_declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
-            set_resolved_type(&noop_declaration->base, &globals.typedef_void, null);
-            
-            ast_table_add_or_return_previous_entry(&globals.global_declarations, &noop_declaration->base, noop_token);
+            register_intrinsic_function_declaration(context, noop_token, noop_type);
         }
         
         {
@@ -4335,16 +4334,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct ast_function_type *debugbreak_type = parser_type_push(context, debugbreak_token, function_type);
             debugbreak_type->return_type = &globals.typedef_void;
             
-            struct ast_function *debugbreak_declaration = parser_ast_push(context, debugbreak_token, function);
-            debugbreak_declaration->identifier = debugbreak_token;
-            debugbreak_declaration->type = debugbreak_type;
-            debugbreak_declaration->offset_in_text_section = -1;
-            debugbreak_declaration->compilation_unit = &hack_whatever;
-            debugbreak_declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
-            set_resolved_type(&debugbreak_declaration->base, &globals.typedef_void, null);
-            
-            ast_table_add_or_return_previous_entry(&globals.global_declarations, &debugbreak_declaration->base, debugbreak_token);
+            register_intrinsic_function_declaration(context, debugbreak_token, debugbreak_type);
         }
+        
         
         globals.empty_statement.kind = AST_empty_statement;
         globals.empty_statement.token = push_dummy_token(arena, atom_for_string(string(";")), TOKEN_semicolon);
@@ -4368,7 +4360,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         };
         globals.tls_index_declaration = push_declaration_for_declarator(context, _tls_index_declarator);
         globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_intrinsic;
-        globals.tls_index_declaration->compilation_unit = &hack_whatever;
+        globals.tls_index_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
         ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->base, globals.tls_index_declaration->base.token);
     }
     
