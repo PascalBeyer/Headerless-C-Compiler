@@ -2700,6 +2700,8 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
             parse_and_process_pragma_pack(context);
         }
         
+        if(!in_current_token_array(context)) break; // In case there was a pragma pack at the end of the file.
+        
         smm start_marker = context->token_at;
         
         b32 is_static = false;
