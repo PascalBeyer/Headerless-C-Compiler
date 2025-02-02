@@ -2439,6 +2439,9 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
     }else if(string_match(ident->base.token->string, string("__debugbreak"))){
         emit(0xcc);
         return emit_location_invalid(context);
+    }else if(string_match(ident->base.token->string, string("_AddressOfReturnAddress"))){
+        struct emit_location *return_address = emit_location_stack_relative(context, REGISTER_KIND_gpr, -(8 + 8 * /*amount_of_saved_registers*/2), /*size*/8);
+        return emit_load_address(context, return_address, allocate_register(context, REGISTER_KIND_gpr));
     }else{
         invalid_code_path;
     }
@@ -4533,6 +4536,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // @cleanup: only do this if we have a memcpy, this value is also needed to be known when returning a large struct
     //           maybe the large struct code should live in the epilog?
     // @incomplete: we do not honor the calling convention here...
+    // @WARNING: If you change this code you have to also change the implementation of `_AddressOfReturnAddress`.
     s32 amount_of_saved_registers = 2;
     emit(PUSH_REGISTER_DI);
     emit(PUSH_REGISTER_SI);

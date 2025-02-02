@@ -4337,6 +4337,18 @@ globals.typedef_##postfix = (struct ast_type){                                  
             register_intrinsic_function_declaration(context, debugbreak_token, debugbreak_type);
         }
         
+        {   // 
+            // void *_AddressOfReturnAddress(void)
+            // 
+            
+            struct token *token = push_dummy_token(arena, atom_for_string(string("_AddressOfReturnAddress")), TOKEN_identifier);
+            
+            struct ast_function_type *type = parser_type_push(context, token, function_type);
+            type->return_type = &void_pointer->base;
+            
+            register_intrinsic_function_declaration(context, token, type);
+        }
+        
         
         globals.empty_statement.kind = AST_empty_statement;
         globals.empty_statement.token = push_dummy_token(arena, atom_for_string(string(";")), TOKEN_semicolon);
