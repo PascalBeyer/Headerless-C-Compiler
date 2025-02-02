@@ -151,6 +151,33 @@ func void print_one_error_node(struct error_report_node *node){
     }
 }
 
+func void debug_print_error(struct context *context, struct token *token, char *format, ...){
+    
+    struct string error_string = {0};
+    
+    va_list va;
+    va_start(va, format);
+    
+    va_list copied_va;
+    va_copy(copied_va, va);
+    error_string.length = vsnprintf(0, 0, format, copied_va);
+    va_end(copied_va);
+    
+    error_string.data = push_uninitialized_data(&context->scratch, u8, error_string.length + 1);
+    vsnprintf((char *)error_string.data, (int)(error_string.length + 1), format, va);
+    error_string.data[error_string.length] = 0;
+    
+    va_end(va);
+    
+    struct error_report_node node = {
+        .token = token,
+        .error = error_string,
+    };
+    
+    print_one_error_node(&node);
+    
+}
+
 
 // errors are accumulated in context->error_list and then reported by the main thread
 func void push_error_node_to_context(struct context *context, struct token *token, enum error_report_node_kind kind, enum warning_type warning_type, char *format, va_list va){

@@ -1,5 +1,57 @@
 // run
 
+
+
+//_____________________________________________________________________________________________________________________
+// Some tests for the stack behaviour.
+
+#define ALIGNMENT 0x4
+
+#define check_align(n) static_assert(_Alignof((struct{ __int64 a;}){0}) == n)
+
+#pragma pack()
+#pragma pack(show) // 16
+
+static_assert(_Alignof((struct{ __int64 a;}){0}) == 8);
+
+check_align(8);
+
+#pragma pack(push, hello, ALIGNMENT)
+
+check_align(4);
+
+#pragma pack(show) // 4 | hello 16
+
+#pragma pack(pop, 2)
+
+check_align(2);
+
+#pragma pack(pop) // @note: fails
+
+check_align(2);
+
+#pragma pack(push, hello, 8)
+
+check_align(8);
+
+#pragma pack(pop, world) // Warning previous one did not push world.
+
+check_align(8);
+
+#pragma pack(push, hello, 1)
+
+check_align(1);
+
+#pragma pack(push, 2)
+
+check_align(2);
+
+#pragma pack(pop, hello)
+
+check_align(8);
+
+#pragma pack(show)
+
 typedef struct __declspec(align(32)){
     int arst[16];
 } arst;
@@ -43,6 +95,15 @@ struct arst6{
 
 #define assert(a) if(!(a)) return 1;
 
+
+#pragma pack()
+#pragma pack(push, 2)
+#pragma pack(pop)
+struct arst7{
+    int a;
+};
+
+
 int main(){
     
     // Override alignment takes precedence over pragma pack alignment.
@@ -61,54 +122,8 @@ int main(){
     assert(sizeof(struct arst4) == 32);
     assert(offsetof(struct arst4, b) == 16);
     
+    assert(_Alignof(struct arst7) == 4);
+    
     // printf("%d %d %d\n", _Alignof(struct arst6), sizeof(struct arst6), offsetof(struct arst6, b)); // @cleanup: It also keeps track of a minimum alignment or something.
 }
-
-//_____________________________________________________________________________________________________________________
-// Some tests for the stack behaviour.
-
-#define ALIGNMENT 0x4
-
-#define check_align(n) static_assert(_Alignof((struct{ __int64 a;}){0}) == n)
-
-#pragma pack()
-#pragma pack(show) // 16
-
-static_assert(_Alignof((struct{ __int64 a;}){0}) == 8);
-
-check_align(8);
-
-#pragma pack(push, hello, ALIGNMENT)
-
-check_align(4);
-
-#pragma pack(show) // 8 | hello 16
-
-#pragma pack(pop, 2)
-
-check_align(2);
-
-#pragma pack(pop) // @note: fails
-
-check_align(2);
-
-#pragma pack(push, hello, 8)
-
-check_align(8)
-
-#pragma pack(pop, world) // Warning previous one did not push world.
-
-check_align(8)
-
-#pragma pack(push, hello, 1)
-
-check_align(1)
-
-#pragma pack(push, 2)
-
-check_align(2)
-
-#pragma pack(pop, hello)
-
-check_align(8)
 

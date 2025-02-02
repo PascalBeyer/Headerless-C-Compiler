@@ -9088,7 +9088,10 @@ void parse_and_process_pragma_pack(struct context *context){
                 }
             }else{
                 if(context->pragma_pack_stack.first){
-                    context->pragma_pack_stack.first = context->pragma_pack_stack.first->next;
+                    struct pragma_pack_node *pop = context->pragma_pack_stack.first;
+                    context->pragma_alignment = pop->value;
+                    
+                    sll_pop_front(context->pragma_pack_stack);
                 }
             }
             
