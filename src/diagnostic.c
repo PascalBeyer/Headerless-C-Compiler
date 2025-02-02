@@ -20,7 +20,6 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_ret_in_asm_block]                    = 1, 
     [WARNING_does_not_declare_anything]           = 1,
     [WARNING_undefined_static_if_operand]         = 1, 
-    [WARNING_undef_on_undefined]                  = 1,
     [WARNING_unsupported_pragma]                  = 1,
     [WARNING_unused_local_variable]               = 1,
     // [WARNING_casting_u64_to_float]                = 1,
@@ -41,9 +40,11 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_function_is_implicitly_dllimport] = 1,
     [WARNING_incompatible_redefinition_of_macro] = 1,
     
-    [WARNING_extraneous_semicolon] = 1,
+    // [WARNING_undef_on_undefined] = 1,
+    // [WARNING_relative_include_is_treated_as_system_include] = 1,
+    // [WARNING_extraneous_semicolon] = 1,
+    
     [WARNING_reference_to_dllimport_inserts_stub] = 1,
-    [WARNING_relative_include_is_treated_as_system_include] = 1,
     
     [WARNING_pragma_pack_show] = 1,
 };

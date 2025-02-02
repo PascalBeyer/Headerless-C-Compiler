@@ -1,3 +1,4 @@
+// compile -Wextraneous_semicolon
 // check "Extraneous ';' in struct."
 // check "Extraneous ';' at global scope."
 
