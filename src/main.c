@@ -2992,6 +2992,7 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
     if(peek_token(context, TOKEN_static_assert)){
         struct token *static_assert_token = next_token(context);
         parse_static_assert(context, static_assert_token); // @cleanup: static_assert and sleeping.
+        expect_token(context, TOKEN_semicolon, "Expected a ';' after _Static_assert.");
         return;
     }
     
