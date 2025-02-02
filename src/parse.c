@@ -3236,12 +3236,13 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                 // 
                 
                 struct ast *defined_type = argument->defined_type;
-                struct ast_type *unpromoted_type = argument->resolved_type;
+                struct ast_type *promoted_type = argument->resolved_type;
+                struct ast_type *unpromoted_type = promoted_type;
                 if(conversion_specifier == 'n'){
-                    if(argument->resolved_type->kind != AST_pointer_type){
+                    if(promoted_type->kind != AST_pointer_type){
                         report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects a pointer.", (char *)&length_modifier, conversion_specifier);
                     }else{
-                        struct ast_pointer_type *pointer = (struct ast_pointer_type *)argument->resolved_type;
+                        struct ast_pointer_type *pointer = (struct ast_pointer_type *)promoted_type;
                         defined_type    = pointer->pointer_to_defined_type;
                         unpromoted_type = pointer->pointer_to;
                         
@@ -3312,7 +3313,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                                 if(length_modifier == 'l')  expected_type = &globals.typedef_s32;
                                 if(length_modifier == 'll') expected_type = &globals.typedef_s64;
                                 
-                                if(expected_type != unpromoted_type){
+                                if(expected_type != unpromoted_type && expected_type != promoted_type){
                                     struct string expected_type_string = push_type_string(context->arena, &context->scratch, expected_type);
                                     struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
                                     report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
@@ -3324,7 +3325,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                                 if(length_modifier == 'l')  expected_type = &globals.typedef_u32;
                                 if(length_modifier == 'll') expected_type = &globals.typedef_u64;
                                 
-                                if(expected_type != unpromoted_type){
+                                if(expected_type != unpromoted_type && expected_type != promoted_type){
                                     struct string expected_type_string = push_type_string(context->arena, &context->scratch, expected_type);
                                     struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
                                     report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
@@ -3345,7 +3346,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                                 if(length_modifier == 'l')  expected_unsigned_type = &globals.typedef_u32;
                                 if(length_modifier == 'll') expected_unsigned_type = &globals.typedef_u64;
                                 
-                                if(expected_signed_type != unpromoted_type && expected_unsigned_type != unpromoted_type){
+                                if(expected_signed_type != unpromoted_type && expected_unsigned_type != unpromoted_type && expected_signed_type != promoted_type && expected_unsigned_type != promoted_type){
                                     struct string signed_type_string   = push_type_string(context->arena, &context->scratch, expected_signed_type);
                                     struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
                                     report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects signed or unsigned %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, signed_type_string.size, signed_type_string.data, type_string.size, type_string.data);
@@ -3365,7 +3366,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                         }else if(length_modifier == 'l'){
                             if(unpromoted_type != &globals.typedef_u16 && unpromoted_type != &globals.typedef_s16){
                                 struct string type_string = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%c' expects signed or unsigned character, but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
+                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%c' expects signed or unsigned wide character (wchar_t), but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
                             }
                         }else{
                             report_warning(context, WARNING_incorrect_format_specifier, argument->token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
@@ -3377,8 +3378,8 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                             report_warning(context, WARNING_incorrect_format_specifier, argument->token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
                         }
                         
-                        if(argument->resolved_type->kind != AST_pointer_type){
-                            struct string type_string = push_type_string(context->arena, &context->scratch, argument->resolved_type);
+                        if(promoted_type->kind != AST_pointer_type){
+                            struct string type_string = push_type_string(context->arena, &context->scratch, promoted_type);
                             report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%p' requires a pointer, but the argument is of type '%.*s'.", type_string.size, type_string.data);
                         }
                     }break;
@@ -3392,19 +3393,19 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                             report_warning(context, WARNING_incorrect_format_specifier, argument->token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
                         }
                         
-                        if(argument->resolved_type->kind != AST_float_type){
-                            struct string type_string = push_type_string(context->arena, &context->scratch, argument->resolved_type);
+                        if(promoted_type->kind != AST_float_type){
+                            struct string type_string = push_type_string(context->arena, &context->scratch, promoted_type);
                             report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%f' requires a float, but the argument is of type '%.*s'.", type_string.size, type_string.data);
                         }
                     }break;
                     
                     case 's':{
                         struct ast_type *element_type = null;
-                        if(argument->resolved_type->kind == AST_pointer_type){
-                            struct ast_pointer_type *pointer = (struct ast_pointer_type *)argument->resolved_type;
+                        if(promoted_type->kind == AST_pointer_type){
+                            struct ast_pointer_type *pointer = (struct ast_pointer_type *)promoted_type;
                             element_type = pointer->pointer_to;
-                        }else if(argument->resolved_type->kind == AST_array_type){
-                            struct ast_array_type *array = (struct ast_array_type *)argument->resolved_type;
+                        }else if(promoted_type->kind == AST_array_type){
+                            struct ast_array_type *array = (struct ast_array_type *)promoted_type;
                             element_type = array->element_type;
                         }
                         
@@ -3418,7 +3419,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                         }
                         
                         if(should_warn){
-                            struct string type_string = push_type_string(context->arena, &context->scratch, argument->resolved_type);
+                            struct string type_string = push_type_string(context->arena, &context->scratch, promoted_type);
                             report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%s' requires 'char *', but the argument is of type '%.*s'.", type_string.size, type_string.data);
                         }
                     }break;
