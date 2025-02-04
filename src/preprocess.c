@@ -142,12 +142,6 @@ func struct token *get_current_token_raw(struct context *context){
     }
 }
 
-
-func b32 tokenizer_is_at_the_end_of_the_file(struct context *context){
-    return get_current_token_raw(context)->type == TOKEN_invalid;
-}
-
-
 func struct token *next_token_raw(struct context *context){
     struct token *ret = get_current_token_raw(context);
     
@@ -193,20 +187,19 @@ func b32 skip_until_tokens_are_balanced_raw(struct context *context, struct toke
     
     u64 count = 1;
     while(true){
-        if(tokenizer_is_at_the_end_of_the_file(context)){
+        struct token *token = next_token_raw(context);
+        
+        if(token->type == TOKEN_invalid){
             // :Error this should report the beginning and the end
             report_error(context, initial_token, "Scope not ended.");
-            
             return false;
-        }else if(peek_token_raw(context, closed)){
+        }else if(token->type == closed){
             if (--count == 0) break;
-        }else if(peek_token_raw(context, open)){
+        }else if(token->type == open){
             count++;
         }
-        next_token_raw(context);
     }
     
-    next_token_raw(context);
     return true;
 }
 
@@ -374,7 +367,36 @@ func void tokenizer_report_error(struct context *context, struct token *token, s
 
 func b32 u8_is_valid_in_c_ident(u8 a){
     // either ascii alpha numeric, $ or utf8 are allowed
-    return u8_is_alpha_numeric(a) || (a == '$') || (a & 0x80);
+    
+    static u8 table[0x100] = {
+        ['$'] = 1,
+        ['_'] = 1,
+        ['0'] = 1, 1, 1, 1, 1, 
+                1, 1, 1, 1, 1,
+        
+        ['a'] = 1, 1, 1, 1, 1,
+        /**/    1, 1, 1, 1, 1,
+        /**/    1, 1, 1, 1, 1,
+        /**/    1, 1, 1, 1, 1,
+        /**/    1, 1, 1, 1, 1, 1,
+        
+        ['A'] = 1, 1, 1, 1, 1,
+        /**/    1, 1, 1, 1, 1,
+        /**/    1, 1, 1, 1, 1,
+        /**/    1, 1, 1, 1, 1,
+        /**/    1, 1, 1, 1, 1, 1,
+        
+        [0x80] = 1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,
+        [0x90] = 1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,
+        [0xA0] = 1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,
+        [0xB0] = 1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,
+        [0xC0] = 1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,
+        [0xD0] = 1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,
+        [0xE0] = 1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,
+        [0xF0] = 1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,    1, 1, 1, 1,
+    };
+    
+    return table[a]; // u8_is_alpha_numeric(a) || (a == '$') || (a & 0x80);
 }
 
 struct escaped_string{
@@ -1810,7 +1832,10 @@ func struct token *expand_define(struct context *context, struct token *token_to
             eat_whitespace_and_comments(context);
             
             if(!peek_token_eat_raw(context, TOKEN_closed_paren)){
+                begin_error_report(context);
                 tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Function-like define takes zero arguments. Expected ')'.");
+                report_error(context, define->defined_token, "... Here is the define.");
+                end_error_report(context);
             }
             
             goto skip_define_argument_parsing_because_the_define_has_no_arguments;
@@ -2048,8 +2073,9 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     smm capacity = 8;
                     struct token *array = push_uninitialized_data(&context->scratch, struct token, capacity);
                     
-                    while(!tokenizer_is_at_the_end_of_the_file(context)){
+                    while(true){
                         struct token *token = next_token_raw(context);
+                        if(token->type == TOKEN_invalid) break;
                         
                         if(token->type == TOKEN_identifier){
                             struct define_node *define_in_argument = lookup_define(context, token->atom);
@@ -3268,36 +3294,186 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
         goto end;
     }
     
+    
+    struct token *macro_expansion_site = null;
     b32 got_newline = true;
-    while(!tokenizer_is_at_the_end_of_the_file(context)){
+    
+    while(1){
         
-        if(static_if_stack.first && !static_if_stack.first->is_true){
-            // if we are in a diabled static if, we search for a newline into hash
-            begin_counter(context, if0_block);
-            while(true){
-                // no need to expand the token, if we are in a '#if 0' block.
-                struct token *token = get_current_token_raw(context);
-                
-                if(got_newline && token->type == TOKEN_hash) break;
-                if(token->type == TOKEN_invalid){
-                    end_counter(context, static_if_skip);
-                    goto end;
+        // 
+        // Iterate the raw tokens from the `context->token_stack`, expand defines if necessary 
+        // and then copy them out to the `comitted_token_buffer`.
+        // If we encounter a newline token followed by a # and we are not currently expanding a define
+        // (context->define_depth > 0), we break out of this loop and handle the directive.
+        // We are done, when we hit the `TOKEN_invalid`.
+        // 
+        
+        while(1){
+            struct token *token = next_token_raw(context);
+            
+            if(token->type == TOKEN_invalid) goto double_break;
+            
+            if(token->type == TOKEN_hash && got_newline){
+                // We have to handle the directive!
+                break;
+            }
+            
+            if(token->type == TOKEN_identifier){
+                struct define_node *define = lookup_define(context, token->atom);
+                if(define && !define->is_disabled){
+                    
+                    int skip = 0;
+                    if(define->is_function_like){
+                        eat_whitespace_comments_and_newlines(context); 
+                        if(!peek_token_raw(context, TOKEN_open_paren)){
+                            skip = 1;
+                        }
+                    }
+                    
+                    if(!skip){
+                        if(context->define_depth == 0) macro_expansion_site = token;
+                        token = expand_define(context, token, define, macro_expansion_site);
+                        
+                        // We will only ever return a token for predefined identifiers.
+                        // Otherwise, we will expand the macro push the resulting tokens to the stack for rescanning 
+                        // and then return null.
+                        if(!token) continue;
+                    }
                 }
+            }
+            
+            assert(TOKEN_invalid < token->type && token->type < TOKEN_count);
+            
+            if(token->type == TOKEN_whitespace) continue;
+            if(token->type == TOKEN_comment)    continue;
+            if(token->type == TOKEN_newline){
+                got_newline = true;
                 
-                if(token->type != TOKEN_whitespace && token->type != TOKEN_comment){
-                    if(token->type == TOKEN_newline){
-                        got_newline = true;
+                if(have_postponed_directive && !context->define_depth){
+                    //
+                    // Handle the postponed directive!
+                    // This can be either and '#include' or '#if' or '#elif'.
+                    // The tokens for the directives are 
+                    //     [current_directive->saved_emitted_token_count, emitted_tokens).
+                    // Load these and then evaluate the directive.
+                    //
+                    struct token_array token_array = {
+                        .data = emitted_token_buffer + postponed_directive.saved_emitted_token_count,
+                        .size = emitted_tokens       - postponed_directive.saved_emitted_token_count,
+                    };
+                    assert(token_array.amount >= 0);
+                    
+                    if(!token_array.amount){
+                        report_error(context, postponed_directive.directive, "Expected argument for directive.");
+                        goto end;
+                    }
+                    
+                    begin_token_array(context, token_array);
+                    
+                    //
+                    // We now use the usual (non-raw) version of *_token procedures to evaluate the directive.
+                    //
+                    
+                    // :Error Print what the define expanded to.
+                    
+                    if(postponed_directive.directive_kind == DIRECTIVE_include){
+                        // 
+                        // @copy_and_paste from the non-expanded case.
+                        // 
+                        
+                        int is_system_include = false;
+                        struct string file_name = parse_include_string_after_it_has_been_preprocessed(context, postponed_directive.directive, &is_system_include);
+                        
+                        struct file *file = get_or_load_file_for_include_string(context, postponed_directive.directive, file_name, is_system_include);
+                        if(!file){
+                            report_error(context, postponed_directive.directive, "'%.*s' include file not found.", file_name.size, file_name.data);
+                            goto end;
+                        }
+                        
+                        maybe_push_file_to_include_stack(context, file);
                     }else{
-                        got_newline = false;
+                        static_if_stack.first->is_true = static_if_evaluate(context) != 0;
+                        if(context->should_exit_statement) goto end;
+                    }
+                    
+                    //
+                    // We have completed the 'postponed_directive', _delete_ the tokens from the array, 
+                    // by reseting the 'emitted_tokens' back to where the 'postponed_directive' started.
+                    //
+                    have_postponed_directive = false;
+                    emitted_tokens = postponed_directive.saved_emitted_token_count;
+                    context->in_static_if_condition = 0;
+                    
+                    if(static_if_stack.first && !static_if_stack.first->is_true){
+                        // If we _just_ disabled the current block, goto the code that searches for the next directive.
+                        goto jump_because_a_postponed_static_if_was_disabled_and_we_should_search_for_the_next_directive;
                     }
                 }
                 
-                next_token_raw(context);
+                continue; // Don't emit the newline token.
             }
-            end_counter(context, if0_block);
+            
+            got_newline = false;
+            
+            if(emitted_tokens == committed_tokens){
+                if(committed_tokens == reserved_tokens){
+                    report_error(context, token, "Compilation exceeds current maximum amount of tokens per compilation unit (%lld).", reserved_tokens);
+                    goto end;
+                }
+                
+                struct os_virtual_buffer committed = os_commit_memory(emitted_token_buffer + committed_tokens, TOKEN_EMIT_COMMIT_SIZE);
+                assert(committed.committed == TOKEN_EMIT_COMMIT_SIZE);
+                assert((struct token *)committed.base == emitted_token_buffer + committed_tokens);
+                
+                committed_tokens += TOKEN_EMIT_COMMIT_SIZE / sizeof(struct token);
+            }
+            
+            assert(emitted_tokens < committed_tokens);
+            struct token *out_token = emitted_token_buffer + emitted_tokens++;
+            if(token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro){
+                out_token->type = TOKEN_identifier;
+            }else{
+                out_token->type = token->type;
+            }
+            
+            // If we expanded this token from a macro, copy the location :copy_expanded_location
+            if(context->macro_expansion_token){
+                out_token->line   = context->macro_expansion_token->line;
+                out_token->column = context->macro_expansion_token->column;
+                out_token->file_index   = context->macro_expansion_token->file_index;
+            }else{
+                out_token->column = token->column;
+                out_token->line   = token->line;
+                out_token->file_index   = token->file_index;
+            }
+            
+            out_token->data = token->data;
+            out_token->size = token->size;
+            
+            if(out_token->type == TOKEN_identifier){
+                out_token->string_hash = token->string_hash;
+                
+                // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
+                //        things like defined(__int64) will error.
+                if(!have_postponed_directive){
+                    u64 index = token->string_hash & (globals.keyword_table_size - 1);
+                    if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
+                        out_token->type = globals.keyword_table[index].type;
+                    }
+                } 
+            }
         }
         
-        if(got_newline && peek_token_eat_raw(context, TOKEN_hash)){
+        {
+            // 
+            // If we get here, we assume the code above found a newline followed by a hash,
+            // or in other words a directive. In this case, we should handle this directive.
+            // This is sort of a loop, because we could end up with an #ifdef or #else that disables 
+            // the current block, in which case, in the end, we search for the next directive
+            // and re-enter directive handling. But, we currently use continue to continue the outer loop...
+            // 
+            loop_and_retry_the_next_directive_because_we_are_in_a_disabled_static_if:;
+            
             got_newline = false; // Directives do not eat their newlines, this also needs to be here for 'postponed_directives'.
             
             begin_counter(context, handle_directive);
@@ -3331,7 +3507,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     while(!peek_token_raw(context, TOKEN_newline)){
                         next_token_raw(context);
                     }
-                    continue;
+                    goto jump_because_a_postponed_static_if_was_disabled_and_we_should_search_for_the_next_directive;
                 }
             }
             
@@ -4419,160 +4595,42 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
             }
             
             end_counter(context, handle_directive);
-            continue;
+            
+            if(static_if_stack.first && !static_if_stack.first->is_true){
+                
+                jump_because_a_postponed_static_if_was_disabled_and_we_should_search_for_the_next_directive:;
+                
+                // 
+                // If we are in a diabled static if, we search for a newline into hash.
+                // 
+                begin_counter(context, if0_block);
+                while(true){
+                    // no need to expand the token, if we are in a '#if 0' block.
+                    struct token *token = next_token_raw(context);
+                    
+                    if(got_newline && token->type == TOKEN_hash) break;
+                    
+                    if(token->type == TOKEN_invalid){
+                        end_counter(context, static_if_skip);
+                        goto double_break;
+                    }
+                    
+                    if(token->type != TOKEN_whitespace && token->type != TOKEN_comment){
+                        if(token->type == TOKEN_newline){
+                            got_newline = true;
+                        }else{
+                            got_newline = false;
+                        }
+                    }
+                }
+                end_counter(context, if0_block);
+                
+                goto loop_and_retry_the_next_directive_because_we_are_in_a_disabled_static_if;
+            }
         }
-        
-        assert(!static_if_stack.first || static_if_stack.first->is_true);
-        
-        // Expand and emit tokens until we are not in a macro expansion anymore
-        struct token *macro_expansion_site = null;
-        do{
-            struct token *token = next_token_raw(context);
-            
-            if(token->type == TOKEN_identifier){
-                struct define_node *define = lookup_define(context, token->atom);
-                if(define && !define->is_disabled){
-                    
-                    int skip = 0;
-                    if(define->is_function_like){
-                        eat_whitespace_comments_and_newlines(context); 
-                        if(!peek_token_raw(context, TOKEN_open_paren)){
-                            skip = 1;
-                        }
-                    }
-                    
-                    if(!skip){
-                        if(!macro_expansion_site) macro_expansion_site = token;
-                        token = expand_define(context, token, define, macro_expansion_site);
-                        
-                        // We will only ever return a token for predefined identifiers.
-                        // Otherwise, we will expand the macro push the resulting tokens to the stack for rescanning 
-                        // and then return null.
-                        if(!token) continue;
-                    }
-                }
-            }
-            
-            if(token->type == TOKEN_invalid) break; // @note: Only happens, if we are at the end of the token array, and the define expanded to nothing.
-            
-            assert(TOKEN_invalid < token->type && token->type < TOKEN_count);
-            
-            if(token->type == TOKEN_whitespace) continue;
-            if(token->type == TOKEN_comment)    continue;
-            if(token->type == TOKEN_newline){
-                got_newline = true;
-                
-                if(have_postponed_directive && !context->define_depth){
-                    //
-                    // Handle the postponed directive!
-                    // This can be either and '#include' or '#if' or '#elif'.
-                    // The tokens for the directives are 
-                    //     [current_directive->saved_emitted_token_count, emitted_tokens).
-                    // Load these and then evaluate the directive.
-                    //
-                    struct token_array token_array = {
-                        .data = emitted_token_buffer + postponed_directive.saved_emitted_token_count,
-                        .size = emitted_tokens       - postponed_directive.saved_emitted_token_count,
-                    };
-                    assert(token_array.amount >= 0);
-                    
-                    if(!token_array.amount){
-                        report_error(context, postponed_directive.directive, "Expected argument for directive.");
-                        goto end;
-                    }
-                    
-                    begin_token_array(context, token_array);
-                    
-                    //
-                    // We now use the usual (non-raw) version of *_token procedures to evaluate the directive.
-                    //
-                    
-                    // :Error Print what the define expanded to.
-                    
-                    if(postponed_directive.directive_kind == DIRECTIVE_include){
-                        // 
-                        // @copy_and_paste from the non-expanded case.
-                        // 
-                        
-                        int is_system_include = false;
-                        struct string file_name = parse_include_string_after_it_has_been_preprocessed(context, postponed_directive.directive, &is_system_include);
-                                
-                        struct file *file = get_or_load_file_for_include_string(context, postponed_directive.directive, file_name, is_system_include);
-                        if(!file){
-                            report_error(context, postponed_directive.directive, "'%.*s' include file not found.", file_name.size, file_name.data);
-                            goto end;
-                        }
-                        
-                        maybe_push_file_to_include_stack(context, file);
-                    }else{
-                        static_if_stack.first->is_true = static_if_evaluate(context) != 0;
-                        if(context->should_exit_statement) goto end;
-                    }
-                    
-                    
-                    //
-                    // We have completed the 'postponed_directive', _delete_ the tokens from the array, 
-                    // by reseting the 'emitted_tokens' back to where the 'postponed_directive' started.
-                    //
-                    have_postponed_directive = false;
-                    emitted_tokens = postponed_directive.saved_emitted_token_count;
-                    context->in_static_if_condition = 0;
-                }
-                
-                continue;
-            }
-            
-            got_newline = false;
-            
-            if(emitted_tokens == committed_tokens){
-                if(committed_tokens == reserved_tokens){
-                    report_error(context, token, "Compilation exceeds current maximum amount of tokens per compilation unit (%lld).", reserved_tokens);
-                    goto end;
-                }
-                
-                struct os_virtual_buffer committed = os_commit_memory(emitted_token_buffer + committed_tokens, TOKEN_EMIT_COMMIT_SIZE);
-                assert(committed.committed == TOKEN_EMIT_COMMIT_SIZE);
-                assert((struct token *)committed.base == emitted_token_buffer + committed_tokens);
-                
-                committed_tokens += TOKEN_EMIT_COMMIT_SIZE / sizeof(struct token);
-            }
-            
-            assert(emitted_tokens < committed_tokens);
-            struct token *out_token = emitted_token_buffer + emitted_tokens++;
-            if(token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro){
-                out_token->type = TOKEN_identifier;
-            }else{
-                out_token->type = token->type;
-            }
-            
-            // If we expanded this token from a macro, copy the location :copy_expanded_location
-            if(context->macro_expansion_token){
-                out_token->line   = context->macro_expansion_token->line;
-                out_token->column = context->macro_expansion_token->column;
-                out_token->file_index   = context->macro_expansion_token->file_index;
-            }else{
-                out_token->column = token->column;
-                out_token->line   = token->line;
-                out_token->file_index   = token->file_index;
-            }
-            
-            out_token->data = token->data;
-            out_token->size = token->size;
-            
-            if(out_token->type == TOKEN_identifier){
-                out_token->string_hash = token->string_hash;
-                
-                // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
-                //        things like defined(__int64) will error.
-                if(!have_postponed_directive){
-                    u64 index = token->string_hash & (globals.keyword_table_size - 1);
-                    if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
-                        out_token->type = globals.keyword_table[index].type;
-                    }
-                } 
-            }
-        } while(context->define_depth > 0);
     }
+    
+    double_break:;
     
     // :newline_at_the_end_of_the_file
     assert(context->error || !have_postponed_directive);
