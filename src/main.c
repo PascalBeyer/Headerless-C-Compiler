@@ -4719,13 +4719,14 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct string entry_point_name;
             char *pre_main_file;
             char *pre_main_file_no_args;
+            char *pre_main_file_envp;
         } table[] = {
             // Table is in order of preference.
             { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("_start")},
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main"),     "implicit/pre_main.c",     "implicit/pre_main_no_args.c"},
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain"),    "implicit/pre_wmain.c",    "implicit/pre_wmain_no_args.c"},
-            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("WinMain"),  "implicit/pre_WinMain.c",  "implicit/pre_WinMain.c"},  // These always need to have args I am pretty sure.
-            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("wWinMain"), "implicit/pre_wWinMain.c", "implicit/pre_wWinMain.c"}, // These always need to have args I am pretty sure.
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main"),     "implicit/pre_main.c",    "implicit/pre_main_no_args.c",  "implicit/pre_main_envp.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain"),    "implicit/pre_wmain.c",   "implicit/pre_wmain_no_args.c", "implicit/pre_wmain_envp.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("WinMain"),  "implicit/pre_WinMain.c"  },  // These always need to have args I am pretty sure.
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("wWinMain"), "implicit/pre_wWinMain.c" }, // These always need to have args I am pretty sure.
             
             { OUTPUT_FILE_dll, SUBSYSTEM_windows, const_string("DllMain") },
             
@@ -4753,8 +4754,20 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 if(!declaration || !declaration->assign_expr || declaration->type->kind != AST_function_type) continue;
                 
                 if(table[index].pre_main_file){
+                    smm argument_count = ((struct ast_function_type *)declaration->type)->argument_list.count;
                     
-                    char *pre_main_file = ((struct ast_function_type *)declaration->type)->argument_list.count ? table[index].pre_main_file : table[index].pre_main_file_no_args;
+                    char *pre_main_file = null;
+                    switch(argument_count){
+                        case 0: pre_main_file = table[index].pre_main_file_no_args; break;
+                        case 2: pre_main_file = table[index].pre_main_file; break;
+                        case 3: pre_main_file = table[index].pre_main_file_envp; break;
+                        case 4: pre_main_file = table[index].pre_main_file; break;
+                    }
+                    
+                    if(!pre_main_file){
+                        // The final reported error will be a better error reporting than anything we could produce here.
+                        pre_main_file = table[index].pre_main_file;
+                    }
                     
                     // 
                     // We need to load the pre-main file.
@@ -4767,7 +4780,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         print("       If this is intended you can use the '-no_premain'\n");
                         print("       command line option to squelch this warning.\n");
                         print("       This file is usually contained in: \n");
-                        print("             \"<compiler-path>/%s\".", table[index].pre_main_file);
+                        print("             \"<compiler-path>/%s\".", pre_main_file);
                         print("       @incomplete: The -no_premain option currently does not exist :)\n");
                         return 1;
                     }
