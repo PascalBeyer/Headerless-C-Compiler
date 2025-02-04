@@ -40,9 +40,12 @@
 //     ...
 //     
 // Since we currently do not support any security features (and would not use Microsofts code anyway),
-// We only have to implement the list of functions specified above.
+// we only have to implement the list of functions specified above.
 // 
-
+// Update: Apperantly there are some functions in `msvcrt.lib` that we care about,
+//         for example `atexit`. For now, i'm going to hack it up.
+// 
+#pragma comment(linker, "/ALTERNATENAME:atexit=_crt_atexit") // I'm not sure that this is enough, also this would need to be included by <stdlib.h>
 
 static typedef unsigned short wchar_t;
 static typedef unsigned __int64 size_t;
