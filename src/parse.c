@@ -801,6 +801,7 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
     if(!wanted || !given) return null;
     
     struct ast_type *ret = wanted;
+    if(wanted == given) return ret;
     
     if(wanted->kind == AST_pointer_type && given->kind == AST_pointer_type){
         struct ast_pointer_type *wanted_pointer = cast(struct ast_pointer_type *)wanted;
@@ -832,6 +833,7 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
     }
     
     assert(wanted && given);
+    if(wanted == given) return ret;
     if(wanted->kind != given->kind) return null;
     
     if(wanted->kind == AST_function_type){
