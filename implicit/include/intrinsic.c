@@ -3110,7 +3110,7 @@ __declspec(inline_asm) int _mm_cmpestrc(__m128i a, int la, __m128i b, int lb, co
     // "Perform a packed comparison of string data with explicit lengths,
     //  generating an index, and storing the result in ECX."
     // "CFlag - Reset if IntRes2 is equal to zero, set otherwise."
-    pcmpestri xmm1, xmm0, 1
+    pcmpestri xmm1, xmm0, imm8
     
     // "returns 1 if the resulting mask was non-zero, and 0 otherwise."
     mov     eax, 0
