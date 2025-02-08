@@ -3132,6 +3132,14 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         }
         
         ast_list_append(&scope->statement_list, context->arena, &asm_block->base);
+        
+        for_ast_list(function->type->argument_list){
+            struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+            
+            if(decl->_times_referenced == 0){
+                report_warning(context, WARNING_unused_local_variable, decl->base.token, "Function argument of __declspec(inline_asm)-function is not referenced.");
+            }
+        }
     }else{
         //
         // Parse the function!

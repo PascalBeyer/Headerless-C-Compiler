@@ -796,6 +796,8 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
     // If either of the types is unresolved, try to look it up.
     // If we failed to look it up, it cannot match the other type, as the other type is resolved.
     // 
+    // @note: Because of the check above, one of the types is resolved. This means there cannot be a race-condition here.
+    // 
     if(wanted->kind == AST_unresolved_type) wanted = lookup_unresolved_type(wanted);
     if(given->kind  == AST_unresolved_type) given  = lookup_unresolved_type(given);
     if(!wanted || !given) return null;
