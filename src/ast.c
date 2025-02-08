@@ -353,13 +353,14 @@ enum ast_kind{
     AST_invalid,
     AST_none = AST_invalid,
     
-    AST_identifier,
-    AST_string_literal,
-    AST_integer_literal,
-    AST_float_literal,
-    AST_compound_literal,
+    // Declarations
     AST_declaration,
+    AST_function,
+    AST_typedef,
     
+    AST_declaration_list,
+    
+    // Types
     AST_void_type,
     AST_integer_type,
     AST_atomic_integer_type,
@@ -369,11 +370,23 @@ enum ast_kind{
     AST_function_type,
     AST_array_type,
     AST_struct,
+    AST_union,
     AST_enum,
     
-    AST_cast,
-    AST_function,
+    AST_unresolved_type,
     
+    // Primary Expressions
+    AST_identifier,
+    AST_string_literal,
+    AST_integer_literal,
+    AST_float_literal,
+    AST_compound_literal,
+    
+    AST_pointer_literal,             // (struct s *)1337
+    AST_pointer_literal_deref,       // *(struct s *)1337 or ((struct s *)1337)->member
+    
+    // Unary Expressions
+    AST_cast,
     AST_unary_postinc,
     AST_unary_preinc,
     AST_unary_postdec,
@@ -390,11 +403,9 @@ enum ast_kind{
     AST_sizeof,
     AST_alignof,
     
-    AST_member,
-    AST_member_deref,
-    AST_pointer_subscript,
-    AST_array_subscript,
+    AST_implicit_address_conversion, // Used if an array or a function is implicitly converted to a pointer.
     
+    // Binary Expressions
     AST_binary_times,
     AST_binary_divide,
     AST_binary_mod,
@@ -420,8 +431,6 @@ enum ast_kind{
     AST_logical_and,
     AST_logical_or,
     
-    AST_conditional_expression,
-    
     // Assignment AST_*, same order as TOKEN_*_equals
     AST_assignment,
     AST_and_assignment,
@@ -435,9 +444,18 @@ enum ast_kind{
     AST_divide_assignment,
     AST_modulo_assignment,
     
+    AST_member,
+    AST_member_deref,
+    AST_pointer_subscript,
+    AST_array_subscript,
+    
     AST_comma_expression,
     
+    AST_conditional_expression,
+    
     AST_function_call,
+    
+    // Statements
     AST_scope,
     
     AST_empty_statement, 
@@ -453,16 +471,6 @@ enum ast_kind{
     AST_case,
     AST_label,
     AST_goto,
-    
-    AST_typedef,
-    
-    AST_unresolved_type,
-    AST_declaration_list,
-    AST_union,
-    
-    AST_pointer_literal,             // (struct s *)1337
-    AST_pointer_literal_deref,       // *(struct s *)1337 or ((struct s *)1337)->member
-    AST_implicit_address_conversion, // Used if an array or a function is implicitly converted to a pointer.
     
     AST_asm_block,
     AST_embed,

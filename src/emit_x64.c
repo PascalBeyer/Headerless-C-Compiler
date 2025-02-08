@@ -2877,7 +2877,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
                 emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
             }else if(op->base.resolved_type->kind == AST_float_type){
-                struct ast_float_literal *one = parser_ast_push(context, op->base.token, float_literal);
+                struct ast_float_literal *one = push_ast(context, op->base.token, float_literal); // :ir_refactor_not_sure_initializer
                 one->value = 1.0;
                 set_resolved_type(&one->base, op->base.resolved_type, null);
                 
@@ -2963,7 +2963,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
                 emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
             }else if(op->base.resolved_type->kind == AST_float_type){
-                struct ast_float_literal *one = parser_ast_push(context, op->base.token, float_literal);
+                struct ast_float_literal *one = push_ast(context, op->base.token, float_literal); // :ir_refactor_not_sure_initializer
                 one->value = 1.0;
                 set_resolved_type(&one->base, op->base.resolved_type, null);
                 

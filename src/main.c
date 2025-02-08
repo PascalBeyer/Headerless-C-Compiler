@@ -696,6 +696,8 @@ struct context{
     //
     struct memory_arena scratch; // Cleared after every thread_do_work.
     struct memory_arena *arena; // Right now never cleared. Think later about how we can minimize memory usage.
+    struct memory_arena ast_arena;
+    
     struct thread_info *thread_info;
     
     struct{
@@ -758,7 +760,13 @@ struct context{
     smm in_conditional_expression;
     int current_statement_returns_a_value;
     
-    struct ast *ast_stack[1024];
+    struct ast_stack_entry{
+        enum ast_kind ast_kind;
+        struct token *token;
+        
+        struct ast *operand;
+        void *other;
+    } ast_stack[1024];
     smm ast_stack_at;
     
     struct ast_scope *current_scope;
@@ -2496,6 +2504,7 @@ func void init_context(struct context *context, struct thread_info *info, struct
     
     context->thread_info = info;
     context->arena = arena;
+    context->ast_arena = create_memory_arena(giga_bytes(8), 1.0f, mega_bytes(1));
     context->ast_serializer = (thread_index << 48);
     
     smm emit_pool_capacity = mega_bytes(100);
@@ -3116,7 +3125,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         // Special case for __declspec(inline_asm) in this case we only want a single 'ast_asm_block'
         //
         
-        struct ast_asm_block *asm_block = parser_ast_push(context, function->scope->token, asm_block);
+        struct ast_asm_block *asm_block = push_ast(context, function->scope->token, asm_block);
         set_resolved_type(&asm_block->base, &globals.typedef_void, null);
         
         context->in_inline_asm_function = function->base.token;
@@ -3173,7 +3182,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             
             // @cleanup: is this the correct token?
             struct token *end_curly = get_current_token_for_error_report(context);
-            struct ast_return *ast_return = parser_ast_push(context, end_curly, return);
+            struct ast_return *ast_return = push_ast(context, end_curly, return);
             ast_return->expr = ast_push_s32_literal(context, end_curly, 0);
             set_resolved_type(&ast_return->base, &globals.typedef_void, null);
             
@@ -3299,7 +3308,7 @@ func struct token *push_dummy_token(struct memory_arena *arena, struct atom toke
 
 func void register_intrinsic_function_declaration(struct context *context, struct token *token, struct ast_function_type *type){
     
-    struct ast_function *declaration = parser_ast_push(context, token, function);
+    struct ast_function *declaration = push_ast(context, token, function);
     declaration->identifier = token;
     declaration->type = type;
     declaration->offset_in_text_section = -1;
