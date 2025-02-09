@@ -5733,8 +5733,6 @@ case NUMBER_KIND_##type:{ \
                 struct ast *op_rhs = operand;
                 
                 if(stack_entry->operand->kind == AST_integer_literal && operand->kind == AST_integer_literal){
-                    
-                    
                     u64 lhs = integer_literal_as_u64(op_lhs);
                     u64 rhs = integer_literal_as_u64(op_rhs);
                     
@@ -5744,6 +5742,9 @@ case NUMBER_KIND_##type:{ \
                     
                     set_resolved_type(op_lhs, promoted_type, null);
                     ((struct ast_integer_literal *)op_lhs)->_u64 = lhs;
+                    
+                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand);
+                    
                     operand = op_lhs;
                 }else{
                     
@@ -5789,6 +5790,9 @@ case NUMBER_KIND_##type:{ \
                     
                     set_resolved_type(op_lhs, promoted_type, null);
                     ((struct ast_integer_literal *)op_lhs)->_u64 = lhs;
+                    
+                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand);
+                    
                     operand = op_lhs;
                 }else{
                     if(!check_binary_for_basic_types(context, op_lhs, op_rhs, stack_entry->token, CHECK_integer)) return operand;
@@ -5829,6 +5833,9 @@ case NUMBER_KIND_##type:{ \
                     
                     set_resolved_type(op_lhs, promoted_type, null);
                     ((struct ast_integer_literal *)op_lhs)->_u64 = lhs;
+                    
+                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand);
+                    
                     operand = op_lhs;
                 }else{
                     if(!check_binary_for_basic_types(context, op_lhs, op_rhs, stack_entry->token, CHECK_integer)) return operand;
@@ -5873,6 +5880,8 @@ case NUMBER_KIND_##type:{ \
                     }else{
                         lit->_u64 = 0;
                     }
+                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand);
+                    
                     operand = &lit->base;
                 }else{
                     struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
@@ -5906,6 +5915,9 @@ case NUMBER_KIND_##type:{ \
                     }else{
                         lit->_u64 = 0;
                     }
+                    
+                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand);
+                    
                     operand = &lit->base;
                 }else{
                     struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
