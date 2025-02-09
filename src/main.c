@@ -2171,15 +2171,14 @@ func b32 evaluate_static_address(struct context *context, struct ast *rhs, struc
 }
 
 // returns 1 on error, 0 on success
-func b32 evaluate_static_initializer__internal(struct context *context, struct ast *assignment_ast, struct ast_declaration *patch_declaration, u8 *data, smm data_size, smm offset){
+func b32 evaluate_static_initializer__internal(struct context *context, struct ast_initializer *initializer, struct ast_declaration *patch_declaration, u8 *data, smm data_size, smm offset){
     
-    assert(assignment_ast->kind == AST_assignment);
-    struct ast_binary_op *assign = cast(struct ast_binary_op *)assignment_ast;
-    
+
     // For range initializers. This kinda sucks.
     u64 range_stride = 0;
     u64 range_size = 1;
     
+    #if 0
     {
         //
         // Evaluate the lhs to get the 'offset'.
@@ -2231,9 +2230,11 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
             }
         }
     }
+    #endif
     
-    struct ast_type *lhs_type = assign->lhs->resolved_type;
-    struct ast *rhs = assign->rhs;
+    struct ast_type *lhs_type = initializer->base.resolved_type; // ?
+    struct ast *rhs = initializer->rhs;
+    offset += initializer->offset;
     
     assert(offset + lhs_type->size <= data_size);
     
@@ -2274,8 +2275,8 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
             case AST_compound_literal:{
                 struct ast_compound_literal *lit = cast(struct ast_compound_literal *)rhs;
                 
-                for_ast_list(lit->assignment_list){
-                    evaluate_static_initializer__internal(context, it->value, patch_declaration, data, data_size, offset);
+                for(struct ast_initializer *it = lit->assignment_list.first; it; it = it->next){
+                    evaluate_static_initializer__internal(context, it, patch_declaration, data, data_size, offset);
                 }
             }break;
             
@@ -2447,7 +2448,7 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
             
             default:{
                 initializer_non_const:
-                report_error(context, assign->base.token, "Initializer is not a constant.");
+                report_error(context, initializer->base.token, "Initializer is not a constant.");
                 return 1;
             }break;
         }
@@ -2462,21 +2463,29 @@ func u8 *evaluate_static_initializer(struct context *context, struct ast_declara
     
     smm data_size = decl->type->size;
     
-    struct ast_list assignment_list = zero_struct;
+    struct initializer_list assignment_list = zero_struct;
     
     if(initializer->kind == AST_compound_literal){
         struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)initializer;
         assignment_list = compound_literal->assignment_list;
         data_size += compound_literal->trailing_array_size;
     }else{
-        ast_list_append(&assignment_list, &context->scratch, initializer);
+        
+        struct ast_binary_op *assignment = (struct ast_binary_op *)decl->assign_expr;
+        
+        struct ast_initializer *dummy = _parser_ast_push(context, &context->scratch, initializer->token, sizeof(struct ast_initializer), alignof(struct ast_initializer), AST_initializer);
+        dummy->offset = 0;
+        dummy->rhs = assignment->rhs;
+        set_resolved_type(&dummy->base, decl->type, null);
+        
+        sll_push_back(assignment_list, dummy);
     }
     
     push_zero_align(context->arena, decl->type->alignment); // @cleanup: Do we need this? Also get_declaration_alignment.
     u8 *data = push_uninitialized_data(context->arena, u8, data_size); // @note: This will be zero-initialized, as we never free from arena.
     
-    for_ast_list(assignment_list){
-        evaluate_static_initializer__internal(context, it->value, decl, data, data_size, 0);
+    for(struct ast_initializer *it = assignment_list.first; it; it = it->next){
+        evaluate_static_initializer__internal(context, it, decl, data, data_size, 0);
     }
     
     return data;

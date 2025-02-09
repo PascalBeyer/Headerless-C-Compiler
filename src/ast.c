@@ -458,6 +458,9 @@ enum ast_kind{
     
     AST_function_call,
     
+    AST_initializer, // Used inside initializer lists.
+    AST_array_range, // GNU extension: array[1 ... 5] - only allowed in initializers.
+    
     // Statements
     AST_scope,
     
@@ -479,8 +482,6 @@ enum ast_kind{
     AST_embed,
     
     AST_panic, 
-    
-    AST_array_range, // GNU extension: array[1 ... 5] - only allowed in initializers.
     
     AST_count,
 };
@@ -687,10 +688,16 @@ struct ast_string_literal{
     u32 symbol_table_index; // needed for .obj (this should maybe be named unique_string_index as that is what it realy is)
 };
 
+struct initializer_list{
+    struct ast_initializer *first;
+    struct ast_initializer *last;
+    smm count;
+};
+
 struct ast_compound_literal{
     struct ast base;
     struct ast_declaration *decl;
-    struct ast_list assignment_list;
+    struct initializer_list assignment_list;
     
     smm trailing_array_size;
 };
@@ -742,6 +749,13 @@ struct ast_array_range{ // array[1 ... 5] - only allowed in initializers.
     struct ast *lhs;
     u64 start_index;
     u64 end_index;
+};
+
+struct ast_initializer{
+    struct ast base;
+    struct ast_initializer *next;
+    u64 offset;
+    struct ast *rhs; // @note: The lhs is implicit because this is part of an initializer_list
 };
 
 struct ast_return{

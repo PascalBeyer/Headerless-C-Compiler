@@ -1562,8 +1562,8 @@ func void emit_pdb_line_info_for_ast__recursive(struct pdb_write_context *contex
             if(decl->assign_expr->kind == AST_compound_literal){
                 // recurse into struct literals as these can be (and often are) multi line!
                 struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)decl->assign_expr;
-                for_ast_list(compound_literal->assignment_list){
-                    emit_pdb_line_info_for_ast__recursive(context, function, it->value);
+                for(struct ast_initializer *it = compound_literal->assignment_list.first; it; it = it->next){
+                    emit_pdb_line_info_for_ast__recursive(context, function, it->rhs);
                 }
                 break;
             }

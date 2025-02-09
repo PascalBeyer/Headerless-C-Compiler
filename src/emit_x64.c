@@ -2630,10 +2630,72 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 emit_memset(context, decl_location, 0);
             }
             
-            for_ast_list(compound_literal->assignment_list){
-                struct emit_location *loc = emit_code_for_ast(context, it->value);
-                if(loc) free_emit_location(context, loc);
+            smm base_offset = decl_location->offset;
+            
+            for(struct ast_initializer *initializer = compound_literal->assignment_list.first; initializer; initializer = initializer->next){
+                
+                decl_location->offset = base_offset + initializer->offset;
+                decl_location->size = initializer->base.resolved_type->size;
+                
+                struct ast_type *lhs_type = initializer->base.resolved_type;
+                
+                if(lhs_type->kind == AST_array_type && initializer->rhs->kind == AST_string_literal){
+                    // 
+                    // for 'char asd[] = "asd";' emit a memcpy
+                    // There are three cases:
+                    //     char asd[10] = "asd"; // copy the string literal zero the upper part of the buffer.
+                    //     char asd[4]  = "asd"; // copy the string literal including the null-terminator
+                    //     char asd[3]  = "asd"; // copy the string literal excluding the null-terminator
+                    //     
+                    
+                    struct ast_array_type   *array = (struct ast_array_type *)lhs_type;
+                    struct ast_string_literal *lit = (struct ast_string_literal *)initializer->rhs;
+                    
+                    initializer->rhs->byte_offset_in_function = to_s32(get_bytes_emitted(context));
+                    
+                    // Mark the string literal as being used.
+                    sll_push_back(context->string_literals, lit);
+                    context->string_literals.amount_of_strings += 1;
+                    
+                    smm array_size = array->amount_of_elements * array->element_type->size;
+                    if(array->is_of_unknown_size){
+                        // We are in an initializer like:
+                        // 
+                        // struct s{
+                        //     char array[];
+                        // } arst = {"hello :)"};
+                        // 
+                        // We have made sure to allocate enough space to hold the initializer.
+                        array_size = lit->value.size + array->element_type->size;
+                    }
+                    
+                    smm extra = (array_size == lit->value.size) ? 0 : array->element_type->size;
+                    
+                    if(array->is_of_unknown_size) decl_location->size = array_size;
+                    
+                    if(array_size > lit->value.size + extra){
+                        // @cleanup: We only would have to zero the upper part of the 'lhs'.
+                        emit_memset(context, decl_location, 0);
+                    }
+                    
+                    struct emit_location *rhs = emit_location_rip_relative(context, &lit->base, REGISTER_KIND_gpr, lit->value.size + extra);
+                    emit_memcpy(context, decl_location, rhs);
+                }else{
+                    struct emit_location *rhs = emit_code_for_ast(context, initializer->rhs);
+                    
+                    if(lhs_type->kind == AST_bitfield_type){
+                        struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)lhs_type;
+                        emit_store_bitfield(context, bitfield, decl_location, rhs);
+                    }else if(lhs_type->flags & TYPE_FLAG_is_atomic){
+                        emit_store_atomic_integer(context, decl_location, rhs);
+                    }else{
+                        emit_store(context, decl_location, rhs);
+                    }
+                }
             }
+            
+            decl_location->offset = base_offset;
+            decl_location->size   = decl->type->size;
             
             return decl_location;
         }break;
@@ -3348,7 +3410,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     // We have made sure to allocate enough space to hold the initializer.
                     array_size = lit->value.size + array->element_type->size;
                 }
-                
                 
                 smm extra = (array_size == lit->value.size) ? 0 : array->element_type->size;
                 

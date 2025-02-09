@@ -1730,34 +1730,35 @@ func struct ast *maybe_insert_implicit_assignment_cast_and_check_that_types_matc
 
 struct designator_node{
     struct designator_node *next;
-    struct ast *lhs;
+    struct ast_type *lhs_type;
+    smm offset_at;
     union{
         smm member_at;
         smm array_at;
     };
 };
 
-func struct ast *push_current_object_for_designator_node(struct context *context, struct designator_node *designator_node, struct token *site){
+func struct ast_type *get_current_object_type_for_designator_node(struct designator_node *designator_node){
     
-    struct ast *current_object = designator_node->lhs;
-    if(current_object->resolved_type->kind == AST_array_type){
-        struct ast *index = ast_push_s64_literal(context, site, designator_node->array_at);
-        current_object = push_nodes_for_subscript(context, current_object, index, site);
+    struct ast_type *current_object_type = designator_node->lhs_type;
+    if(current_object_type->kind == AST_array_type){
+        struct ast_array_type *array = (struct ast_array_type *)current_object_type;
+        current_object_type = array->element_type;
     }else{
-        struct ast_compound_type *compound = (struct ast_compound_type *)current_object->resolved_type;
-        current_object = push_dot_or_arrow(context, &compound->members[designator_node->member_at], current_object, AST_member, site);
+        struct ast_compound_type *compound = (struct ast_compound_type *)current_object_type;
+        current_object_type = compound->members[designator_node->member_at].type;
     }
-    return current_object;
+    return current_object_type;
 }
 
-func struct ast_list parse_initializer_list(struct context *context, struct ast *ast_to_initialize, smm *out_trailing_initializer_size){
+func struct initializer_list parse_initializer_list(struct context *context, struct ast_type *type_to_initialize, u64 base_offset, smm *out_trailing_initializer_size){
     
     struct token *initial_open_curly = next_token(context);
     assert(initial_open_curly->type == TOKEN_open_curly);
     
-    struct ast_list ret = {0};
+    struct initializer_list ret = {0};
     
-    if(ast_to_initialize->resolved_type->kind != AST_array_type && ast_to_initialize->resolved_type->kind != AST_struct && ast_to_initialize->resolved_type->kind != AST_union){
+    if(type_to_initialize->kind != AST_array_type && type_to_initialize->kind != AST_struct && type_to_initialize->kind != AST_union){
         // 
         // For an initializer like:
         //     int a = {1};
@@ -1771,7 +1772,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             // We found an initializer like 'int a = {{1}};', or '(int){{1}}'.
             // This is sort of stupid, but legal.
             // 
-            ret = parse_initializer_list(context, ast_to_initialize, out_trailing_initializer_size);
+            ret = parse_initializer_list(context, type_to_initialize, base_offset, out_trailing_initializer_size);
             expect_token(context, TOKEN_closed_curly, "Expected '}'."); // :Error, but it does not matter, noones ever going to see this.
             return ret;
         }
@@ -1798,13 +1799,16 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
         expect_token(context, TOKEN_closed_curly, "More than one member in initializer-list for scalar type.");
         
         initializer = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, initializer);
-        initializer = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, ast_to_initialize->resolved_type, ast_to_initialize->defined_type, initializer, initial_open_curly);
+        initializer = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type_to_initialize, /*ast_to_initialize->defined_type*/null, initializer, initial_open_curly); // @cleanup:
         
-        struct ast *assignment = ast_push_binary_expression(context, AST_assignment, initial_open_curly, ast_to_initialize, initializer);
+        struct ast_initializer *ast_initializer = push_expression(context, initializer->token, initializer);
+        ast_initializer->offset = base_offset;
+        ast_initializer->rhs    = initializer;
         
-        set_resolved_type(assignment, ast_to_initialize->resolved_type, ast_to_initialize->defined_type);
+        set_resolved_type(&ast_initializer->base, type_to_initialize, null); // @cleanup: defined type?
         
-        ast_list_append(&ret, context->arena, assignment);
+        sll_push_back(ret, ast_initializer);
+        ret.count += 1;
         
         return ret;
     }
@@ -1823,10 +1827,13 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
     //    struct => designator.lhs."designator.declaration_in_struct"
     //
     
-    struct designator_node initial_node = {.lhs = ast_to_initialize};
+    struct designator_node initial_node = {
+        .lhs_type = type_to_initialize,
+        .offset_at = base_offset,
+    };
     
-    if(ast_to_initialize->resolved_type->kind == AST_struct || ast_to_initialize->resolved_type->kind == AST_union){
-        struct ast_compound_type *ast_struct = (struct ast_compound_type *)ast_to_initialize->resolved_type;
+    if(type_to_initialize->kind == AST_struct || type_to_initialize->kind == AST_union){
+        struct ast_compound_type *ast_struct = (struct ast_compound_type *)type_to_initialize;
         
         if(!ast_struct->amount_of_members){
             //
@@ -1890,7 +1897,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
         // Figure out the current object.
         // It is either given by an explicit designator, or by the top of the designator stack.
         // 
-        struct ast *current_object = null;
+        struct ast_type *current_object_type = null;
         struct token *site = get_current_token_for_error_report(context);
         
         if(peek_token(context, TOKEN_dot) || peek_token(context, TOKEN_open_index)){
@@ -1905,12 +1912,12 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             
             do{
                 struct token *token = next_token(context);
-                current_object = designator_stack.first->lhs;
+                current_object_type = designator_stack.first->lhs_type;
                 
                 if(token->type == TOKEN_dot){
                     struct token *identifier = expect_token(context, TOKEN_identifier, "Expected an identifier after '.' in initializer list.");
                     
-                    struct ast_type *type = current_object->resolved_type;
+                    struct ast_type *type = current_object_type;
                     if(type->kind != AST_struct && type->kind != AST_union){
                         struct string type_string = push_type_string(context->arena, &context->scratch, type);
                         report_error(context, token, "Field designator '.%.*s' can only be used for structs or unions and not '%.*s'.", identifier->size, identifier->data, type_string.size, type_string.data);
@@ -1930,26 +1937,25 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                         goto error;
                     }
                     
-                    struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)_parser_ast_push(context, &context->ast_arena, token, sizeof(struct ast_dot_or_arrow), alignof(struct ast_dot_or_arrow), AST_member);
-                    dot->lhs = current_object;
-                    dot->member = found;
-                    set_resolved_type(&dot->base, found->type, found->defined_type);
+                    u64 new_offset = designator_stack.first->offset_at + found->offset_in_type;
                     
                     designator_stack.first->member_at = found - compound->members;
+                    designator_stack.first->offset_at = new_offset;
                     
                     struct designator_node *new_node = push_struct(&context->scratch, struct designator_node);
-                    new_node->lhs = &dot->base;
+                    new_node->lhs_type  = found->type;
+                    new_node->offset_at = new_offset;
                     sll_push_front(designator_stack, new_node);
                     
                 }else if(token->type == TOKEN_open_index){
                     
-                    if(current_object->resolved_type->kind != AST_array_type){
-                        struct string type_string = push_type_string(context->arena, &context->scratch, current_object->resolved_type);
+                    if(current_object_type->kind != AST_array_type){
+                        struct string type_string = push_type_string(context->arena, &context->scratch, current_object_type);
                         report_error(context, token, "Array designator can only be used for arrays and not '%.*s'.", type_string.size, type_string.data);
                         goto error;
                     }
                     
-                    struct ast_array_type *array = (struct ast_array_type *)current_object->resolved_type;
+                    struct ast_array_type *array = (struct ast_array_type *)current_object_type;
                     
                     struct ast *index = parse_expression(context, /*should_skip_comma_expression*/false);
                     if(index->kind != AST_integer_literal){
@@ -1975,6 +1981,8 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                         goto error;
                     }
                     
+                    #if 0
+                    // :ir_refactor 
                     if(peek_token(context, TOKEN_dotdotdot)){
                         struct token *dotdotdot = next_token(context);
                         // Gnu extension:
@@ -2020,12 +2028,16 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                             report_error(context, get_current_token(context), "Nested range designators are unsupported. (e.g.: `[1 .. 5][1 .. 3] = 1`).");
                         }
                         
-                        designator_stack.first->array_at = end_value;
+                        u64 new_offset = designator_stack.first->offset_at + end_value * array->element_type->size;
+                        designator_stack.first->array_at  = end_value;
+                        designator_stack.first->offset_at = new_offset;
                         
-                        struct ast_array_range *range_initializer = push_ast(context, dotdotdot, array_range); // :ir_refactor_not_sure_initializer
+                        struct ast_range_initializer *range_initializer = push_expression(context, dotdotdot, array_range);
+                        range_initializer->offset_at = new_offset;
+                        range_initializer->
                         range_initializer->start_index = value;
                         range_initializer->end_index = end_value;
-                        range_initializer->lhs = current_object;
+                        
                         set_resolved_type(&range_initializer->base, array->element_type, array->element_type_defined_type);
                         
                         check_for_basic_types__internal(context, &range_initializer->base, CHECK_basic, "@incomplete: Range designator", dotdotdot);
@@ -2034,7 +2046,10 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                         new_node->lhs = &range_initializer->base;
                         sll_push_front(designator_stack, new_node);
                         
-                    }else{
+                    }else
+                    #endif
+                    
+                    {
                         
                         // 
                         // "Normal" array designator:
@@ -2048,10 +2063,13 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                             goto error;
                         }
                         
-                        designator_stack.first->array_at = value;
+                        u64 new_offset = designator_stack.first->offset_at + value * array->element_type->size;
+                        designator_stack.first->array_at  = value;
+                        designator_stack.first->offset_at = new_offset;
                         
                         struct designator_node *new_node = push_struct(&context->scratch, struct designator_node);
-                        new_node->lhs = push_nodes_for_subscript(context, current_object, index, token);
+                        new_node->lhs_type  = array->element_type;
+                        new_node->offset_at = new_offset;
                         sll_push_front(designator_stack, new_node);
                     }
                 }
@@ -2060,11 +2078,11 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             site = expect_token(context, TOKEN_equals, "Expected an '=' after initializer designation.");
             
             // 
-            // At this point, the new current object is the top of the designator stack.
+            // At this point, the new current object type is the top of the designator stack.
             // This means that for the rest of the code, the 'designator_stack' is one too far.
             // Hence, we get the current object, and then pop it off the stack.
             // 
-            current_object = designator_stack.first->lhs;
+            current_object_type = designator_stack.first->lhs_type;
             sll_pop_front(designator_stack);
         }else{
             
@@ -2075,7 +2093,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 // but then the initializer list did not end and also did not have a designator, to reset 
                 // the current_object, therefore report an error!
                 //
-                struct ast_type *type = ast_to_initialize->resolved_type;
+                struct ast_type *type = type_to_initialize;
                 
                 if(type->kind == AST_struct || type->kind == AST_union){
                     struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
@@ -2092,7 +2110,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 goto error;
             }
             
-            current_object = push_current_object_for_designator_node(context, designator_stack.first, site);
+            current_object_type = get_current_object_type_for_designator_node(designator_stack.first);
         }
         
         // 
@@ -2112,7 +2130,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             // 
             
             smm trailing_sub_initializer_size = 0;
-            struct ast_list sub_initializers = parse_initializer_list(context, current_object, &trailing_sub_initializer_size);
+            struct initializer_list sub_initializers = parse_initializer_list(context, current_object_type, designator_stack.first->offset_at, &trailing_sub_initializer_size);
             
             // :trailing_arrays
             // 
@@ -2136,7 +2154,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             struct token *embed = next_token(context);
             struct string file_data = embed->string;
             struct designator_node *designator_node = designator_stack.first;
-            struct ast_array_type *array_type = (struct ast_array_type *)designator_node->lhs->resolved_type;
+            struct ast_array_type *array_type = (struct ast_array_type *)designator_node->lhs_type;
             
             if(array_type->base.kind != AST_array_type || array_type->element_type->size != 1){
                 // @cleanup: How correct is this?
@@ -2151,18 +2169,23 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 goto error;
             }
             
-            struct ast_embed *ast_embed = push_ast(context, embed, embed); // :ir_refactor_not_sure_initializer
+            struct ast_embed *ast_embed = push_expression(context, embed, embed);
             
-            struct ast *assignment = ast_push_binary_expression(context, AST_assignment, embed, current_object, &ast_embed->base);
-            set_resolved_type(assignment, current_object->resolved_type, current_object->defined_type);
-            ast_list_append(&ret, context->arena, assignment);
+            struct ast_initializer *initializer = push_expression(context, embed, initializer);
+            initializer->offset = designator_node->offset_at;
+            initializer->rhs = &ast_embed->base;
+            set_resolved_type(&initializer->base, current_object_type, null);
+            
+            sll_push_back(ret, initializer);
+            ret.count += 1;
             
             // @note: We need to add -1 here, because the code below assumes it was not incremented.
-            designator_node->array_at += (file_data.size - 1); 
+            designator_node->array_at  += (file_data.size - 1); 
+            designator_node->offset_at += (file_data.size - 1);
         }else{
             struct ast *expression = parse_expression(context, /*skip_comma_expression*/true);
             
-            if(designator_stack.first->member_at == 0 && expression->kind == AST_string_literal && designator_stack.first->lhs->resolved_type->kind == AST_array_type){
+            if(designator_stack.first->member_at == 0 && expression->kind == AST_string_literal && designator_stack.first->lhs_type->kind == AST_array_type){
                 // 
                 // The C-spec allows the initializer of a character array to be optionally brace enclosed.
                 // In this case, we end up here.
@@ -2177,13 +2200,13 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 //  
                 // 
                 
-                struct ast_array_type *wanted_array = (struct ast_array_type *)designator_stack.first->lhs->resolved_type;
+                struct ast_array_type *wanted_array = (struct ast_array_type *)designator_stack.first->lhs_type;
                 struct ast_array_type *given_array  = (struct ast_array_type *)expression->resolved_type;
                 
                 if(wanted_array->element_type->size == given_array->element_type->size){
                     
-                    // Pop one layer off the designator stack, making `designator_stack.first->lhs` the current object.
-                    current_object = designator_stack.first->lhs;
+                    // Pop one layer off the designator stack, making `designator_stack.first->lhs_type` the current object type.
+                    current_object_type = designator_stack.first->lhs_type;
                     sll_pop_front(designator_stack);
                     
                     if(wanted_array->is_of_unknown_size){
@@ -2193,10 +2216,13 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                         goto error;
                     }
                     
-                    struct ast *assignment = ast_push_binary_expression(context, AST_assignment, expression->token, current_object, expression);
-                    set_resolved_type(assignment, current_object->resolved_type, current_object->defined_type);
+                    struct ast_initializer *initializer = push_expression(context, expression->token, initializer);
+                    initializer->offset = designator_stack.first ? designator_stack.first->offset_at : base_offset;
+                    initializer->rhs    = expression;
+                    set_resolved_type(&initializer->base, current_object_type, null);
                     
-                    ast_list_append(&ret, context->arena, assignment);
+                    sll_push_back(ret, initializer);
+                    ret.count += 1;
                     
                     continue;
                 }
@@ -2205,12 +2231,12 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
             
             while(true){
                 
-                if(current_object->resolved_type->kind == AST_array_type && expression->kind == AST_string_literal){
+                if(current_object_type->kind == AST_array_type && expression->kind == AST_string_literal){
                     // 
                     // This is the case for:
                     //      struct { u8 array[8]; } asd = {"asd"};
                     // 
-                    struct ast_array_type *wanted_array = (struct ast_array_type *)current_object->resolved_type;
+                    struct ast_array_type *wanted_array = (struct ast_array_type *)current_object_type;
                     struct ast_array_type *given_array = (struct ast_array_type *)expression->resolved_type;
                     
                     if(wanted_array->element_type->size == given_array->element_type->size){
@@ -2222,28 +2248,35 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                             goto error;
                         }
                         
-                        struct ast *assignment = ast_push_binary_expression(context, AST_assignment, expression->token, current_object, expression);
-                        set_resolved_type(assignment, current_object->resolved_type, current_object->defined_type);
+                        struct ast_initializer *initializer = push_expression(context, expression->token, initializer);
+                        initializer->offset = designator_stack.first->offset_at;
+                        initializer->rhs    = expression;
+                        set_resolved_type(&initializer->base, current_object_type, null);
                         
-                        ast_list_append(&ret, context->arena, assignment);
+                        sll_push_back(ret, initializer);
+                        ret.count += 1;
                         break;
                     }
                 }
                 
-                if(types_are_equal(expression->resolved_type, current_object->resolved_type)){
+                if(types_are_equal(expression->resolved_type, current_object_type)){
                     //
                     // This checks for struct {v2 a;} a = { return_v2() };
                     //
                     
-                    struct ast *assignment = ast_push_binary_expression(context, AST_assignment, expression->token, current_object, expression);
-                    set_resolved_type(assignment, current_object->resolved_type, current_object->defined_type);
+                    struct ast_initializer *initializer = push_expression(context, expression->token, initializer);
+                    initializer->offset = designator_stack.first->offset_at;
+                    initializer->rhs    = expression;
+                    set_resolved_type(&initializer->base, current_object_type, null);
                     
-                    ast_list_append(&ret, context->arena, assignment);
+                    sll_push_back(ret, initializer);
+                    ret.count += 1;
+                    
                     break;
                 }
                 
                 struct designator_node *new_node = null;
-                struct ast_type *type = current_object->resolved_type;
+                struct ast_type *type = current_object_type;
                 
                 if(type->kind == AST_struct || type->kind == AST_union){
                     struct ast_compound_type *compound = (struct ast_compound_type *)type;
@@ -2257,24 +2290,30 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                     // Recurse into the sub struct or union.
                     // 
                     new_node = push_struct(&context->scratch, struct designator_node);
-                    new_node->lhs = current_object;
+                    new_node->lhs_type = current_object_type;
+                    new_node->offset_at = designator_stack.first->offset_at;
                     new_node->member_at = 0;
                 }else if(type->kind == AST_array_type){
                     new_node = push_struct(&context->scratch, struct designator_node);
-                    new_node->lhs = current_object;
+                    new_node->offset_at = designator_stack.first->offset_at;
+                    new_node->lhs_type = current_object_type;
                 }else{
                     expression = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expression);
-                    expression = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_object->resolved_type, current_object->defined_type, expression, site);
+                    expression = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_object_type, /*@cleanup*/null, expression, site);
                     
-                    struct ast *assignment = ast_push_binary_expression(context, AST_assignment, expression->token, current_object, expression);
-                    set_resolved_type(assignment, current_object->resolved_type, current_object->defined_type);
-                    ast_list_append(&ret, context->arena, assignment);
+                    struct ast_initializer *initializer = push_expression(context, expression->token, initializer);
+                    initializer->offset = designator_stack.first->offset_at;
+                    initializer->rhs    = expression;
+                    set_resolved_type(&initializer->base, current_object_type, null);
+                    
+                    sll_push_back(ret, initializer);
+                    ret.count += 1;
                     
                     break;
                 }
                 
                 sll_push_front(designator_stack, new_node);
-                current_object = push_current_object_for_designator_node(context, designator_stack.first, site);
+                current_object_type = get_current_object_type_for_designator_node(designator_stack.first);
             }
         }
         
@@ -2282,7 +2321,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
         
         while(true){
             struct designator_node *node = designator_stack.first;
-            struct ast_type *type = node->lhs->resolved_type;
+            struct ast_type *type = node->lhs_type;
             
             if(type->kind == AST_struct){
                 struct ast_compound_type *compound = (struct ast_compound_type *)type;
@@ -2293,6 +2332,11 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 // Skip the linear members once we are done with the nested type.
                 node->member_at += member->next_member_increment;
                 
+                if(node->member_at < compound->amount_of_members){
+                    struct compound_member *new_member = &compound->members[node->member_at];
+                    node->offset_at += new_member->offset_in_type - member->offset_in_type;
+                }
+                
                 if(!at_end && (node->member_at < compound->amount_of_members)) break;
                 
             }else if(type->kind == AST_union){
@@ -2302,6 +2346,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                 struct ast_array_type *array = (struct ast_array_type *)type;
                 
                 node->array_at++;
+                node->offset_at += array->element_type->size;
                 
                 if(array->is_of_unknown_size){
                     
@@ -2372,7 +2417,7 @@ func struct ast *parse_initializer(struct context *context, struct ast_identifie
         
         compound_literal->decl = lhs->decl;
         
-        compound_literal->assignment_list = parse_initializer_list(context, &lhs->base, &compound_literal->trailing_array_size);
+        compound_literal->assignment_list = parse_initializer_list(context, lhs->base.resolved_type, 0, &compound_literal->trailing_array_size);
         ret = &compound_literal->base;
         
         if(context->should_exit_statement) return ret;
@@ -3867,7 +3912,7 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                     compound_literal->decl = ident->decl;
                     compound_literal->decl->assign_expr = &compound_literal->base;
                     
-                    compound_literal->assignment_list = parse_initializer_list(context, &ident->base, &compound_literal->trailing_array_size);
+                    compound_literal->assignment_list = parse_initializer_list(context, ident->base.resolved_type, 0, &compound_literal->trailing_array_size);
                     if(context->should_exit_statement) return &ident->base;
                     
                     if(type_is_array_of_unknown_size(type_to_cast_to.type)){
@@ -4812,7 +4857,9 @@ case NUMBER_KIND_##type:{ \
                     // 
                     // Convert '(*function_pointer)()' to 'function_pointer()'.
                     // 
-                    operand = ((struct ast_unary_op *)operand)->operand;
+                    struct ast_unary_op *unary = (struct ast_unary_op *)operand;
+                    operand = unary->operand;
+                    pop_from_ast_arena(context, unary);
                 }
                 
                 struct token *call_token = test;
@@ -6521,12 +6568,30 @@ ast_stack[ast_stack_at-1] = ast;\
 break
             
             switch(ast->kind){
+                case AST_compound_literal:{
+                    // This one in mostly informative! Does not touch the stack.
+                    current += sizeof(struct ast_compound_literal);
+                    struct ast_compound_literal *compound = (struct ast_compound_literal *)ast;
+                    print("    %p primary-compound_literal %p\n", ast, compound->decl);
+                }break;
+                
+                case AST_initializer:{
+                    current += sizeof(struct ast_initializer);
+                    struct ast_initializer *initializer = (struct ast_initializer *)ast;
+                    print("    %p initializer 0x%llx <- %p\n", ast, initializer->offset, initializer->rhs);
+                    
+                    if(!ast_stack_at || ast_stack[ast_stack_at-1] != initializer->rhs){
+                        print(">>>> Wrong!\n");
+                        os_panic(1);
+                    }
+                    
+                    ast_stack_at -= 1;
+                }break;
                 
                 primary(identifier);
                 primary(string_literal);
                 primary(integer_literal);
                 primary(float_literal);
-                primary(compound_literal);
                 primary(pointer_literal);
                 case AST_pointer_literal_deref:{
                     current += sizeof(struct ast_pointer_literal);

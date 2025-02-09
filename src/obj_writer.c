@@ -2245,11 +2245,14 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                                 push_uninitialized_data(&stack_arena, struct ast_stack_node, assignment_list_count);
                             }
                             
+                            #if 0
                             smm assignment_index = 0;
-                            for_ast_list(compound_literal->assignment_list){
-                                stack[(ast_stack_size - 1) - assignment_index++].ast = it->value;
+                            for(struct ast_initializer *it = lit->assignment_list.first; it; it = it->next){
+                                stack[(ast_stack_size - 1) - assignment_index++].ast = it->rhs;
                             }
                             assert(assignment_index == assignment_list_count);
+                            #endif
+                            not_implemented;
                         }break;
                         
                         // 
