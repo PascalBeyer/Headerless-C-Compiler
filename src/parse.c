@@ -628,29 +628,28 @@ func struct ast_type *perform_usual_arithmetic_conversions(struct ast_type *lhs,
     invalid_code_path;
 }
 
-
-func void maybe_insert_arithmetic_conversion_casts(struct context *context, struct ast_binary_op *op){
+func void maybe_insert_arithmetic_conversion_casts(struct context *context, struct ast **op_lhs, struct ast **op_rhs){
     
-    op->lhs = maybe_insert_cast_from_special_int_to_int(context, op->lhs);
-    op->rhs = maybe_insert_cast_from_special_int_to_int(context, op->rhs);
+    *op_lhs = maybe_insert_cast_from_special_int_to_int(context, *op_lhs);
+    *op_rhs = maybe_insert_cast_from_special_int_to_int(context, *op_rhs);
     
-    if(!type_is_arithmetic(op->lhs->resolved_type) || !type_is_arithmetic(op->rhs->resolved_type)) return;
+    if(!type_is_arithmetic((*op_lhs)->resolved_type) || !type_is_arithmetic((*op_rhs)->resolved_type)) return;
     
-    struct ast_type *promoted_type = perform_usual_arithmetic_conversions(op->lhs->resolved_type, op->rhs->resolved_type);
+    struct ast_type *promoted_type = perform_usual_arithmetic_conversions((*op_lhs)->resolved_type, (*op_rhs)->resolved_type);
     if(!promoted_type) return;
     
-    if(op->lhs->resolved_type != promoted_type){
+    if((*op_lhs)->resolved_type != promoted_type){
         // :retain_type_information_through_promotion
         // if it was promoted, we retain the information about the actual size in the defined_type
-        struct ast *defined_type = op->lhs->defined_type;
-        if(!defined_type) defined_type = (struct ast *)op->lhs->resolved_type;
-        op->lhs = push_cast(context, promoted_type, defined_type, op->lhs);
+        struct ast *defined_type = (*op_lhs)->defined_type;
+        if(!defined_type) defined_type = (struct ast *)(*op_lhs)->resolved_type;
+        *op_lhs = push_cast(context, promoted_type, defined_type, *op_lhs);
     }
     
-    if(op->rhs->resolved_type != promoted_type){
-        struct ast *defined_type = op->rhs->defined_type;
-        if(!defined_type) defined_type = (struct ast *)op->rhs->resolved_type;
-        op->rhs = push_cast(context, promoted_type, defined_type, op->rhs);
+    if((*op_rhs)->resolved_type != promoted_type){
+        struct ast *defined_type = (*op_rhs)->defined_type;
+        if(!defined_type) defined_type = (struct ast *)(*op_rhs)->resolved_type;
+        *op_rhs = push_cast(context, promoted_type, defined_type, *op_rhs);
     }
 }
 
@@ -1418,71 +1417,73 @@ func struct ast *maybe_load_address_for_array_or_function(struct context *contex
     return ast;
 }
 
-func struct ast *handle_pointer_arithmetic(struct context *context, struct ast *binary_op){
-    struct ast_binary_op *op = cast(struct ast_binary_op *)binary_op;
+func struct ast *handle_pointer_arithmetic(struct context *context, enum ast_kind ast_kind, struct token *token, struct ast *op_lhs, struct ast *op_rhs){
     
     // @cleanup: where do we check for void?
     
     // op should probably be either '+', '-', '+=' or '-=' but whatever
     
-    struct token *token = op->base.token;
-    struct ast *pointer = op->lhs;
-    struct ast *integer = op->rhs;
+    struct ast *pointer = op_lhs;
+    struct ast *integer = op_rhs;
     
     assert(integer->resolved_type->kind == AST_integer_type);
     assert(pointer->resolved_type->kind == AST_pointer_type);
     struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)pointer->resolved_type;
     
-    set_resolved_type(binary_op, &pointer_type->base, pointer->defined_type);
+    if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer_type->pointer_to)) return pointer;
     
-    if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer_type->pointer_to)) return binary_op;
     struct ast_type *deref_type = pointer_type->pointer_to;
     
     if(deref_type == &globals.typedef_void){
         report_error(context, token, "Cannot use pointer arithmetic on pointer to 'void'.");
-        return binary_op;
+        return integer;
     }
     
     if(deref_type->kind == AST_function_type){
         report_error(context, token, "Cannot use pointer arithmetic on function-pointer.");
-        return binary_op;
+        return integer;
     }
     
     assert(deref_type->size >= 0);
     
     struct ast *ret;
-    if(integer->kind == AST_integer_literal){
+    if(integer->kind == AST_integer_literal && pointer->kind == AST_pointer_literal){
         struct ast_integer_literal *lit = cast(struct ast_integer_literal *)integer;
         
-        if(pointer->kind == AST_pointer_literal){
-            struct ast_pointer_literal *pointer_lit = cast(struct ast_pointer_literal *)pointer;
-            if(binary_op->kind == AST_binary_plus){
-                pointer_lit->pointer += integer_literal_as_s64(integer);
-            }else{
-                pointer_lit->pointer -= integer_literal_as_s64(integer);
-            }
-            ret = pointer;
+        struct ast_pointer_literal *pointer_lit = cast(struct ast_pointer_literal *)pointer;
+        if(ast_kind == AST_binary_plus){
+            pointer_lit->pointer += integer_literal_as_s64(integer);
         }else{
-            // Upconvert to s64.
-            lit->_s64 = integer_literal_as_s64(integer);
+            pointer_lit->pointer -= integer_literal_as_s64(integer);
+        }
+        ret = pointer;
+        
+        pop_from_ast_arena(context, lit); // @cleanup: for now assume 'pointer + integer'
+    }else if(integer->kind == AST_integer_literal){
+        struct ast_integer_literal *lit = cast(struct ast_integer_literal *)integer;
+        
+        // Upconvert to s64.
+        lit->_s64 = integer_literal_as_s64(integer);
+        
+        if(lit->_s64 == 0){
+            ret = pointer;
+            pop_from_ast_arena(context, lit); // @cleanup: for now assume 'pointer + integer'
+        }else{
             
-            if(lit->_s64 != 0){
-                
-                // @cleanup: Check for compile time overflow?
-                if(type_is_signed(lit->base.resolved_type)){
-                    lit->_s64 *= deref_type->size;
-                }else{
-                    lit->_u64 *= deref_type->size;
-                }
-                
-                set_resolved_type(&lit->base, &globals.typedef_u64, null);
-                op->rhs = &lit->base;
-                ret = &op->base;
+            // @cleanup: Check for compile time overflow?
+            if(type_is_signed(lit->base.resolved_type)){
+                lit->_s64 *= deref_type->size;
             }else{
-                ret = pointer;
+                lit->_u64 *= deref_type->size;
             }
+            
+            set_resolved_type(&lit->base, &globals.typedef_u64, null);
+            
+            ret = ast_push_binary_expression(context, ast_kind, token, pointer, integer);
+            set_resolved_type(ret, &pointer_type->base, pointer->defined_type);
         }
     }else{
+        
         if(integer->resolved_type != &globals.typedef_s64){
             integer = push_cast(context, &globals.typedef_s64, null, integer);
         }
@@ -1495,9 +1496,8 @@ func struct ast *handle_pointer_arithmetic(struct context *context, struct ast *
             integer = new_index;
         }
         
-        op->lhs = pointer;
-        op->rhs = integer;
-        ret = &op->base;
+        ret = ast_push_binary_expression(context, ast_kind, token, pointer, integer);
+        set_resolved_type(ret, &pointer_type->base, pointer->defined_type);
     }
     
     assert(ret->resolved_type == pointer->resolved_type);
@@ -2457,16 +2457,16 @@ func struct ast *parse_initializer(struct context *context, struct ast_identifie
 }
 
 // @note: for compare_exressions we set the resolved_type afterwards
-func struct ast *perform_float_operation(struct context *context, struct ast_binary_op *op){
-    struct ast_float_literal *lhs = (struct ast_float_literal *)op->lhs;
-    struct ast_float_literal *rhs = (struct ast_float_literal *)op->rhs;
+func struct ast *perform_float_operation(struct context *context, enum ast_kind binary_op, struct token *token, struct ast *op_lhs, struct ast *op_rhs){
+    struct ast_float_literal *lhs = (struct ast_float_literal *)op_lhs;
+    struct ast_float_literal *rhs = (struct ast_float_literal *)op_rhs;
     
     assert(lhs->base.kind == AST_float_literal && rhs->base.kind == AST_float_literal);
     // @cleanup: how to deal with float vs double
     
     s32 compare_value = -1;
     
-    switch(op->base.kind){
+    switch(binary_op){
         case AST_binary_times:            lhs->value *= rhs->value; break;
         case AST_binary_divide:           lhs->value /= rhs->value; break;
         case AST_binary_plus:             lhs->value += rhs->value; break;
@@ -2482,7 +2482,7 @@ func struct ast *perform_float_operation(struct context *context, struct ast_bin
     
     if(compare_value != -1){
         // "The result has type int".
-        return ast_push_s32_literal(context, op->base.token, compare_value);
+        return ast_push_s32_literal(context, token, compare_value);
     }
     
     return &lhs->base;
@@ -2490,6 +2490,7 @@ func struct ast *perform_float_operation(struct context *context, struct ast_bin
 
 // @note: for compare_exressions we set the resolved_type afterwards
 // @WARNING: This frees the 'op_rhs' from the `ast_arena`.
+// @cleanup: Revert this to take an ast_kind as well.
 func struct ast *perform_integer_operation(struct context *context, struct token *operation, struct ast *op_lhs, struct ast *op_rhs){
     struct ast_integer_literal *lhs = cast(struct ast_integer_literal *)op_lhs;
     struct ast_integer_literal *rhs = cast(struct ast_integer_literal *)op_rhs;
@@ -3752,7 +3753,7 @@ func struct ast_binary_op *punt_compound_assignment_with_unnamed_declaration(str
     set_resolved_type(deref, lhs->resolved_type, lhs->defined_type);
     
     struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, AST_binary_op, site, deref, rhs);
-    maybe_insert_arithmetic_conversion_casts(context, op);
+    maybe_insert_arithmetic_conversion_casts(context, &op->lhs, &op->rhs);
     assert(op->lhs->resolved_type == op->rhs->resolved_type);
     set_resolved_type(&op->base, op->lhs->resolved_type, op->lhs->defined_type);
     
@@ -5414,32 +5415,36 @@ case NUMBER_KIND_##type:{ \
             //    
             case AST_binary_times: case AST_binary_divide: case AST_binary_mod:{
                 
-                if(stack_entry->operand->kind == AST_integer_literal && operand->kind == AST_integer_literal){
-                    operand = perform_integer_operation(context, stack_entry->token, stack_entry->operand, operand);
+                struct ast *op_lhs = stack_entry->operand;
+                struct ast *op_rhs = operand;
+                
+                if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
+                    operand = perform_integer_operation(context, stack_entry->token, op_lhs, op_rhs);
                 }else{
-                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
+                    maybe_insert_arithmetic_conversion_casts(context, &op_lhs, &op_rhs);
                     
-                    if(!check_binary_for_basic_types(context, op, CHECK_integer | CHECK_float)) return operand;
-                    maybe_insert_arithmetic_conversion_casts(context, op);
-                    
-                    // @note: only checking the rhs works, because of the arithmetic conversion casts.
-                    if(op->base.kind == AST_binary_mod && op->rhs->resolved_type->kind == AST_float_type){
-                        report_error(context, op->base.token, "Operator '%%' is illegal for floats.");
-                        return operand;
-                    }
-                    
-                    if(op->lhs->kind == AST_float_literal && op->rhs->kind == AST_float_literal){
-                        operand = perform_float_operation(context, op);
+                    if(stack_entry->operand->kind == AST_float_literal && operand->kind == AST_float_literal){
+                        operand = perform_float_operation(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
                     }else{
-                        if(op->lhs->resolved_type != op->rhs->resolved_type){
-                            report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
+                        
+                        // @note: only checking the rhs works, because of the arithmetic conversion casts.
+                        if(ast_kind == AST_binary_mod && op_rhs->resolved_type->kind == AST_float_type){
+                            report_error(context, op_rhs->token, "Operator '%%' is illegal for floats.");
                             return operand;
                         }
                         
+                        if(op_lhs->resolved_type != op_rhs->resolved_type){
+                            report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, stack_entry->token);
+                            return operand;
+                        }
+                        
+                        struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
+                        if(!check_binary_for_basic_types(context, op, CHECK_integer | CHECK_float)) return operand;
+                        
                         // @note: For '%', the right hand side defined type "bounds" the lhs type as this is an and.
                         //        Hence, we simply reuse the defined type of the rhs.
-                        struct ast *defined_type = (ast_kind == AST_binary_mod) ? op->rhs->defined_type : defined_type_for_binary_op(op);
-                        set_resolved_type(&op->base, op->lhs->resolved_type, defined_type);
+                        struct ast *defined_type = (ast_kind == AST_binary_mod) ? op_rhs->defined_type : defined_type_for_binary_op(op);
+                        set_resolved_type(&op->base, op_lhs->resolved_type, defined_type);
                         
                         operand = &op->base;
                     }
@@ -5455,65 +5460,65 @@ case NUMBER_KIND_##type:{ \
             //    
             case AST_binary_plus: case AST_binary_minus:{
                 
-                if(stack_entry->operand->kind == AST_integer_literal && operand->kind == AST_integer_literal){
-                    operand = perform_integer_operation(context, stack_entry->token, stack_entry->operand, operand);
+                struct ast *op_lhs = stack_entry->operand;
+                struct ast *op_rhs = operand;
+                
+                if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
+                    operand = perform_integer_operation(context, stack_entry->token, op_lhs, op_rhs);
                 }else{
-                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
+                    op_lhs = maybe_load_address_for_array_or_function(context, op_lhs);
+                    op_rhs = maybe_load_address_for_array_or_function(context, op_rhs);
                     
-                    // @cleanup: I think this check should be later for only arithmetic types
-                    if(!check_binary_for_basic_types(context, op, CHECK_basic)) return operand;
-                    op->lhs = maybe_load_address_for_array_or_function(context, op->lhs);
-                    op->rhs = maybe_load_address_for_array_or_function(context, op->rhs);
+                    maybe_insert_arithmetic_conversion_casts(context, &op_lhs, &op_rhs);
                     
-                    op->lhs = maybe_insert_cast_from_special_int_to_int(context, op->lhs);
-                    op->rhs = maybe_insert_cast_from_special_int_to_int(context, op->rhs);
-                    
-                    
-                    struct ast *handled = null;
-                    // @cleanup: interger + pointer is legal, integer - pointer is not.
-                    if(op->lhs->resolved_type->kind == AST_pointer_type && op->rhs->resolved_type->kind == AST_integer_type){
-                        // 'pointer + integer', 'pointer - integer',
-                        handled = handle_pointer_arithmetic(context, &op->base);
-                    }else if(op->base.kind == AST_binary_minus){
+                    // @note: interger + pointer is legal, integer - pointer is not.
+                    if(op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_integer_type){
+                        // 'pointer + integer', 'pointer - integer'
+                        operand = handle_pointer_arithmetic(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
+                    }else if(ast_kind == AST_binary_minus && op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_pointer_type){
                         // 'pointer - pointer'
                         
-                        if(op->lhs->resolved_type->kind == AST_pointer_type && op->rhs->resolved_type->kind == AST_pointer_type){
-                            if(!types_are_equal(op->lhs->resolved_type, op->rhs->resolved_type)){
-                                report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
-                                return operand;
-                            }
-                            set_resolved_type(&op->base, &globals.typedef_s64, null);
-                            
-                            struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op->lhs->resolved_type;
-                            struct ast *size = ast_push_s64_literal(context, op->base.token, pointer->pointer_to->size);
-                            handled = ast_push_binary_expression(context, AST_binary_divide, op->base.token, &op->base, size);
-                            set_resolved_type(handled, &globals.typedef_s64, null);
+                        if(!types_are_equal(op_lhs->resolved_type, op_rhs->resolved_type)){
+                            report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, stack_entry->token);
+                            return operand;
                         }
-                    }else if(op->lhs->resolved_type->kind == AST_integer_type && op->rhs->resolved_type->kind == AST_pointer_type){
+                        
+                        // @cleanup: Constant propagate!
+                        
+                        // Subtract the two pointers.
+                        struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
+                        set_resolved_type(&op->base, &globals.typedef_s64, null);
+                        operand = &op->base;
+                        
+                        // Divide by the size.
+                        struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op_lhs->resolved_type;
+                        if(pointer->pointer_to->size != 1){ // @cleanup: 0?
+                            struct ast *size = ast_push_s64_literal(context, stack_entry->token, pointer->pointer_to->size);
+                            operand = ast_push_binary_expression(context, AST_binary_divide, stack_entry->token, &op->base, size);
+                        }
+                        set_resolved_type(operand, &globals.typedef_s64, null);
+                    }else if(op_lhs->resolved_type->kind == AST_integer_type && op_rhs->resolved_type->kind == AST_pointer_type){
                         // swap the arguments, as this is what 'handle_pointer_arithmetic' expects
                         // @cleanup: This is "incorrect", because we want to keep the execution order the same as it in the source code.
-                        struct ast *temp = op->rhs;
-                        op->rhs = op->lhs;
-                        op->lhs = temp;
-                        handled = handle_pointer_arithmetic(context, &op->base);
-                    }
-                    
-                    if(!handled){
-                        maybe_insert_arithmetic_conversion_casts(context, op);
                         
-                        if(op->lhs->kind == AST_float_literal && op->rhs->kind == AST_float_literal){
-                            handled = perform_float_operation(context, op);
-                        }else{
-                            if(op->lhs->resolved_type != op->rhs->resolved_type){
-                                report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
-                                return operand;
-                            }else{
-                                set_resolved_type(&op->base, op->lhs->resolved_type, defined_type_for_binary_op(op));
-                                handled = &op->base;
-                            }
+                        // :ir_refactor - This wont work anymore, because it will delete the wrong ast.
+                        operand = handle_pointer_arithmetic(context, ast_kind, stack_entry->token, op_rhs, op_lhs);
+                    }else if(op_lhs->kind == AST_float_literal && op_rhs->kind == AST_float_literal){
+                        operand = perform_float_operation(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
+                    }else{
+                        struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
+                        
+                        // @cleanup: I think this check should be later for only arithmetic types
+                        if(!check_binary_for_basic_types(context, op, CHECK_basic)) return operand;
+                        
+                        if(op->lhs->resolved_type != op->rhs->resolved_type){
+                            report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
+                            return operand;
                         }
+                        
+                        set_resolved_type(&op->base, op->lhs->resolved_type, defined_type_for_binary_op(op));
+                        operand = &op->base;
                     }
-                    operand = handled;
                 }
                 context->in_lhs_expression = false;
             }break;
@@ -5621,14 +5626,25 @@ case NUMBER_KIND_##type:{ \
             case AST_binary_bigger:
             case AST_binary_smaller:{
 
-                if(stack_entry->operand->kind == AST_integer_literal && operand->kind == AST_integer_literal){
-                    operand = perform_integer_operation(context, stack_entry->token, stack_entry->operand, operand);
+                struct ast *op_lhs = stack_entry->operand;
+                struct ast *op_rhs = operand;
+                
+                if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
+                    operand = perform_integer_operation(context, stack_entry->token, op_lhs, op_rhs);
                     // "The result has type int."
                     set_resolved_type(operand, &globals.typedef_s32, null);
                     break;
                 }
                 
-                struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
+                maybe_insert_arithmetic_conversion_casts(context, &op_lhs, &op_rhs);
+                
+                if(op_lhs->kind == AST_float_literal && op_rhs->kind == AST_float_literal){
+                    // @note: perform_float_operation returns an 'AST_integer_literal' in this case
+                    operand = perform_float_operation(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
+                    break;
+                }
+                
+                struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
                 
                 op->lhs = maybe_load_address_for_array_or_function(context, op->lhs);
                 op->rhs = maybe_load_address_for_array_or_function(context, op->rhs);
@@ -5636,13 +5652,6 @@ case NUMBER_KIND_##type:{ \
                 if(!check_binary_for_basic_types(context, op, CHECK_basic)) return operand;
                 
                 maybe_cast_literal_0_to_void_pointer(context, &op->lhs, &op->rhs); // @cleanup: this seems sus to me, but all compilers seem to do this.
-                maybe_insert_arithmetic_conversion_casts(context, op);
-                
-                if(op->lhs->kind == AST_float_literal && op->rhs->kind == AST_float_literal){
-                    // @note: perform_float_operation returns an 'AST_integer_literal' in this case
-                    operand = perform_float_operation(context, op);
-                    break;
-                }
                 
                 struct ast_type *match = types_are_equal(op->lhs->resolved_type, op->rhs->resolved_type);
                 if(!match){
@@ -5669,14 +5678,25 @@ case NUMBER_KIND_##type:{ \
             case AST_binary_logical_equals:
             case AST_binary_logical_unequals:{
                 
-                if(stack_entry->operand->kind == AST_integer_literal && operand->kind == AST_integer_literal){
-                    operand = perform_integer_operation(context, stack_entry->token, stack_entry->operand, operand);
+                struct ast *op_lhs = stack_entry->operand;
+                struct ast *op_rhs = operand;
+                
+                if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
+                    operand = perform_integer_operation(context, stack_entry->token, op_lhs, op_rhs);
                     // "The result has type int."
                     set_resolved_type(operand, &globals.typedef_s32, null);
                     break;
                 }
                 
-                struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);;
+                maybe_insert_arithmetic_conversion_casts(context, &op_lhs, &op_rhs);
+                
+                if(op_lhs->kind == AST_float_literal && op_rhs->kind == AST_float_literal){
+                    // @note: perform_float_operation returns an 'AST_integer_literal' in this case
+                    operand = perform_float_operation(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
+                    break;
+                }
+                
+                struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
                 op->lhs = maybe_load_address_for_array_or_function(context, op->lhs);
                 op->rhs = maybe_load_address_for_array_or_function(context, op->rhs);
                 
@@ -5684,13 +5704,6 @@ case NUMBER_KIND_##type:{ \
                 
                 maybe_insert_cast_from_void_pointer(context, &op->lhs, &op->rhs);
                 maybe_cast_literal_0_to_void_pointer(context, &op->lhs, &op->rhs);
-                maybe_insert_arithmetic_conversion_casts(context, op);
-                
-                if(op->lhs->kind == AST_float_literal && op->rhs->kind == AST_float_literal){
-                    // @note: perform_float_operation returns an 'AST_integer_literal' in this case
-                    operand = perform_float_operation(context, op);
-                    break;
-                }
                 
                 struct ast_type *match = types_are_equal(op->lhs->resolved_type, op->rhs->resolved_type);
                 if(!match){
@@ -5734,7 +5747,7 @@ case NUMBER_KIND_##type:{ \
                     
                     if(!check_binary_for_basic_types(context, op, CHECK_integer)) return operand;
                     
-                    maybe_insert_arithmetic_conversion_casts(context, op);
+                    maybe_insert_arithmetic_conversion_casts(context, &op->lhs, &op->rhs);
                     
                     if(op->lhs->resolved_type != op->rhs->resolved_type){
                         report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
@@ -5776,7 +5789,7 @@ case NUMBER_KIND_##type:{ \
                     struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
                     
                     if(!check_binary_for_basic_types(context, op, CHECK_integer)) return operand;
-                    maybe_insert_arithmetic_conversion_casts(context, op);
+                    maybe_insert_arithmetic_conversion_casts(context, &op->lhs, &op->rhs);
                     
                     if(op->lhs->resolved_type != op->rhs->resolved_type){
                         report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
@@ -5814,7 +5827,7 @@ case NUMBER_KIND_##type:{ \
                     struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
                     
                     if(!check_binary_for_basic_types(context, op, CHECK_integer)) return operand;
-                    maybe_insert_arithmetic_conversion_casts(context, op);
+                    maybe_insert_arithmetic_conversion_casts(context, &op->lhs, &op->rhs);
                     
                     if(op->lhs->resolved_type != op->rhs->resolved_type){
                         report_type_mismatch_error(context, op->lhs->resolved_type, op->lhs->defined_type, op->rhs->resolved_type, op->rhs->defined_type, op->base.token);
@@ -5853,7 +5866,7 @@ case NUMBER_KIND_##type:{ \
                     }
                     operand = &lit->base;
                 }else{
-                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
+                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
                     operand = &op->base;
                 }
                 set_resolved_type(operand, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
@@ -5886,7 +5899,7 @@ case NUMBER_KIND_##type:{ \
                     }
                     operand = &lit->base;
                 }else{
-                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
+                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
                     operand = &op->base;
                 }
                 set_resolved_type(operand, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
@@ -6012,63 +6025,60 @@ case NUMBER_KIND_##type:{ \
             
             case AST_plus_assignment:
             case AST_minus_assignment:{
-                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
-                assignment->rhs = maybe_load_address_for_array_or_function(context, operand);
-                assignment->rhs = maybe_insert_cast_from_special_int_to_int(context, assignment->rhs);
+                struct ast *lhs = stack_entry->operand;
+                struct ast *rhs = maybe_insert_cast_from_special_int_to_int(context, operand);
                 
-                if(!check_binary_for_basic_types(context, assignment, CHECK_basic)) return operand;
+                struct ast_type *lhs_type = lhs->resolved_type;
+                struct ast_type *rhs_type = rhs->resolved_type;
                 
-                if(assignment->rhs->resolved_type->kind == AST_pointer_type){
-                    // the rhs should never be a pointer
-                    report_error(context, assignment->base.token, "Right of '%s' cannot be a pointer.", assignment->base.kind == AST_plus_assignment ? "+=" : "-=");
+                if(lhs_type->kind == AST_pointer_type){
+                    if(rhs_type->kind != AST_integer_type){
+                        report_error(context, stack_entry->token, "Left is a pointer type and the right is not an integer.");
+                        return operand;
+                    }
+                    
+                    operand = handle_pointer_arithmetic(context, ast_kind, stack_entry->token, lhs, rhs);
+                    context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
+                    break;
+                }
+                
+                rhs = maybe_load_address_for_array_or_function(context, rhs);
+                
+                if(rhs->resolved_type->kind == AST_pointer_type){
+                    // The rhs should never be a pointer.
+                    report_error(context, rhs->token, "Right of '%s' cannot be a pointer.", ast_kind == AST_plus_assignment ? "+=" : "-=");
                     return operand;
                 }
                 
-                struct ast_type *lhs_type = assignment->lhs->resolved_type;
-                struct ast_type *rhs_type = assignment->rhs->resolved_type;
+                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
                 
-                if(lhs_type->kind == AST_pointer_type){
-                    if(rhs_type->kind == AST_integer_type){
-                        struct ast *handled = handle_pointer_arithmetic(context, &assignment->base);
-                        
-                        if(handled != &assignment->base){
-                            //
-                            // This can happen if we get something like '(u8 *)0 + 1337'
-                            // which gets transformed into '(u8 *)1337'
-                            //
-                            assignment = (struct ast_binary_op *)handled; // @sigh: scarry cast
-                        }
-                    }else{
-                        report_error(context, assignment->base.token, "Left is a pointer type and the right is not an integer.");
-                        return operand;
-                    }
-                }else{
-                    b32 punt = false;
-                    
-                    if(lhs_type->kind == AST_integer_type && rhs_type->kind == AST_float_type){
-                        // punt on 'integer += float' and 'integer -= float'.
-                        // this is necessary as for example 'int i = 0x4000000; i += 1.0f;' yields 'i == 0x4000000'.
-                        punt = true;
-                    }else if(assignment->lhs->resolved_type == &globals.typedef_f32 && assignment->rhs->resolved_type == &globals.typedef_f64){
-                        // punt on 'float += double', this is necessary for example
-                        //     double var_00 = -1183312983.13;
-                        //     float  var_08 =  -282911132.13f;
-                        //     var_08 -= var_00;
-                        // @cleanup: search for a better example!
-                        punt = true;
-                    }
-                    
-                    if(assignment->lhs->resolved_type == &globals.typedef_Bool || (assignment->lhs->resolved_type->kind == AST_bitfield_type)) punt = 1;
-                    
-                    if(punt){
-                        enum ast_kind kind = assignment->base.kind == AST_plus_assignment ? AST_binary_plus : AST_binary_minus;
-                        assignment = punt_compound_assignment_with_unnamed_declaration(context, assignment, kind);
-                    }else{
-                        assignment->rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, assignment->lhs->resolved_type, assignment->lhs->defined_type, assignment->rhs, assignment->base.token);
-                        set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
-                    }
+                if(!check_binary_for_basic_types(context, assignment, CHECK_basic)) return operand;
+                
+                b32 punt = false;
+                
+                if(lhs_type->kind == AST_integer_type && rhs_type->kind == AST_float_type){
+                    // punt on 'integer += float' and 'integer -= float'.
+                    // this is necessary as for example 'int i = 0x4000000; i += 1.0f;' yields 'i == 0x4000000'.
+                    punt = true;
+                }else if(assignment->lhs->resolved_type == &globals.typedef_f32 && assignment->rhs->resolved_type == &globals.typedef_f64){
+                    // punt on 'float += double', this is necessary for example
+                    //     double var_00 = -1183312983.13;
+                    //     float  var_08 =  -282911132.13f;
+                    //     var_08 -= var_00;
+                    // @cleanup: search for a better example!
+                    punt = true;
                 }
                 
+                if(assignment->lhs->resolved_type == &globals.typedef_Bool || (assignment->lhs->resolved_type->kind == AST_bitfield_type)) punt = 1;
+                
+                if(punt){
+                    enum ast_kind kind = assignment->base.kind == AST_plus_assignment ? AST_binary_plus : AST_binary_minus;
+                    assignment = punt_compound_assignment_with_unnamed_declaration(context, assignment, kind);
+                }else{
+                    assignment->rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, assignment->lhs->resolved_type, assignment->lhs->defined_type, assignment->rhs, assignment->base.token);
+                    set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                }
+
                 operand = &assignment->base;
                 context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
             }break;
@@ -6411,7 +6421,7 @@ case NUMBER_KIND_##type:{ \
     // @note: This should never fire as we want to return early if there is an error deeper in the stack.
     assert(ast_stack_before == context->ast_stack_at);
     
-    if(1){
+    if(0){
         
         print("\nExpression:\n");
         
