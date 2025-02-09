@@ -4781,7 +4781,6 @@ case NUMBER_KIND_##type:{ \
                 context->in_lhs_expression = true;
             }break;
             case TOKEN_open_paren:{
-                struct ast_function_call *call = push_expression(context, test, function_call);
                 
                 if(operand->kind == AST_unary_deref && operand->resolved_type->kind == AST_function_type){
                     // 
@@ -4790,9 +4789,9 @@ case NUMBER_KIND_##type:{ \
                     operand = ((struct ast_unary_op *)operand)->operand;
                 }
                 
-                if(operand->kind == AST_identifier) call->base.token = operand->token;
+                struct token *call_token = test;
                 
-                call->identifier_expression = operand;
+                if(operand->kind == AST_identifier) call_token = operand->token;
                 
                 struct ast_type *type = operand->resolved_type;
                 if(type->kind == AST_pointer_type){
@@ -4817,10 +4816,6 @@ case NUMBER_KIND_##type:{ \
                 maybe_resolve_unresolved_type_or_sleep_or_error(context, &function_type->return_type);
                 if(context->should_exit_statement) return operand;
                 
-                set_resolved_type(&call->base, function_type->return_type, function_type->return_type_defined_type);
-                operand = &call->base;
-                context->in_lhs_expression = false;
-                
                 if(function_type->flags & FUNCTION_TYPE_FLAGS_is_printlike){
                     //
                     // For a printlike function we do the parameter parsing ourselves.
@@ -4832,11 +4827,21 @@ case NUMBER_KIND_##type:{ \
                     //         In this case we will _infer_ a 'format' argument.
                     //
                     
+                    // @incomplete: This has the wrong order for the new system. :ir_refactor
+                    struct ast_function_call *call = push_expression(context, call_token, function_call);
+                    call->identifier_expression = operand;
+                    
+                    set_resolved_type(&call->base, function_type->return_type, function_type->return_type_defined_type);
+                    operand = &call->base;
+                    context->in_lhs_expression = false;
+                    
                     struct ast *error = check_call_to_printlike_function(context, call, operand);
                     if(error) return error;
                     
                     break;
                 }
+                
+                struct ast_list call_arguments = zero_struct;
                 
                 struct ast_list_node* function_argument_iterator = function_type->argument_list.first;
                 if(!peek_token_eat(context, TOKEN_closed_paren)){
@@ -4860,7 +4865,7 @@ case NUMBER_KIND_##type:{ \
                         }else{
                             if(!(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs)){
                                 // :Error
-                                report_error(context, call->base.token, "Too many arguments to function.");
+                                report_error(context, call_token, "Too many arguments to function.");
                                 return operand;
                             }else{
                                 
@@ -4872,7 +4877,7 @@ case NUMBER_KIND_##type:{ \
                             }
                         }
                         
-                        ast_list_append(&call->call_arguments, context->arena, expr);
+                        ast_list_append(&call_arguments, context->arena, expr);
                         
                         if(!peek_token_eat(context, TOKEN_comma)) break;
                         if(peek_token(context, TOKEN_closed_paren)) break; // Allow trailling ',' in function calls.
@@ -4880,13 +4885,13 @@ case NUMBER_KIND_##type:{ \
                     expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of parameter list.");
                 }
                 
-                if(function_type->argument_list.count > call->call_arguments.count){
+                if(function_type->argument_list.count > call_arguments.count){
                     // :Error
                     begin_error_report(context);
                     struct string type_string = push_type_string(&context->scratch, &context->scratch, &function_type->base);
-                    report_error(context, call->base.token, "Too few arguments to function of type '%.*s'.", type_string.size, type_string.data);
-                    if(call->identifier_expression->kind == AST_identifier){
-                        struct ast_identifier *ident = (struct ast_identifier *)call->identifier_expression;
+                    report_error(context, call_token, "Too few arguments to function of type '%.*s'.", type_string.size, type_string.data);
+                    if(operand->kind == AST_identifier){
+                        struct ast_identifier *ident = (struct ast_identifier *)operand;
                         report_error(context, ident->decl->base.token, "... Here is the declaration of the function.");
                     }
                     end_error_report(context);
@@ -4897,6 +4902,12 @@ case NUMBER_KIND_##type:{ \
                     context->current_statement_returns_a_value = 1;
                 }
                 
+                struct ast_function_call *call = push_expression(context, call_token, function_call);
+                call->identifier_expression = operand;
+                call->call_arguments = call_arguments;
+                
+                set_resolved_type(&call->base, function_type->return_type, function_type->return_type_defined_type);
+                operand = &call->base;
                 context->in_lhs_expression = false;
             }break;
             default:{
@@ -6393,7 +6404,7 @@ case NUMBER_KIND_##type:{ \
     // @note: This should never fire as we want to return early if there is an error deeper in the stack.
     assert(ast_stack_before == context->ast_stack_at);
     
-    if(0){
+    if(1){
         
         print("\nExpression:\n");
         
