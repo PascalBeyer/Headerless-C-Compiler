@@ -2084,7 +2084,7 @@ func b32 evaluate_static_address(struct context *context, struct ast *rhs, struc
         
         case AST_unary_deref:{
             struct ast_unary_op *deref = (struct ast_unary_op *)rhs;
-            if(deref->operand->kind == AST_implicit_address_conversion){
+            if(deref->operand->kind == AST_implicit_address_conversion || deref->operand->kind == AST_implicit_address_conversion_lhs){
                 struct ast_unary_op *address_conversion = (struct ast_unary_op *)deref->operand;
                 rhs = address_conversion->operand;
             }else{
@@ -2350,16 +2350,16 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
                 struct ast_binary_op *binary = (struct ast_binary_op *)rhs;
                 
                 // 
-                // Ignore casts to 64-bit (poinre sized) things.
+                // Ignore casts to 64-bit (pointer sized) things.
                 // 
                 struct ast *binary_rhs = binary->rhs;
-                while(binary_rhs->kind == AST_cast && binary_rhs->resolved_type->size == 8){
+                while((binary_rhs->kind == AST_cast || binary_rhs->kind == AST_cast_lhs) && binary_rhs->resolved_type->size == 8){
                     struct ast_unary_op *cast = (struct ast_unary_op *)binary_rhs;
                     binary_rhs = cast->operand;
                 }
                 
                 struct ast *binary_lhs = binary->lhs;
-                while(binary_lhs->kind == AST_cast && binary_lhs->resolved_type->size == 8){
+                while((binary_lhs->kind == AST_cast || binary_lhs->kind == AST_cast_lhs) && binary_lhs->resolved_type->size == 8){
                     struct ast_unary_op *cast = (struct ast_unary_op *)binary_lhs;
                     binary_lhs = cast->operand;
                 }
@@ -2372,9 +2372,9 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
                     offset_lhs = (smm)((struct ast_pointer_literal *)binary_lhs)->pointer;
                 }else if(binary_lhs->kind == AST_integer_literal){
                     offset_lhs = integer_literal_as_s64(binary_lhs);
-                }else if(binary_lhs->kind == AST_implicit_address_conversion || binary_lhs->kind == AST_unary_address || binary_lhs->kind == AST_cast){
-                    while(binary_lhs->kind == AST_cast){
-                    }
+                }else if(binary_lhs->kind == AST_implicit_address_conversion || binary_lhs->kind == AST_implicit_address_conversion_lhs || binary_lhs->kind == AST_unary_address || binary_lhs->kind == AST_cast || binary_lhs->kind == AST_cast_lhs){
+                    // while(binary_lhs->kind == AST_cast){ // Uhh, wat. Why was this here? :ir_refactor 
+                    // }
                     int error = evaluate_static_address(context, binary_lhs, &patch_lhs, &offset_lhs);
                     if(error) return 1;
                 }else{
@@ -2388,7 +2388,7 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
                     offset_rhs = (smm)((struct ast_pointer_literal *)binary_rhs)->pointer;
                 }else if(binary_rhs->kind == AST_integer_literal){
                     offset_rhs = integer_literal_as_s64(binary_rhs);
-                }else if(binary_rhs->kind == AST_implicit_address_conversion || binary_rhs->kind == AST_unary_address){
+                }else if(binary_rhs->kind == AST_implicit_address_conversion || binary_rhs->kind == AST_implicit_address_conversion_lhs || binary_rhs->kind == AST_unary_address){
                     int error = evaluate_static_address(context, binary_rhs, &patch_rhs, &offset_rhs);
                     if(error) return 1;
                 }else{
@@ -2408,7 +2408,7 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
                 }
             }break;
             
-            case AST_implicit_address_conversion: case AST_unary_address:{
+            case AST_implicit_address_conversion_lhs: case AST_implicit_address_conversion: case AST_unary_address:{
                 
                 struct ast *patch_ast = null; // Either a 'AST_declartation' or 'AST_string_literal'.
                 smm offset_in_rhs = 0;
@@ -2419,7 +2419,8 @@ func b32 evaluate_static_initializer__internal(struct context *context, struct a
                 emit_patch(context, PATCH_absolute, patch_ast, offset_in_rhs, patch_declaration, offset, -1);
             }break;
             
-            case AST_cast:{
+            case AST_cast:
+            case AST_cast_lhs:{
                 //
                 // We should only get here for casts of a pointer to an integer/pointer, 
                 // everything else should have been constant propagated, or is not constant.

@@ -6425,6 +6425,9 @@ case NUMBER_KIND_##type:{ \
         
         print("\nExpression:\n");
         
+        struct ast *ast_stack[1024];
+        smm ast_stack_at = 0;
+        
         for(u8 *current = start_in_ast_arena; current < arena_current(&context->ast_arena); ){
             struct ast *ast = (void *)current;
             struct string string = ast->token->string;
@@ -6432,20 +6435,33 @@ case NUMBER_KIND_##type:{ \
 #define primary(ast_kind) \
 case AST_##ast_kind: \
 current += sizeof(struct ast_##ast_kind);\
-print("    primary-" #ast_kind ": %.*s\n", string.size, string.data); \
+print("    %p primary-" #ast_kind ": %.*s\n", ast, string.size, string.data); \
+ast_stack[ast_stack_at++] = ast;\
 break
             
 #define unary(ast_kind) \
 case AST_##ast_kind: \
 current += sizeof(struct ast_unary_op);\
-print("    unary-" #ast_kind ": %.*s\n", string.size, string.data); \
+print("    %p unary-" #ast_kind ": %.*s %p\n", ast, string.size, string.data, ((struct ast_unary_op *)ast)->operand); \
+if(!ast_stack_at || ast_stack[ast_stack_at-1] != ((struct ast_unary_op *)ast)->operand){\
+    print(">>>> Wrong!\n");\
+}\
+if(!ast_stack_at) ast_stack_at += 1;\
+ast_stack[ast_stack_at-1] = ast;\
 break
             
             
 #define binary(ast_kind) \
 case AST_##ast_kind: \
 current += sizeof(struct ast_binary_op);\
-print("    binary-" #ast_kind ": %.*s\n", string.size, string.data); \
+print("    %p binary-" #ast_kind ": %.*s %p %p\n", ast, string.size, string.data, ((struct ast_binary_op *)ast)->lhs, ((struct ast_binary_op *)ast)->rhs); \
+if(ast_stack_at < 2 || ast_stack[ast_stack_at-2] != ((struct ast_binary_op *)ast)->lhs || ast_stack[ast_stack_at-1] != ((struct ast_binary_op *)ast)->rhs){\
+    print(">>>> Wrong!\n");\
+    os_panic(1);\
+}\
+if(ast_stack_at >= 2) ast_stack_at -= 1;\
+if(!ast_stack_at) ast_stack_at += 1;\
+ast_stack[ast_stack_at-1] = ast;\
 break
             
             switch(ast->kind){
@@ -6458,7 +6474,8 @@ break
                 primary(pointer_literal);
                 case AST_pointer_literal_deref:{
                     current += sizeof(struct ast_pointer_literal);
-                    print("    primary-AST_pointer_literal_deref: %.*s\n", string.size, string.data);
+                    print("    %p primary-AST_pointer_literal_deref: %.*s\n", ast, string.size, string.data);
+                    ast_stack[ast_stack_at++] = ast;
                 }break;
                 
                 unary(cast);
@@ -6520,18 +6537,65 @@ break
                     current += sizeof(struct ast_dot_or_arrow);
                     struct ast_dot_or_arrow *dot_or_arrow = (struct ast_dot_or_arrow *)ast;
                     char *kind_string = ast->kind == AST_member ? "member" : "member_deref";
-                    print("    %s %.*s\n", kind_string, dot_or_arrow->member->name->size, dot_or_arrow->member->name->data);
+                    print("    %p %s %.*s\n", ast, kind_string, dot_or_arrow->member->name->size, dot_or_arrow->member->name->data);
+                    
+                    if(!ast_stack_at || ast_stack[ast_stack_at-1] != dot_or_arrow->lhs){
+                        print(">>>> Wrong!\n");
+                        os_panic(1);
+                    }
+                    
+                    if(!ast_stack_at) ast_stack_at += 1;
+                    ast_stack[ast_stack_at-1] = ast;
                 }break;
                 
                 case AST_function_call:{
                     current += sizeof(struct ast_function_call);
                     struct ast_function_call *call = (struct ast_function_call *)ast;
-                    print("    function_call %lld arguments\n", call->call_arguments.count);
+                    print("    %p function_call %lld arguments %p(", ast, call->call_arguments.count, call->identifier_expression);
+                    for_ast_list(call->call_arguments){
+                        print("%p", it->value);
+                        if(it != call->call_arguments.last) print(", ");
+                    }
+                    print(")\n");
+                    
+                    smm args = call->call_arguments.count;
+                    if(args + 1 < ast_stack_at){
+                        print(">>>> Wrong! (too little args)\n");
+                        os_panic(1);
+                    }else if(call->identifier_expression != ast_stack[ast_stack_at - (args + 1)]){
+                        print(">>>> Wrong! Identifier expression\n");
+                        os_panic(1);
+                    }else{
+                        smm index = 0;
+                        int arg_wrong = 0;
+                        for_ast_list(call->call_arguments){
+                            if(ast_stack[ast_stack_at - args + index] != it->value){
+                                print(">>>> Argument %d Wrong! %p vs %p\n", index, ast_stack[ast_stack_at - args + index], it->value);
+                                arg_wrong = 1;
+                            }
+                            index++;
+                        }
+                        if(arg_wrong) os_panic(1);
+                    }
+                    
+                    if(ast_stack_at >= args + 1) ast_stack_at -= args;
+                    if(!ast_stack_at) ast_stack_at += 1;
+                    ast_stack[ast_stack_at-1] = ast;
                 }break;
                 
                 case AST_conditional_expression:{
                     current += sizeof(struct ast_conditional_expression);
-                    print("    conditional_expression\n");
+                    struct ast_conditional_expression *cond = (struct ast_conditional_expression *)ast;
+                    print("    %p conditional_expression %p ? %p : %p\n", ast, cond->condition, cond->if_true, cond->if_false);
+                    
+                    if(ast_stack_at < 3 || ast_stack[ast_stack_at-3] != cond->condition || ast_stack[ast_stack_at-2] != cond->if_true || ast_stack[ast_stack_at-1] != cond->if_false){
+                        print(">>>> Wrong!\n");
+                        os_panic(1);
+                    }
+                    
+                    if(ast_stack_at >= 3) ast_stack_at -= 2;
+                    if(!ast_stack_at) ast_stack_at += 1;
+                    ast_stack[ast_stack_at-1] = ast;
                 }break;
                 
                 default:{

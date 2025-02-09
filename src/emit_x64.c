@@ -2762,6 +2762,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             return emit_location_rip_relative(context, &lit->base, REGISTER_KIND_gpr, 8);
         }break;
         case AST_implicit_address_conversion:
+        case AST_implicit_address_conversion_lhs:
         case AST_unary_address:{
             struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
             struct emit_location *loc = emit_code_for_ast(context, op->operand);
@@ -4185,7 +4186,8 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             assert(return_type->kind == AST_integer_type || return_type->kind == AST_pointer_type);
             return emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
         }break;
-        case AST_cast:{
+        case AST_cast:
+        case AST_cast_lhs:{
             struct ast_unary_op *cast = cast(struct ast_unary_op *)ast;
             
             struct ast *cast_what = cast->operand;

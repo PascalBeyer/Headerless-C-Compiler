@@ -387,6 +387,11 @@ enum ast_kind{
     
     // Unary Expressions
     AST_cast,
+    AST_cast_lhs,
+    
+    AST_implicit_address_conversion, // Used if an array or a function is implicitly converted to a pointer.
+    AST_implicit_address_conversion_lhs,
+    
     AST_unary_postinc,
     AST_unary_preinc,
     AST_unary_postdec,
@@ -402,8 +407,6 @@ enum ast_kind{
     
     AST_sizeof,
     AST_alignof,
-    
-    AST_implicit_address_conversion, // Used if an array or a function is implicitly converted to a pointer.
     
     // Binary Expressions
     AST_binary_times,
