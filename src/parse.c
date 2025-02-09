@@ -1392,7 +1392,7 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
     return ret;
 }
 
-func struct ast *maybe_load_address_for_array_or_function(struct context *context, struct ast *ast){
+func struct ast *maybe_load_address_for_array_or_function(struct context *context, enum ast_kind rhs_or_lhs, struct ast *ast){
     
     if(ast->resolved_type->kind == AST_array_type){
         struct ast_array_type *array = cast(struct ast_array_type *)ast->resolved_type;
@@ -1404,13 +1404,13 @@ func struct ast *maybe_load_address_for_array_or_function(struct context *contex
             
             ast->kind = AST_pointer_literal;
         }else{
-            ast = ast_push_unary_expression(context, AST_implicit_address_conversion, ast->token, ast);
+            ast = ast_push_unary_expression(context, rhs_or_lhs, ast->token, ast);
         }
         
         struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, ast->token);
         set_resolved_type(ast, pointer_type, null);
     }else if(ast->resolved_type->kind == AST_function_type){
-        struct ast *address = ast_push_unary_expression(context, AST_implicit_address_conversion, ast->token, ast);
+        struct ast *address = ast_push_unary_expression(context, rhs_or_lhs, ast->token, ast);
         set_resolved_type(address, parser_push_pointer_type(context, ast->resolved_type, null, ast->token), null);
         ast = address;
     }
@@ -1791,7 +1791,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
         
         expect_token(context, TOKEN_closed_curly, "More than one member in initializer-list for scalar type.");
         
-        initializer = maybe_load_address_for_array_or_function(context, initializer);
+        initializer = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, initializer);
         initializer = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, ast_to_initialize->resolved_type, ast_to_initialize->defined_type, initializer, initial_open_curly);
         
         struct ast *assignment = ast_push_binary_expression(context, AST_assignment, initial_open_curly, ast_to_initialize, initializer);
@@ -2257,7 +2257,7 @@ func struct ast_list parse_initializer_list(struct context *context, struct ast 
                     new_node = push_struct(&context->scratch, struct designator_node);
                     new_node->lhs = current_object;
                 }else{
-                    expression = maybe_load_address_for_array_or_function(context, expression);
+                    expression = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expression);
                     expression = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_object->resolved_type, current_object->defined_type, expression, site);
                     
                     struct ast *assignment = ast_push_binary_expression(context, AST_assignment, expression->token, current_object, expression);
@@ -2444,7 +2444,7 @@ func struct ast *parse_initializer(struct context *context, struct ast_identifie
             }
             
         }else{
-            expr = maybe_load_address_for_array_or_function(context, expr);
+            expr = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expr);
             expr = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type, lhs->base.defined_type, expr, equals);
         }
         
@@ -2799,7 +2799,7 @@ func void get_pretty_print_string_for_type(struct context *context, struct strin
 }
 
 struct ast *maybe_insert_implicit_nodes_for_varargs_argument(struct context *context, struct ast *expr){
-    expr = maybe_load_address_for_array_or_function(context, expr);
+    expr = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expr);
     
     if(expr->resolved_type->kind == AST_integer_type || expr->resolved_type->kind == AST_bitfield_type){
         // "The integer promotions are performed on each argument."
@@ -2945,7 +2945,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
         
         if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return expr;
         
-        expr = maybe_load_address_for_array_or_function(context, expr);
+        expr = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expr);
         argument_node->value = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, decl->type, decl->defined_type, expr, expr->token);
     }
     
@@ -3679,7 +3679,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
     
     struct string new_format_string = string_list_flatten(pretty_print_list, context->arena);
     if(format_string_literal){
-        format_string_node->value = maybe_load_address_for_array_or_function(context, &format_string_literal->base);
+        format_string_node->value = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &format_string_literal->base);
         sll_push_back(new_call_arguments, format_string_node);
         new_call_arguments.count++;
     }else{
@@ -3693,7 +3693,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
         
         set_resolved_type(&format_string_literal->base, &type->base, null);
         
-        struct ast *implicit_address_conversion = maybe_load_address_for_array_or_function(context, &format_string_literal->base);
+        struct ast *implicit_address_conversion = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &format_string_literal->base);
         ast_list_append(&new_call_arguments, context->arena, implicit_address_conversion);
     }
     
@@ -4509,7 +4509,7 @@ case NUMBER_KIND_##type:{ \
             expect_token(context, TOKEN_open_paren, "Expected a '(' after '_Generic'.");
             
             struct ast *choice = parse_expression(context, /*skip_comma_expression*/1);
-            choice = maybe_load_address_for_array_or_function(context, choice);
+            choice = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, choice);
             choice = maybe_insert_cast_from_special_int_to_int(context, choice);
             
             struct ast *default_expression = null;
@@ -4758,7 +4758,7 @@ case NUMBER_KIND_##type:{ \
             case TOKEN_arrow:{
                 treat_dot_as_arrow_because_allow_dot_as_arrow_was_set_and_we_got_a_pointer_type_for_a_dot:;
                 
-                operand = maybe_load_address_for_array_or_function(context, operand); // Apperantly, you can use '->' on arrays.
+                operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand); // Apperantly, you can use '->' on arrays.
                 
                 if(operand->resolved_type->kind == AST_unresolved_type){
                     if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &operand->resolved_type)){
@@ -4870,7 +4870,7 @@ case NUMBER_KIND_##type:{ \
                             if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return expr;
                             
                             // "the arguments are implicitly converted, as if by assignment"
-                            expr = maybe_load_address_for_array_or_function(context, expr);
+                            expr = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expr);
                             expr = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, decl->type, decl->defined_type, expr, expr->token);
                             
                             function_argument_iterator = function_argument_iterator->next;
@@ -5191,21 +5191,20 @@ case NUMBER_KIND_##type:{ \
                 
                 // @cleanup: Const prop for pointer literals.
                 
-                struct ast *prefix = ast_push_unary_expression(context, ast_kind, stack_entry->token, operand);
-                struct ast_unary_op *op = (struct ast_unary_op *)prefix;
-                
-                operand = maybe_load_address_for_array_or_function(context, operand);
-                
-                if(!check_unary_for_basic_types(context, operand, CHECK_basic, op->base.token)) return operand;
+                operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 
                 if(operand->resolved_type->kind == AST_integer_type || operand->resolved_type->kind == AST_bitfield_type){
                     operand = maybe_insert_integer_promotion_cast(context, operand);
                 }
                 
+                struct ast *prefix = ast_push_unary_expression(context, ast_kind, stack_entry->token, operand);
+                struct ast_unary_op *op = (struct ast_unary_op *)prefix;
+                
+                if(!check_unary_for_basic_types(context, operand, CHECK_basic, op->base.token)) return operand;
+                
                 set_resolved_type(&op->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 context->in_lhs_expression = false;
                 
-                op->operand = operand;
                 operand = prefix; // sets in op->operand in the next iteration
             }break;
             
@@ -5292,7 +5291,7 @@ case NUMBER_KIND_##type:{ \
                 operand = prefix; // Sets in op->operand in the next iteration.
             }break;
             case AST_unary_deref:{
-                operand = maybe_load_address_for_array_or_function(context, operand);
+                operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 
                 if(operand->resolved_type->kind != AST_pointer_type){
                     report_error(context, operand->token, "Can only use '->' on a pointer type.");
@@ -5362,7 +5361,7 @@ case NUMBER_KIND_##type:{ \
                 struct ast *defined_type_to_cast_to = stack_entry->operand;
                 
                 // @cleanup: is this correct?
-                operand = maybe_load_address_for_array_or_function(context, operand);
+                operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 operand = maybe_insert_cast_from_special_int_to_int(context, operand);
                 
                 enum ast_kind kind_to_cast_to = type_to_cast_to->kind;
@@ -5466,8 +5465,8 @@ case NUMBER_KIND_##type:{ \
                 if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
                     operand = perform_integer_operation(context, stack_entry->token, op_lhs, op_rhs);
                 }else{
-                    op_lhs = maybe_load_address_for_array_or_function(context, op_lhs);
-                    op_rhs = maybe_load_address_for_array_or_function(context, op_rhs);
+                    op_lhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion_lhs, op_lhs);
+                    op_rhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, op_rhs);
                     
                     maybe_insert_arithmetic_conversion_casts(context, &op_lhs, &op_rhs);
                     
@@ -5646,8 +5645,8 @@ case NUMBER_KIND_##type:{ \
                 
                 struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
                 
-                op->lhs = maybe_load_address_for_array_or_function(context, op->lhs);
-                op->rhs = maybe_load_address_for_array_or_function(context, op->rhs);
+                op->lhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion_lhs, op->lhs);
+                op->rhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, op->rhs);
                 
                 if(!check_binary_for_basic_types(context, op, CHECK_basic)) return operand;
                 
@@ -5697,8 +5696,8 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
-                op->lhs = maybe_load_address_for_array_or_function(context, op->lhs);
-                op->rhs = maybe_load_address_for_array_or_function(context, op->rhs);
+                op->lhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion_lhs, op->lhs);
+                op->rhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, op->rhs);
                 
                 if(!check_binary_for_basic_types(context, op, CHECK_basic)) return operand;
                 
@@ -5846,7 +5845,7 @@ case NUMBER_KIND_##type:{ \
             //    lhs && rhs
             //    
             case AST_logical_and:{
-                operand = maybe_load_address_for_array_or_function(context, operand);
+                operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 
                 if(!casts_implicitly_to_bool(operand)){
                     // :Error pick a way to say this an stick to it
@@ -5880,7 +5879,7 @@ case NUMBER_KIND_##type:{ \
             //    lhs || rhs
             //    
             case AST_logical_or:{
-                operand = maybe_load_address_for_array_or_function(context, operand);
+                operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 
                 if(!casts_implicitly_to_bool(operand)){
                     report_error(context, operand->token, "Right of '||' has to be convertible to _Bool.");
@@ -5924,7 +5923,7 @@ case NUMBER_KIND_##type:{ \
                 struct ast *if_true   = stack_entry->other;
                 struct ast *if_false  = operand;
                 
-                if_false = maybe_load_address_for_array_or_function(context, operand);
+                if_false = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 if_false = maybe_insert_cast_from_special_int_to_int(context, if_false);
                 
                 // "one of the following shall hold":
@@ -5994,7 +5993,7 @@ case NUMBER_KIND_##type:{ \
             //    
             case AST_assignment:{
                 struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
-                assignment->rhs = maybe_load_address_for_array_or_function(context, operand);
+                assignment->rhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 assignment->rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, assignment->lhs->resolved_type, assignment->lhs->defined_type, assignment->rhs, assignment->base.token);
                 set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
                 
@@ -6042,7 +6041,7 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
-                rhs = maybe_load_address_for_array_or_function(context, rhs);
+                rhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, rhs);
                 
                 if(rhs->resolved_type->kind == AST_pointer_type){
                     // The rhs should never be a pointer.
@@ -6085,7 +6084,7 @@ case NUMBER_KIND_##type:{ \
             
             case AST_modulo_assignment:{
                 struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
-                assignment->rhs = maybe_load_address_for_array_or_function(context, operand);
+                assignment->rhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 
                 if(!check_binary_for_basic_types(context, assignment, CHECK_integer)) return operand;
                 
@@ -6150,7 +6149,7 @@ case NUMBER_KIND_##type:{ \
             case AST_divide_assignment:
             case AST_times_assignment:{
                 struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
-                assignment->rhs = maybe_load_address_for_array_or_function(context, operand);
+                assignment->rhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 if(!check_binary_for_basic_types(context, assignment, CHECK_integer|CHECK_float)) return operand;
                 
                 struct ast_type *lhs_type = assignment->lhs->resolved_type;
@@ -6204,7 +6203,7 @@ case NUMBER_KIND_##type:{ \
             case AST_left_shift_assignment:
             case AST_right_shift_assignment:{
                 struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
-                assignment->rhs = maybe_load_address_for_array_or_function(context, operand);
+                assignment->rhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 if(!check_binary_for_basic_types(context, assignment, CHECK_integer)) return operand;
                 
                 if(assignment->lhs->resolved_type == &globals.typedef_Bool || (assignment->lhs->resolved_type->kind == AST_bitfield_type)){
@@ -6269,7 +6268,7 @@ case NUMBER_KIND_##type:{ \
         
         // Precedence 11
         case TOKEN_logical_and:{
-            operand = maybe_load_address_for_array_or_function(context, operand);
+            operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
             if(!casts_implicitly_to_bool(operand)){
                 report_error(context, next_token(context), "Left of '&&' has to be convertible to _Bool.");
                 return operand;
@@ -6281,7 +6280,7 @@ case NUMBER_KIND_##type:{ \
         
         // Precedence 12
         case TOKEN_logical_or:{
-            operand = maybe_load_address_for_array_or_function(context, operand);
+            operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
             
             if(!casts_implicitly_to_bool(operand)){
                 report_error(context, next_token(context), "Left of '||' has to be convertible to _Bool.");
@@ -6298,7 +6297,7 @@ case NUMBER_KIND_##type:{ \
             
             struct token *question_mark = binary_expression;
             
-            operand = maybe_load_address_for_array_or_function(context, operand);
+            operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
             
             if(!casts_implicitly_to_bool(operand)){
                 report_error(context, question_mark, "Left hand side of '?' has no implicit conversion to bool.");
@@ -6308,7 +6307,7 @@ case NUMBER_KIND_##type:{ \
             context->in_conditional_expression += 1; // :tracking_conditional_expression_depth_for_noreturn_functions
             
             struct ast *if_true = parse_expression(context, false);
-            if_true = maybe_load_address_for_array_or_function(context, if_true);
+            if_true = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, if_true);
             if_true = maybe_insert_cast_from_special_int_to_int(context, if_true);
             expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
             if(context->should_exit_statement) return operand;
@@ -6445,8 +6444,8 @@ current += sizeof(struct ast_unary_op);\
 print("    %p unary-" #ast_kind ": %.*s %p\n", ast, string.size, string.data, ((struct ast_unary_op *)ast)->operand); \
 if(!ast_stack_at || ast_stack[ast_stack_at-1] != ((struct ast_unary_op *)ast)->operand){\
     print(">>>> Wrong!\n");\
+    os_panic(1);\
 }\
-if(!ast_stack_at) ast_stack_at += 1;\
 ast_stack[ast_stack_at-1] = ast;\
 break
             
@@ -6459,8 +6458,7 @@ if(ast_stack_at < 2 || ast_stack[ast_stack_at-2] != ((struct ast_binary_op *)ast
     print(">>>> Wrong!\n");\
     os_panic(1);\
 }\
-if(ast_stack_at >= 2) ast_stack_at -= 1;\
-if(!ast_stack_at) ast_stack_at += 1;\
+ast_stack_at -= 1;\
 ast_stack[ast_stack_at-1] = ast;\
 break
             
@@ -6496,6 +6494,18 @@ break
                 unary(alignof);
                 
                 unary(implicit_address_conversion);
+                
+                case AST_cast_lhs:
+                case AST_implicit_address_conversion_lhs:{
+                    current += sizeof(struct ast_unary_op);
+                    char *kind = AST_cast_lhs == ast->kind ? "cast_lhs" : "implicit_address_conversion_lhs";
+                    print("    %p unary-%s: %.*s %p\n", ast, kind, string.size, string.data, ((struct ast_unary_op *)ast)->operand); 
+                    if(ast_stack_at < 2 || ast_stack[ast_stack_at-2] != ((struct ast_unary_op *)ast)->operand){
+                        print(">>>> Wrong!\n");
+                        os_panic(1);
+                    }
+                    ast_stack[ast_stack_at-2] = ast;
+                }break;
                 
                 binary(binary_times);
                 binary(binary_divide);
@@ -8158,7 +8168,7 @@ func struct ast *parse_statement(struct context *context){
             ast_if->condition = parse_expression(context, false);
             maybe_report_warning_for_assignment_in_condition(context, ast_if->condition);
             
-            ast_if->condition = maybe_load_address_for_array_or_function(context, ast_if->condition);
+            ast_if->condition = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, ast_if->condition);
             if(!casts_implicitly_to_bool(ast_if->condition)){
                 // :Error
                 report_error(context, ast_if->condition->token, "'if' condition has to cast to bool.");
@@ -8212,7 +8222,7 @@ func struct ast *parse_statement(struct context *context){
                     ast_for->condition = parse_expression(context, false);
                     maybe_report_warning_for_assignment_in_condition(context, ast_for->condition);
                     
-                    ast_for->condition = maybe_load_address_for_array_or_function(context, ast_for->condition);
+                    ast_for->condition = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, ast_for->condition);
                     if(!casts_implicitly_to_bool(ast_for->condition)){
                         // :Error
                         report_error(context, ast_for->condition->token, "'for' condition has to cast to bool.");
@@ -8251,7 +8261,7 @@ func struct ast *parse_statement(struct context *context){
             ast_while->condition = parse_expression(context, false);
             maybe_report_warning_for_assignment_in_condition(context, ast_while->condition);
             
-            ast_while->condition = maybe_load_address_for_array_or_function(context, ast_while->condition);
+            ast_while->condition = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, ast_while->condition);
             if(!casts_implicitly_to_bool(ast_while->condition)){
                 report_error(context, ast_while->condition->token, "'while' condition has to cast to bool.");
                 return &ast_while->base;
@@ -8291,7 +8301,7 @@ func struct ast *parse_statement(struct context *context){
             do_while->condition = parse_expression(context, false);
             maybe_report_warning_for_assignment_in_condition(context, do_while->condition);
             
-            do_while->condition = maybe_load_address_for_array_or_function(context, do_while->condition);            
+            do_while->condition = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, do_while->condition);            
             if(!casts_implicitly_to_bool(do_while->condition)){
                 report_error(context, do_while->condition->token, "'while' condition has to cast to bool.");
                 return &do_while->base;
@@ -8483,7 +8493,7 @@ func struct ast *parse_statement(struct context *context){
                 //        Lets support it for now!
                 
                 ast_return->expr = parse_expression(context, false);
-                ast_return->expr = maybe_load_address_for_array_or_function(context, ast_return->expr);
+                ast_return->expr = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, ast_return->expr);
                 ast_return->expr = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_function_type->return_type, current_function_type->return_type_defined_type, ast_return->expr, ast_return->base.token);
             }
             
