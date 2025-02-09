@@ -113,6 +113,16 @@ func struct ast_type *_parser_type_push(struct context *context, struct token *t
     return type;
 }
 
+// Sometimes when we are constant propagating, we have to un-emit a literal.
+func void pop_from_ast_arena_(struct context *context, u8 *ast_memory, smm size){
+    assert(ast_memory + size == arena_current(&context->ast_arena));
+    context->ast_arena.current = ast_memory;
+    memset(ast_memory, 0, size);
+}
+
+#define pop_from_ast_arena(context, ast) pop_from_ast_arena_(context, (u8 *)(ast), sizeof(*ast))
+
+
 #define parser_compound_type_push(context, token, type) (struct ast_compound_type *)_parser_type_push(context, token, sizeof(struct ast_compound_type), alignof(struct ast_compound_type), AST_##type);
 
 func struct ast_type *parser_push_pointer_type(struct context *context, struct ast_type *pointer_to, struct ast *defined_type, struct token *token){
@@ -345,36 +355,40 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
     }else if(cast_what->kind == AST_float_literal){
         if(cast_to->kind == AST_integer_type){
             struct ast_float_literal *f = cast(struct ast_float_literal *)cast_what;
-            struct ast_integer_literal *i = push_expression(context, cast_what->token, integer_literal);
+            
+            struct token *cast_what_token = cast_what->token;
+            double f_value = f->value;
+            pop_from_ast_arena(context, f);
+            
+            struct ast_integer_literal *i = push_expression(context, cast_what_token, integer_literal);
+            set_resolved_type(&i->base, cast_to, cast_to_defined_type);
+            cast = &i->base;
+            
             if(type_is_signed(cast_to)){
                 switch(cast_to->size){
-                    case 1: i->_s8  = (s8) f->value; break;
-                    case 2: i->_s16 = (s16)f->value; break;
-                    case 4: i->_s32 = (s32)f->value; break;
-                    case 8: i->_s64 = (s64)f->value; break;
+                    case 1: i->_s8  = (s8) f_value; break;
+                    case 2: i->_s16 = (s16)f_value; break;
+                    case 4: i->_s32 = (s32)f_value; break;
+                    case 8: i->_s64 = (s64)f_value; break;
                     invalid_default_case();
                 }
             }else{
-                if(f->value < 0.0){
-                    report_error(context, cast_what->token, "Cast from negative a floating point number to an unsigned type is illegal.");
-                    return cast_what;
+                if(f_value < 0.0){
+                    report_error(context, cast_what_token, "Cast from negative a floating point number to an unsigned type is illegal.");
                 }
                 
                 if(cast_to == &globals.typedef_Bool){
-                    i->_u8 = (_Bool)f->value;
+                    i->_u8 = (_Bool)f_value;
                 }else{
                     switch(cast_to->size){
-                        case 1: i->_u8  = (u8) f->value; break;
-                        case 2: i->_u16 = (u16)f->value; break;
-                        case 4: i->_u32 = (u32)f->value; break;
-                        case 8: i->_u64 = (u64)f->value; break;
+                        case 1: i->_u8  = (u8) f_value; break;
+                        case 2: i->_u16 = (u16)f_value; break;
+                        case 4: i->_u32 = (u32)f_value; break;
+                        case 8: i->_u64 = (u64)f_value; break;
                         invalid_default_case();
                     }
                 }
             }
-            
-            set_resolved_type(&i->base, cast_to, cast_to_defined_type);
-            cast = &i->base;
         }else if(cast_to->kind == AST_float_type){
             if(cast_to == &globals.typedef_f32){
                 struct ast_float_literal *lit = cast(struct ast_float_literal *)cast_what;
@@ -1297,14 +1311,6 @@ func enum ast_kind ast_stack_current(struct context *context){
     }
     return AST_invalid;
 }
-
-func void pop_from_ast_arena_(struct context *context, u8 *ast_memory, smm size){
-    assert(ast_memory + size == arena_current(&context->ast_arena));
-    context->ast_arena.current = ast_memory;
-    memset(ast_memory, 0, size);
-}
-
-#define pop_from_ast_arena(context, ast) pop_from_ast_arena_(context, (u8 *)(ast), sizeof(*ast))
 
 //_____________________________________________________________________________________________________________________
 
@@ -5996,12 +6002,15 @@ case NUMBER_KIND_##type:{ \
             //    lhs <<= rhs, lhs >>= rhs, lhs &= rhs, lhs ^= rhs, lhs |= rhs
             //    
             case AST_assignment:{
-                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
-                assignment->rhs = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
-                assignment->rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, assignment->lhs->resolved_type, assignment->lhs->defined_type, assignment->rhs, assignment->base.token);
-                set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                struct ast *lhs = stack_entry->operand;
                 
+                operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
+                operand = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, operand, stack_entry->token);
+                
+                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, operand);
+                set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
                 operand = &assignment->base;
+                
                 context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
             }break;
             
