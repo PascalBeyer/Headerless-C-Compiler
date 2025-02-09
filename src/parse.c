@@ -3822,8 +3822,16 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
         case TOKEN_and:         ast_stack_push(context, AST_unary_address,     next_token(context), null); goto restart;
         
         // :sizeof/alignof threading bug
-        case TOKEN_sizeof:  ast_stack_push(context, AST_sizeof,  next_token(context), null); goto restart;
-        case TOKEN_alignof: ast_stack_push(context, AST_alignof, next_token(context), null); goto restart;
+        case TOKEN_sizeof:{
+            struct ast_stack_entry *entry = ast_stack_push(context, AST_sizeof,  next_token(context), null); 
+            entry->other = arena_current(&context->ast_arena); // For sizeof(expression), we have to delete the whole expression.
+            goto restart;
+        }
+        case TOKEN_alignof:{
+            struct ast_stack_entry *entry = ast_stack_push(context, AST_alignof,  next_token(context), null); 
+            entry->other = arena_current(&context->ast_arena); // For alignof(expression), we have to delete the whole expression.
+            goto restart;
+        }
         
         case TOKEN_open_paren:{
             struct token *open_paren = next_token(context);
@@ -5137,10 +5145,17 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
-                context->in_lhs_expression = false;
+                u64 size = operand->resolved_type->size;
+                
+                // @note: Delete the whole <expression> off of the `ast_arena`.
+                u8 *start = stack_entry->other;
+                u8 *end = arena_current(&context->ast_arena); // @note: Scarry stuff...
+                memset(start, 0, end - start);
+                context->ast_arena.current = start;
                 
                 // Sets in op->operand in the next iteration.
-                operand = ast_push_u64_literal(context, stack_entry->token, operand->resolved_type->size);
+                operand = ast_push_u64_literal(context, stack_entry->token, size);
+                context->in_lhs_expression = false;
             }break;
             case AST_alignof:{
                 
@@ -5154,10 +5169,17 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
-                context->in_lhs_expression = false;
+                u64 alignment = operand->resolved_type->alignment;
+                
+                // @note: Delete the whole <expression> off of the `ast_arena`.
+                u8 *start = stack_entry->other;
+                u8 *end = arena_current(&context->ast_arena); // @note: Scarry stuff...
+                memset(start, 0, end - start);
+                context->ast_arena.current = start;
                 
                 // Sets in op->operand in the next iteration.
-                operand = ast_push_u64_literal(context, stack_entry->token, operand->resolved_type->alignment);
+                operand = ast_push_u64_literal(context, stack_entry->token, alignment);
+                context->in_lhs_expression = false;
             }break;
             
             case AST_unary_bitwise_not:{
