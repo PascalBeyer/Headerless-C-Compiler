@@ -1371,14 +1371,14 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         struct{
-            struct ast_float_literal *literals;
+            struct ast_emitted_float_literal *literals;
             smm amount_of_literals;
         } float_literals_by_type[2] = zero_struct; // 0 - float, 1 - double
         
         for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
             struct context *thread_context = globals.thread_infos[thread_index].context;
-            for(struct ast_float_literal *lit = thread_context->float_literals.first; lit; ){
-                struct ast_float_literal *next = lit->next;
+            for(struct ast_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; ){
+                struct ast_emitted_float_literal *next = lit->next;
                 
                 int is_double = (lit->base.resolved_type == &globals.typedef_f64);
                 
@@ -1406,7 +1406,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             smm capacity = u64_round_up_to_next_power_of_two((u64)(1.5 * amount_of_literals));
             void **table = push_data(scratch, void *, capacity);
             
-            for(struct ast_float_literal *lit = float_literals_by_type[is_double].literals; lit; lit = lit->next){
+            for(struct ast_emitted_float_literal *lit = float_literals_by_type[is_double].literals; lit; lit = lit->next){
                 
                 u64 hash = xor_shift64(*(u64 *)&lit->value);
                 
@@ -3009,8 +3009,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)source->symbol_table_index;
-            }else if(source_kind == AST_float_literal){
-                struct ast_float_literal *source = (struct ast_float_literal *)patch->source;
+            }else if(source_kind == AST_emitted_float_literal){
+                struct ast_emitted_float_literal *source = (struct ast_emitted_float_literal *)patch->source;
                 
                 u32 symbol_table_index;
                 if(source->base.resolved_type == &globals.typedef_f64){

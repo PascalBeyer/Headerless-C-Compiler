@@ -2220,7 +2220,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
             struct context *thread_context = globals.thread_infos[thread_index].context;
             
-            for(struct ast_float_literal *lit = thread_context->float_literals.first; lit; lit = lit->next){
+            for(struct ast_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; lit = lit->next){
                 if(lit->base.resolved_type == &globals.typedef_f32){
                     f32 *_float = push_struct(arena, f32);
                     *_float = (f32)lit->value;
@@ -2474,8 +2474,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     source_location += patch->location_offset_in_source_declaration;
                     smm rip_at = dest_location + patch->rip_at;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
-                }else if(patch->source->kind == AST_float_literal){
-                    struct ast_float_literal *f = cast(struct ast_float_literal *)patch->source;
+                }else if(patch->source->kind == AST_emitted_float_literal){
+                    struct ast_emitted_float_literal *f = cast(struct ast_emitted_float_literal *)patch->source;
                     assert(f->relative_virtual_address);
                     
                     smm dest_location = patch->dest_declaration->relative_virtual_address;

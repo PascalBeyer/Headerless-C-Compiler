@@ -485,6 +485,8 @@ enum ast_kind{
     
     AST_panic, 
     
+    AST_emitted_float_literal, // yuck, we copy float-literals in the back-end.
+    
     AST_count,
 };
 
@@ -671,14 +673,21 @@ struct ast_pointer_literal{
     u8 *pointer;
 };
 
-
+// We have to be able to cast lhs float literals.
 struct ast_float_literal{
     struct ast base;
-    struct ast_float_literal *next;
+    f64 value;
+};
+
+// These get allocated in `emit_x64`.
+struct ast_emitted_float_literal{
+    struct ast base;
     f64 value;
     
+    struct ast_emitted_float_literal *next;
     u32 relative_virtual_address; // @note: float  literals get loaded rip relative, so this is here to patch
 };
+
 
 struct ast_string_literal{
     struct ast base;

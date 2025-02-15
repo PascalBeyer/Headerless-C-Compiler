@@ -354,13 +354,15 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
         cast = cast_what;
     }else if(cast_what->kind == AST_float_literal){
         if(cast_to->kind == AST_integer_type){
-            struct ast_float_literal *f = cast(struct ast_float_literal *)cast_what;
+            struct ast_float_literal   *f = cast(struct ast_float_literal   *)cast_what;
+            struct ast_integer_literal *i = cast(struct ast_integer_literal *)cast_what;
+            static_assert(sizeof(struct ast_float_literal) == sizeof(struct ast_integer_literal));
             
-            struct token *cast_what_token = cast_what->token;
+            // @cleanup: warn?
+            
+            i->base.kind = AST_integer_literal;
             double f_value = f->value;
-            pop_from_ast_arena(context, f);
             
-            struct ast_integer_literal *i = push_expression(context, cast_what_token, integer_literal);
             set_resolved_type(&i->base, cast_to, cast_to_defined_type);
             cast = &i->base;
             
@@ -374,7 +376,7 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
                 }
             }else{
                 if(f_value < 0.0){
-                    report_error(context, cast_what_token, "Cast from negative a floating point number to an unsigned type is illegal.");
+                    report_error(context, cast_what->token, "Cast from negative a floating point number to an unsigned type is illegal.");
                 }
                 
                 if(cast_to == &globals.typedef_Bool){
@@ -419,8 +421,8 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
             cast = &lit->base;
             set_resolved_type(cast, cast_to, cast_to_defined_type);
         }else if(cast_to->kind == AST_float_type){
-            struct ast_float_literal *f = push_expression(context, cast_what->token, float_literal);
-            f->base.token = lit->base.token;
+            struct ast_float_literal *f = (struct ast_float_literal *)cast_what;
+            
             // :we_always_keep_double
             // @cleanup: this does not really work: I don't think casting to f64 and then to f32 is the same
             //                                      as casting to f32 to begin with, but not sure...
@@ -430,6 +432,7 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
                 f->value = (f64)integer_literal_as_u64(cast_what);
             }
             
+            f->base.kind = AST_float_literal;
             set_resolved_type(&f->base, cast_to, cast_to_defined_type);
             cast = &f->base;
         }else if(cast_to->kind == AST_pointer_type){
@@ -2072,6 +2075,8 @@ func struct initializer_list parse_initializer_list(struct context *context, str
                         new_node->offset_at = new_offset;
                         sll_push_front(designator_stack, new_node);
                     }
+                    
+                    pop_from_ast_arena(context, (struct ast_integer_literal *)index);
                 }
             } while(peek_token(context, TOKEN_dot) || peek_token(context, TOKEN_open_index));
             
@@ -6576,7 +6581,7 @@ case NUMBER_KIND_##type:{ \
     
     // if(0)
     // if(1)
-    if(0){
+    if(1){
         
         struct ast *start_of_expression_ast = (struct ast *)start_in_ast_arena;
         debug_print_error(context, start_of_expression_ast->token, "EXPRESSION:");
@@ -6622,12 +6627,6 @@ ast_stack[ast_stack_at-1] = ast;\
 break
             
             switch(ast->kind){
-                case AST_compound_literal:{
-                    // This one in mostly informative! Does not touch the stack.
-                    current += sizeof(struct ast_compound_literal);
-                    struct ast_compound_literal *compound = (struct ast_compound_literal *)ast;
-                    print("    %p primary-compound_literal %p\n", ast, compound->decl);
-                }break;
                 
                 case AST_initializer:{
                     current += sizeof(struct ast_initializer);
@@ -6647,11 +6646,13 @@ break
                 primary(integer_literal);
                 primary(float_literal);
                 primary(pointer_literal);
+                primary(compound_literal);
                 case AST_pointer_literal_deref:{
                     current += sizeof(struct ast_pointer_literal);
                     print("    %p primary-AST_pointer_literal_deref: %.*s\n", ast, string.size, string.data);
                     ast_stack[ast_stack_at++] = ast;
                 }break;
+                
                 
                 unary(cast);
                 unary(unary_postinc);
@@ -6733,6 +6734,58 @@ break
                     
                     if(!ast_stack_at) ast_stack_at += 1;
                     ast_stack[ast_stack_at-1] = ast;
+                }break;
+                
+                case AST_duplicate_lhs:{
+                    current += sizeof(struct ast_duplicate_lhs);
+                    print("    %p duplicate lhs\n", current);
+                    
+                    struct ast *should_break = 0;
+                    while(current < arena_current(&context->ast_arena) && !should_break){
+                        ast = (void *)current;
+                        switch(ast->kind){
+                            
+                            case AST_cast_lhs:
+                            case AST_cast:{
+                                current += sizeof(struct ast_unary_op);
+                            }break;
+                            
+                            case AST_binary_times:
+                            
+                            case AST_binary_divide:
+                            case AST_binary_mod:
+                            
+                            case AST_binary_plus:
+                            case AST_binary_minus:
+                            
+                            case AST_binary_left_shift:
+                            case AST_binary_right_shift:
+                            
+                            case AST_binary_and:
+                            case AST_binary_or:
+                            case AST_binary_xor:{
+                                current += sizeof(struct ast_binary_op);
+                            }break;
+                            
+                            case AST_assignment:{
+                                current += sizeof(struct ast_binary_op);
+                                should_break = ast;
+                            }break;
+                            
+                            default:{
+                                print("UNHANDLED!\n");
+                                os_panic(1);
+                            }break;
+                        }
+                    }
+                    
+                    if(ast_stack_at < 2 || !should_break){
+                        print(">>>> Wrong!\n");
+                        os_panic(1);
+                    }
+                    
+                    ast_stack_at -= 1;
+                    ast_stack[ast_stack_at-1] = should_break;
                 }break;
                 
                 case AST_function_call:{

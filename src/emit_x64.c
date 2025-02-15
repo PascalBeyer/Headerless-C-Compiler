@@ -2813,9 +2813,16 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
         }break;
         case AST_float_literal:{
             struct ast_float_literal *f = cast(struct ast_float_literal *)ast;
-            sll_push_back(context->float_literals, f);
-            context->float_literals.amount_of_float_literals += 1;
-            return emit_location_rip_relative(context, &f->base, REGISTER_KIND_xmm, f->base.resolved_type->size);
+            
+            // @note: This sucks!
+            struct ast_emitted_float_literal *emitted = push_ast(context, f->base.token, emitted_float_literal);
+            emitted->value = f->value;
+            
+            sll_push_back(context->emitted_float_literals, emitted);
+            context->emitted_float_literals.amount_of_float_literals += 1;
+            set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
+            
+            return emit_location_rip_relative(context, &emitted->base, REGISTER_KIND_xmm, f->base.resolved_type->size);
         }break;
         case AST_string_literal:{
             struct ast_string_literal *lit = cast(struct ast_string_literal *)ast;

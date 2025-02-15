@@ -851,10 +851,10 @@ struct context{
     } inline_asm_function_arguments;
     
     struct{
-        struct ast_float_literal *first;
-        struct ast_float_literal *last;
+        struct ast_emitted_float_literal *first;
+        struct ast_emitted_float_literal *last;
         smm amount_of_float_literals;
-    } float_literals;
+    } emitted_float_literals;
     
     struct{
         struct ast_string_literal *first;
