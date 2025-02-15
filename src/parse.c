@@ -2664,7 +2664,7 @@ func b32 check_types_for_increment_or_decrement(struct context *context, struct 
 // pushes a declaration without a name with type 'type' and 'defined_type', this declaration is not initialized, and the declaration 
 // is not reachable. It then returns an identifier that references this declaration.
 // This is used for struct literal kind of situations.
-func struct ast_identifier *push_unnamed_declaration(struct context *context, struct ast_type *type, struct ast *defined_type, struct token *site){
+func struct ast_declaration *push_unnamed_declaration(struct context *context, struct ast_type *type, struct ast *defined_type, struct token *site){
     struct declarator_return declarator = {
         .ident = site,
         .type  =  type,
@@ -2680,11 +2680,7 @@ func struct ast_identifier *push_unnamed_declaration(struct context *context, st
         parser_emit_memory_location(context, decl);
     }
     
-    struct ast_identifier *ident = push_expression(context, declarator.ident, identifier);
-    ident->decl = decl;
-    set_resolved_type(&ident->base, decl->type, decl->defined_type);
-    
-    return ident;
+    return decl;
 }
 
 func void get_pretty_print_string_for_type(struct context *context, struct string_list *format_list, struct ast_list *arguments, struct ast *value, s32 depth_or_minus_one, struct string field_width, struct string precision, struct string type_specifiers){
@@ -2891,7 +2887,12 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
         //               struct small_struct returns_small_struct(){ return (struct small_struct){0}; }
         //               print("{}", returns_small_struct());
         //
-        struct ast_identifier *struct_identifier = push_unnamed_declaration(context, argument->resolved_type, null, argument->token);
+        struct ast_declaration *struct_declaration = push_unnamed_declaration(context, argument->resolved_type, null, argument->token);
+        
+        struct ast_identifier *struct_identifier = push_expression(context, argument->token, identifier);
+        struct_identifier->decl = struct_declaration;
+        set_resolved_type(&struct_identifier->base, struct_declaration->type, struct_declaration->defined_type);
+        
         struct ast *assign = ast_push_binary_expression(context, AST_assignment, argument->token, &struct_identifier->base, argument);
         set_resolved_type(assign, argument->resolved_type, argument->defined_type);
         
@@ -3783,42 +3784,73 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
 }
 
 // :compound_assignments
-// This routine transforms 'a op= b' into '((unnamed) = &a,  *(unnamed) = *(unnamed) op b)'
-func struct ast_binary_op *punt_compound_assignment_with_unnamed_declaration(struct context *context, struct ast_binary_op *assignment, enum ast_kind AST_binary_op){
+func struct ast *punt_compound_assignment(struct context *context, struct ast *lhs, struct ast *rhs, struct token *site, enum ast_kind AST_binary_op){
     // @cleanup: we could reuse 'assignment'
     
-    struct token *site = assignment->base.token;
+    // :ir_refactor - With the new system we do this:
+    // 
+    // AST_duplicate_lhs:
+    //     {lhs, rhs} -> {lhs, lhs, rhs}
+    // AST_op:
+    //     {lhs, lhs, rhs} -> {lhs, result}
+    // AST_assignment:
+    //     {lhs, result} -> {result}
+    //     
+    // With the old system we do this:
+    //     a op= b -> ((unnamed) = &a,  *(unnamed) = *(unnamed) op b)
     
-    struct ast *lhs = assignment->lhs;
-    struct ast *rhs = assignment->rhs;
+    struct ast_duplicate_lhs *dup = push_expression(context, site, duplicate_lhs);
+    set_resolved_type(&dup->base, &globals.typedef_void, 0); // ?
     
-    struct ast *address = ast_push_unary_expression(context, AST_unary_address, site, lhs);
     struct ast_type *pointer_type = parser_push_pointer_type(context, lhs->resolved_type, lhs->defined_type, site);
-    set_resolved_type(address, pointer_type, null);
     
-    struct ast_identifier *unnamed = push_unnamed_declaration(context, pointer_type, null, site);
-    struct ast *address_assignment = ast_push_binary_expression(context, AST_assignment, site, &unnamed->base, address);
-    set_resolved_type(address_assignment, pointer_type, null);
+    // @note: Use `context->arena` so the new system does not see it.
+    struct ast_unary_op *address = (struct ast_unary_op *)_parser_ast_push(context, context->arena, site, sizeof(struct ast_unary_op), alignof(struct ast_unary_op), AST_unary_address);
+    address->operand = lhs;
+    set_resolved_type(&address->base, pointer_type, null);
     
-    struct ast *deref = ast_push_unary_expression(context, AST_unary_deref, site, &unnamed->base);
-    set_resolved_type(deref, lhs->resolved_type, lhs->defined_type);
+    struct ast_declaration *unnamed_decl = push_unnamed_declaration(context, pointer_type, null, site);
+    struct ast_identifier *unnamed = push_ast(context, unnamed_decl->identifier, identifier); // @note: `context->arena`.
+    unnamed->decl = unnamed_decl;
+    set_resolved_type(&unnamed->base, unnamed_decl->type, unnamed_decl->defined_type);
     
-    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, AST_binary_op, site, deref, rhs);
-    maybe_insert_arithmetic_conversion_casts(context, &op->lhs, &op->rhs);
-    assert(op->lhs->resolved_type == op->rhs->resolved_type);
+    struct ast_binary_op *address_assignment = _parser_ast_push(context, context->arena, site, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_assignment);
+    address_assignment->lhs = &unnamed->base;
+    address_assignment->rhs = &address->base;
+    set_resolved_type(&address_assignment->base, pointer_type, null);
+    
+    struct ast_unary_op *deref = (struct ast_unary_op *)_parser_ast_push(context, context->arena, site, sizeof(struct ast_unary_op), alignof(struct ast_unary_op), AST_unary_deref);
+    deref->operand = &unnamed->base;
+    set_resolved_type(&deref->base, lhs->resolved_type, lhs->defined_type);
+    
+    struct ast *op_lhs = &deref->base;
+    
+    // 
+    // AST_op:
+    // 
+    maybe_insert_arithmetic_conversion_casts(context, &op_lhs, &rhs);
+    
+    assert(op_lhs->resolved_type == rhs->resolved_type);
+    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, AST_binary_op, site, op_lhs, rhs);
     set_resolved_type(&op->base, op->lhs->resolved_type, op->lhs->defined_type);
+    
+    // 
+    // AST_assignment:
+    // 
     
     rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, &op->base, site);
     
     // @WARNING: we reuse 'deref' here, I don't think this should be a problem, but if there is weird behaviour
     //           this might be the culprit
-    struct ast *value_assignment = ast_push_binary_expression(context, AST_assignment, site, deref, rhs);
+    struct ast *value_assignment = ast_push_binary_expression(context, AST_assignment, site, &deref->base, rhs);
     set_resolved_type(value_assignment, lhs->resolved_type, lhs->defined_type);
     
-    struct ast *comma = ast_push_binary_expression(context, AST_comma_expression, site, address_assignment, value_assignment);
-    set_resolved_type(comma, lhs->resolved_type, lhs->defined_type);
+    struct ast_binary_op *comma = _parser_ast_push(context, context->arena, site, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_comma_expression);
+    comma->lhs = &address_assignment->base;
+    comma->rhs = value_assignment;
+    set_resolved_type(&comma->base, lhs->resolved_type, lhs->defined_type);
     
-    return (struct ast_binary_op *)comma;
+    return &comma->base;
 }
 
 // @cleanup: Eventually, we should implement this ourselves.
@@ -3905,15 +3937,15 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                         return invalid_ast(context);
                     }
                     
-                    struct ast_identifier *ident = push_unnamed_declaration(context, type_to_cast_to.type, type_to_cast_to.defined_type, get_current_token(context));
+                    struct ast_declaration *compound_literal_declaration = push_unnamed_declaration(context, type_to_cast_to.type, type_to_cast_to.defined_type, get_current_token(context));
                     
                     struct ast_compound_literal *compound_literal = push_expression(context, get_current_token(context), compound_literal);
                     set_resolved_type(&compound_literal->base, type_to_cast_to.type, type_to_cast_to.defined_type);
-                    compound_literal->decl = ident->decl;
+                    compound_literal->decl = compound_literal_declaration;
                     compound_literal->decl->assign_expr = &compound_literal->base;
                     
-                    compound_literal->assignment_list = parse_initializer_list(context, ident->base.resolved_type, 0, &compound_literal->trailing_array_size);
-                    if(context->should_exit_statement) return &ident->base;
+                    compound_literal->assignment_list = parse_initializer_list(context, compound_literal_declaration->type, 0, &compound_literal->trailing_array_size);
+                    if(context->should_exit_statement) return invalid_ast(context);
                     
                     if(type_is_array_of_unknown_size(type_to_cast_to.type)){
                         struct ast_array_type *array_of_unknown_size = (struct ast_array_type *)type_to_cast_to.type;
@@ -3931,7 +3963,7 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                         patch_array_size(context, array_type, array_length, compound_literal->base.token);
                         
                         // Set the new type.
-                        ident->decl->type = &array_type->base;
+                        compound_literal_declaration->type = &array_type->base;
                         set_resolved_type(&compound_literal->base, &array_type->base, null);
                         
                         // Reset the trailing array size, to not overallocate later on.
@@ -3940,7 +3972,7 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                     
                     if(type_to_cast_to.type->flags & TYPE_FLAG_ends_in_array_of_unknown_size){
                         // :compounds_with_trailing_array
-                        parser_emit_memory_location(context, ident->decl);
+                        parser_emit_memory_location(context, compound_literal_declaration);
                     }
                     
                     operand = &compound_literal->base;
@@ -4691,7 +4723,12 @@ case NUMBER_KIND_##type:{ \
                     operand = ast_push_unary_expression(context, AST_unary_address, test, operand);
                     set_resolved_type(operand, s_ident_type, null);
                     
-                    struct ast_identifier *s_ident = push_unnamed_declaration(context, s_ident_type, null, test);
+                    struct ast_declaration *struct_declaration = push_unnamed_declaration(context, s_ident_type, null, test);
+                    
+                    struct ast_identifier *s_ident = push_expression(context, struct_declaration->identifier, identifier);
+                    s_ident->decl = struct_declaration;
+                    set_resolved_type(&s_ident->base, struct_declaration->type, struct_declaration->defined_type);
+                    
                     
                     struct ast *s_assign = ast_push_binary_expression(context, AST_assignment, operand->token, &s_ident->base, operand);
                     set_resolved_type(s_assign, s_ident_type, null);
@@ -4728,7 +4765,12 @@ case NUMBER_KIND_##type:{ \
                     index = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, size->resolved_type, size->defined_type, index, test);
                     
                     // u64 <i> = index
-                    struct ast_identifier *i_ident = push_unnamed_declaration(context, size->resolved_type, size->defined_type, test);
+                    struct ast_declaration *i_decl = push_unnamed_declaration(context, size->resolved_type, size->defined_type, test);
+                    
+                    struct ast_identifier *i_ident = push_expression(context, i_decl->identifier, identifier);
+                    i_ident->decl = i_decl;
+                    set_resolved_type(&i_ident->base, i_decl->type, i_decl->defined_type);
+                    
                     struct ast *i_assign = ast_push_binary_expression(context, AST_assignment, operand->token, &i_ident->base, index);
                     set_resolved_type(i_assign, size->resolved_type, size->defined_type);
                     
@@ -6145,15 +6187,13 @@ case NUMBER_KIND_##type:{ \
                 
                 if(!check_binary_for_basic_types(context, lhs, rhs, stack_entry->token, CHECK_basic)) return operand;
                 
-                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
-                
                 b32 punt = false;
                 
                 if(lhs_type->kind == AST_integer_type && rhs_type->kind == AST_float_type){
                     // punt on 'integer += float' and 'integer -= float'.
                     // this is necessary as for example 'int i = 0x4000000; i += 1.0f;' yields 'i == 0x4000000'.
                     punt = true;
-                }else if(assignment->lhs->resolved_type == &globals.typedef_f32 && assignment->rhs->resolved_type == &globals.typedef_f64){
+                }else if(lhs->resolved_type == &globals.typedef_f32 && rhs->resolved_type == &globals.typedef_f64){
                     // punt on 'float += double', this is necessary for example
                     //     double var_00 = -1183312983.13;
                     //     float  var_08 =  -282911132.13f;
@@ -6162,17 +6202,19 @@ case NUMBER_KIND_##type:{ \
                     punt = true;
                 }
                 
-                if(assignment->lhs->resolved_type == &globals.typedef_Bool || (assignment->lhs->resolved_type->kind == AST_bitfield_type)) punt = 1;
+                if(lhs->resolved_type == &globals.typedef_Bool || lhs->resolved_type->kind == AST_bitfield_type) punt = 1;
                 
                 if(punt){
-                    enum ast_kind kind = assignment->base.kind == AST_plus_assignment ? AST_binary_plus : AST_binary_minus;
-                    assignment = punt_compound_assignment_with_unnamed_declaration(context, assignment, kind);
+                    enum ast_kind kind = ast_kind == AST_plus_assignment ? AST_binary_plus : AST_binary_minus;
+                    operand = punt_compound_assignment(context, lhs, rhs, stack_entry->token, kind);
                 }else{
-                    assignment->rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, assignment->lhs->resolved_type, assignment->lhs->defined_type, assignment->rhs, assignment->base.token);
+                    rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
+                    
+                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
                     set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    operand = &assignment->base;
                 }
-
-                operand = &assignment->base;
+                
                 context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
             }break;
             
@@ -6182,38 +6224,40 @@ case NUMBER_KIND_##type:{ \
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand, operand, stack_entry->token, CHECK_integer)) return operand;
                 
-                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
-                
+                struct ast *lhs = stack_entry->operand;
+                struct ast *rhs = maybe_insert_cast_from_special_int_to_int(context, AST_cast, operand);
                 
                 // Punt if the right hand side is bigger than the lhs, because we could have situation like
                 //     char a = 1; int b = 0x100; a %= b; 
                 // in which case 'b' cant be truncated to char, or it will crash.
-                b32 punt = (assignment->lhs->resolved_type->size < assignment->rhs->resolved_type->size);
+                b32 punt = (lhs->resolved_type->size < rhs->resolved_type->size);
                 
-                if(assignment->rhs->kind == AST_integer_literal){
-                    u64 value = integer_literal_as_u64(assignment->rhs);
+                if(rhs->kind == AST_integer_literal){
+                    u64 value = integer_literal_as_u64(rhs);
                     if(value == 0){
-                        report_error(context, assignment->base.token, "Compile time '%%=' by 0.");
+                        report_error(context, stack_entry->token, "Compile time '%%=' by 0.");
                         return operand;
                     }
                     
-                    if(value < (1ull << assignment->lhs->resolved_type->size)){
+                    if(value < (1ull << lhs->resolved_type->size)){
                         // @cleanup: you could see how we could report an error here instead of punting in some cases
                         //           but this hits the common case of % by some small integer (like 10).
                         punt = false;
                     }
                 }
                 
-                if(assignment->lhs->resolved_type == &globals.typedef_Bool || (assignment->lhs->resolved_type->kind == AST_bitfield_type)) punt = 1;
+                if(lhs->resolved_type == &globals.typedef_Bool || (lhs->resolved_type->kind == AST_bitfield_type)) punt = 1;
                 
                 if(punt){
-                    assignment = punt_compound_assignment_with_unnamed_declaration(context, assignment, AST_binary_mod);
+                    operand = punt_compound_assignment(context, lhs, rhs, stack_entry->token, AST_binary_mod);
                 }else{
-                    assignment->rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, assignment->lhs->resolved_type, assignment->lhs->defined_type, assignment->rhs, assignment->base.token);
+                    rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
+                    
+                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
                     set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    operand = &assignment->base;
                 }
                 
-                operand = &assignment->base;
                 context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
             }break;
             
@@ -6223,23 +6267,25 @@ case NUMBER_KIND_##type:{ \
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand, operand, stack_entry->token, CHECK_integer)) return operand;
                 
-                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
+                struct ast *lhs = stack_entry->operand;
+                struct ast *rhs = maybe_insert_cast_from_special_int_to_int(context, AST_cast, operand);
                 
-                set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
-                
-                if(assignment->lhs->resolved_type == &globals.typedef_Bool || (assignment->lhs->resolved_type->kind == AST_bitfield_type)){
+                if(lhs->resolved_type == &globals.typedef_Bool || lhs->resolved_type->kind == AST_bitfield_type){
                     enum ast_kind punt_kind = 0;
-                    if(assignment->base.kind == AST_and_assignment) punt_kind = AST_binary_and;
-                    if(assignment->base.kind == AST_or_assignment)  punt_kind = AST_binary_or;
-                    if(assignment->base.kind == AST_xor_assignment) punt_kind = AST_binary_xor;
+                    if(ast_kind == AST_and_assignment) punt_kind = AST_binary_and;
+                    if(ast_kind == AST_or_assignment)  punt_kind = AST_binary_or;
+                    if(ast_kind == AST_xor_assignment) punt_kind = AST_binary_xor;
                     
-                    assignment = punt_compound_assignment_with_unnamed_declaration(context, assignment, punt_kind);
+                    operand = punt_compound_assignment(context, lhs, rhs, stack_entry->token, punt_kind);
                 }else{
                     // These are always fine, we never have to punt.
-                    assignment->rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, assignment->lhs->resolved_type, assignment->lhs->defined_type, assignment->rhs, assignment->base.token);
+                    rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
+                    
+                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
+                    set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    operand = &assignment->base;
                 }
                 
-                operand = &assignment->base;
                 context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
             }break;
             
@@ -6250,10 +6296,11 @@ case NUMBER_KIND_##type:{ \
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand, operand, stack_entry->token, CHECK_integer|CHECK_float)) return operand;
                 
-                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
+                struct ast *lhs = stack_entry->operand;
+                struct ast *rhs = maybe_insert_cast_from_special_int_to_int(context, AST_cast, operand);
                 
-                struct ast_type *lhs_type = assignment->lhs->resolved_type;
-                struct ast_type *rhs_type = assignment->rhs->resolved_type;
+                struct ast_type *lhs_type = lhs->resolved_type;
+                struct ast_type *rhs_type = rhs->resolved_type;
                 
                 int punt = false;
                 if(lhs_type->kind == AST_integer_type && rhs_type->kind == AST_float_type) punt = true;
@@ -6264,39 +6311,41 @@ case NUMBER_KIND_##type:{ \
                 // 
                 if(lhs_type->size < rhs_type->size) punt = true;
                 
-                if(assignment->rhs->kind == AST_integer_literal){
+                if(rhs->kind == AST_integer_literal){
                     // 
                     // @copy and paste from above.
                     // 
                     
-                    u64 value = integer_literal_as_u64(assignment->rhs);
+                    u64 value = integer_literal_as_u64(rhs);
                     if(value == 0){
-                        if(assignment->base.kind == AST_divide_assignment){
-                            report_error(context, assignment->base.token, "Compile time '/=' by 0.");
+                        if(ast_kind == AST_divide_assignment){
+                            report_error(context, stack_entry->token, "Compile time '/=' by 0.");
                             return operand;
                         }else{
-                            report_warning(context, WARNING_compile_time_multiplication_by_zero, assignment->base.token, "Compile time '*=' by 0.");
+                            report_warning(context, WARNING_compile_time_multiplication_by_zero, stack_entry->token, "Compile time '*=' by 0.");
                         }
                     }
                     
-                    if(value < (1ull << assignment->lhs->resolved_type->size)){
+                    if(value < (1ull << lhs->resolved_type->size)){
                         // @cleanup: you could see how we could report an error here instead of punting in some cases
                         //           but this hits the common case of % by some small integer (like 10).
                         punt = false;
                     }
                 }
                 
-                if(assignment->lhs->resolved_type == &globals.typedef_Bool || (assignment->lhs->resolved_type->kind == AST_bitfield_type)) punt = 1;
+                if(lhs->resolved_type == &globals.typedef_Bool || lhs->resolved_type->kind == AST_bitfield_type) punt = 1;
                 
                 if(punt){
-                    enum ast_kind kind = (assignment->base.kind == AST_divide_assignment) ? AST_binary_divide : AST_binary_times;
-                    assignment = punt_compound_assignment_with_unnamed_declaration(context, assignment, kind);
+                    enum ast_kind kind = (ast_kind == AST_divide_assignment) ? AST_binary_divide : AST_binary_times;
+                    operand = punt_compound_assignment(context, lhs, rhs, stack_entry->token, kind);
                 }else{
-                    assignment->rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, assignment->lhs->resolved_type, assignment->lhs->defined_type, assignment->rhs, assignment->base.token);
+                    rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
+                    
+                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
                     set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    operand = &assignment->base;
                 }
                 
-                operand = &assignment->base;
                 context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
             }break;
             
@@ -6306,17 +6355,20 @@ case NUMBER_KIND_##type:{ \
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand, operand, stack_entry->token, CHECK_integer)) return operand;
                 
-                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
+                struct ast *lhs = stack_entry->operand;
+                struct ast *rhs = maybe_insert_cast_from_special_int_to_int(context, AST_cast, operand);
                 
-                if(assignment->lhs->resolved_type == &globals.typedef_Bool || (assignment->lhs->resolved_type->kind == AST_bitfield_type)){
-                    enum ast_kind kind = (assignment->base.kind == AST_left_shift_assignment) ? AST_binary_left_shift : AST_binary_right_shift;
-                    assignment = punt_compound_assignment_with_unnamed_declaration(context, assignment, kind);
+                if(lhs->resolved_type == &globals.typedef_Bool || lhs->resolved_type->kind == AST_bitfield_type){
+                    enum ast_kind kind = (ast_kind == AST_left_shift_assignment) ? AST_binary_left_shift : AST_binary_right_shift;
+                    operand = punt_compound_assignment(context, lhs, rhs, stack_entry->token, kind);
                 }else{
-                    assignment->rhs = push_cast(context, AST_cast, &globals.typedef_u8, null, assignment->rhs);
+                    rhs = push_cast(context, AST_cast, &globals.typedef_u8, null, rhs);
+                    
+                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
                     set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    operand = &assignment->base;
                 }
                 
-                operand = &assignment->base;
                 context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
             }break;
             
@@ -6522,6 +6574,8 @@ case NUMBER_KIND_##type:{ \
     // @note: This should never fire as we want to return early if there is an error deeper in the stack.
     assert(ast_stack_before == context->ast_stack_at);
     
+    // if(0)
+    // if(1)
     if(0){
         
         struct ast *start_of_expression_ast = (struct ast *)start_in_ast_arena;

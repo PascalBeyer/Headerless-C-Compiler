@@ -447,6 +447,8 @@ enum ast_kind{
     AST_divide_assignment,
     AST_modulo_assignment,
     
+    AST_duplicate_lhs, // For punting compound assignments.
+    
     AST_member,
     AST_member_deref,
     AST_pointer_subscript,
@@ -726,6 +728,10 @@ struct ast_binary_op{
     struct ast base;
     struct ast *lhs;
     struct ast *rhs;
+};
+
+struct ast_duplicate_lhs{
+    struct ast base;
 };
 
 struct ast_panic{
