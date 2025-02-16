@@ -114,13 +114,12 @@ func struct ast_type *_parser_type_push(struct context *context, struct token *t
 }
 
 // Sometimes when we are constant propagating, we have to un-emit a literal.
+#define pop_from_ast_arena(context, ast) pop_from_ast_arena_(context, (u8 *)(ast), sizeof(*ast))
 func void pop_from_ast_arena_(struct context *context, u8 *ast_memory, smm size){
     assert(ast_memory + size == arena_current(&context->ast_arena));
     context->ast_arena.current = ast_memory;
     memset(ast_memory, 0, size);
 }
-
-#define pop_from_ast_arena(context, ast) pop_from_ast_arena_(context, (u8 *)(ast), sizeof(*ast))
 
 
 #define parser_compound_type_push(context, token, type) (struct ast_compound_type *)_parser_type_push(context, token, sizeof(struct ast_compound_type), alignof(struct ast_compound_type), AST_##type);
@@ -1533,6 +1532,7 @@ func struct ast *push_nodes_for_subscript(struct context *context, struct ast *l
         struct ast_array_type *array = (struct ast_array_type *)lhs_type;
         
         if(lhs->kind == AST_pointer_literal_deref && index->kind == AST_integer_literal){
+            
             // Transform
             //    (*((int (*) [])0))[3]
             // Into
@@ -1543,6 +1543,8 @@ func struct ast *push_nodes_for_subscript(struct context *context, struct ast *l
             
             struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, token);
             set_resolved_type(lhs, pointer_type, null);
+            
+            pop_from_ast_arena(context, (struct ast_integer_literal *)index);
             
             return lhs;
         }
@@ -2536,9 +2538,16 @@ func struct ast *perform_float_operation(struct context *context, enum ast_kind 
         invalid_default_case();
     }
     
+    pop_from_ast_arena(context, rhs);
+    
+    lhs->base.token = token;
+    
     if(compare_value != -1){
         // "The result has type int".
-        return ast_push_s32_literal(context, token, compare_value);
+        struct ast_integer_literal *lit = (struct ast_integer_literal *)lhs;
+        lit->base.kind = AST_integer_literal;
+        lit->_u64 = 1;
+        set_resolved_type(&lit->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
     }
     
     return &lhs->base;
@@ -2622,6 +2631,7 @@ switch(operation->type){                                                  \
     else if(value <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
     else if(value <= max_u32) defined_type = (struct ast *)&globals.typedef_u32;
     
+    lhs->base.token = operation;
     set_resolved_type(&lhs->base, promoted_type, defined_type);
     
     pop_from_ast_arena(context, rhs);
@@ -4604,9 +4614,15 @@ case NUMBER_KIND_##type:{ \
             
             expect_token(context, TOKEN_open_paren, "Expected a '(' after '_Generic'.");
             
-            struct ast *choice = parse_expression(context, /*skip_comma_expression*/1);
-            choice = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, choice);
-            choice = maybe_insert_cast_from_special_int_to_int(context, AST_cast, choice);
+            u8 *ast_arena_start = arena_current(&context->ast_arena);
+            
+            struct ast *choice_expression = parse_expression(context, /*skip_comma_expression*/1);
+            choice_expression = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, choice_expression);
+            choice_expression = maybe_insert_cast_from_special_int_to_int(context, AST_cast, choice_expression);
+            
+            struct ast_type *choice = choice_expression->resolved_type;
+            memset(ast_arena_start, 0, context->ast_arena.current - ast_arena_start);
+            context->ast_arena.current = ast_arena_start;
             
             struct ast *default_expression = null;
             struct ast *choosen_expression = null;
@@ -4632,8 +4648,11 @@ case NUMBER_KIND_##type:{ \
                     
                     struct ast *expression = parse_expression(context, /*skip_comma_expression*/1);
                     
-                    if(types_are_equal(type_name.type, choice->resolved_type)){
+                    if(types_are_equal(type_name.type, choice)){
                         choosen_expression = expression;
+                    }else{
+                        memset(ast_arena_start, 0, context->ast_arena.current - ast_arena_start);
+                        context->ast_arena.current = ast_arena_start;
                     }
                 }
             }
@@ -4645,7 +4664,7 @@ case NUMBER_KIND_##type:{ \
             }else{
                 // :Error
                 report_error(context, generic, "_Generic choice did not match any of the associations.");
-                operand = choice;
+                operand = invalid_ast(context);
             }
         }break;
         
@@ -5411,10 +5430,11 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 if(operand->kind == AST_unary_address){
-                    // const_prop '*&a' to 'a' :ir_refactor should we pop here?
+                    // const_prop '*&a' to 'a'
                     struct ast_unary_op *address = cast(struct ast_unary_op *)operand;
                     assert(address->base.resolved_type->kind == AST_pointer_type);
                     operand = address->operand;
+                    pop_from_ast_arena(context, address);
                 }else if(operand->kind == AST_pointer_literal){
                     operand->kind = AST_pointer_literal_deref;
                     struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)operand->resolved_type;
@@ -5446,10 +5466,11 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 if(operand->kind == AST_unary_deref){
-                    // @note: const prop '&*a' to 'a' :ir_refactor Should we pop here?
+                    // @note: const prop '&*a' to 'a'
                     struct ast_unary_op *deref = cast(struct ast_unary_op *)operand;
                     operand = deref->operand;
                     assert(operand->resolved_type->kind == AST_pointer_type);
+                    pop_from_ast_arena(context, deref);
                 }else if(operand->kind == AST_pointer_literal_deref){
                     operand->kind = AST_pointer_literal;
                     
@@ -5611,7 +5632,9 @@ case NUMBER_KIND_##type:{ \
                         set_resolved_type(operand, &globals.typedef_s64, null);
                     }else if(op_lhs->resolved_type->kind == AST_integer_type && op_rhs->resolved_type->kind == AST_pointer_type){
                         // swap the arguments, as this is what 'handle_pointer_arithmetic' expects
-                        // @cleanup: This is "incorrect", because we want to keep the execution order the same as it in the source code.
+                        // @cleanup: This is "incorrect", because we want to keep the execution order the same as it in the source code. :ir_refactor should fix this.
+                        
+                        push_expression(context, stack_entry->token, swap_lhs_rhs);
                         
                         // :ir_refactor - This wont work anymore, because it will delete the wrong ast.
                         operand = handle_pointer_arithmetic(context, ast_kind, stack_entry->token, op_rhs, op_lhs);
@@ -6093,16 +6116,40 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                // Constant propagation.
-                if(condition->kind == AST_integer_literal){
-                    operand = integer_literal_as_u64(condition) ? if_true : if_false;
-                }else if(condition->kind == AST_pointer_literal){
-                    struct ast_pointer_literal *pointer_literal = (struct ast_pointer_literal *)condition;
-                    operand = pointer_literal->pointer ? if_true : if_false;
-                }else if(condition->kind == AST_float_literal){
-                    struct ast_float_literal *float_literal = (struct ast_float_literal *)condition;
-                    operand = float_literal->value ? if_true : if_false;
-                }else{
+                int constant_propagated = 0;
+                if(condition->kind == AST_integer_literal || condition->kind == AST_pointer_literal || condition->kind == AST_float_literal){
+                    // The condition is constant, we only turn this into a constant if the "true" path is also const.
+                    // @cleanup: Only do this if both paths are const?
+                    
+                    struct ast *ast = null;
+                    switch(condition->kind){
+                        case AST_integer_literal: ast = integer_literal_as_u64(condition) ? if_true : if_false;                  break;
+                        case AST_pointer_literal: ast = ((struct ast_pointer_literal *)condition)->pointer ? if_true : if_false; break;
+                        case AST_float_literal:   ast = ((struct ast_float_literal *)condition)->value ? if_true : if_false;     break;
+                        invalid_default_case();
+                    }
+                    
+                    if(ast->kind == AST_integer_literal || ast->kind == AST_pointer_literal || ast->kind == AST_float_literal){
+                        // 
+                        // We have to constant-propergate this.
+                        // Copy it into condition and delete everything afterwards.
+                        // 
+                        // This whole thing feels sort-of bad, but it is the best I could come up with.
+                        constant_propagated = 1;
+                        
+                        static_assert(sizeof(struct ast_integer_literal) == sizeof(struct ast_float_literal));
+                        static_assert(sizeof(struct ast_integer_literal) == sizeof(struct ast_pointer_literal));
+                        memcpy(condition, ast, sizeof(struct ast_integer_literal));
+                        
+                        u8 *past_const = (u8 *)condition + sizeof(struct ast_integer_literal);
+                        memset(past_const, 0, context->ast_arena.current - past_const);
+                        context->ast_arena.current = past_const;
+                        
+                        operand = condition;
+                    }
+                }
+                
+                if(!constant_propagated){
                     
                     struct ast_conditional_expression *cond = push_expression(context, question_mark, conditional_expression);
                     cond->condition = condition;
@@ -6581,12 +6628,12 @@ case NUMBER_KIND_##type:{ \
     
     // if(0)
     // if(1)
-    if(1){
+    if(1 && !context->should_exit_statement){
         
         struct ast *start_of_expression_ast = (struct ast *)start_in_ast_arena;
         debug_print_error(context, start_of_expression_ast->token, "EXPRESSION:");
         
-        // if(start_of_expression_ast->token->line == 29) __debugbreak();
+        if(start_of_expression_ast->token->line == 309) os_debug_break();
         
         struct ast *ast_stack[1024];
         smm ast_stack_at = 0;
@@ -6736,6 +6783,20 @@ break
                     ast_stack[ast_stack_at-1] = ast;
                 }break;
                 
+                case AST_swap_lhs_rhs:{
+                    current += sizeof(struct ast);
+                    
+                    print("    %p swap_lhs_rhs\n", ast);
+                    if(ast_stack_at < 2){
+                        print(">>>> Wrong!\n");
+                        os_panic(1);
+                    }
+                    
+                    struct ast *temp = ast_stack[ast_stack_at-1];
+                    ast_stack[ast_stack_at-1] = ast_stack[ast_stack_at-2];
+                    ast_stack[ast_stack_at-2] = temp;
+                }break;
+                
                 case AST_duplicate_lhs:{
                     current += sizeof(struct ast_duplicate_lhs);
                     print("    %p duplicate lhs\n", current);
@@ -6845,6 +6906,14 @@ break
             }
         }
         print("\n");
+        
+        if(ast_stack_at != 1){
+            print("WRONG! Ast stack at %d\n", ast_stack_at);
+            for(smm index = 0; index < ast_stack_at; index++){
+                print("    %p\n", ast_stack[index]);
+            }
+            os_panic(1);
+        }
     }
     
     #undef primary
@@ -9328,6 +9397,8 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 }
                 
                 array_type->amount_of_elements = value;
+                
+                pop_from_ast_arena(context, (struct ast_integer_literal *)index_expression);
                 
                 if(context->should_exit_statement) return ret;
             }

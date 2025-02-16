@@ -448,6 +448,7 @@ enum ast_kind{
     AST_modulo_assignment,
     
     AST_duplicate_lhs, // For punting compound assignments.
+    AST_swap_lhs_rhs,  // For weird stuff like `integer + pointer` or `integer[array]`.
     
     AST_member,
     AST_member_deref,
@@ -740,6 +741,10 @@ struct ast_binary_op{
 };
 
 struct ast_duplicate_lhs{
+    struct ast base;
+};
+
+struct ast_swap_lhs_rhs{
     struct ast base;
 };
 
