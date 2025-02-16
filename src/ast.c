@@ -486,6 +486,8 @@ enum ast_kind{
     
     AST_panic, 
     
+    AST_pop_expression,
+    
     AST_emitted_float_literal, // yuck, we copy float-literals in the back-end.
     
     AST_count,
@@ -740,6 +742,7 @@ struct ast_binary_op{
     struct ast *rhs;
 };
 
+// :ir_refactor - This is how all "ast" should look.
 struct ast_duplicate_lhs{
     struct ast base;
 };
@@ -749,6 +752,10 @@ struct ast_swap_lhs_rhs{
 };
 
 struct ast_panic{
+    struct ast base;
+};
+
+struct ast_pop_expression{
     struct ast base;
 };
 
