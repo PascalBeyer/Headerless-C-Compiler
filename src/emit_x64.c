@@ -1971,30 +1971,8 @@ func struct emit_location *emit_compound_assignment_xmm(struct context *context,
 
 ////////////////////////////////////////////////////////////////////////////////////////
 
-struct jump_node{
-    struct jump_node *next;
-    u8 *patch_location;
-    smm jump_from;
-};
-
-enum jump_context_condition{
-    JUMP_CONTEXT_jump_on_true,
-    JUMP_CONTEXT_jump_on_false,
-};
-
-struct jump_context{
-    struct{
-        struct jump_node *first;
-        struct jump_node *last;
-    } jump_list;
-    
-    struct context *context;
-    enum jump_context_condition condition;
-};
-
-func struct jump_context emit_begin_jumps(struct context *context, enum jump_context_condition condition){
+func struct jump_context emit_begin_jumps(enum jump_context_condition condition){
     struct jump_context jump_context = zero_struct;
-    jump_context.context = context;
     jump_context.condition = condition;
     return jump_context;
 }
@@ -2045,9 +2023,8 @@ func u8 instruction_from_comp_condition(enum comp_condition cond, enum jump_cont
     return inst;
 }
 
-func void jump_context_emit(struct jump_context *jump_context, enum comp_condition cond){
-    struct context *context = jump_context->context;
-    struct jump_node *node = push_struct(context->arena, struct jump_node);
+func void jump_context_emit(struct context *context, struct jump_context *jump_context, enum comp_condition cond){
+    struct jump_node *node = push_struct(context->arena, struct jump_node); // @cleanup: Why is this using arena?
     
     u8 inst = instruction_from_comp_condition(cond, jump_context->condition);
     
@@ -2070,8 +2047,8 @@ func void emit_end_jumps_location(struct jump_context context, smm jump_location
     }
 }
 
-func void emit_end_jumps(struct jump_context jump_context){
-    emit_end_jumps_location(jump_context, get_bytes_emitted(jump_context.context));
+func void emit_end_jumps(struct context *context, struct jump_context jump_context){
+    emit_end_jumps_location(jump_context, get_bytes_emitted(context));
 }
 
 func void emit_jump(struct context *context, smm location, enum comp_condition cond, enum jump_context_condition jump_on){
@@ -2233,7 +2210,7 @@ func struct emit_location *emit_code_for_plain_condition(struct context *context
 }
 
 func struct jump_context emit_code_for_if_condition(struct context *context, struct ast *ast){
-    struct jump_context or_jump_context = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
+    struct jump_context or_jump_context = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
     
     ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
     
@@ -2250,13 +2227,13 @@ func struct jump_context emit_code_for_if_condition(struct context *context, str
             should_loop = false;
         }
         
-        struct jump_context and_jump_context = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_false);
+        struct jump_context and_jump_context = emit_begin_jumps(JUMP_CONTEXT_jump_on_false);
         while(and_it->kind == AST_logical_and){
             struct ast_binary_op *logical_and = cast(struct ast_binary_op *)and_it;
             
             // if this fails we want to jump to the next 'or' block
             struct emit_location *loc = emit_code_for_plain_condition(context, logical_and->lhs);
-            jump_context_emit(&and_jump_context, loc->condition);
+            jump_context_emit(context, &and_jump_context, loc->condition);
             
             and_it = logical_and->rhs;
         }
@@ -2266,14 +2243,14 @@ func struct jump_context emit_code_for_if_condition(struct context *context, str
         struct emit_location *loc = emit_code_for_plain_condition(context, and_it);
         
         if(!should_loop){
-            jump_context_emit(&and_jump_context, loc->condition);
+            jump_context_emit(context, &and_jump_context, loc->condition);
             // this is inside the 'if'
-            emit_end_jumps(or_jump_context);
+            emit_end_jumps(context, or_jump_context);
             return and_jump_context;
         }else{
-            jump_context_emit(&or_jump_context, loc->condition);
+            jump_context_emit(context, &or_jump_context, loc->condition);
             // after this is the next 'or' block
-            emit_end_jumps(and_jump_context);
+            emit_end_jumps(context, and_jump_context);
         }
     }
     
@@ -3167,14 +3144,14 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             struct emit_location *loaded = emit_load_into_specific_gpr(context, immediate, reg);
             free_emit_location(context, loaded); // we load it later again.
             
-            struct jump_context jump_over_else = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-            jump_context_emit(&jump_over_else, COMP_none);
-            emit_end_jumps(jump_context);
+            struct jump_context jump_over_else = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+            jump_context_emit(context, &jump_over_else, COMP_none);
+            emit_end_jumps(context, jump_context);
             
             struct emit_location *rhs_loc = emit_code_for_plain_condition(context, op->rhs);
             loaded = emit_load_into_specific_gpr(context, rhs_loc, reg);
             
-            emit_end_jumps(jump_over_else);
+            emit_end_jumps(context, jump_over_else);
             return loaded;
         }break;
         case AST_logical_and:{
@@ -3199,12 +3176,12 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             struct emit_location *rhs_loc = emit_code_for_plain_condition(context, op->rhs);
             struct emit_location *rhs = emit_load(context, rhs_loc);
             
-            struct jump_context jump_over_else = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-            jump_context_emit(&jump_over_else, COMP_none);
-            emit_end_jumps(jump_context);
+            struct jump_context jump_over_else = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+            jump_context_emit(context, &jump_over_else, COMP_none);
+            emit_end_jumps(context, jump_context);
             
             emit_register_register(context, no_prefix(), one_byte_opcode(XOR_REG_REGM), rhs, rhs);
-            emit_end_jumps(jump_over_else);
+            emit_end_jumps(context, jump_over_else);
             
             return rhs;
         }break;
@@ -3300,15 +3277,15 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 struct emit_location *if_true = emit_code_for_ast(context, conditional->if_true);
                 assert(if_true == emit_location_invalid(context));
                 
-                struct jump_context jump_over_else = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-                jump_context_emit(&jump_over_else, COMP_none);
+                struct jump_context jump_over_else = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+                jump_context_emit(context, &jump_over_else, COMP_none);
                 
-                emit_end_jumps(jump_context);
+                emit_end_jumps(context, jump_context);
                 
                 struct emit_location *if_false = emit_code_for_ast(context, conditional->if_false);
                 assert(if_false == emit_location_invalid(context));
                 
-                emit_end_jumps(jump_over_else);
+                emit_end_jumps(context, jump_over_else);
                 
                 return emit_location_invalid(context);
             }
@@ -3344,10 +3321,10 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             // we have to free it here because we re assign it in the second call, this is kinda dumb
             if(dumb) free_emit_location(context, dumb);
             
-            struct jump_context jump_over_else = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-            jump_context_emit(&jump_over_else, COMP_none);
+            struct jump_context jump_over_else = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+            jump_context_emit(context, &jump_over_else, COMP_none);
             
-            emit_end_jumps(jump_context);
+            emit_end_jumps(context, jump_context);
             struct emit_location *if_false = emit_code_for_ast(context, conditional->if_false);
             
             struct emit_location *loaded = null;
@@ -3360,7 +3337,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             }
             
             if(loaded) free_emit_location(context, loaded);
-            emit_end_jumps(jump_over_else);
+            emit_end_jumps(context, jump_over_else);
             
             if(should_memcpy) return temporary;
             
@@ -3571,7 +3548,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             if(!context->should_not_emit_ret_jump){
                 // :function_epilog
                 // jump to the function epilog, this does not have to happen, when we are already at the end of a function
-                jump_context_emit(context->jump_to_function_epilog, COMP_none);
+                jump_context_emit(context, context->jump_to_function_epilog, COMP_none);
             }
             
             return emit_location_invalid(context);
@@ -3605,15 +3582,15 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             if(loc) free_emit_location(context, loc);
             
             if(ast_if->else_statement){
-                struct jump_context jump_over_else = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-                jump_context_emit(&jump_over_else, COMP_none);
-                emit_end_jumps(jump_context);
+                struct jump_context jump_over_else = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+                jump_context_emit(context, &jump_over_else, COMP_none);
+                emit_end_jumps(context, jump_context);
                 struct emit_location *else_statement = emit_code_for_ast(context, ast_if->else_statement);
                 if(else_statement) free_emit_location(context, else_statement);
                 
-                emit_end_jumps(jump_over_else);
+                emit_end_jumps(context, jump_over_else);
             }else{
-                emit_end_jumps(jump_context);
+                emit_end_jumps(context, jump_context);
             }
             
             return emit_location_invalid(context);
@@ -3674,30 +3651,30 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 
                 // @cleanup: is this the right arena?
                 struct jump_context *jump = push_struct(context->arena, struct jump_context);
-                *jump = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-                jump_context_emit(jump, COMP_equals);
+                *jump = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+                jump_context_emit(context, jump, COMP_equals);
                 ast_case->jump = jump;
             }
             free_emit_location(context, switch_on);
             
             struct jump_context *old_break_jump_context = context->break_jump_context;
-            struct jump_context break_jumps = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
+            struct jump_context break_jumps = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
             context->break_jump_context = &break_jumps;
             
             if(ast_switch->default_case){
                 // @cleanup: is this the right arena?
                 struct jump_context *jump = push_struct(context->arena, struct jump_context);
-                *jump = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-                jump_context_emit(jump, COMP_none);
+                *jump = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+                jump_context_emit(context, jump, COMP_none);
                 ast_switch->default_case->jump = jump;
             }else{
-                jump_context_emit(&break_jumps, COMP_none);
+                jump_context_emit(context, &break_jumps, COMP_none);
             }
             
             struct emit_location *loc = emit_code_for_ast(context, ast_switch->statement);
             if(loc) free_emit_location(context, loc);
             
-            emit_end_jumps(break_jumps);
+            emit_end_jumps(context, break_jumps);
             context->break_jump_context = old_break_jump_context;
             
             return emit_location_invalid(context);
@@ -3706,7 +3683,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             while(true){
                 struct ast_case *ast_case = cast(struct ast_case *)ast;
                 assert(ast_case->jump);
-                emit_end_jumps(*ast_case->jump);
+                emit_end_jumps(context, *ast_case->jump);
                 
                 if(ast_case->statement){ 
                     // Chain all case statements and do not recurse for them.
@@ -3742,8 +3719,8 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             struct jump_context *old_break_jump_context    = context->break_jump_context;
             struct jump_context *old_continue_jump_context = context->continue_jump_context;
             
-            struct jump_context break_jumps    = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-            struct jump_context continue_jumps = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
+            struct jump_context break_jumps    = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+            struct jump_context continue_jumps = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
             context->break_jump_context = &break_jumps;
             context->continue_jump_context = &continue_jumps;
             
@@ -3759,9 +3736,9 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             // break:
             
             // :AST_do_while, if ast->kind == AST_do_while we emit an initial jump to body.
-            struct jump_context init_jump_for_do_while = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
+            struct jump_context init_jump_for_do_while = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
             if(ast->kind == AST_do_while){
-                jump_context_emit(&init_jump_for_do_while, COMP_none);
+                jump_context_emit(context, &init_jump_for_do_while, COMP_none);
             }
             
             if(ast_for->decl){
@@ -3775,14 +3752,14 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             // @cleanup: ast_for->condition can be null, but maybe we do that in parse
             struct jump_context end_loop_context = emit_code_for_if_condition(context, ast_for->condition);
             {
-                if(ast->kind == AST_do_while) emit_end_jumps(init_jump_for_do_while);
+                if(ast->kind == AST_do_while) emit_end_jumps(context, init_jump_for_do_while);
                 
                 // body;
                 struct emit_location *body = emit_code_for_ast(context, ast_for->body);
                 if(body) free_emit_location(context, body);
                 
                 // continue:
-                emit_end_jumps(continue_jumps);
+                emit_end_jumps(context, continue_jumps);
                 
                 // inc;
                 if(ast_for->increment){
@@ -3795,8 +3772,8 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             }
             
             // break:
-            emit_end_jumps(end_loop_context);
-            emit_end_jumps(break_jumps);
+            emit_end_jumps(context, end_loop_context);
+            emit_end_jumps(context, break_jumps);
             
             // restore old values
             context->break_jump_context = old_break_jump_context;
@@ -3808,12 +3785,12 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
         }break;
         case AST_break:{
             //struct ast_break *ast_break = cast(struct ast_break *)ast;
-            jump_context_emit(context->break_jump_context, COMP_none);
+            jump_context_emit(context, context->break_jump_context, COMP_none);
             return emit_location_invalid(context);
         }break;
         case AST_continue:{
             //struct ast_continue *ast_continue = cast(struct ast_continue *)ast;
-            jump_context_emit(context->continue_jump_context, COMP_none);
+            jump_context_emit(context, context->continue_jump_context, COMP_none);
             return emit_location_invalid(context);
         }break;
         case AST_goto:{
@@ -3919,7 +3896,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             // :returning_structs
             struct emit_location *stack_return_location = null;
             
-            enum register_encoding argument_registers[REGISTER_KIND_count][4] = {
+            static enum register_encoding argument_registers[REGISTER_KIND_count][4] = {
                 [REGISTER_KIND_gpr][0] = REGISTER_C,
                 [REGISTER_KIND_gpr][1] = REGISTER_D,
                 [REGISTER_KIND_gpr][2] = REGISTER_R8,
@@ -4192,11 +4169,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     emit(CALL_RELATIVE);
                     smm patch_offset = emit_bytes(context, sizeof(s32), 0);
                     
-                    // @note: We have to lookup the identifier either here or in patching, 
-                    //        I think if makes more sense to do it here, than in patching,
-                    //        because string literals and static variables do not want that lookup. 
-                    //                                                        -3.1.2020
-                    
                     emit_patch(context, PATCH_rip_relative, &patch_call_source_declaration->base, 0, &context->current_function->as_decl, patch_offset, patch_offset + 4);
                 }
             }else{
@@ -4223,7 +4195,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             if(function_type->return_type == &globals.typedef_void){
                 return emit_location_invalid(context);
             }
-            
             
             struct ast_type *return_type = function_type->return_type;
             
@@ -4462,17 +4433,17 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     // test the value
                     emit_register_register(context, no_prefix(), one_byte_opcode(TEST_REGM_REG), loc, loc);
                     
-                    struct jump_context msb_set_jump = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-                    jump_context_emit(&msb_set_jump, COMP_negative);
+                    struct jump_context msb_set_jump = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+                    jump_context_emit(context, &msb_set_jump, COMP_negative);
                     
                     // we are good, we have passed the test, MSB is not set. just convert the value!
                     emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, 8);
                     
-                    struct jump_context jump_to_end = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
-                    jump_context_emit(&jump_to_end, COMP_none);
+                    struct jump_context jump_to_end = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+                    jump_context_emit(context, &jump_to_end, COMP_none);
                     
                     // msb_set:
-                    emit_end_jumps(msb_set_jump);
+                    emit_end_jumps(context, msb_set_jump);
                     
                     // copy the value
                     enum register_encoding saved_gpr = allocate_register(context, REGISTER_KIND_gpr);
@@ -4495,7 +4466,7 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     emit_register_register(context, create_prefixes(prefix), two_byte_opcode(ADD_XMM), ret, ret);
                     
                     // end:
-                    emit_end_jumps(jump_to_end);
+                    emit_end_jumps(context, jump_to_end);
                     
                     free_emit_location(context, saved);
                     emit_location_allow_spilling(context, loc);
@@ -4552,6 +4523,196 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
         invalid_default_case(return null);
     }
     //invalid_code_path;
+}
+
+
+// :ir_refactor
+void emit_code_for_scope(struct context *context, struct ast_scope *scope){
+    
+    struct ast_function *current_function = context->current_function;
+    context->jump_labels = push_data(&context->scratch, struct jump_label_information, current_function->amount_of_jump_labels);
+    
+    struct emit_location *emit_location_stack[0x100];
+    smm emit_location_stack_at = 0;
+    
+    scope->base.byte_offset_in_function = to_s32(get_bytes_emitted(context));
+    
+    for(u8 *ast_arena_at = scope->start_in_ast_arena; ast_arena_at < scope->end_in_ast_arena; ){
+        struct ast *ast = (struct ast *)ast_arena_at;
+        
+        ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
+        
+        switch(ast->kind){
+            
+            // 
+            // For now, for primary expressions, fall back to `emit_code_for_ast`.
+            // 
+            
+            case AST_identifier:{
+                ast_arena_at += sizeof(struct ast_identifier);
+                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+            }break;
+            
+            case AST_string_literal:{
+                ast_arena_at += sizeof(struct ast_string_literal);
+                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+            }break;
+            
+            case AST_integer_literal:{
+                ast_arena_at += sizeof(struct ast_integer_literal);
+                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+            }break;
+            
+            case AST_float_literal:{
+                ast_arena_at += sizeof(struct ast_float_literal);
+                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+            }break;
+            
+            case AST_pointer_literal:{
+                ast_arena_at += sizeof(struct ast_pointer_literal);
+                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+            }break;
+            
+            case AST_assignment:{
+                ast_arena_at += sizeof(struct ast_binary_op);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                assert(lhs->state == EMIT_LOCATION_register_relative);
+                emit_store(context, lhs, rhs);
+            }break;
+            
+            
+#if 0
+            case AST_binary_plus:{
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 2;
+                
+            }break;
+#endif
+            
+            case AST_function_call:{ 
+                struct ast_function_call *call = (struct ast_function_call *)ast;
+                ast_arena_at += sizeof(*call); 
+                
+                struct ast_function_type *function_type = call->function_type;
+                
+                // @incomplete: varargs functions might have argument_count != parameter_count.
+                
+                smm argument_count = function_type->argument_list.count;
+                assert(argument_count < 4);
+                
+                emit_location_stack_at -= argument_count + 1;
+                
+                struct emit_location *function_location = emit_location_stack[emit_location_stack_at];
+                struct emit_location **argument_locations = &emit_location_stack[emit_location_stack_at + 1];
+                
+                if(function_location->state == EMIT_LOCATION_register_relative && function_location->ast != 0){
+                    struct ast_function *function = (struct ast_function *)function_location->ast;
+                    assert(function->base.kind == AST_function); // @cleanup: I'm not sure this is how anything works.
+                    
+                    static enum register_encoding argument_registers[REGISTER_KIND_count][4] = {
+                        [REGISTER_KIND_gpr][0] = REGISTER_C,
+                        [REGISTER_KIND_gpr][1] = REGISTER_D,
+                        [REGISTER_KIND_gpr][2] = REGISTER_R8,
+                        [REGISTER_KIND_gpr][3] = REGISTER_R9,
+                        
+                        [REGISTER_KIND_xmm][0] = REGISTER_XMM0,
+                        [REGISTER_KIND_xmm][1] = REGISTER_XMM1,
+                        [REGISTER_KIND_xmm][2] = REGISTER_XMM2,
+                        [REGISTER_KIND_xmm][3] = REGISTER_XMM3,
+                    };
+                    
+                    // Put the arguments into the right slots. (Currently assuming all interger arguments).
+                    for(u32 argument_index = 0; argument_index < argument_count; argument_index++){
+                        struct emit_location *argument = argument_locations[argument_index];
+                        if(argument->state == EMIT_LOCATION_loaded && argument->loaded_register == argument_registers[0][argument_index]){
+                            // The argument is already in the correct slot.
+                            continue;
+                        }
+                        
+                        enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, argument_registers[0][argument_index]);
+                        argument_locations[argument_index] = emit_load_into_specific_gpr(context, argument, arg_reg);
+                        emit_location_prevent_spilling(context, argument_locations[argument_index]);
+                    }
+                    
+                    emit(CALL_RELATIVE);
+                    smm patch_offset = emit_bytes(context, sizeof(s32), 0);
+                    emit_patch(context, PATCH_rip_relative, &function->base, 0, &context->current_function->as_decl, patch_offset, patch_offset + 4);
+                    
+                    // Free all 'argument_locations'.
+                    for(u32 argument_index = 0; argument_index < argument_count; argument_index++){
+                        emit_location_allow_spilling(context, argument_locations[argument_index]);
+                        free_emit_location(context, argument_locations[argument_index]);
+                    }
+                    
+                    struct ast_type *return_type = function_type->return_type;
+                    
+                    emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
+                }else{
+                    not_implemented;
+                }
+            }break;
+            
+            case AST_return:{
+                ast_arena_at += sizeof(struct ast_return);
+                
+                emit_location_stack_at -= 1;
+                struct emit_location *return_location = emit_location_stack[emit_location_stack_at];
+                
+                struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, REGISTER_A);
+                free_emit_location(context, loaded);
+            }break;
+            
+            case AST_pop_expression:{
+                ast_arena_at += sizeof(struct ast_pop_expression);
+                emit_location_stack_at -= 1;
+                free_emit_location(context, emit_location_stack[emit_location_stack_at]);
+            }break;
+            
+            case AST_jump_label:{
+                ast_arena_at += sizeof(struct ast_jump_label);
+                
+                struct ast_jump_label *jump_label = (struct ast_jump_label *)ast;
+                context->jump_labels[jump_label->label_number].jump_location = get_bytes_emitted(context);
+            }break;
+            
+            case AST_jump:{
+                ast_arena_at += sizeof(struct ast_jump);
+                
+                struct ast_jump *jump = (struct ast_jump *)ast;
+                jump_context_emit(context, &context->jump_labels[jump->label_number].context, COMP_none);
+            }break;
+            
+            case AST_conditional_jump:{
+                ast_arena_at += sizeof(struct ast_jump);
+                
+                emit_location_stack_at -= 1;
+                struct emit_location *condition = emit_load(context, emit_location_stack[emit_location_stack_at]);
+                
+                // @cleanup:
+                condition = emit_compare_to_zero(context, condition);
+                
+                struct ast_jump *jump = (struct ast_jump *)ast;
+                jump_context_emit(context, &context->jump_labels[jump->label_number].context, condition->condition);
+                
+                free_emit_location(context, condition);
+            }break;
+            
+            default:{
+                report_internal_compiler_error(ast->token, __FUNCTION__ ": Unhandled ast");
+            }break;
+        }
+    }
+    
+    for(u32 jump_label_index = 0; jump_label_index < current_function->amount_of_jump_labels; jump_label_index++){
+        struct jump_label_information *jump_label_information = &context->jump_labels[jump_label_index];
+        emit_end_jumps_location(jump_label_information->context, jump_label_information->jump_location);
+    }
+    
+    assert(emit_location_stack_at == 0);
 }
 
 func void emit_code_for_function(struct context *context, struct ast_function *function){
@@ -4694,7 +4855,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     context->current_emit_base = main_function_start;
     function->base_of_main_function = main_function_start;
     
-    struct jump_context jump_to_function_epilog = emit_begin_jumps(context, JUMP_CONTEXT_jump_on_true);
+    struct jump_context jump_to_function_epilog = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
     context->jump_to_function_epilog = &jump_to_function_epilog;
     
     
@@ -4702,7 +4863,15 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     
     // LET'S GO:
     ////////////////////////////////////////////////
-    emit_code_for_ast(context, function->scope);
+    
+    if(0)
+    // if(1)
+    {
+        emit_code_for_scope(context, (struct ast_scope *)function->scope);
+    }else{
+        emit_code_for_ast(context, function->scope);
+    }
+    
     ////////////////////////////////////////////////
     
     
@@ -4737,7 +4906,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     
     // :function_epilog
     // we jump to here, instead of returning on the spot, this is so we can get canonical stack framing.
-    emit_end_jumps(jump_to_function_epilog);
+    emit_end_jumps(context, jump_to_function_epilog);
     
     if(type_is_returned_by_address(return_type)){
         // :returning_structs

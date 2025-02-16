@@ -675,10 +675,32 @@ func enum register_kind get_register_kind_for_type(struct ast_type *type){
     return kind;
 }
 
-
 struct register_allocator{
     struct emit_location *emit_location_map[16];
     u32 rolling_index;
+};
+
+//_____________________________________________________________________________________________________________________
+// jump nodes
+
+struct jump_node{
+    struct jump_node *next;
+    u8 *patch_location;
+    smm jump_from;
+};
+
+enum jump_context_condition{
+    JUMP_CONTEXT_jump_on_true,
+    JUMP_CONTEXT_jump_on_false,
+};
+
+struct jump_context{
+    struct{
+        struct jump_node *first;
+        struct jump_node *last;
+    } jump_list;
+    
+    enum jump_context_condition condition;
 };
 
 //_____________________________________________________________________________________________________________________
@@ -688,6 +710,7 @@ struct pragma_once_list_node{
     struct pragma_once_list_node *next;
     struct file *file;
 };
+
 
 // @note: thread local datum
 struct context{
@@ -778,6 +801,8 @@ struct context{
     struct token *in_inline_asm_function;
     b32 current_asm_flags;
     
+    smm jump_label_index;
+    
     //
     // Error stream
     //
@@ -844,6 +869,11 @@ struct context{
     struct jump_context *continue_jump_context;
     struct jump_context *jump_to_function_epilog;
     b32 should_not_emit_ret_jump;
+    
+    struct jump_label_information{
+        struct jump_context context;
+        smm jump_location;
+    } *jump_labels;
     
     struct {
         struct inline_asm_function_argument *first;
@@ -2546,6 +2576,8 @@ func void reset_context(struct context *context){
     context->in_static_if_condition     = 0;
     context->current_statement_returns_a_value = 0;
     
+    context->jump_label_index = 0;
+    
     context->pragma_pack_stack.first = context->pragma_pack_stack.last = null;
 }
 
@@ -3181,6 +3213,9 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             return;
         }
     }
+    
+    function->amount_of_jump_labels = context->jump_label_index;
+    
     function->stack_space_needed = context->current_emit_offset_of_rsp;
     
     if(atoms_match(function->identifier->atom, globals.keyword_main)){

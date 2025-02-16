@@ -486,8 +486,12 @@ enum ast_kind{
     
     AST_panic, 
     
-    AST_pop_expression,
+    // :ir_refactor
+    AST_conditional_jump,
+    AST_jump,
+    AST_jump_label,
     
+    AST_pop_expression,
     AST_emitted_float_literal, // yuck, we copy float-literals in the back-end.
     
     AST_count,
@@ -759,6 +763,21 @@ struct ast_pop_expression{
     struct ast base;
 };
 
+struct ast_jump{
+    struct ast base;
+    smm label_number;
+};
+
+struct ast_conditional_jump{
+    struct ast base;
+    smm label_number;
+};
+
+struct ast_jump_label{
+    struct ast base;
+    smm label_number;
+};
+
 struct ast_dot_or_arrow{
     struct ast base;
     struct ast *lhs;
@@ -804,7 +823,12 @@ struct ast_scope{
     struct ast base;
     struct ast_scope *parent;
     
+    // old way to iterate the statements
     struct ast_list statement_list;
+    
+    // new way to iterate the statements
+    u8 *start_in_ast_arena;
+    u8 *end_in_ast_arena;
     
     enum scope_flags flags;
     
@@ -918,7 +942,10 @@ struct ast_function{
     struct ast_list goto_list;
     struct ast_list label_list;
     
-    struct ast_list static_variables;
+    // This should replace the goto and label list above. :ir_refactor.
+    smm amount_of_jump_labels;
+    
+    struct ast_list static_variables;    
     
     // debug info:
     smm debug_size;
@@ -964,6 +991,7 @@ struct ast_case{
 
 struct ast_function_call{
     struct ast base;
+    struct ast_function_type *function_type;
     struct ast *identifier_expression; // @cleanup: garbage name
     struct ast_list call_arguments;
 };

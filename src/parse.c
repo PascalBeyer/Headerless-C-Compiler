@@ -5042,6 +5042,7 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 struct ast_function_call *call = push_expression(context, call_token, function_call);
+                call->function_type = function_type;
                 call->identifier_expression = operand;
                 call->call_arguments = call_arguments;
                 
@@ -5049,6 +5050,7 @@ case NUMBER_KIND_##type:{ \
                 operand = &call->base;
                 context->in_lhs_expression = false;
             }break;
+            
             default:{
                 prev_token(context);
                 do_continue = false;
@@ -8182,9 +8184,13 @@ func struct ast *parse_statement(struct context *context){
             // Get the initial "returns a value state".
             int statement_returns_a_value = context->current_statement_returns_a_value;
             
-            struct ast_if *ast_if = push_expression(context, initial_token, if);
-            ast_if->condition = condition;
+            // :ir_refactor - new
+            struct ast_conditional_jump *condition_jump = push_expression(context, initial_token, conditional_jump);
+            condition_jump->label_number = context->jump_label_index++; // @cleanup: tell this that it has to jump if false?
             
+            // :ir_refactor - old
+            struct ast_if *ast_if = push_ast(context, initial_token, if);
+            ast_if->condition = condition;
             ast_if->statement = parse_statement(context);
             
             // Check if the "if" part returns a value and reset the to the old state.
@@ -8193,11 +8199,24 @@ func struct ast *parse_statement(struct context *context){
             
             if(peek_token_eat(context, TOKEN_else)){
                 
+                struct ast_jump *jump_over_else = push_expression(context, initial_token, jump);
+                jump_over_else->label_number = context->jump_label_index++;
+                
+                struct ast_jump_label *else_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                else_label->label_number = condition_jump->label_number;
+                
                 ast_if->else_statement = parse_statement(context);
+                
+                struct ast_jump_label *end_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                end_label->label_number = jump_over_else->label_number;
+                
                 
                 // Check if the "else" part returns a value and we now return a value, if we returned a value before, or both sides returned a value.
                 int else_statement_returns_a_value = context->current_statement_returns_a_value;
                 context->current_statement_returns_a_value = statement_returns_a_value | (else_statement_returns_a_value & if_statement_returns_a_value);
+            }else{
+                struct ast_jump_label *end_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                end_label->label_number = condition_jump->label_number;
             }
             
             needs_semicolon = false;
@@ -8652,7 +8671,8 @@ func struct ast *parse_statement(struct context *context){
 
 void dump_and_check_ast_stack(struct context *context, void *start_in_ast_arena){
     
-    if(context) return;
+    // if(0) return;
+    if(1) return;
     
     if(start_in_ast_arena == arena_current(&context->ast_arena)) return; // Check for empty block.
     
@@ -8875,16 +8895,6 @@ break
                 ast_stack[ast_stack_at-1] = should_break;
             }break;
             
-            
-            case AST_pop_expression:{
-                current += sizeof(struct ast);
-                print("    %p pop-ast\n", ast);
-                if(ast_stack_at < 1){
-                    print(">>>> Wrong!\n");
-                }
-                ast_stack_at -= 1;
-            }break;
-            
             case AST_function_call:{
                 current += sizeof(struct ast_function_call);
                 struct ast_function_call *call = (struct ast_function_call *)ast;
@@ -8920,6 +8930,38 @@ break
                 ast_stack[ast_stack_at-1] = ast;
             }break;
             
+            // new nodes.
+            
+            case AST_conditional_jump:{
+                current += sizeof(struct ast_conditional_jump);
+                struct ast_conditional_jump *jump = (struct ast_conditional_jump *)ast;
+                print("    conditional-jump %lld\n", jump->label_number);
+                ast_stack_at -= 1;
+            }break;
+            
+            case AST_jump:{
+                current += sizeof(struct ast_jump);
+                struct ast_jump *jump = (struct ast_jump *)ast;
+                print("    jump %lld\n", jump->label_number);
+            }break;
+            
+            case AST_jump_label:{
+                current += sizeof(struct ast_jump_label);
+                struct ast_jump_label *label = (struct ast_jump_label *)ast;
+                print(".%lld:\n", label->label_number);
+            }break;
+            
+            case AST_pop_expression:{
+                current += sizeof(struct ast);
+                print("    %p pop-ast\n", ast);
+                if(ast_stack_at < 1){
+                    print(">>>> Wrong!\n");
+                }
+                ast_stack_at -= 1;
+            }break;
+            
+            // @cleanup: This has to go away.
+            
             case AST_conditional_expression:{
                 current += sizeof(struct ast_conditional_expression);
                 struct ast_conditional_expression *cond = (struct ast_conditional_expression *)ast;
@@ -8935,6 +8977,7 @@ break
                 ast_stack[ast_stack_at-1] = ast;
             }break;
             
+            
             // 
             // Statements: 
             // 
@@ -8947,17 +8990,6 @@ break
                 }
                 ast_stack_at -= 1;
             }break;
-            
-            case AST_if:{
-                current += sizeof(struct ast_if);
-                struct ast_if *ast_if = (struct ast_if *)ast;
-                print("    %p if %p then %p else %p\n", ast_if->condition, ast_if->statement, ast_if->else_statement);
-                if(ast_stack_at < 1){
-                    print(">>>> Wrong!\n");
-                }
-                ast_stack_at -= 1;
-            }break;
-            
             
             default:{
                 debug_print_error(context, ast->token, "UNHANDLED!");
@@ -8987,6 +9019,8 @@ func struct ast *parse_imperative_scope(struct context *context){
     
     struct ast_scope *scope = context->current_scope;
     assert(scope);
+    
+    scope->start_in_ast_arena = start_in_ast_arena;
     
     // Keep parsing inputs even after an error has occurred!
     while(true){
@@ -9038,6 +9072,8 @@ func struct ast *parse_imperative_scope(struct context *context){
             ast_list_append(&scope->statement_list, context->arena, statement);
         }
     }
+    
+    scope->end_in_ast_arena = arena_current(&context->ast_arena);
     
     for(u32 table_index = 0; table_index < scope->current_max_amount_of_declarations; table_index++){
         
