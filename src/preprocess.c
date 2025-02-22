@@ -3313,7 +3313,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
             
             if(token->type == TOKEN_invalid) goto double_break;
             
-            if(token->type == TOKEN_hash && got_newline){
+            if(token->type == TOKEN_hash && got_newline && context->define_depth == 0){
                 // We have to handle the directive!
                 break;
             }

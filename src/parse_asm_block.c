@@ -1998,7 +1998,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             if(asm_instruction->operands[0].size == 0) asm_instruction->operands[0].size = 8;
             if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 8;
             
-            if(asm_instruction->operands[0].kind != ASM_ARG_memory_operand && asm_instruction->operands[1].kind != ASM_ARG_memory_operand){
+            if(regm_index == -1){
                 report_error(context, token, "One operand of '%.*s' has to be a memory location.", token->size, token->data);
             }
         }break;

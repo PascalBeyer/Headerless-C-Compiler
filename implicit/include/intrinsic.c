@@ -45,8 +45,7 @@
 
 __declspec(inline_asm) unsigned __int8 _bittest(__int32 *to_test, __int32 bit_index){
     // stores the bit at 'bit_index' and stores it in CF
-    mov rcx, to_test
-    bt [rcx], bit_index
+    bt [to_test], bit_index
     
     setc al
     return al
@@ -54,8 +53,7 @@ __declspec(inline_asm) unsigned __int8 _bittest(__int32 *to_test, __int32 bit_in
 
 __declspec(inline_asm) unsigned __int8 _bittest64(__int64 *to_test, __int64 bit_index){
     // stores the bit at 'bit_index' and stores it in CF
-    mov rcx, to_test
-    bt [rcx], bit_index
+    bt [to_test], bit_index
     
     setc al
     return al
@@ -63,16 +61,14 @@ __declspec(inline_asm) unsigned __int8 _bittest64(__int64 *to_test, __int64 bit_
 
 
 __declspec(inline_asm) unsigned __int8 _bittestandcomplement(__int32 *to_test, __int32 bit_index){
-    mov rcx, to_test
-    btc [rcx], bit_index
+    btc [to_test], bit_index
     
     setc al
     return al
 }
 
 __declspec(inline_asm) unsigned __int8 _bittestandcomplement64(__int64 *to_test, __int64 bit_index){
-    mov rcx, to_test
-    btc [rcx], bit_index
+    btc [to_test], bit_index
     
     setc al
     return al
@@ -81,8 +77,7 @@ __declspec(inline_asm) unsigned __int8 _bittestandcomplement64(__int64 *to_test,
 
 __declspec(inline_asm) unsigned __int8 _bittestandreset(__int32 *to_test, __int32 bit_index){
     // stores the bit at 'bit_index'(< 32) and stores it in CF
-    mov rcx, to_test
-    btr [rcx], bit_index
+    btr [to_test], bit_index
     setc al
     
     return al
@@ -90,8 +85,7 @@ __declspec(inline_asm) unsigned __int8 _bittestandreset(__int32 *to_test, __int3
 
 __declspec(inline_asm) unsigned __int8 _bittestandreset64(__int64 *to_test, __int64 bit_index){
     // stores the bit at 'bit_index'(< 62) and stores it in CF
-    mov rcx, to_test
-    btr [rcx], bit_index
+    btr [to_test], bit_index
     
     setc al
     return al
@@ -100,8 +94,7 @@ __declspec(inline_asm) unsigned __int8 _bittestandreset64(__int64 *to_test, __in
 
 __declspec(inline_asm) unsigned __int8 _bittestandset(__int32 *to_test, __int32 bit_index){
     // stores the bit at 'bit_index'(< 32) and stores it in CF
-    mov rcx, to_test
-    bts [rcx], bit_index
+    bts [to_test], bit_index
     
     setc al
     return al
@@ -109,8 +102,7 @@ __declspec(inline_asm) unsigned __int8 _bittestandset(__int32 *to_test, __int32 
 
 __declspec(inline_asm) unsigned __int8 _bittestandset64(__int64 *to_test, __int64 bit_index){
     // stores the bit at 'bit_index'(< 62) and stores it in CF
-    mov rcx, to_test
-    bts [rcx], bit_index
+    bts [to_test], bit_index
     
     setc al
     return al
@@ -186,8 +178,7 @@ __declspec(inline_asm) __int8 _InterlockedIncrement8(__int8 *to_increment){
     mov edx, 1
     
     // add the one, the preincremented value will be in dl
-    mov rcx, to_increment
-    lock xadd [rcx], dl
+    lock xadd [to_increment], dl
     
     // increment dl such that we have the 'incremented_value'
     inc dl
@@ -204,8 +195,7 @@ __declspec(inline_asm) __int16 _InterlockedIncrement16(__int16 *to_increment){
     mov edx, 1
     
     // add the one, the preincremented value will be in dx
-    mov rcx, to_increment
-    lock xadd [rcx], dx
+    lock xadd [to_increment], dx
     
     // increment dl such that we have the 'incremented_value'
     inc dx
@@ -222,8 +212,7 @@ __declspec(inline_asm) __int32 _InterlockedIncrement(__int32 *to_increment){
     mov edx, 1
     
     // add the one, the preincremented value will be in edx
-    mov rcx, to_increment
-    lock xadd [rcx], edx
+    lock xadd [to_increment], edx
     
     // increment dl such that we have the 'incremented_value'
     inc edx
@@ -241,8 +230,7 @@ __declspec(inline_asm) __int64 _InterlockedIncrement64(__int64 *to_increment){
     mov edx, 1
     
     // add the one, the preincremented value will be in rdx
-    mov rcx, to_increment
-    lock xadd [rcx], rdx
+    lock xadd [to_increment], rdx
     
     // increment dl such that we have the 'incremented_value'
     inc rdx
@@ -260,8 +248,7 @@ __declspec(inline_asm) __int8 _InterlockedDecrement8(__int8 *to_increment){
     mov edx, -1
     
     // add the one, the preincremented value will be in dl
-    mov rcx, to_increment
-    lock xadd [rcx], dl
+    lock xadd [to_increment], dl
     
     // increment dl such that we have the 'incremented_value'
     inc dl
@@ -278,8 +265,7 @@ __declspec(inline_asm) __int16 _InterlockedDecrement16(__int16 *to_increment){
     mov edx, -1
     
     // add the one, the preincremented value will be in dx
-    mov rcx, to_increment
-    lock xadd [rcx], dx
+    lock xadd [to_increment], dx
     
     // increment dl such that we have the 'incremented_value'
     inc dx
@@ -297,8 +283,7 @@ __declspec(inline_asm) __int32 _InterlockedDecrement(__int32 *to_increment){
     mov edx, -1
     
     // add the one, the preincremented value will be in edx
-    mov rcx, to_increment
-    lock xadd [rcx], edx
+    lock xadd [to_increment], edx
     
     // increment dl such that we have the 'incremented_value'
     inc edx
@@ -316,8 +301,7 @@ __declspec(inline_asm) __int64 _InterlockedDecrement64(__int64 *to_increment){
     mov rdx, -1
     
     // add the one, the preincremented value will be in rdx
-    mov rcx, to_increment
-    lock xadd [rcx], rdx
+    lock xadd [to_increment], rdx
     
     // increment dl such that we have the 'incremented_value'
     inc rdx
@@ -334,8 +318,7 @@ __declspec(inline_asm) __int8 _InterlockedCompareExchange8(__int8 *destination, 
     
     // check atomically if '*destintaion == al'(comparand), if true 'exchange' is stored in '*destination'
     // otherwise *destination is stored in al
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
+    lock cmpxchg [destination], exchange
     
     // return the result(*destination) in either case
     return al
@@ -349,8 +332,7 @@ __declspec(inline_asm) __int16 _InterlockedCompareExchange16(__int16 *destinatio
     
     // check atomically if '*destintaion == ax'(comparand), if true 'exchange' is stored in '*destination'
     // otherwise *destination is stored in ax
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
+    lock cmpxchg [destination], exchange
     
     // return the result(*destination) in either case
     return ax
@@ -362,8 +344,7 @@ __declspec(inline_asm) __int32 _InterlockedCompareExchange(__int32 *destination,
     
     // check atomically if '*destintaion == eax'(comparand), if true 'exchange' is stored in '*destination'
     // otherwise *destination is stored in eax
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
+    lock cmpxchg [destination], exchange
     
     // return the result(*destination) in either case
     return eax
@@ -376,8 +357,7 @@ __declspec(inline_asm) __int64 _InterlockedCompareExchange64(__int64 *destinatio
     
     // check atomically if '*destintaion == rax'(comparand), if true 'exchange' is stored in '*destination'
     // otherwise *destination is stored in rax
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
+    lock cmpxchg [destination], exchange
     
     // return the result(*destination) in either case
     return rax
@@ -417,8 +397,7 @@ __declspec(inline_asm) void *_InterlockedCompareExchangePointer(void **destinati
     
     // check atomically if '*destintaion == rax'(comparand), if true 'exchange' is stored in '*destination'
     // otherwise *destination is stored in rax
-    mov rcx, destination
-    lock cmpxchg [rcx], exchange
+    lock cmpxchg [destination], exchange
     
     // return the result(*destination) in either case
     return rax
@@ -427,36 +406,31 @@ __declspec(inline_asm) void *_InterlockedCompareExchangePointer(void **destinati
 
 __declspec(inline_asm) char _InterlockedExchange8(char *target, char value){
     movzx eax, value
-    mov rcx, target
-    xchg al, [rcx]
+    xchg al, [target]
     return al
 }
 
 __declspec(inline_asm) short _InterlockedExchange16(short *target, short value){
     movzx eax, value
-    mov rcx, target
-    xchg ax, [rcx]
+    xchg ax, [target]
     return ax
 }
 
 __declspec(inline_asm) long _InterlockedExchange(long *target, long value){
     mov eax, value
-    mov rcx, target
-    xchg eax, [rcx]
+    xchg eax, [target]
     return eax
 }
 
 __declspec(inline_asm) __int64 _InterlockedExchange64(__int64 *target, __int64 value){
     mov rax, value
-    mov rcx, target
-    xchg rax, [rcx]
+    xchg rax, [target]
     return rax
 }
 
 __declspec(inline_asm) void *_InterlockedExchangePointer(void **target, void *value){
     mov rax, value
-    mov rcx, target
-    xchg rax, [rcx]
+    xchg rax, [target]
     return rax
 }
 
@@ -466,8 +440,7 @@ __declspec(inline_asm) __int8 _InterlockedExchangeAdd8(__int8 *destination, __in
     mov dl, to_add
     
     // perform the atomic xadd, the preincremented '*destination' will be saved in dl
-    mov rcx, destination
-    lock xadd [rcx], dl
+    lock xadd [destination], dl
     
     // save the preincremented value in the 'result'
     return dl
@@ -479,8 +452,7 @@ __declspec(inline_asm) __int16 _InterlockedExchangeAdd16(__int16 *destination, _
     mov dx, to_add
     
     // perform the atomic xadd, the preincremented '*destination' will be saved in dx
-    mov rcx, destination
-    lock xadd [rcx], dx
+    lock xadd [destination], dx
     
     // save the preincremented value in the 'result'
     return dx
@@ -492,8 +464,7 @@ __declspec(inline_asm) __int32 _InterlockedExchangeAdd(__int32 *destination, __i
     mov edx, to_add
     
     // perform the atomic xadd, the preincremented '*destination' will be saved in edx
-    mov rcx, destination
-    lock xadd [rcx], edx
+    lock xadd [destination], edx
     
     // save the preincremented value in the 'result'
     return edx
@@ -505,8 +476,7 @@ __declspec(inline_asm) __int64 _InterlockedExchangeAdd64(__int64 *destination, _
     mov rdx, to_add
     
     // perform the atomic xadd, the preincremented '*destination' will be saved in rdx
-    mov rcx, destination
-    lock xadd [rcx], rdx
+    lock xadd [destination], rdx
     
     // save the preincremented value in the 'result'
     return rdx
@@ -897,6 +867,7 @@ __declspec(inline_asm) int __builtin_ffsll(long long x){
 }
 
 __declspec(inline_asm) int __builtin_expect(int __expression, int expected){
+    mov edx, expected // @cleanup: How to handle this, this is just here to get rid of unused warning. @note: This should not be an inline_asm function anyway so whatever.
     return __expression
 }
 
@@ -1321,35 +1292,30 @@ __declspec(inline_asm) __m128 _mm_div_ss(__m128 a, __m128 b){
 
 
 __declspec(inline_asm) __m128 _mm_load_ps(float *mem_addr){
-    mov rcx, mem_addr
-    movups xmm0, xmmword ptr [rcx]
+    movups xmm0, xmmword ptr [mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128 _mm_load_ps1(float *mem_addr){
-    mov rcx, mem_addr
-    movss  xmm0, dword ptr [rcx]
+    movss  xmm0, dword ptr [mem_addr]
     shufps xmm0, xmm0, 0
     return xmm0
 }
 
 __declspec(inline_asm) __m128 _mm_load_ss(float const* mem_addr){
-    mov rcx, mem_addr
     xorps xmm0, xmm0
-    movss xmm0, dword ptr [rcx]
+    movss xmm0, dword ptr [mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128 _mm_load1_ps(float const* mem_addr){
-    mov    rcx, mem_addr
-    movss  xmm0, dword ptr [rcx]
+    movss  xmm0, dword ptr [mem_addr]
     shufps xmm0, xmm0, 0
     return xmm0
 }
 
 __declspec(inline_asm) __m128 _mm_loadr_ps(float const* mem_addr){
-    mov rcx, mem_addr
-    movups xmm0, xmmword ptr [rcx]
+    movups xmm0, xmmword ptr [mem_addr]
     shufps xmm0, xmm0, 27
     return xmm0
 }
@@ -1526,38 +1492,31 @@ __declspec(inline_asm) __m128 _mm_sqrt_ss(__m128 a){
 }
 
 __declspec(inline_asm) void _mm_store_ps(float *mem_addr, __m128 a){
-    mov rcx, mem_addr
     movdqa xmm0, a
-    movaps [rcx], xmm0
+    movaps xmmword ptr [mem_addr], xmm0
 }
 
 __declspec(inline_asm) void _mm_store_ps1(float* mem_addr, __m128 a){
-    mov rcx, mem_addr
-    
     shufps xmm0, a, 0
-    movups xmmword ptr[rcx], xmm0
+    movups xmmword ptr[mem_addr], xmm0
 }
 
 __declspec(inline_asm) void _mm_store_ss(float* mem_addr, __m128 a){
-    mov rcx, mem_addr
-    movss dword ptr [rcx], a
+    movss dword ptr [mem_addr], a
 }
 __declspec(inline_asm) void _mm_store1_ps(float* mem_addr, __m128 a){
-    mov rcx, mem_addr
     shufps xmm0, a, 0
-    movups xmmword ptr[rcx], xmm0
+    movups xmmword ptr[mem_addr], xmm0
 }
 
 __declspec(inline_asm) void _mm_storer_ps(float* mem_addr, __m128 a){
-    mov rcx, mem_addr
     shufps xmm0, a, 27
-    movups xmmword ptr[rcx], xmm0
+    movups xmmword ptr[mem_addr], xmm0
 }
 
 __declspec(inline_asm) void _mm_storeu_ps(float *mem_addr, __m128 a){
-    mov rcx, mem_addr
     movdqa xmm0, a
-    movups [rcx], xmm0
+    movups xmmword ptr[mem_addr], xmm0
 }
 
 __declspec(inline_asm) __m128 _mm_sub_ps(__m128 a, __m128 b){
@@ -1755,8 +1714,7 @@ __declspec(inline_asm) __m128d _mm_castsi128_pd(__m128i a) { return a }
 __declspec(inline_asm) __m128  _mm_castsi128_ps(__m128i a) { return a }
 
 __declspec(inline_asm) void _mm_clflush(void const* p){
-    mov rcx, p
-    clflush [rcx]
+    clflush [p]
 }
 
 __declspec(inline_asm) __m128i _mm_cmpeq_epi8(__m128i a, __m128i b){
@@ -2137,102 +2095,86 @@ __declspec(inline_asm) void _mm_lfence(void){
 }
 
 __declspec(inline_asm) __m128d _mm_load_pd(double const* mem_addr){
-    mov rcx, mem_addr
-    movupd xmm0, xmmword ptr [rcx]
+    movupd xmm0, xmmword ptr [mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128d _mm_load_pd1(double const* mem_addr){
-    mov rcx, mem_addr
-    movsd xmm0, qword ptr [rcx]
+    movsd xmm0, qword ptr [mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128d _mm_load_sd(double const* mem_addr){
-    mov rcx, mem_addr
     xorps xmm0, xmm0
-    movsd xmm0, qword ptr [rcx]
+    movsd xmm0, qword ptr [mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128i _mm_load_si128(__m128i const* mem_addr){
-    mov rcx, mem_addr
-    movdqa xmm0, xmmword ptr[rcx]
+    movdqa xmm0, xmmword ptr[mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128d _mm_load1_pd(double const* mem_addr){
-    mov rcx, mem_addr
-    movsd xmm0, qword ptr[rcx]
+    movsd xmm0, qword ptr[mem_addr]
     shufpd xmm0, xmm0, 0
     return xmm0
 }
 
 __declspec(inline_asm) __m128i _mm_loadl_epi64(__m128i const* mem_addr){
-    mov rcx, mem_addr
-    movq xmm0, qword ptr [rcx]
+    movq xmm0, qword ptr [mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128d _mm_loadh_pd(__m128d a, double const* mem_addr){
-    mov rcx, mem_addr
-    movhpd a, qword ptr [rcx]
+    movhpd a, qword ptr [mem_addr]
     return a
 }
 
 __declspec(inline_asm) __m128d _mm_loadl_pd(__m128d a, double const* mem_addr){
-    mov rcx, mem_addr
-    movlpd a, qword ptr [rcx]
+    movlpd a, qword ptr [mem_addr]
     return a
 }
 
 
 __declspec(inline_asm) __m128 _mm_loadh_pi(__m128 a, __m64 const* mem_addr){
-    mov rcx, mem_addr
-    movhps a, qword ptr [rcx]
+    movhps a, qword ptr [mem_addr]
     return a
 }
 
 __declspec(inline_asm) __m128 _mm_loadl_pi(__m128 a, __m64 const* mem_addr){
-    mov rcx, mem_addr
-    movlps a, qword ptr [rcx]
+    movlps a, qword ptr [mem_addr]
     return a
 }
 
 __declspec(inline_asm) __m128d _mm_loadr_pd(double const* mem_addr){
-    mov rcx, mem_addr
-    shufpd xmm0, xmmword ptr [rcx], 1
+    shufpd xmm0, xmmword ptr [mem_addr], 1
     return xmm0
 }
 
 __declspec(inline_asm) __m128d _mm_loadu_pd(double const* mem_addr){
-    mov rcx, mem_addr
-    movups xmm0, xmmword ptr [rcx]
+    movups xmm0, xmmword ptr [mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128i _mm_loadu_si128(__m128i const* mem_addr){
-    mov rcx, mem_addr
-    movdqu xmm0, xmmword ptr [rcx]
+    movdqu xmm0, xmmword ptr [mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128i _mm_loadu_si16(void const* mem_addr){
-    mov rcx, mem_addr
-    movzx eax, word ptr[rcx]
+    movzx eax, word ptr[mem_addr]
     movd xmm0, eax
     return xmm0
 }
 
 __declspec(inline_asm) __m128i _mm_loadu_si32(void const* mem_addr){
-    mov rcx, mem_addr
-    movd xmm0, dword ptr [rcx]
+    movd xmm0, dword ptr [mem_addr]
     return xmm0
 }
 
 __declspec(inline_asm) __m128i _mm_loadu_si64(void const* mem_addr){
-    mov rcx, mem_addr
-    movq xmm0, qword ptr [rcx]
+    movq xmm0, qword ptr [mem_addr]
     return xmm0
 }
 
@@ -2718,121 +2660,98 @@ __declspec(inline_asm) __m128i _mm_srli_si128(__m128i a, int imm8){
 }
 
 __declspec(inline_asm) void _mm_store_pd(double *mem_addr, __m128d a){
-    mov rcx, mem_addr
-    movups [rcx], a
+    movups xmmword ptr[mem_addr], a
 }
 
 
 __declspec(inline_asm) void _mm_store_pd1(double* mem_addr, __m128d a){
     shufps a, a, 0
-    
-    mov rcx, mem_addr
-    movups [rcx], a
+    movups xmmword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_store_sd(double* mem_addr, __m128d a){
-    mov rcx, mem_addr
-    movsd qword ptr [rcx], a
+    movsd qword ptr [mem_addr], a
 }
 
 
 __declspec(inline_asm) void _mm_store_si128(__m128i *mem_addr, __m128i a){
-    mov rcx, mem_addr
     movdqa xmm0, a
-    movdqa [rcx], xmm0
+    movdqa [mem_addr], xmm0
 }
 
 __declspec(inline_asm) void _mm_store1_pd(double* mem_addr, __m128d a){
-    shufpd xmm0, xmm0, 0
-    
-    mov rcx, mem_addr
-    movups xmmword ptr[rcx], xmm0
+    shufpd a, a, 0
+    movups xmmword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_storeh_pd(double* mem_addr, __m128d a){
-    mov rcx, mem_addr
-    movhpd qword ptr[rcx], a
+    movhpd qword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_storel_pd(double* mem_addr, __m128d a){
-    mov rcx, mem_addr
-    movlpd qword ptr[rcx], a
+    movlpd qword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_storeh_pi(__m64* mem_addr, __m128 a){
-    mov rcx, mem_addr
-    movhps qword ptr[rcx], a
+    movhps qword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_storel_pi(__m64* mem_addr, __m128 a){
-    mov rcx, mem_addr
-    movlps qword ptr[rcx], a
+    movlps qword ptr[mem_addr], a
 }
 
 
 __declspec(inline_asm) void _mm_storel_epi64(__m128i* mem_addr, __m128i a){
-    mov rcx, mem_addr
-    movq qword ptr[rcx], a
+    movq qword ptr[mem_addr], a
 }
 
 
 __declspec(inline_asm) void _mm_storer_pd(double* mem_addr, __m128d a){
     shufpd a, a, 1
-    
-    mov rcx, mem_addr
-    movups [rcx], a
+    movups xmmword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_storeu_pd(double* mem_addr, __m128d a){
-    mov rcx, mem_addr
-    movups xmmword ptr [rcx], a
+    movups xmmword ptr [mem_addr], a
 }
 
 
 __declspec(inline_asm) void _mm_storeu_si128(__m128i *mem_addr, __m128i a){
-    mov rcx, mem_addr
-    movdqa xmm0, a
-    movdqu [rcx], xmm0
+    movdqa xmm0, a // @cleanup: is this necessary?
+    movdqu [mem_addr], xmm0
 }
 
 
 __declspec(inline_asm) void _mm_storeu_si16(void* mem_addr, __m128i a){
-    mov rcx, mem_addr
     movd eax, a
-    mov word ptr [rcx], ax
+    mov word ptr [mem_addr], ax
 }
 
 
 __declspec(inline_asm) void _mm_storeu_si32(void* mem_addr, __m128i a){
-    mov rcx, mem_addr
     movd eax, a
-    mov dword ptr [rcx], eax
+    mov dword ptr [mem_addr], eax
 }
 
 __declspec(inline_asm) void _mm_storeu_si64(void* mem_addr, __m128i a){
-    mov rcx, mem_addr
-    movq qword ptr[rcx], a
+    movq qword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_stream_pd(double* mem_addr, __m128d a){
-    mov rcx, mem_addr
-    movntpd xmmword ptr[rcx], a
+    movntpd xmmword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_stream_si128(__m128i* mem_addr, __m128i a){
-    mov rcx, mem_addr
-    movntdq xmmword ptr[rcx], a
+    movntdq xmmword ptr[mem_addr], a
 }
 
 
 __declspec(inline_asm) void _mm_stream_si32(int* mem_addr, int a){
-    mov rcx, mem_addr
-    movnti dword ptr [rcx], a
+    movnti dword ptr [mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_stream_si64(__int64* mem_addr, __int64 a){
-    mov rcx, mem_addr
-    movnti qword ptr [rcx], a
+    movnti qword ptr [mem_addr], a
 }
 
 
@@ -3015,8 +2934,7 @@ __declspec(inline_asm) __m128i _mm_xor_si128(__m128i a, __m128i b){
 //
 
 __declspec(inline_asm) void _mm_prefetch(char *a, int hint){
-    mov rcx, a
-    prefetch hint, [rcx]
+    prefetch hint, [a]
 }
 
 
@@ -3027,9 +2945,8 @@ __declspec(inline_asm) __m128i _mm_andn_si128(__m128i a, __m128i b){
 }
 
 __declspec(inline_asm) void _mm_stream_ps(float *mem_addr, __m128 a){
-    mov rcx, mem_addr
     movdqa xmm0, a
-    movntps [rcx], xmm0
+    movntps xmmword ptr[mem_addr], xmm0
 }
 
 __declspec(inline_asm) __m128i _mm_shuffle_epi8(__m128i a, __m128i b){
@@ -3188,26 +3105,22 @@ __declspec(inline_asm) __m256 _mm256_set1_ps(float a){
 }
 
 __declspec(inline_asm) __m256 _mm256_loadu_ps(float const * mem_addr){
-    mov rcx, mem_addr
-    vmovups ymm0, [rcx]
+    vmovups ymm0, ymmword ptr[mem_addr]
     return ymm0
 }
 
 __declspec(inline_asm) void _mm256_storeu_ps(float *mem_addr, __m256 a){
-    mov rcx, mem_addr
     vmovups ymm0, a
-    vmovups [rcx], ymm0
+    vmovups ymmword ptr[mem_addr], ymm0
 }
 
 __declspec(inline_asm) void _mm256_storeu_si256(__m256i * mem_addr, __m256i a){
-    mov rcx, mem_addr
     vmovdqu ymm0, a
-    vmovdqu [rcx], ymm0
+    vmovdqu [mem_addr], ymm0
 }
 
 __declspec(inline_asm) __m256i _mm256_loadu_si256(__m256i const * mem_addr){
-    mov rcx, mem_addr
-    vmovdqu ymm0, [rcx]
+    vmovdqu ymm0, [mem_addr]
     return ymm0
 }
 
