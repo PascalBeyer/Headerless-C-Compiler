@@ -1296,6 +1296,8 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
         operand.kind      = ASM_ARG_immediate;
         operand.immediate = integer_literal_as_u64(expr);
         operand.size      = expr->resolved_type->size;
+        
+        pop_from_ast_arena(context, (struct ast_integer_literal *)expr);
         return operand;
     }
     

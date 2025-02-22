@@ -2399,7 +2399,7 @@ func struct initializer_list parse_initializer_list(struct context *context, str
     return ret;
 }
 
-func struct ast *parse_initializer(struct context *context, struct ast_identifier *lhs, struct token *equals){
+func struct ast *parse_initializer(struct context *context, struct ast_declaration *decl, struct token *identifier, struct token *equals){
     
     // 
     // We call this function for
@@ -2412,23 +2412,28 @@ func struct ast *parse_initializer(struct context *context, struct ast_identifie
     // 
     struct ast *ret = null;
     
-    struct ast_type *type = lhs->base.resolved_type;
-    
     if(peek_token(context, TOKEN_open_curly)){
         // 
         // Parse an initializer like 'struct s asd = {1,2,3};' or '(struct s){1,2,3};'.
         // 
         
         struct ast_compound_literal *compound_literal = push_expression(context, get_current_token(context), compound_literal);
-        set_resolved_type(&compound_literal->base, lhs->base.resolved_type, lhs->base.defined_type);
+        set_resolved_type(&compound_literal->base, decl->type, decl->defined_type);
         
-        compound_literal->decl = lhs->decl;
+        compound_literal->decl = decl;
         
-        compound_literal->assignment_list = parse_initializer_list(context, lhs->base.resolved_type, 0, &compound_literal->trailing_array_size);
+        compound_literal->assignment_list = parse_initializer_list(context, decl->type, 0, &compound_literal->trailing_array_size);
         ret = &compound_literal->base;
         
         if(context->should_exit_statement) return ret;
     }else{
+        struct ast_type *type = decl->type;
+        
+        struct ast_identifier *lhs = push_expression(context, identifier, identifier);
+        lhs->decl = decl;
+        set_resolved_type(&lhs->base, decl->type, decl->defined_type);
+        
+        
         // 
         // Parse an initializer like:
         //     struct s a = <expr>
@@ -6769,6 +6774,7 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                         report_error(context, const_expr->token, "Argument of '_Alignas' must be a type name or a constant expression.");
                     }else{
                         value = integer_literal_as_u64(const_expr);
+                        pop_from_ast_arena(context, (struct ast_integer_literal *)const_expr);
                     }
                 }
                 
@@ -6819,6 +6825,7 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                         report_error(context, directive, "Expected a constant expression in '__declspec(align(_))'.");
                     }else{
                         u64 value = integer_literal_as_u64(const_expr);
+                        pop_from_ast_arena(context, (struct ast_integer_literal *)const_expr);
                         
                         //
                         // struct __declspec(align(0x100)) asd;
@@ -6927,6 +6934,7 @@ case TOKEN_##type_name:{                                                 \
                             report_error(context, declspec, "Expected a constant expression in '__declspec(align(_))'.");
                         }else{
                             u64 value = integer_literal_as_u64(const_expr);
+                            pop_from_ast_arena(context, (struct ast_integer_literal *)const_expr);
                             
                             has_declspec_alignment = true;
                             
@@ -7151,6 +7159,9 @@ case TOKEN_##type_name:{                                                 \
                                     width = 0;
                                 }
                                 
+                                pop_from_ast_arena(context, (struct ast_integer_literal *)constant);
+                                
+                                
                                 // "As a special case, a bit-field struture member with a width of 0 indicates 
                                 //  that no further bit-field is to be packed into the unit in which the previous 
                                 //  bitfield, if any, was placed."
@@ -7171,7 +7182,7 @@ case TOKEN_##type_name:{                                                 \
                                 
                                 if(width > (declarator.type->size * 8)){
                                     struct string type_string = report_type_mismatch__internal(context, "", declarator.type, declarator.defined_type);
-                                    report_error(context, constant->token, "Bitfield width for type '%.*s' must be '<= %lld', but is '%lld'.", type_string.size, type_string.data, (declarator.type->size * 8), width);
+                                    report_error(context, colon, "Bitfield width for type '%.*s' must be '<= %lld', but is '%lld'.", type_string.size, type_string.data, (declarator.type->size * 8), width);
                                     width = 1;
                                 }
                                 
@@ -7375,7 +7386,6 @@ case TOKEN_##type_name:{                                                 \
                         
                         struct token *ident = expect_token(context, TOKEN_identifier, "Expected an identifier in enum declaration.");
                         
-                        struct ast *literal;
                         if(peek_token_eat(context, TOKEN_equals)){
                             struct ast *const_expr = parse_expression(context, true);
                             
@@ -7384,15 +7394,9 @@ case TOKEN_##type_name:{                                                 \
                                 const_expr = ast_push_s32_literal(context, const_expr->token, 0);
                             }
                             
-                            literal = const_expr;
-                            
                             current_value = integer_literal_as_s64(const_expr);
-                        }else{
-                            literal = ast_push_s32_literal(context, ident, (s32)current_value);
+                            pop_from_ast_arena(context, (struct ast_integer_literal *)const_expr);
                         }
-                        
-                        // "an identifier declared as an enumeration constant has type int".
-                        set_resolved_type(literal, &globals.typedef_s32, cast(struct ast *)ast_enum);
                         
                         // @note: allow to u32_max, as enums are often used as flag-constants and it just does not matter
                         //        whether its s32 or u32.
@@ -7407,13 +7411,19 @@ case TOKEN_##type_name:{                                                 \
                             report_error(context, token, "Enum members are ints, this member is outside of the range of the enum. Member is %lld range is [%d, %u].", current_value, s32_min, u32_max);
                         }
                         
+                        
+                        // "an identifier declared as an enumeration constant has type int".
+                        struct ast_integer_literal *literal = push_ast(context, token, integer_literal);
+                        literal->_s32 = (s32)current_value;
+                        set_resolved_type(&literal->base, &globals.typedef_s32, cast(struct ast *)ast_enum);
+                        
                         //
                         // the c-spec says: enum members are ints, and the enum is of a size that can hold all enum members
                         struct ast_declaration *decl = push_ast(context, ident, declaration);
                         decl->identifier = ident;
                         decl->flags |= DECLARATION_FLAGS_is_enum_member;
                         decl->type = &ast_enum->base;
-                        decl->assign_expr = literal;
+                        decl->assign_expr = &literal->base;
                         decl->offset_on_stack = -1;
                         decl->compilation_unit = context->current_compilation_unit;
                         
@@ -8027,14 +8037,10 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     add_global_reference_for_declaration(context->arena, decl);
                 }
                 
-                struct ast_identifier *ident = push_expression(context, declarator.ident, identifier);
-                ident->decl = decl;
-                set_resolved_type(&ident->base, decl->type, decl->defined_type);
-                
                 // :DeclarationReferenceThreadingBug
                 context->current_declaration = decl;
                 
-                struct ast *rhs = parse_initializer(context, ident, equals);
+                struct ast *rhs = parse_initializer(context, decl, declarator.ident, equals);
                 if(context->should_exit_statement) goto end;
                 
                 struct ast_type *type = decl->type;
@@ -8072,8 +8078,11 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     
                     type = &array_type->base;
                     
-                    // We control the 'ident', so just patch in the new type.
-                    set_resolved_type(&ident->base, type, decl->defined_type);
+                    if(rhs->kind == AST_assignment){
+                        struct ast_binary_op *assignment = (struct ast_binary_op *)rhs;
+                        // We control the 'ident', so just patch in the new type.
+                        set_resolved_type(assignment->lhs, type, decl->defined_type);
+                    }
                 }
                 
                 if(!context->current_scope){
@@ -8119,6 +8128,14 @@ void parse_static_assert(struct context *context, struct token *static_assert_to
     expect_token(context, TOKEN_open_paren, "Expected a '(' after _Static_assert.");
     struct ast *constant_expression = parse_expression(context, /*should_skip_comma_expression*/true);
     
+    if(constant_expression->kind != AST_integer_literal){
+        report_error(context, constant_expression->token, "First argument to '_Static_assert' is not constant.");
+        return;
+    }
+    
+    s64 value = integer_literal_as_s64(constant_expression);
+    pop_from_ast_arena(context, (struct ast_integer_literal *)constant_expression);
+    
     struct string string_literal = {0};
     
     if(peek_token_eat(context, TOKEN_comma)){
@@ -8128,22 +8145,17 @@ void parse_static_assert(struct context *context, struct token *static_assert_to
         }else{
             struct ast_string_literal *ast_string_literal = (struct ast_string_literal *)string_literal_expression;
             string_literal = ast_string_literal->value;
+            pop_from_ast_arena(context, ast_string_literal);
         }
     }
     
     if(!context->error){
-        if(constant_expression->kind != AST_integer_literal){
-            report_error(context, constant_expression->token, "First argument to '_Static_assert' is not constant.");
-        }else{
-            s64 value = integer_literal_as_s64(constant_expression);
-            
-            if(value == 0){
-                if(string_literal.data && string_literal.size){
-                    // @cleanup: wide characters?
-                    report_error(context, static_assert_token, "%.*s", string_literal.size, string_literal.data);
-                }else{
-                    report_error(context, static_assert_token, "_Static_assert fired.");
-                }
+        if(value == 0){
+            if(string_literal.data && string_literal.size){
+                // @cleanup: wide characters?
+                report_error(context, static_assert_token, "%.*s", string_literal.size, string_literal.data);
+            }else{
+                report_error(context, static_assert_token, "_Static_assert fired.");
             }
         }
     }
@@ -8240,6 +8252,33 @@ func struct ast *parse_statement(struct context *context){
                     ast_for->decl = parse_statement(context);
                 }
                 
+                // 
+                // We delay parsing the 'post condition' to after we have parsed the body of the for.
+                // This is because we want to emit the for to look like:
+                // 
+                //    declaration
+                //  .for:
+                //      condition
+                //      cond-jump .break
+                //      body
+                //  .continue:
+                //      increment
+                //    jump .for
+                //  .break:
+                // 
+                
+                smm for_label_index      = context->jump_label_index++;
+                smm continue_label_index = context->jump_label_index++;
+                smm break_label_index    = context->jump_label_index++;
+                
+                smm old_continue_label_index = context->current_continue_label;
+                smm old_break_label_index    = context->current_break_label;
+                context->current_continue_label = continue_label_index;
+                context->current_break_label    = break_label_index;
+                
+                struct ast_jump_label *for_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                for_label->label_number = for_label_index;
+                
                 if(peek_token(context, TOKEN_semicolon)){
                     ast_for->condition = ast_push_s32_literal(context, next_token(context), 1); // desugars to true
                 }else{
@@ -8256,12 +8295,43 @@ func struct ast *parse_statement(struct context *context){
                     expect_token(context, TOKEN_semicolon, "Expected ';' after 'for'-condition.");
                 }
                 
+                // :ir_refactor - new
+                struct ast_conditional_jump *condition_jump = push_expression(context, initial_token, conditional_jump);
+                condition_jump->label_number = break_label_index;
+                
+                smm increment_token_at = -1;
+                
                 if(!peek_token_eat(context, TOKEN_closed_paren)){
-                    ast_for->increment = parse_expression(context, false);
-                    expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'for'.");
+                    increment_token_at = context->token_at;
+                    skip_until_tokens_are_balanced(context, get_current_token(context), TOKEN_open_paren, TOKEN_closed_paren, "Expected ')' at the end of 'for'.");
                 }
                 
                 ast_for->body = parse_statement(context);
+                
+                struct ast_jump_label *continue_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                continue_label->label_number = continue_label_index;
+                
+                if(increment_token_at != -1){
+                    smm past_body = context->token_at;
+                    context->token_at = increment_token_at;
+                    ast_for->increment = parse_expression(context, false);
+                    
+                    // Because of how expressions work, this is also where skip_until_tokens_are_balanced moved us.
+                    expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'for'.");
+                    
+                    push_expression(context, get_current_token_for_error_report(context), pop_expression);
+                    
+                    context->token_at = past_body;
+                }
+                
+                struct ast_jump *loop_jump = push_expression(context, initial_token, jump);
+                loop_jump->label_number = for_label_index;
+                
+                struct ast_jump_label *break_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                break_label->label_number = break_label_index;
+                
+                context->current_continue_label = old_continue_label_index;
+                context->current_break_label    = old_break_label_index;
             }
             parser_scope_pop(context, scope);
             
@@ -8278,9 +8348,20 @@ func struct ast *parse_statement(struct context *context){
         }break;
         case TOKEN_while:{
             
+            smm continue_label_index = context->jump_label_index++;
+            smm break_label_index    = context->jump_label_index++;
+            
+            smm old_continue_label_index = context->current_continue_label;
+            smm old_break_label_index    = context->current_break_label;
+            context->current_continue_label = continue_label_index;
+            context->current_break_label    = break_label_index;
+            
             // @note: We desugar 'while' to 'for(;condition;)'.
             struct ast_for *ast_while = push_ast(context, initial_token, for);
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
+            
+            struct ast_jump_label *continue_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+            continue_label->label_number = continue_label_index;
             
             ast_while->condition = parse_expression(context, false);
             maybe_report_warning_for_assignment_in_condition(context, ast_while->condition);
@@ -8292,6 +8373,10 @@ func struct ast *parse_statement(struct context *context){
             }
             expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'while'.");
             
+            // :ir_refactor - new
+            struct ast_conditional_jump *condition_jump = push_expression(context, initial_token, conditional_jump);
+            condition_jump->label_number = break_label_index;
+            
             // Get the initial "returns a value state".
             int statement_returns_a_value = context->current_statement_returns_a_value;
             
@@ -8300,6 +8385,12 @@ func struct ast *parse_statement(struct context *context){
             ast_while->body = parse_statement(context);
             parser_scope_pop(context, scope);
             
+            struct ast_jump *loop_jump = push_expression(context, initial_token, jump);
+            loop_jump->label_number = continue_label_index;
+            
+            struct ast_jump_label *break_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+            break_label->label_number = break_label_index;
+            
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
             int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && ast_while->condition->kind == AST_integer_literal && integer_literal_as_u64(ast_while->condition) != 0;
             context->current_statement_returns_a_value = statement_returns_a_value | is_infinite_loop; // See 'for' case for comment.
@@ -8307,12 +8398,33 @@ func struct ast *parse_statement(struct context *context){
             needs_semicolon = false;
             set_resolved_type(&ast_while->base, &globals.typedef_void, null);
             ret = &ast_while->base;
+            
+            context->current_continue_label = old_continue_label_index;
+            context->current_break_label    = old_break_label_index;
         }break;
         case TOKEN_do:{
+            smm loop_label_index      = context->jump_label_index++;
+            smm continue_label_index = context->jump_label_index++;
+            smm break_label_index    = context->jump_label_index++;
+            
+            smm old_continue_label_index = context->current_continue_label;
+            smm old_break_label_index    = context->current_break_label;
+            context->current_continue_label = continue_label_index;
+            context->current_break_label    = break_label_index;
+            
+            // loop:
+            //    body
+            //  continue:
+            //    condition
+            //    cond-jump loop
+            //  break:
             
             // :AST_do_while
             struct ast_for *do_while = push_ast(context, initial_token, for);
             do_while->base.kind = AST_do_while;
+            
+            struct ast_jump_label *loop_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+            loop_label->label_number = loop_label_index;
             
             struct ast_scope *scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_can_continue | SCOPE_FLAG_can_break);
             do_while->scope_for_decl = scope;
@@ -8321,6 +8433,9 @@ func struct ast *parse_statement(struct context *context){
             
             expect_token(context, TOKEN_while, "Missing 'while' in do-while statement.");
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
+            
+            struct ast_jump_label *continue_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+            continue_label->label_number = continue_label_index;
             
             do_while->condition = parse_expression(context, false);
             maybe_report_warning_for_assignment_in_condition(context, do_while->condition);
@@ -8332,6 +8447,13 @@ func struct ast *parse_statement(struct context *context){
             }
             expect_token(context, TOKEN_closed_paren, "Expected ')' ending 'while'-condition.");
             
+            // :ir_refactor - new
+            struct ast_conditional_jump *condition_jump = push_expression(context, initial_token, conditional_jump);
+            condition_jump->label_number = loop_label_index;
+            
+            struct ast_jump_label *break_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+            break_label->label_number = break_label_index;
+            
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
             int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && do_while->condition->kind == AST_integer_literal && integer_literal_as_u64(do_while->condition) != 0;
             
@@ -8341,11 +8463,15 @@ func struct ast *parse_statement(struct context *context){
             
             set_resolved_type(&do_while->base, &globals.typedef_void, null);
             ret = &do_while->base;
+            
+            context->current_continue_label = old_continue_label_index;
+            context->current_break_label    = old_break_label_index;
         }break;
         case TOKEN_break:{
             
             struct ast_break *ast_break = push_ast(context, initial_token, break);
             
+            // @cleanup: This loop is stupid. Hmm maybe not 100%.
             struct ast_scope *scope = context->current_scope;
             for(; scope; scope = scope->parent){
                 if(scope->flags & SCOPE_FLAG_can_break) break;
@@ -8355,7 +8481,6 @@ func struct ast *parse_statement(struct context *context){
                 report_syntax_error(context, initial_token, "'break' is not inside of a breakable scope.");
                 return &ast_break->base;
             }
-            ast_break->scope_to_break = scope;
             
             if(!context->current_statement_returns_a_value){
                 // If the scope we are currently in does not return a value and there is a break, 
@@ -8363,12 +8488,16 @@ func struct ast *parse_statement(struct context *context){
                 scope->flags |= SCOPE_FLAG_found_an_alive_break;
             }
             
+            struct ast_jump *loop_jump = push_expression(context, initial_token, jump);
+            loop_jump->label_number = context->current_break_label;
+            
             set_resolved_type(&ast_break->base, &globals.typedef_void, null);
             ret = &ast_break->base;
         }break;
         case TOKEN_continue:{
             struct ast_continue *ast_continue = push_ast(context, initial_token, continue);
             
+            // @cleanup: This search is stupid.
             struct ast_scope *scope = context->current_scope;
             for(; scope; scope = scope->parent){
                 if(scope->flags & SCOPE_FLAG_can_continue) break;
@@ -8379,28 +8508,38 @@ func struct ast *parse_statement(struct context *context){
                 return &globals.empty_statement;
             }
             
+            struct ast_jump *loop_jump = push_expression(context, initial_token, jump);
+            loop_jump->label_number = context->current_continue_label;
+            
             // We cannot escape infinte loops through a 'continue'.
             context->current_statement_returns_a_value = 1;
             
-            ast_continue->scope_to_continue = scope;
             set_resolved_type(&ast_continue->base, &globals.typedef_void, null);
             ret = &ast_continue->base;
         }break;
         case TOKEN_switch:{
-            struct ast_switch *ast_switch = push_ast(context, initial_token, switch);
-            expect_token(context, TOKEN_open_paren, "Expected '(' following 'switch'.");
-            ast_switch->switch_on = parse_expression(context, false);
-            ast_switch->switch_on = maybe_insert_cast_from_special_int_to_int(context, AST_cast, ast_switch->switch_on);
             
-            if(ast_switch->switch_on->resolved_type->kind != AST_integer_type){
-                report_error(context, ast_switch->base.token, "Can only switch on integers.");
-                return &ast_switch->base;
+            expect_token(context, TOKEN_open_paren, "Expected '(' following 'switch'.");
+            
+            struct ast *switch_on = parse_expression(context, false);
+            switch_on = maybe_insert_cast_from_special_int_to_int(context, AST_cast, switch_on);
+            
+            if(switch_on->resolved_type->kind != AST_integer_type){
+                report_error(context, switch_on->token, "Can only switch on integers.");
+                return switch_on;
             }
             
             // "The integer promotions are performed on the controlling expression"
-            ast_switch->switch_on = maybe_insert_integer_promotion_cast(context, AST_cast, ast_switch->switch_on);
+            switch_on = maybe_insert_integer_promotion_cast(context, AST_cast, switch_on);
             
             expect_token(context, TOKEN_closed_paren, "Expected ')' ending 'switch'-condition.");
+            
+            smm break_label_index        = context->jump_label_index++;
+            smm old_break_label_index    = context->current_break_label;
+            context->current_break_label = break_label_index;
+            
+            struct ast_switch *ast_switch = push_expression(context, initial_token, switch);
+            ast_switch->switch_on = switch_on;
             
             struct ast_switch *previous_switch = context->current_switch;
             context->current_switch = ast_switch;
@@ -8421,6 +8560,7 @@ func struct ast *parse_statement(struct context *context){
             set_resolved_type(&ast_switch->base, &globals.typedef_void, null);
             needs_semicolon = false;
             ret = &ast_switch->base;
+            context->current_break_label = old_break_label_index;
         }break;
         case TOKEN_case:{
             if(!context->current_switch){
@@ -8443,6 +8583,7 @@ func struct ast *parse_statement(struct context *context){
             assert(promoted_const_expr->resolved_type == context->current_switch->switch_on->resolved_type);
             
             u64 value = integer_literal_as_u64(promoted_const_expr);
+            pop_from_ast_arena(context, (struct ast_integer_literal *)promoted_const_expr);
             
             for(struct ast_list_node *node = context->current_switch->case_list.first; node; node = node->next){
                 struct ast_case *ast_case = (struct ast_case *)node->value;
@@ -8555,6 +8696,10 @@ func struct ast *parse_statement(struct context *context){
             
             set_resolved_type(&ast_goto->base, &globals.typedef_void, null);
             ret = &ast_goto->base;
+            
+            // :ir_refactor - new way.
+            struct ast_jump *goto_jump = push_expression(context, initial_token, jump);
+            ast_goto->jump = goto_jump;
         }break;
         case TOKEN_identifier:{
             if(peek_token_eat(context, TOKEN_colon)){
@@ -8583,6 +8728,10 @@ func struct ast *parse_statement(struct context *context){
                 context->current_statement_returns_a_value = 0;
                 
                 if(!peek_token(context, TOKEN_closed_curly)) label->statement = parse_statement(context);
+                
+                struct ast_jump_label *break_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                break_label->label_number = context->jump_label_index++;
+                label->jump_label = break_label;
                 
                 ret = &label->base;
                 break;
@@ -8618,7 +8767,7 @@ func struct ast *parse_statement(struct context *context){
         }break;
         
         case TOKEN_asm:{
-            struct ast_asm_block *asm_block = push_ast(context, initial_token, asm_block);
+            struct ast_asm_block *asm_block = push_expression(context, initial_token, asm_block);
             set_resolved_type(&asm_block->base, &globals.typedef_void, null);
             
             expect_token(context, TOKEN_open_curly, "Expected '{' after '__asm__'.");
@@ -8671,6 +8820,7 @@ func struct ast *parse_statement(struct context *context){
 
 void dump_and_check_ast_stack(struct context *context, void *start_in_ast_arena){
     
+    if(context->error) return;
     // if(0) return;
     if(1) return;
     
@@ -8691,14 +8841,14 @@ void dump_and_check_ast_stack(struct context *context, void *start_in_ast_arena)
 #define primary(ast_kind) \
 case AST_##ast_kind: \
 current += sizeof(struct ast_##ast_kind);\
-print("    %p primary-" #ast_kind ": %.*s\n", ast, string.size, string.data); \
+debug_print_error(context, ast->token, "    [%lld] %p primary-" #ast_kind ": %.*s", ast_stack_at, ast, string.size, string.data); \
 ast_stack[ast_stack_at++] = ast;\
 break
         
 #define unary(ast_kind) \
 case AST_##ast_kind: \
 current += sizeof(struct ast_unary_op);\
-print("    %p unary-" #ast_kind ": %.*s %p\n", ast, string.size, string.data, ((struct ast_unary_op *)ast)->operand); \
+debug_print_error(context, ast->token, "    [%lld] %p unary-" #ast_kind ": %.*s %p", ast_stack_at, ast, string.size, string.data, ((struct ast_unary_op *)ast)->operand); \
 if(!ast_stack_at || ast_stack[ast_stack_at-1] != ((struct ast_unary_op *)ast)->operand){\
     print(">>>> Wrong!\n");\
     os_panic(1);\
@@ -8710,7 +8860,7 @@ break
 #define binary(ast_kind) \
 case AST_##ast_kind: \
 current += sizeof(struct ast_binary_op);\
-print("    %p binary-" #ast_kind ": %.*s %p %p\n", ast, string.size, string.data, ((struct ast_binary_op *)ast)->lhs, ((struct ast_binary_op *)ast)->rhs); \
+debug_print_error(context, ast->token, "    [%lld] %p binary-" #ast_kind ": %.*s %p %p", ast_stack_at, ast, string.size, string.data, ((struct ast_binary_op *)ast)->lhs, ((struct ast_binary_op *)ast)->rhs); \
 if(ast_stack_at < 2 || ast_stack[ast_stack_at-2] != ((struct ast_binary_op *)ast)->lhs || ast_stack[ast_stack_at-1] != ((struct ast_binary_op *)ast)->rhs){\
     print(">>>> Wrong!\n");\
     os_panic(1);\
@@ -8745,7 +8895,6 @@ break
                 print("    %p primary-AST_pointer_literal_deref: %.*s\n", ast, string.size, string.data);
                 ast_stack[ast_stack_at++] = ast;
             }break;
-            
             
             unary(cast);
             unary(unary_postinc);
@@ -8939,6 +9088,14 @@ break
                 ast_stack_at -= 1;
             }break;
             
+            case AST_switch:{
+                current += sizeof(struct ast_switch);
+                struct ast_switch *ast_switch = (struct ast_switch *)ast;
+                print("    switch %p\n", ast_switch->switch_on);
+                ast_stack_at -= 1;
+            }break;
+            
+            
             case AST_jump:{
                 current += sizeof(struct ast_jump);
                 struct ast_jump *jump = (struct ast_jump *)ast;
@@ -8958,6 +9115,11 @@ break
                     print(">>>> Wrong!\n");
                 }
                 ast_stack_at -= 1;
+            }break;
+            
+            case AST_asm_block:{
+                current += sizeof(struct ast_asm_block);
+                print("    %p asm_block\n", ast);
             }break;
             
             // @cleanup: This has to go away.
@@ -8985,10 +9147,14 @@ break
             case AST_return:{
                 current += sizeof(struct ast_return);
                 print("    %p return %p\n", ast, ((struct ast_return *)ast)->expr);
-                if(ast_stack_at < 1){
-                    print(">>>> Wrong!\n");
+                
+                if(context->current_function->type->return_type != &globals.typedef_void){
+                    if(ast_stack_at < 1){
+                        print(">>>> Wrong!\n");
+                    }
+                    
+                    ast_stack_at -= 1;
                 }
-                ast_stack_at -= 1;
             }break;
             
             default:{
@@ -8996,6 +9162,8 @@ break
                 invalid_code_path;
             }break;
         }
+        
+        assert(current != (u8 *)ast); // We should have incremented.
     }
     print("\n");
     

@@ -4542,6 +4542,7 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
         
         ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
         
+        
         switch(ast->kind){
             
             // 
@@ -4571,6 +4572,101 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
             case AST_pointer_literal:{
                 ast_arena_at += sizeof(struct ast_pointer_literal);
                 emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+            }break;
+            
+            // 
+            // Unary expressions:
+            // 
+            
+            case AST_unary_postinc:
+            case AST_unary_postdec:{
+                struct ast_unary_op *op = (struct ast_unary_op *)ast;
+                ast_arena_at += sizeof(*op);
+                
+                struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
+                assert(loc->state == EMIT_LOCATION_register_relative);
+                
+                emit_location_prevent_spilling(context, loc);
+                struct emit_location *loaded = emit_load(context, loc);
+                
+                if(op->base.resolved_type->kind == AST_pointer_type){
+                    struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op->base.resolved_type;
+                    u8 reg_inst = (ast->kind == AST_unary_postinc) ? REG_OPCODE_ADD : REG_OPCODE_SUB;
+                    smm size = pointer->pointer_to->size;
+                    b32 is_big = size > max_s8;
+                    
+                    assert(size >= 0); // @note: allow empty structs to be incremented.
+                    assert(size <= 0xffffffff);
+                    u8 inst = is_big ? REG_EXTENDED_OPCODE_REGM_IMMIDIATE : REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8;
+                    
+                    assert(loc->size == 8);
+                    struct emit_location *immediate = emit_location_immediate(context, size, is_big ? 4 : 1);
+                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(inst), reg_inst, loc, immediate);
+                }else if(op->base.resolved_type == &globals.typedef_Bool){
+                    
+                    // 
+                    // For _Bool we want the following:
+                    //  ++arst: mov [arst], 1
+                    //  --arst: xor [arst], 1
+                    
+                    struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
+                    
+                    if(ast->kind == AST_unary_postdec){
+                        emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM8_IMMIDIATE8), REG_OPCODE_XOR, loc, immediate);
+                    }else{
+                        emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(MOVE_REGM8_IMMEDIATE8), 0, loc, immediate);
+                    }
+                }else if(op->base.resolved_type->kind == AST_integer_type){
+                    u8 inst = (ast->kind == AST_unary_postinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
+                    u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
+                    emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
+                }else if(op->base.resolved_type->kind == AST_float_type){
+                    struct ast_float_literal *one = push_ast(context, op->base.token, float_literal); // :ir_refactor_not_sure_initializer
+                    one->value = 1.0;
+                    set_resolved_type(&one->base, op->base.resolved_type, null);
+                    
+                    struct emit_location *rhs = emit_code_for_ast(context, &one->base);
+                    assert(rhs->state == EMIT_LOCATION_register_relative);
+                    
+                    struct emit_location *lhs = emit_load(context, loc); // @cleanup: This should be a register-to-register move instead.
+                    
+                    // emit 'op lhs, [float_literal]'
+                    emit_register_relative_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode((ast->kind == AST_unary_postinc) ? ADD_XMM : SUB_XMM), lhs->loaded_register, rhs);
+                    emit_store(context, loc, lhs);
+                }else{
+                    assert(op->base.resolved_type->kind == AST_bitfield_type);
+                    struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)op->base.resolved_type;
+                    
+                    // @note: We return 'loaded' in the end, which is still a bitfield.
+                    emit_location_prevent_spilling(context, loaded);
+                    
+                    // Copy 'loaded' so we retain the original value.
+                    enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
+                    struct emit_location *copied = emit_load_into_specific_gpr(context, loaded, reg);
+                    
+                    // Load the bitfield.
+                    copied = emit_load_bitfield(context, copied, bitfield);
+                    
+                    // Increment/Decrement 'copied'.
+                    u8 inst = (ast->kind == AST_unary_postinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
+                    u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
+                    emit_reg_extended_op(context, no_prefix(), one_byte_opcode(opcode), inst, copied);
+                    
+                    // Truncate the value of loaded again to the size of 'loc', 
+                    // as that is what 'emit_store_bitfield' expects.
+                    copied->size = loc->size;
+                    
+                    // Store copied.
+                    emit_store_bitfield(context, bitfield, loc, copied);
+                    
+                    // "Return" the original "loaded" value.
+                    emit_location_allow_spilling(context, loaded);
+                }
+                
+                emit_location_allow_spilling(context, loc);
+                free_emit_location(context, loc);
+                
+                emit_location_stack[emit_location_stack_at-1] = loaded;
             }break;
             
             case AST_assignment:{
@@ -4705,6 +4801,8 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 report_internal_compiler_error(ast->token, __FUNCTION__ ": Unhandled ast");
             }break;
         }
+        
+        assert(ast_arena_at != (u8 *)ast); // We should increment ast_arena_at.
     }
     
     for(u32 jump_label_index = 0; jump_label_index < current_function->amount_of_jump_labels; jump_label_index++){

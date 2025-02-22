@@ -846,12 +846,10 @@ struct ast_scope{
 
 struct ast_continue{
     struct ast base;
-    struct ast_scope *scope_to_continue;
 };
 
 struct ast_break{
     struct ast base;
-    struct ast_scope *scope_to_break;
 };
 
 struct compound_member{
@@ -1003,6 +1001,9 @@ struct ast_label{
     
     // for emitting
     smm byte_offset_in_function;
+    
+    // :ir_refactor - new way.
+    struct ast_jump_label *jump_label;
 };
 
 struct ast_goto{
@@ -1012,6 +1013,9 @@ struct ast_goto{
     
     // for emiting
     struct jump_node *jump_node;
+    
+    // :ir_refactor - new way.
+    struct ast_jump *jump;
 };
 
 struct ast_conditional_expression{

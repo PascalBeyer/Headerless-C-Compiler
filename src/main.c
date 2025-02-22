@@ -802,6 +802,8 @@ struct context{
     b32 current_asm_flags;
     
     smm jump_label_index;
+    smm current_break_label;
+    smm current_continue_label;
     
     //
     // Error stream
@@ -2577,6 +2579,8 @@ func void reset_context(struct context *context){
     context->current_statement_returns_a_value = 0;
     
     context->jump_label_index = 0;
+    context->current_break_label = -1;
+    context->current_continue_label = -1;
     
     context->pragma_pack_stack.first = context->pragma_pack_stack.last = null;
 }
