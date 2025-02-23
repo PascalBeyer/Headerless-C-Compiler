@@ -1716,20 +1716,9 @@ func struct emit_location *emit_binary_op(struct context *context, struct ast *a
     return emit_binary_op__internal(context, no_prefix(), lhs, rhs, size, is_signed, reg_extended, u8_code, opcode);
 }
 
-func struct emit_location *emit_divide_or_mod_or_multiply(struct context *context, struct ast *ast, u8 REG_OPCODE_signed, u8 REG_OPCODE_unsigned, b32 is_assignment){
-    struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct context *context, struct emit_location *lhs, struct emit_location *rhs, smm size, int is_signed, u8 REG_OPCODE_signed, u8 REG_OPCODE_unsigned, enum ast_kind ast_kind){
     
-    smm size = op->lhs->resolved_type->size;
-    b32 is_signed = type_is_signed(ast->resolved_type);
-    
-    struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-    rhs = emit_load(context, rhs);
-    struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-    
-    assert(rhs->register_kind_when_loaded == REGISTER_KIND_gpr);
-    assert(lhs->register_kind_when_loaded == REGISTER_KIND_gpr);
-    
-    assert(op->lhs->resolved_type->size == op->rhs->resolved_type->size);
+    int is_assignment = ast_kind == AST_modulo_assignment || ast_kind == AST_divide_assignment || ast_kind == AST_times_assignment;
     //
     // thses instructions perform an operation like MUL rdx:rax (rax * REGM)
     // i.e multiply rax with REGM then store the 'upper part' in rdx and the 'lower part' in rax.
@@ -1800,7 +1789,7 @@ func struct emit_location *emit_divide_or_mod_or_multiply(struct context *contex
     lower_part->size = size;
     
     if(is_assignment){
-        if(ast->kind  == AST_modulo_assignment){
+        if(ast_kind == AST_modulo_assignment){
             if(size == 1){
                 free_emit_location(context, upper_part);
                 // the result is in AX
@@ -1821,7 +1810,7 @@ func struct emit_location *emit_divide_or_mod_or_multiply(struct context *contex
         return lhs;
     }
     
-    if(ast->kind == AST_binary_mod){
+    if(ast_kind == AST_binary_mod){
         // if size == 1 then the upper_part is 'AH' and not 'DL'...
         if(size == 1){
             free_emit_location(context, upper_part);
@@ -1841,6 +1830,24 @@ func struct emit_location *emit_divide_or_mod_or_multiply(struct context *contex
         free_emit_location(context, upper_part);
         return lower_part;
     }
+}
+
+func struct emit_location *emit_divide_or_mod_or_multiply(struct context *context, struct ast *ast, u8 REG_OPCODE_signed, u8 REG_OPCODE_unsigned, enum ast_kind kind){
+    struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+    
+    smm size = op->lhs->resolved_type->size;
+    b32 is_signed = type_is_signed(ast->resolved_type);
+    
+    struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+    rhs = emit_load(context, rhs);
+    struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+    
+    assert(rhs->register_kind_when_loaded == REGISTER_KIND_gpr);
+    assert(lhs->register_kind_when_loaded == REGISTER_KIND_gpr);
+    
+    assert(op->lhs->resolved_type->size == op->rhs->resolved_type->size);
+    
+    return emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, size, is_signed, REG_OPCODE_signed, REG_OPCODE_unsigned, kind);
 }
 
 func struct emit_location *emit_compound_assignment__internal(struct context *context, struct prefixes prefixes, struct emit_location *lhs,
@@ -1916,10 +1923,7 @@ func struct emit_location *emit_compound_assignment(struct context *context, str
 
 ////////////////////////////////////////////////////////////////////////////////////////
 
-func struct emit_location *emit_binary_op_xmm(struct context *context, struct ast *ast, u8 inst){
-    struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-    struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-    struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+func struct emit_location *emit_binary_op_xmm(struct context *context, struct emit_location *lhs, struct emit_location *rhs, u8 inst){
     
     assert(lhs->size == rhs->size);
     assert(lhs->register_kind_when_loaded == REGISTER_KIND_xmm);
@@ -1939,11 +1943,7 @@ func struct emit_location *emit_binary_op_xmm(struct context *context, struct as
     return lhs;
 }
 
-func struct emit_location *emit_compound_assignment_xmm(struct context *context, struct ast *ast, u8 inst){
-    struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-    struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-    
-    struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+func struct emit_location *emit_compound_assignment_xmm(struct context *context, struct emit_location *lhs, struct emit_location *rhs, u8 inst){
     assert(lhs->state == EMIT_LOCATION_register_relative);
     emit_location_prevent_spilling(context, lhs);
     
@@ -2030,7 +2030,7 @@ func void jump_context_emit(struct context *context, struct jump_context *jump_c
     
     u8 inst = instruction_from_comp_condition(cond, jump_context->condition);
     
-    if(cond != COMP_none)emit(TWO_BYTE_INSTRUCTION_PREFIX);
+    if(cond != COMP_none) emit(TWO_BYTE_INSTRUCTION_PREFIX);
     emit(inst);
     node->patch_location = context->emit_pool.current;
     node->jump_from = emit_bytes(context, 4, 0) + 4;
@@ -3068,32 +3068,52 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             return emit_binary_op(context, ast, REG_OPCODE_AND, AND_REG8_REGM8, AND_REG_REGM);
         }break;
         case AST_binary_plus:{
+            
             if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                return emit_binary_op_xmm(context, ast, ADD_XMM);
+                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+                
+                return emit_binary_op_xmm(context, lhs, rhs, ADD_XMM);
             }
             return emit_binary_op(context, ast, REG_OPCODE_ADD, ADD_REG8_REGM8, ADD_REG_REGM);
         }break;
         case AST_binary_minus:{
+            
             if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                return emit_binary_op_xmm(context, ast, SUB_XMM);
+                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+                
+                return emit_binary_op_xmm(context, lhs, rhs, SUB_XMM);
             }
             return emit_binary_op(context, ast, REG_OPCODE_SUB, SUB_REG8_REGM8, SUB_REG_REGM);
         }break;
         case AST_binary_times:{
+            
             if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                return emit_binary_op_xmm(context, ast, MUL_XMM);
+                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+                
+                return emit_binary_op_xmm(context, lhs, rhs, MUL_XMM);
             }
             
-            return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, false);
+            return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, ast->kind);
         }break;
         
         case AST_binary_divide:
         case AST_binary_mod:{
+            
             if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
+                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+                
                 assert(ast->kind == AST_binary_divide);
-                return emit_binary_op_xmm(context, ast, DIV_XMM);
+                return emit_binary_op_xmm(context, lhs, rhs, DIV_XMM);
             }
-            return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, false);
+            return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, ast->kind);
         }break;
         case AST_binary_left_shift:{
             smm is_signed = type_is_signed(ast->resolved_type);
@@ -3465,13 +3485,19 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
         }break;
         case AST_plus_assignment:{
             if(ast->resolved_type->kind == AST_float_type){
-                return emit_compound_assignment_xmm(context, ast, ADD_XMM);
+                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+                return emit_compound_assignment_xmm(context, lhs, rhs, ADD_XMM);
             }
             return emit_compound_assignment(context, ast, REG_OPCODE_ADD, ADD_REGM8_REG8, ADD_REGM_REG);
         }break;
         case AST_minus_assignment:{
             if(ast->resolved_type->kind == AST_float_type){
-                return emit_compound_assignment_xmm(context, ast, SUB_XMM);
+                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+                return emit_compound_assignment_xmm(context, lhs, rhs, SUB_XMM);
             }
             return emit_compound_assignment(context, ast, REG_OPCODE_SUB, SUB_REGM8_REG8, SUB_REGM_REG);
         }break;
@@ -3493,17 +3519,23 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
         }break;
         case AST_times_assignment:{
             if(ast->resolved_type->kind == AST_float_type){
-                return emit_compound_assignment_xmm(context, ast, MUL_XMM);
+                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+                return emit_compound_assignment_xmm(context, lhs, rhs, MUL_XMM);
             }else{
-                return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, true);
+                return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, ast->kind);
             }
         }break;
         case AST_modulo_assignment:
         case AST_divide_assignment:{
             if(ast->resolved_type->kind == AST_float_type){
-                return emit_compound_assignment_xmm(context, ast, DIV_XMM);
+                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
+                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
+                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
+                return emit_compound_assignment_xmm(context, lhs, rhs, DIV_XMM);
             }else{
-                return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, true);
+                return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, ast->kind);
             }
         }break;
         case AST_return:{
