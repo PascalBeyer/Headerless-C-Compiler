@@ -6030,7 +6030,7 @@ case NUMBER_KIND_##type:{ \
                 
                 struct ast *op_lhs = stack_entry->operand;
                 struct ast *op_rhs = operand;
-                struct ast_conditional_jump *conditional_jump = stack_entry->other;
+                struct ast_jump_if_false *conditional_jump = stack_entry->other;
                 
                 if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
                     struct ast_integer_literal *lit = cast(struct ast_integer_literal *)op_lhs;
@@ -6084,7 +6084,7 @@ case NUMBER_KIND_##type:{ \
                 
                 struct ast *op_lhs = stack_entry->operand;
                 struct ast *op_rhs = operand;
-                struct ast_conditional_jump *conditional_jump = stack_entry->other;
+                struct ast_jump_if_true *conditional_jump = stack_entry->other;
                 
                 if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
                     struct ast_integer_literal *lit = cast(struct ast_integer_literal *)op_lhs;
@@ -6549,7 +6549,7 @@ case NUMBER_KIND_##type:{ \
                 return operand;
             }
             
-            struct ast_conditional_jump *conditional_jump = push_expression(context, binary_expression, conditional_jump);
+            struct ast_jump_if_false *conditional_jump = push_expression(context, binary_expression, jump_if_false);
             conditional_jump->label_number = context->jump_label_index++;
             
             struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_and, binary_expression, operand);
@@ -6566,7 +6566,7 @@ case NUMBER_KIND_##type:{ \
                 return operand;
             }
             
-            struct ast_conditional_jump *conditional_jump = push_expression(context, binary_expression, conditional_jump);
+            struct ast_jump_if_true *conditional_jump = push_expression(context, binary_expression, jump_if_true);
             conditional_jump->label_number = context->jump_label_index++;
             
             struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_or, binary_expression, operand);
@@ -6590,7 +6590,7 @@ case NUMBER_KIND_##type:{ \
             
             context->in_conditional_expression += 1; // :tracking_conditional_expression_depth_for_noreturn_functions
             
-            struct ast_conditional_jump *conditional_jump = push_expression(context, binary_expression, conditional_jump);
+            struct ast_jump_if_false *conditional_jump = push_expression(context, binary_expression, jump_if_false);
             conditional_jump->label_number = context->jump_label_index++;
             
             struct ast *if_true = parse_expression(context, false);
@@ -8301,7 +8301,7 @@ func struct ast *parse_statement(struct context *context){
             int statement_returns_a_value = context->current_statement_returns_a_value;
             
             // :ir_refactor - new
-            struct ast_conditional_jump *condition_jump = push_expression(context, initial_token, conditional_jump);
+            struct ast_jump_if_false *condition_jump = push_expression(context, initial_token, jump_if_false);
             condition_jump->label_number = context->jump_label_index++; // @cleanup: tell this that it has to jump if false?
             
             // :ir_refactor - old
@@ -8400,7 +8400,7 @@ func struct ast *parse_statement(struct context *context){
                 }
                 
                 // :ir_refactor - new
-                struct ast_conditional_jump *condition_jump = push_expression(context, initial_token, conditional_jump);
+                struct ast_jump_if_false *condition_jump = push_expression(context, initial_token, jump_if_false);
                 condition_jump->label_number = break_label_index;
                 
                 smm increment_token_at = -1;
@@ -8478,7 +8478,7 @@ func struct ast *parse_statement(struct context *context){
             expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'while'.");
             
             // :ir_refactor - new
-            struct ast_conditional_jump *condition_jump = push_expression(context, initial_token, conditional_jump);
+            struct ast_jump_if_false *condition_jump = push_expression(context, initial_token, jump_if_false);
             condition_jump->label_number = break_label_index;
             
             // Get the initial "returns a value state".
@@ -8552,7 +8552,7 @@ func struct ast *parse_statement(struct context *context){
             expect_token(context, TOKEN_closed_paren, "Expected ')' ending 'while'-condition.");
             
             // :ir_refactor - new
-            struct ast_conditional_jump *condition_jump = push_expression(context, initial_token, conditional_jump);
+            struct ast_jump_if_true *condition_jump = push_expression(context, initial_token, jump_if_true);
             condition_jump->label_number = loop_label_index;
             
             struct ast_jump_label *break_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
@@ -8571,6 +8571,7 @@ func struct ast *parse_statement(struct context *context){
             context->current_continue_label = old_continue_label_index;
             context->current_break_label    = old_break_label_index;
         }break;
+        
         case TOKEN_break:{
             
             struct ast_break *ast_break = push_ast(context, initial_token, break);
@@ -8622,7 +8623,6 @@ func struct ast *parse_statement(struct context *context){
             ret = &ast_continue->base;
         }break;
         case TOKEN_switch:{
-            
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'switch'.");
             
             struct ast *switch_on = parse_expression(context, false);
@@ -8658,8 +8658,15 @@ func struct ast *parse_statement(struct context *context){
             context->current_switch = previous_switch;
             
             // The switch returns a value, if its statement does, there is a default case (or in the future if its exhaustive ) and there was no alive break.
-            int switch_returns_a_value = context->current_statement_returns_a_value && ast_switch->default_case && !(scope->flags & SCOPE_FLAG_found_an_alive_break);
+            int switch_returns_a_value = context->current_statement_returns_a_value && ast_switch->default_jump_label && !(scope->flags & SCOPE_FLAG_found_an_alive_break);
             context->current_statement_returns_a_value = statement_returns_a_value | switch_returns_a_value;
+            
+            struct ast_jump_label *break_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+            break_label->label_number = break_label_index;
+            
+            if(!ast_switch->default_jump_label){
+                ast_switch->default_jump_label = break_label;
+            }
             
             set_resolved_type(&ast_switch->base, &globals.typedef_void, null);
             needs_semicolon = false;
@@ -8703,7 +8710,7 @@ func struct ast *parse_statement(struct context *context){
                 }
             }
             
-            struct ast_case *ast_case = push_ast(context, initial_token, case);
+            struct ast_case *ast_case = push_expression(context, initial_token, case);
             ast_case->value = value;
             expect_token(context, TOKEN_colon, "Expected ':' after 'case'-label.");
             needs_semicolon = false;
@@ -8725,10 +8732,10 @@ func struct ast *parse_statement(struct context *context){
             // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
             context->current_statement_returns_a_value = 0;
             
-            if(context->current_switch->default_case){
+            if(context->current_switch->default_jump_label){
                 begin_error_report(context);
                 report_syntax_error(context, initial_token, "More than one 'default'-case in switch.");
-                report_syntax_error(context, context->current_switch->default_case->base.token, "... Here was the previous 'default'-case.");
+                report_syntax_error(context, context->current_switch->default_jump_label->base.token, "... Here was the previous 'default'-case.");
                 end_error_report(context);
             }
             
@@ -8737,6 +8744,11 @@ func struct ast *parse_statement(struct context *context){
             needs_semicolon = false;
             set_resolved_type(&ast_case->base, &globals.typedef_void, null);
             context->current_switch->default_case = ast_case;
+            
+            
+            struct ast_jump_label *default_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+            default_label->label_number = context->jump_label_index++;
+            context->current_switch->default_jump_label = default_label;
             
             if(!peek_token(context, TOKEN_closed_curly)) ast_case->statement = parse_statement(context);
             
@@ -9185,10 +9197,17 @@ break
             
             // new nodes.
             
-            case AST_conditional_jump:{
-                current += sizeof(struct ast_conditional_jump);
-                struct ast_conditional_jump *jump = (struct ast_conditional_jump *)ast;
-                print("    conditional-jump %lld\n", jump->label_number);
+            case AST_jump_if_true:{
+                current += sizeof(struct ast_jump_if_true);
+                struct ast_jump_if_true *jump = (struct ast_jump_if_true *)ast;
+                print("    jump_if_true %lld\n", jump->label_number);
+                ast_stack_at -= 1;
+            }break;
+            
+            case AST_jump_if_false:{
+                current += sizeof(struct ast_jump_if_false);
+                struct ast_jump_if_false *jump = (struct ast_jump_if_false *)ast;
+                print("    jump_if_false %lld\n", jump->label_number);
                 ast_stack_at -= 1;
             }break;
             

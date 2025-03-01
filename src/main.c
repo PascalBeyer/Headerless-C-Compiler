@@ -690,6 +690,7 @@ struct jump_node{
 };
 
 enum jump_context_condition{
+    JUMP_CONTEXT_jump_always,
     JUMP_CONTEXT_jump_on_true,
     JUMP_CONTEXT_jump_on_false,
 };
@@ -699,8 +700,6 @@ struct jump_context{
         struct jump_node *first;
         struct jump_node *last;
     } jump_list;
-    
-    enum jump_context_condition condition;
 };
 
 //_____________________________________________________________________________________________________________________
@@ -3373,7 +3372,7 @@ func void register_intrinsic_function_declaration(struct context *context, struc
     declaration->type = type;
     declaration->offset_in_text_section = -1;
     declaration->compilation_unit = &globals.hacky_global_compilation_unit;
-    declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic;
+    declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic | DECLARATION_FLAGS_is_global;
     set_resolved_type(&declaration->base, &globals.typedef_void, null);
     
     ast_table_add_or_return_previous_entry(&globals.global_declarations, &declaration->base, token);

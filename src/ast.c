@@ -489,7 +489,8 @@ enum ast_kind{
     AST_panic, 
     
     // :ir_refactor
-    AST_conditional_jump,
+    AST_jump_if_true,
+    AST_jump_if_false,
     AST_jump,
     AST_jump_label,
     
@@ -776,7 +777,12 @@ struct ast_jump{
     smm label_number;
 };
 
-struct ast_conditional_jump{
+struct ast_jump_if_true{
+    struct ast base;
+    smm label_number;
+};
+
+struct ast_jump_if_false{
     struct ast base;
     smm label_number;
 };
@@ -982,7 +988,8 @@ struct ast_switch{
     struct ast base;
     struct ast *switch_on;
     struct ast *statement;
-    struct ast_case *default_case;
+    struct ast_jump_label *default_jump_label; // Either the default case or the break label.
+    struct ast_case *default_case; // :ir_refactor - old 
     
     struct ast_list case_list;
 };
