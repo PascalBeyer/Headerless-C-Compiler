@@ -789,6 +789,9 @@ struct context{
         
         struct ast *operand;
         void *other;
+        
+        struct ast *hack_condition_for_ternary;
+        
     } ast_stack[1024];
     smm ast_stack_at;
     

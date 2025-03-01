@@ -1435,8 +1435,6 @@ func struct emit_location *emit_load_float_into_specific_register(struct context
     allocate_specific_register(context, REGISTER_KIND_xmm, reg);
     struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, reg, loc->size);
     
-    
-    
     switch(loc->state){
         case EMIT_LOCATION_loaded:{
             emit_register_register(context, sse_prefix, two_byte_opcode(MOVE_UNALIGNED_XMM_REGM), ret, loc);
@@ -4617,6 +4615,85 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 emit_location_stack[emit_location_stack_at++] = emit_location_register_relative(context, register_kind, loc, null, 0, ast->resolved_type->size);
             }break;
             
+            case AST_compound_literal:{
+                struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)ast;
+                ast_arena_at += sizeof(*compound_literal);
+                
+                struct ast_declaration *decl = compound_literal->decl;
+                struct ast_type *type = decl->type;
+                
+                struct emit_location *decl_location = emit_location_stack_relative(context, REGISTER_KIND_gpr, decl->offset_on_stack, type->size);
+                if(type->kind == AST_struct || type->kind == AST_union || type->kind == AST_array_type){
+                    emit_memset(context, decl_location, 0);
+                }
+                
+                emit_location_stack[emit_location_stack_at++] = decl_location;
+            }break;
+            
+            // 
+            // Initializer:
+            // 
+            
+            case AST_initializer:{
+                struct ast_initializer *initializer = (struct ast_initializer *)ast;
+                ast_arena_at += sizeof(*initializer);
+                
+                struct emit_location *initializer_location = emit_location_stack[emit_location_stack_at-1];
+                struct emit_location *decl_location = emit_location_stack[emit_location_stack_at-2];
+                emit_location_stack_at -= 1;
+                
+                u64 offset = initializer->offset;
+                struct ast_type *lhs_type = initializer->base.resolved_type;
+                
+                enum register_kind register_kind = get_register_kind_for_type(lhs_type);
+                
+                struct emit_location *dest = emit_location_stack_relative(context, register_kind, 0, lhs_type->size);
+                dest->offset = decl_location->offset + offset; // @cleanup: my system is way to confusing about stack offsets
+                
+                if(lhs_type->kind == AST_array_type){
+                    assert(initializer_location->ast && initializer_location->ast->kind == AST_string_literal);
+                    struct ast_array_type   *array = (struct ast_array_type *)lhs_type;
+                    struct ast_string_literal *lit = (struct ast_string_literal *)initializer_location->ast;
+                    
+                    // Mark the string literal as being used.
+                    sll_push_back(context->string_literals, lit);
+                    context->string_literals.amount_of_strings += 1;
+                    
+                    smm array_size = array->amount_of_elements * array->element_type->size;
+                    if(array->is_of_unknown_size){
+                        // We are in an initializer like:
+                        // 
+                        // struct s{
+                        //     char array[];
+                        // } arst = {"hello :)"};
+                        // 
+                        // We have made sure to allocate enough space to hold the initializer.
+                        array_size = lit->value.size + array->element_type->size;
+                    }
+                    
+                    smm extra = (array_size == lit->value.size) ? 0 : array->element_type->size;
+                    
+                    if(array->is_of_unknown_size) dest->size = array_size;
+                    
+                    if(array_size > lit->value.size + extra){
+                        // @cleanup: We only would have to zero the upper part of the 'lhs'.
+                        emit_memset(context, dest, 0);
+                    }
+                    
+                    // @cleanup: this seems stupid, this should just be how string literals work, no?
+                    struct emit_location *rhs = emit_location_rip_relative(context, &lit->base, REGISTER_KIND_gpr, lit->value.size + extra);
+                    emit_memcpy(context, dest, rhs);
+                    
+                }else if(lhs_type->kind == AST_bitfield_type){
+                    struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)lhs_type;
+                    emit_store_bitfield(context, bitfield, dest, initializer_location);
+                }else if(lhs_type->flags & TYPE_FLAG_is_atomic){
+                    emit_store_atomic_integer(context, dest, initializer_location);
+                }else{
+                    emit_store(context, dest, initializer_location);
+                }
+            }break;
+            
             // 
             // Unary expressions:
             // 
@@ -5263,6 +5340,29 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_AND, AND_REG8_REGM8, AND_REG_REGM);
             }break;
             
+            case AST_binary_left_shift:{
+                ast_arena_at += sizeof(struct ast_binary_op);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                smm is_signed = type_is_signed(ast->resolved_type);
+                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_LEFT : REG_OPCODE_SHIFT_LEFT;
+                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, false);
+            }break;
+            
+            case AST_binary_right_shift:{
+                ast_arena_at += sizeof(struct ast_binary_op);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                
+                smm is_signed = type_is_signed(ast->resolved_type);
+                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_RIGHT : REG_OPCODE_SHIFT_RIGHT;
+                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, false);
+            }break;
+            
             case AST_binary_plus:{
                 ast_arena_at += sizeof(struct ast_binary_op);
                 struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
@@ -5599,6 +5699,7 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                             struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
                             free_emit_location(context, array);
                             array = emit_location_register_relative(context, register_kind, pointer, index_register, 0, size);
+                            emit_location_stack[emit_location_stack_at - 1] = array;
                         }else{
                             array->index = index_register;
                         }
@@ -5613,6 +5714,7 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                         struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
                         free_emit_location(context, array);
                         array = emit_location_register_relative(context, register_kind, pointer, index_loc, 0, size);
+                        emit_location_stack[emit_location_stack_at - 1] = array;
                     }else{
                         array->index = index_loc;
                     }
@@ -5623,7 +5725,6 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                         case 4: array->log_index_scale = 2; break;
                         case 8: array->log_index_scale = 3; break;
                     }
-                    
                 }else{
                     //
                     // @cleanup: hack for now: first load the address then call into the 'pointer' case.
@@ -5661,7 +5762,10 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 
                 struct ast_function *function_to_call = null;
                 
-                if(function_location->state == EMIT_LOCATION_register_relative && function_location->ast != 0){
+                // We know whether or not we are calling a function, by checking the size of the emit location.
+                // The size is zero for both dllimports and functions, but we can destinguish by checking if 
+                // if it has an ast or the base has an ast.
+                if(function_location->size == 0 && function_location->ast != null){
                     function_to_call = (struct ast_function *)function_location->ast;
                     assert(function_to_call->base.kind == AST_function);
                     
@@ -5768,7 +5872,13 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                     }
                     
                     enum register_encoding arg_reg = allocate_specific_register(context, argument->register_kind_when_loaded, expected_register);
-                    argument_locations[argument_index] = emit_load_into_specific_gpr(context, argument, arg_reg);
+                    
+                    if(argument->register_kind_when_loaded == REGISTER_KIND_gpr){
+                        argument_locations[argument_index] = emit_load_into_specific_gpr(context, argument, arg_reg);
+                    }else{
+                        argument_locations[argument_index] = emit_load_float_into_specific_register(context, argument, arg_reg);
+                    }
+                    
                     emit_location_prevent_spilling(context, argument_locations[argument_index]);
                 }
                 
@@ -5933,11 +6043,43 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 }
             }break;
             
+            
+            // 
+            // Stack manipulation:
+            // 
+            
             case AST_pop_expression:{
                 ast_arena_at += sizeof(struct ast_pop_expression);
                 emit_location_stack_at -= 1;
                 if(emit_location_stack[emit_location_stack_at]) free_emit_location(context, emit_location_stack[emit_location_stack_at]);
             }break;
+            
+            case AST_pop_lhs_expression:{
+                ast_arena_at += sizeof(struct ast_pop_lhs_expression);
+                emit_location_stack_at -= 1;
+                
+                if(emit_location_stack[emit_location_stack_at-1]) free_emit_location(context, emit_location_stack[emit_location_stack_at-1]);
+                
+                emit_location_stack[emit_location_stack_at-1] = emit_location_stack[emit_location_stack_at];
+            }break;
+            
+            case AST_duplicate_lhs:{
+                ast_arena_at += sizeof(struct ast_duplicate_lhs);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at-2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at-1];
+                
+                struct emit_location *copy = push_struct(&context->scratch, struct emit_location);
+                *copy = *lhs;
+                
+                emit_location_stack_at += 1;
+                emit_location_stack[emit_location_stack_at-1] = rhs;
+                emit_location_stack[emit_location_stack_at-2] = copy;
+            }break;
+            
+            // 
+            // jumps
+            // 
             
             case AST_jump_label:{
                 ast_arena_at += sizeof(struct ast_jump_label);

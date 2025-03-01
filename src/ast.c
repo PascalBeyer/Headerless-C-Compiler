@@ -458,6 +458,8 @@ enum ast_kind{
     AST_comma_expression,
     
     AST_conditional_expression,
+    AST_conditional_expression_true,  // 1 ? <expr> : <expr>
+    AST_conditional_expression_false, // 0 ? <expr> : <expr>
     
     AST_function_call,
     
@@ -492,6 +494,8 @@ enum ast_kind{
     AST_jump_label,
     
     AST_pop_expression,
+    AST_pop_lhs_expression, // needed for conditional expressions.
+    
     AST_emitted_float_literal, // yuck, we copy float-literals in the back-end.
     
     AST_count,
@@ -760,6 +764,10 @@ struct ast_panic{
 };
 
 struct ast_pop_expression{
+    struct ast base;
+};
+
+struct ast_pop_lhs_expression{
     struct ast base;
 };
 

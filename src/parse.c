@@ -2513,9 +2513,17 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
             expr = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type, lhs->base.defined_type, expr, equals);
         }
         
-        ret = ast_push_binary_expression(context, AST_assignment, equals, &lhs->base, expr);
+        struct ast_initializer *ast_initializer = push_expression(context, equals, initializer);
+        ast_initializer->offset = 0;
+        ast_initializer->rhs    = expr;
+        set_resolved_type(&ast_initializer->base, lhs->base.resolved_type, lhs->base.defined_type);
         
-        set_resolved_type(ret, lhs->base.resolved_type, lhs->base.defined_type);
+        struct ast_binary_op *op = (void *)_parser_ast_push(context, context->arena, equals, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_assignment);
+        op->lhs = &lhs->base;
+        op->rhs = expr;
+        
+        set_resolved_type(&op->base, lhs->base.resolved_type, lhs->base.defined_type);
+        ret = &op->base;
     }
     
     push_expression(context, get_current_token_for_error_report(context), pop_expression);
@@ -5164,6 +5172,8 @@ case NUMBER_KIND_##type:{ \
             [AST_logical_or]  = PRECEDENCE_logical_or,
             
             [AST_conditional_expression] = PRECEDENCE_ternary, // right-to-left associative
+            [AST_conditional_expression_true] = PRECEDENCE_ternary, // right-to-left associative
+            [AST_conditional_expression_false] = PRECEDENCE_ternary, // right-to-left associative
             
             [AST_assignment]             = PRECEDENCE_assignment, // right-to-left associative
             [AST_and_assignment]         = PRECEDENCE_assignment,
@@ -6020,6 +6030,7 @@ case NUMBER_KIND_##type:{ \
                 
                 struct ast *op_lhs = stack_entry->operand;
                 struct ast *op_rhs = operand;
+                struct ast_conditional_jump *conditional_jump = stack_entry->other;
                 
                 if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
                     struct ast_integer_literal *lit = cast(struct ast_integer_literal *)op_lhs;
@@ -6028,13 +6039,23 @@ case NUMBER_KIND_##type:{ \
                     }else{
                         lit->_u64 = 0;
                     }
+                    
                     pop_from_ast_arena(context, (struct ast_integer_literal *)operand);
+                    pop_from_ast_arena(context, conditional_jump);
                     
                     operand = &lit->base;
                 }else{
-                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
+                    struct ast_jump_label *label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                    label->label_number = conditional_jump->label_number;
+                    
+                    // :ir_refactor - old
+                    struct ast_binary_op *op = (struct ast_binary_op *)_parser_ast_push(context, context->arena, stack_entry->token, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_logical_and);
+                    op->lhs = op_lhs;
+                    op->rhs = op_rhs;
+                    
                     operand = &op->base;
                 }
+                
                 set_resolved_type(operand, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 context->in_lhs_expression = false;
             }break;
@@ -6046,6 +6067,14 @@ case NUMBER_KIND_##type:{ \
             //    lhs || rhs
             //    
             case AST_logical_or:{
+                
+                // Code for logical or:
+                //     lhs 
+                //     jumpcc .fail
+                //     rhs
+                //   .fail:
+                // 
+                
                 operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 
                 if(!casts_implicitly_to_bool(operand)){
@@ -6055,6 +6084,7 @@ case NUMBER_KIND_##type:{ \
                 
                 struct ast *op_lhs = stack_entry->operand;
                 struct ast *op_rhs = operand;
+                struct ast_conditional_jump *conditional_jump = stack_entry->other;
                 
                 if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
                     struct ast_integer_literal *lit = cast(struct ast_integer_literal *)op_lhs;
@@ -6065,10 +6095,18 @@ case NUMBER_KIND_##type:{ \
                     }
                     
                     pop_from_ast_arena(context, (struct ast_integer_literal *)operand);
+                    pop_from_ast_arena(context, conditional_jump);
                     
                     operand = &lit->base;
                 }else{
-                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
+                    struct ast_jump_label *label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                    label->label_number = conditional_jump->label_number;
+                    
+                    // :ir_refactor - old
+                    struct ast_binary_op *op = (struct ast_binary_op *)_parser_ast_push(context, context->arena, stack_entry->token, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_logical_or);
+                    op->lhs = op_lhs;
+                    op->rhs = op_rhs;
+                    
                     operand = &op->base;
                 }
                 set_resolved_type(operand, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
@@ -6081,17 +6119,32 @@ case NUMBER_KIND_##type:{ \
             // 
             //    lhs ? true : false
             //    
-            case AST_conditional_expression:{
+            case AST_conditional_expression:
+            case AST_conditional_expression_true:
+            case AST_conditional_expression_false:{
                 
                 // @cleanup: this has a lot of code that any binary expression also has e.g.
                 //              'maybe_cast_literal_0_to_void_pointer'
                 //              'maybe_insert_arithmetic_conversion_casts'
                 //           maybe we could make it compatible with binary ops, to use these functions
                 
+                // 
+                // Code for ternary:
+                //    
+                //    condition     (if this is constant, it has been passed through 'AST_condtional_expression_true / AST_condition_expression_false')
+                //    jumpcc .false
+                //    if_true
+                //    jump .end
+                //  .false:
+                //    if_false
+                //  .end:
+                // 
+                
                 struct token *question_mark = stack_entry->token;
-                struct ast *condition = stack_entry->operand;
-                struct ast *if_true   = stack_entry->other;
+                
+                struct ast *if_true   = stack_entry->operand;
                 struct ast *if_false  = operand;
+                struct ast_jump *end_jump = stack_entry->other;
                 
                 if_false = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 if_false = maybe_insert_cast_from_special_int_to_int(context, AST_cast, if_false);
@@ -6125,18 +6178,16 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
+                // Now that we have pushed all necessary casts for the lhs, we can pop it.
+                push_expression(context, get_current_token_for_error_report(context), pop_lhs_expression);
+                
                 int constant_propagated = 0;
-                if(condition->kind == AST_integer_literal || condition->kind == AST_pointer_literal || condition->kind == AST_float_literal){
+                if(ast_kind != AST_conditional_expression){
+                    
                     // The condition is constant, we only turn this into a constant if the "true" path is also const.
                     // @cleanup: Only do this if both paths are const?
                     
-                    struct ast *ast = null;
-                    switch(condition->kind){
-                        case AST_integer_literal: ast = integer_literal_as_u64(condition) ? if_true : if_false;                  break;
-                        case AST_pointer_literal: ast = ((struct ast_pointer_literal *)condition)->pointer ? if_true : if_false; break;
-                        case AST_float_literal:   ast = ((struct ast_float_literal *)condition)->value ? if_true : if_false;     break;
-                        invalid_default_case();
-                    }
+                    struct ast *ast = (ast_kind == AST_conditional_expression_true) ? if_true : if_false;
                     
                     if(ast->kind == AST_integer_literal || ast->kind == AST_pointer_literal || ast->kind == AST_float_literal){
                         // 
@@ -6145,6 +6196,8 @@ case NUMBER_KIND_##type:{ \
                         // 
                         // This whole thing feels sort-of bad, but it is the best I could come up with.
                         constant_propagated = 1;
+                        
+                        struct ast *condition = stack_entry->hack_condition_for_ternary;
                         
                         static_assert(sizeof(struct ast_integer_literal) == sizeof(struct ast_float_literal));
                         static_assert(sizeof(struct ast_integer_literal) == sizeof(struct ast_pointer_literal));
@@ -6159,15 +6212,19 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 if(!constant_propagated){
-                    
-                    struct ast_conditional_expression *cond = push_expression(context, question_mark, conditional_expression);
-                    cond->condition = condition;
-                    cond->if_true   = if_true;
-                    cond->if_false  = if_false;
+                    struct ast_jump_label *end_label = push_expression(context, question_mark, jump_label);
+                    end_label->label_number = end_jump->label_number;
                     
                     // @cleanup: how should these defined_types propagate in this case?
                     struct ast *defined_type = if_true->defined_type ? if_true->defined_type : if_false->defined_type;
-                    set_resolved_type(&cond->base, cond->if_true->resolved_type, defined_type);
+                    set_resolved_type(&end_label->base, if_true->resolved_type, defined_type);
+                    
+                    struct ast_conditional_expression *cond = push_ast(context, question_mark, conditional_expression);
+                    cond->condition = stack_entry->hack_condition_for_ternary;
+                    cond->if_true   = if_true;
+                    cond->if_false  = if_false;
+                    
+                    set_resolved_type(&cond->base, if_true->resolved_type, defined_type);
                     
                     operand = &cond->base;
                 }
@@ -6175,7 +6232,6 @@ case NUMBER_KIND_##type:{ \
                 context->in_lhs_expression = false;
                 context->in_conditional_expression -= 1;
             }break;
-            
             
             // :assign_expression parse_assign_expression :assignment_expression parse_assignment_expression
             // :compound_assignment
@@ -6435,7 +6491,10 @@ case NUMBER_KIND_##type:{ \
             
             case AST_comma_expression:{
                 assert(!should_skip_comma_expression);
-                struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, stack_entry->operand, operand);
+                
+                struct ast_binary_op *op = (struct ast_binary_op *)_parser_ast_push(context, context->arena, stack_entry->token, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_comma_expression);
+                op->lhs = stack_entry->operand;
+                op->rhs = operand;
                 
                 set_resolved_type(&op->base, operand->resolved_type, operand->defined_type);
                 operand = &op->base;
@@ -6484,12 +6543,17 @@ case NUMBER_KIND_##type:{ \
         // Precedence 11
         case TOKEN_logical_and:{
             operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
+            
             if(!casts_implicitly_to_bool(operand)){
                 report_error(context, next_token(context), "Left of '&&' has to be convertible to _Bool.");
                 return operand;
             }
             
-            ast_stack_push(context, AST_logical_and, binary_expression, operand);
+            struct ast_conditional_jump *conditional_jump = push_expression(context, binary_expression, conditional_jump);
+            conditional_jump->label_number = context->jump_label_index++;
+            
+            struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_and, binary_expression, operand);
+            stack_entry->other = conditional_jump;
             goto restart;
         }break;
         
@@ -6502,7 +6566,12 @@ case NUMBER_KIND_##type:{ \
                 return operand;
             }
             
-            ast_stack_push(context, AST_logical_or, binary_expression, operand);
+            struct ast_conditional_jump *conditional_jump = push_expression(context, binary_expression, conditional_jump);
+            conditional_jump->label_number = context->jump_label_index++;
+            
+            struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_or, binary_expression, operand);
+            
+            stack_entry->other = conditional_jump;
             goto restart;
         }break;
         
@@ -6521,14 +6590,45 @@ case NUMBER_KIND_##type:{ \
             
             context->in_conditional_expression += 1; // :tracking_conditional_expression_depth_for_noreturn_functions
             
+            struct ast_conditional_jump *conditional_jump = push_expression(context, binary_expression, conditional_jump);
+            conditional_jump->label_number = context->jump_label_index++;
+            
             struct ast *if_true = parse_expression(context, false);
             if_true = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, if_true);
             if_true = maybe_insert_cast_from_special_int_to_int(context, AST_cast, if_true);
-            expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
+            struct token *colon = expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
             if(context->should_exit_statement) return operand;
             
-            struct ast_stack_entry *entry = ast_stack_push(context, AST_conditional_expression, question_mark, operand);
-            entry->other = if_true;
+            enum ast_kind conditional_expression_kind = AST_conditional_expression;
+            
+            if(operand->kind == AST_integer_literal || operand->kind == AST_pointer_literal || operand->kind == AST_float_literal){
+                // 
+                // The condition is constant, we emit one of:
+                //     AST_conditional_expression_true
+                //     AST_conditional_expression_false
+                // 
+                
+                int is_true;
+                switch(operand->kind){
+                    case AST_integer_literal: is_true = integer_literal_as_u64(operand) ? 1 : 0;                  break;
+                    case AST_pointer_literal: is_true = ((struct ast_pointer_literal *)operand)->pointer ? 1 : 0; break;
+                    case AST_float_literal:   is_true = ((struct ast_float_literal *)operand)->value ? 1 : 0;     break;
+                    invalid_default_case(is_true = false);
+                }
+                
+                conditional_expression_kind = is_true ? AST_conditional_expression_true : AST_conditional_expression_false;
+            }
+            
+            struct ast_jump *end_jump = push_expression(context, colon, jump);
+            end_jump->label_number = context->jump_label_index++;
+            
+            struct ast_jump_label *if_false_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+            if_false_label->label_number = conditional_jump->label_number;
+            
+            struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, if_true);
+            entry->other = end_jump;
+            
+            entry->hack_condition_for_ternary = operand;
             goto restart;
         }break;
         
@@ -6616,6 +6716,8 @@ case NUMBER_KIND_##type:{ \
                 prev_token(context);
                 break;
             }
+            
+            push_expression(context, get_current_token_for_error_report(context), pop_expression);
             
             ast_stack_push(context, AST_comma_expression, binary_expression, operand);
             goto restart;
