@@ -4652,18 +4652,19 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
 
 
 // :ir_refactor
-void emit_code_for_scope(struct context *context, struct ast_scope *scope){
+void emit_code_for_function__internal(struct context *context, struct ast_function *current_function){
     
-    struct ast_function *current_function = context->current_function;
     context->jump_labels = push_data(&context->scratch, struct jump_label_information, current_function->amount_of_jump_labels);
     
     struct emit_location *emit_location_stack[0x100];
     smm emit_location_stack_at = 0;
     
-    scope->base.byte_offset_in_function = to_s32(get_bytes_emitted(context));
+    current_function->scope->byte_offset_in_function = to_s32(get_bytes_emitted(context));
     
-    for(u8 *ast_arena_at = scope->start_in_ast_arena; ast_arena_at < scope->end_in_ast_arena; ){
+    for(u8 *ast_arena_at = current_function->start_in_ast_arena; ast_arena_at < current_function->end_in_ast_arena; ){
         struct ast *ast = (struct ast *)ast_arena_at;
+        
+        ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
         
         switch(ast->kind){
             
@@ -4721,6 +4722,16 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 emit_location_stack[emit_location_stack_at++] = decl_location;
             }break;
             
+            case AST_temp:{
+                struct ast_temp *temp = (struct ast_temp *)ast;
+                ast_arena_at += sizeof(*temp);
+                
+                struct ast_type *type = temp->base.resolved_type;
+                enum register_kind register_kind = get_register_kind_for_type(type);
+                
+                emit_location_stack[emit_location_stack_at++] = emit_allocate_temporary_stack_location(context, register_kind, type->size, type->alignment);
+            }break;
+            
             // 
             // Initializer:
             // 
@@ -4733,7 +4744,7 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 struct emit_location *decl_location = emit_location_stack[emit_location_stack_at-2];
                 emit_location_stack_at -= 1;
                 
-                if(decl_location->ast) break; // @incomplete: We should not evaluate the rhs for statics...
+                assert(!decl_location->ast); // This declaration should not be rip-relative. Rip-relative declarations should not be initialized at run-time.
                 
                 u64 offset = initializer->offset;
                 struct ast_type *lhs_type = initializer->base.resolved_type;
@@ -5523,8 +5534,20 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
                 emit_location_stack_at -= 1;
                 
-                assert(lhs->state == EMIT_LOCATION_register_relative);
-                emit_store(context, lhs, rhs);
+                struct ast_binary_op *op = (struct ast_binary_op *)ast;
+                struct ast_type *lhs_type = op->lhs->resolved_type;
+                
+                if(lhs_type->kind == AST_bitfield_type){
+                    struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)lhs_type;
+                    emit_store_bitfield(context, bitfield, lhs, rhs);
+                }else if(lhs_type->flags & TYPE_FLAG_is_atomic){
+                    emit_store_atomic_integer(context, lhs, rhs);
+                }else{
+                    if(lhs->size != 0){
+                        assert(lhs->state == EMIT_LOCATION_register_relative);
+                        emit_store(context, lhs, rhs);
+                    }
+                }
             }break;
             
             case AST_binary_bigger:
@@ -5598,7 +5621,7 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 
                 struct emit_location *conditional = emit_location_conditional(context, cond);
                 
-                if(ast_arena_at < scope->end_in_ast_arena){ // @paranoid
+                if(ast_arena_at < current_function->end_in_ast_arena){ // @paranoid
                     struct ast *next_ast = (struct ast *)ast_arena_at;
                     
                     if(next_ast->kind != AST_jump_if_true && next_ast->kind != AST_jump_if_false && next_ast->kind != AST_unary_logical_not){
@@ -5892,6 +5915,10 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 // address of the return value. We memcpy in 'case AST_return'.
                 b32 returns_big_struct = type_is_returned_by_address(return_type);
                 
+                // Keep track of the maximal amount of function call arguments 
+                // to allocate the correct amount of memory for arguments passed on the stack.
+                context->max_amount_of_function_call_arguments = max_of(context->max_amount_of_function_call_arguments, argument_count + returns_big_struct);
+                
                 // 
                 // Put the arguments into the right slots and prepare
                 // the arguments that have to be altered.
@@ -6184,6 +6211,12 @@ void emit_code_for_scope(struct context *context, struct ast_scope *scope){
                 emit_location_stack[emit_location_stack_at-2] = rhs;
             }break;
             
+            case AST_skip:{
+                struct ast_skip *skip = (struct ast_skip *)ast;
+                ast_arena_at += skip->size_to_skip;
+            }break;
+            
+            
             // 
             // jumps
             // 
@@ -6461,7 +6494,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     if(0)
     // if(1)
     {
-        emit_code_for_scope(context, (struct ast_scope *)function->scope);
+        emit_code_for_function__internal(context, function);
     }else{
         emit_code_for_ast(context, function->scope);
     }

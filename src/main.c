@@ -788,9 +788,6 @@ struct context{
         
         struct ast *operand;
         void *other;
-        
-        struct ast *hack_condition_for_ternary;
-        
     } ast_stack[1024];
     smm ast_stack_at;
     
@@ -806,6 +803,8 @@ struct context{
     smm jump_label_index;
     smm current_break_label;
     smm current_continue_label;
+    // smm if_true_label;  // Used to track that && and || jump to the correct place if inside 
+    // smm if_false_label;
     
     //
     // Error stream
@@ -3168,6 +3167,9 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         if(decl->identifier != globals.invalid_identifier_token) register_declaration(context, decl);
     }
     
+    
+    function->start_in_ast_arena = arena_current(&context->ast_arena);
+    
     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm){
         //
         // Special case for __declspec(inline_asm) in this case we only want a single 'ast_asm_block'
@@ -3241,14 +3243,14 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             
             // @cleanup: is this the correct token?
             struct token *end_curly = get_current_token_for_error_report(context);
-            struct ast_return *ast_return = push_ast(context, end_curly, return);
-            ast_return->expr = ast_push_s32_literal(context, end_curly, 0);
+            struct ast *expression = ast_push_s32_literal(context, end_curly, 0);
+            struct ast_return *ast_return = push_expression(context, end_curly, return);
+            ast_return->expr = expression;
             set_resolved_type(&ast_return->base, &globals.typedef_void, null);
             
             ast_list_append(&scope->statement_list, context->arena, &ast_return->base);
         }
     }
-    
     
     if(!context->current_statement_returns_a_value){
         
@@ -3263,6 +3265,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             report_warning(context, WARNING_missing_return, get_current_token_for_error_report(context), "Function of type '%.*s' must return a value.", return_type_string.size, return_type_string.data);
         }
     }
+    
+    function->end_in_ast_arena = arena_current(&context->ast_arena);
     
     context->current_function = null;
 }

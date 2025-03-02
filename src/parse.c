@@ -1319,6 +1319,25 @@ func enum ast_kind ast_stack_current(struct context *context){
 //_____________________________________________________________________________________________________________________
 
 
+
+func struct ast *parse_constant_integer_expression(struct context *context, int should_skip_comma_expression, char *message){
+    
+    struct ast *constant_expression = parse_expression(context, should_skip_comma_expression);
+    
+    struct ast_integer_literal *ret = push_ast(context, constant_expression->token, integer_literal);
+    
+    if(constant_expression->kind != AST_integer_literal){
+        report_error(context, constant_expression->token, message);
+        set_resolved_type(&ret->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
+    }else{
+        *ret = *(struct ast_integer_literal *)constant_expression;
+        pop_from_ast_arena(context, (struct ast_integer_literal *)constant_expression);
+    }
+    
+    return &ret->base;
+}
+
+
 // @cleanup: Rename to 'maybe_parse_type_name' ?
 static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct context *context){
     
@@ -1760,6 +1779,7 @@ func struct ast_type *get_current_object_type_for_designator_node(struct designa
 
 func struct initializer_list parse_initializer_list(struct context *context, struct ast_type *type_to_initialize, u64 base_offset, smm *out_trailing_initializer_size){
     
+    
     struct token *initial_open_curly = next_token(context);
     assert(initial_open_curly->type == TOKEN_open_curly);
     
@@ -1964,11 +1984,7 @@ func struct initializer_list parse_initializer_list(struct context *context, str
                     
                     struct ast_array_type *array = (struct ast_array_type *)current_object_type;
                     
-                    struct ast *index = parse_expression(context, /*should_skip_comma_expression*/false);
-                    if(index->kind != AST_integer_literal){
-                        report_error(context, index->token, "Expected a constant integer expression in array subscript.");
-                        goto error;
-                    }
+                    struct ast *index = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant integer expression in array subscript.");
                     
                     u64 value;
                     if(type_is_signed(index->resolved_type)){
@@ -2000,7 +2016,7 @@ func struct initializer_list parse_initializer_list(struct context *context, str
                         // and restart the loop.
                         // 
                         
-                        struct ast *end_index = parse_expression(context, /*should_skip_comma_expression*/false);
+                        struct ast *end_index = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false);
                         if(end_index->kind != AST_integer_literal){
                             report_error(context, end_index->token, "Expected a constant integer expression in range designator. (e.g.: [1 ... moose]).");
                             goto error;
@@ -2079,8 +2095,6 @@ func struct initializer_list parse_initializer_list(struct context *context, str
                         new_node->offset_at = new_offset;
                         sll_push_front(designator_stack, new_node);
                     }
-                    
-                    pop_from_ast_arena(context, (struct ast_integer_literal *)index);
                 }
             } while(peek_token(context, TOKEN_dot) || peek_token(context, TOKEN_open_index));
             
@@ -2403,6 +2417,18 @@ func struct initializer_list parse_initializer_list(struct context *context, str
 
 func struct ast *parse_initializer(struct context *context, struct ast_declaration *decl, struct token *identifier, struct token *equals){
     
+    struct ast_skip *ast_skip = null;
+    if(decl->flags & DECLARATION_FLAGS_is_local_persist){
+        // 
+        // For local static declarations (local presist declarations), we don't want to execute their initializer.
+        // Hence, we add a _skip_ node which just tells us how many bytes to skip in the `ast_arena`.
+        // In the future, there may be a better solution, where we immediately evaluate the initializer
+        // and therefor do not have to do this junk.
+        //                                                       - Pascal Beyer 02.03.2025
+        // 
+        ast_skip = push_expression(context, equals, skip);
+    }
+    
     // 
     // We call this function for
     //     1) int a = ?;
@@ -2527,6 +2553,10 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
     }
     
     push_expression(context, get_current_token_for_error_report(context), pop_expression);
+    
+    if(ast_skip){
+        ast_skip->size_to_skip = (u32)(arena_current(&context->ast_arena) - (u8*)ast_skip);
+    }
     
     return ret;
 }
@@ -6028,6 +6058,23 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
+                // 
+                // Code for &&
+                //  
+                //    lhs
+                //    jump if false .false
+                //    rhs
+                //    jump if false .false
+                //    temp
+                //    1
+                //    assign
+                //    jump .end
+                //  .false:
+                //    0
+                //    assign
+                //  .end:
+                // 
+                
                 struct ast *op_lhs = stack_entry->operand;
                 struct ast *op_rhs = operand;
                 struct ast_jump_if_false *conditional_jump = stack_entry->other;
@@ -6045,8 +6092,42 @@ case NUMBER_KIND_##type:{ \
                     
                     operand = &lit->base;
                 }else{
-                    struct ast_jump_label *label = push_expression(context, get_current_token_for_error_report(context), jump_label);
-                    label->label_number = conditional_jump->label_number;
+                    
+                    // 
+                    // Okay, this is somewhat aweful. 
+                    // Something like this is necessary for expressions like a + (b && c),
+                    // but for the case where a logical and / logical or leads into a condition
+                    // we should have special cases, that do not load the condition.
+                    // 
+                    
+                    struct ast_jump_if_false *rhs_jump = push_expression(context, stack_entry->token, jump_if_false);
+                    rhs_jump->label_number = conditional_jump->label_number;
+                    
+                    struct ast_temp *temp = push_expression(context, stack_entry->token, temp);
+                    set_resolved_type(&temp->base, &globals.typedef_s32, null);
+                    
+                    {
+                        struct ast *rhs = ast_push_s32_literal(context, stack_entry->token, 1);
+                        struct ast *assign = ast_push_binary_expression(context, AST_assignment, stack_entry->token, &temp->base, rhs);
+                        set_resolved_type(assign, &globals.typedef_s32, null);
+                    }
+                    
+                    struct ast_jump *jump_end = push_expression(context, stack_entry->token, jump);
+                    jump_end->label_number = context->jump_label_index++;
+                    
+                    struct ast_jump_label *false_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                    false_label->label_number = conditional_jump->label_number;
+                    
+                    {
+                        struct ast *rhs = ast_push_s32_literal(context, stack_entry->token, 0);
+                        struct ast *assign = ast_push_binary_expression(context, AST_assignment, stack_entry->token, &temp->base, rhs);
+                        set_resolved_type(assign, &globals.typedef_s32, null);
+                    }
+                    
+                    struct ast_jump_label *end_label = push_expression(context, stack_entry->token, jump_label);
+                    end_label->label_number = jump_end->label_number;
+                    
+                    // ... in the end, temp is on top of the stack, the expression we return.
                     
                     // :ir_refactor - old
                     struct ast_binary_op *op = (struct ast_binary_op *)_parser_ast_push(context, context->arena, stack_entry->token, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_logical_and);
@@ -6070,9 +6151,17 @@ case NUMBER_KIND_##type:{ \
                 
                 // Code for logical or:
                 //     lhs 
-                //     jumpcc .fail
+                //     jump if true .if_true
                 //     rhs
-                //   .fail:
+                //     jump if true .if_true
+                //     temp
+                //     0
+                //     assign
+                //     jump .end
+                //   .if_true
+                //     1
+                //     assign
+                //   .end:
                 // 
                 
                 operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
@@ -6099,8 +6188,43 @@ case NUMBER_KIND_##type:{ \
                     
                     operand = &lit->base;
                 }else{
-                    struct ast_jump_label *label = push_expression(context, get_current_token_for_error_report(context), jump_label);
-                    label->label_number = conditional_jump->label_number;
+                    
+                    // 
+                    // @copy and paste from ast_logical_and:
+                    // 
+                    // Something like this is necessary for expressions like a + (b && c),
+                    // but for the case where a logical and / logical or leads into a condition
+                    // we should have special cases, that do not load the condition.
+                    // 
+                    
+                    struct ast_jump_if_true *rhs_jump = push_expression(context, stack_entry->token, jump_if_true);
+                    rhs_jump->label_number = conditional_jump->label_number;
+                    
+                    struct ast_temp *temp = push_expression(context, stack_entry->token, temp);
+                    set_resolved_type(&temp->base, &globals.typedef_s32, null);
+                    
+                    {
+                        struct ast *rhs = ast_push_s32_literal(context, stack_entry->token, 0);
+                        struct ast *assign = ast_push_binary_expression(context, AST_assignment, stack_entry->token, &temp->base, rhs);
+                        set_resolved_type(assign, &globals.typedef_s32, null);
+                    }
+                    
+                    struct ast_jump *jump_end = push_expression(context, stack_entry->token, jump);
+                    jump_end->label_number = context->jump_label_index++;
+                    
+                    struct ast_jump_label *true_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+                    true_label->label_number = conditional_jump->label_number;
+                    
+                    {
+                        struct ast *rhs = ast_push_s32_literal(context, stack_entry->token, 1);
+                        struct ast *assign = ast_push_binary_expression(context, AST_assignment, stack_entry->token, &temp->base, rhs);
+                        set_resolved_type(assign, &globals.typedef_s32, null);
+                    }
+                    
+                    struct ast_jump_label *end_label = push_expression(context, stack_entry->token, jump_label);
+                    end_label->label_number = jump_end->label_number;
+                    
+                    
                     
                     // :ir_refactor - old
                     struct ast_binary_op *op = (struct ast_binary_op *)_parser_ast_push(context, context->arena, stack_entry->token, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_logical_or);
@@ -6144,7 +6268,11 @@ case NUMBER_KIND_##type:{ \
                 
                 struct ast *if_true   = stack_entry->operand;
                 struct ast *if_false  = operand;
-                struct ast_jump *end_jump = stack_entry->other;
+                struct conditional_expression_information *information = stack_entry->other;
+                
+                struct ast *condition = information->condition;
+                struct ast *temp = information->temp;
+                struct ast_jump *end_jump = information->end_jump;
                 
                 if_false = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
                 if_false = maybe_insert_cast_from_special_int_to_int(context, AST_cast, if_false);
@@ -6178,9 +6306,6 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                // Now that we have pushed all necessary casts for the lhs, we can pop it.
-                push_expression(context, get_current_token_for_error_report(context), pop_lhs_expression);
-                
                 int constant_propagated = 0;
                 if(ast_kind != AST_conditional_expression){
                     
@@ -6197,8 +6322,6 @@ case NUMBER_KIND_##type:{ \
                         // This whole thing feels sort-of bad, but it is the best I could come up with.
                         constant_propagated = 1;
                         
-                        struct ast *condition = stack_entry->hack_condition_for_ternary;
-                        
                         static_assert(sizeof(struct ast_integer_literal) == sizeof(struct ast_float_literal));
                         static_assert(sizeof(struct ast_integer_literal) == sizeof(struct ast_pointer_literal));
                         memcpy(condition, ast, sizeof(struct ast_integer_literal));
@@ -6212,19 +6335,25 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 if(!constant_propagated){
-                    struct ast_jump_label *end_label = push_expression(context, question_mark, jump_label);
-                    end_label->label_number = end_jump->label_number;
-                    
                     // @cleanup: how should these defined_types propagate in this case?
                     struct ast *defined_type = if_true->defined_type ? if_true->defined_type : if_false->defined_type;
+                    
+                    struct ast *assign = ast_push_binary_expression(context, AST_assignment, question_mark, temp, if_false);
+                    set_resolved_type(assign, if_false->resolved_type, if_false->defined_type);
+                    
+                    set_resolved_type(temp, if_true->resolved_type, defined_type);
+                    
+                    struct ast_jump_label *end_label = push_expression(context, question_mark, jump_label);
+                    end_label->label_number = end_jump->label_number;
                     set_resolved_type(&end_label->base, if_true->resolved_type, defined_type);
                     
                     struct ast_conditional_expression *cond = push_ast(context, question_mark, conditional_expression);
-                    cond->condition = stack_entry->hack_condition_for_ternary;
+                    cond->condition = condition;
                     cond->if_true   = if_true;
                     cond->if_false  = if_false;
                     
                     set_resolved_type(&cond->base, if_true->resolved_type, defined_type);
+                    
                     
                     operand = &cond->base;
                 }
@@ -6593,6 +6722,8 @@ case NUMBER_KIND_##type:{ \
             struct ast_jump_if_false *conditional_jump = push_expression(context, binary_expression, jump_if_false);
             conditional_jump->label_number = context->jump_label_index++;
             
+            struct ast_temp *temp = push_expression(context, question_mark, temp);
+            
             struct ast *if_true = parse_expression(context, false);
             if_true = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, if_true);
             if_true = maybe_insert_cast_from_special_int_to_int(context, AST_cast, if_true);
@@ -6619,16 +6750,23 @@ case NUMBER_KIND_##type:{ \
                 conditional_expression_kind = is_true ? AST_conditional_expression_true : AST_conditional_expression_false;
             }
             
+            struct ast *assign = ast_push_binary_expression(context, AST_assignment, question_mark, &temp->base, if_true);
+            set_resolved_type(assign, if_true->resolved_type, if_true->defined_type);
+            set_resolved_type(&temp->base, if_true->resolved_type, if_true->defined_type);
+            
             struct ast_jump *end_jump = push_expression(context, colon, jump);
             end_jump->label_number = context->jump_label_index++;
             
             struct ast_jump_label *if_false_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
             if_false_label->label_number = conditional_jump->label_number;
             
-            struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, if_true);
-            entry->other = end_jump;
+            struct conditional_expression_information *conditional_expression_information = push_struct(&context->scratch, struct conditional_expression_information);
+            conditional_expression_information->condition = operand;
+            conditional_expression_information->temp = &temp->base;
+            conditional_expression_information->end_jump = end_jump;
             
-            entry->hack_condition_for_ternary = operand;
+            struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, if_true);
+            entry->other = conditional_expression_information;
             goto restart;
         }break;
         
@@ -6872,14 +7010,8 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                 if(type_name.type){
                     value = type_name.type->alignment;
                 }else{
-                    struct ast *const_expr = parse_expression(context, /*should_skip_comma_expression*/false);
-                    
-                    if(const_expr->kind != AST_integer_literal){
-                        report_error(context, const_expr->token, "Argument of '_Alignas' must be a type name or a constant expression.");
-                    }else{
-                        value = integer_literal_as_u64(const_expr);
-                        pop_from_ast_arena(context, (struct ast_integer_literal *)const_expr);
-                    }
+                    struct ast *const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Argument of '_Alignas' must be a type name or a constant expression.");
+                    value = integer_literal_as_u64(const_expr);
                 }
                 
                 // "An alignment specification of zero has no effect."
@@ -6923,33 +7055,28 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                 }else if(atoms_match(directive_string, globals.keyword_align)){
                     expect_token(context, TOKEN_open_paren, "Expected '(' to follow 'align'.");
                     
-                    struct ast *const_expr = parse_expression(context, /*should_skip_comma_expression*/false);
+                    struct ast *const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
                     
-                    if(const_expr->kind != AST_integer_literal){
-                        report_error(context, directive, "Expected a constant expression in '__declspec(align(_))'.");
+                    u64 value = integer_literal_as_u64(const_expr);
+                    
+                    //
+                    // struct __declspec(align(0x100)) asd;
+                    //
+                    // @note: the difference between '__declspec(align(#)) struct asd {int asd; } asd;'
+                    //        and                    'struct __declspec(align(#)) asd {int asd; } asd;'
+                    // is whether all instances of 'struct asd' are #-aligned or just 'asd'.
+                    //
+                    
+                    if(!is_power_of_two(value)){
+                        report_error(context, directive, "Alignment must be a power of two.");
+                    }
+                    
+                    if(specifiers.alignment){
+                        // @cleanup: warn here!
+                        // report_warning(context, WARNING_alignment_specified_more_then_once, "Alignment");
+                        specifiers.alignment = max_of(specifiers.alignment, value);
                     }else{
-                        u64 value = integer_literal_as_u64(const_expr);
-                        pop_from_ast_arena(context, (struct ast_integer_literal *)const_expr);
-                        
-                        //
-                        // struct __declspec(align(0x100)) asd;
-                        //
-                        // @note: the difference between '__declspec(align(#)) struct asd {int asd; } asd;'
-                        //        and                    'struct __declspec(align(#)) asd {int asd; } asd;'
-                        // is whether all instances of 'struct asd' are #-aligned or just 'asd'.
-                        //
-                        
-                        if(!is_power_of_two(value)){
-                            report_error(context, directive, "Alignment must be a power of two.");
-                        }
-                        
-                        if(specifiers.alignment){
-                            // @cleanup: warn here!
-                            // report_warning(context, WARNING_alignment_specified_more_then_once, "Alignment");
-                            specifiers.alignment = max_of(specifiers.alignment, value);
-                        }else{
-                            specifiers.alignment = value;
-                        }
+                        specifiers.alignment = value;
                     }
                     
                     expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'align'.");
@@ -7032,34 +7159,29 @@ case TOKEN_##type_name:{                                                 \
                     if(atoms_match(declspec->atom, globals.keyword_align)){
                         expect_token(context, TOKEN_open_paren, "Expected '(' to follow 'align'.");
                         
-                        struct ast *const_expr = parse_expression(context, /*should_skip_comma_expression*/false);
+                        struct ast *const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
                         
-                        if(const_expr->kind != AST_integer_literal){
-                            report_error(context, declspec, "Expected a constant expression in '__declspec(align(_))'.");
+                        u64 value = integer_literal_as_u64(const_expr);
+                        
+                        has_declspec_alignment = true;
+                        
+                        //
+                        // struct __declspec(align(0x100)) asd;
+                        //
+                        // @note: the difference between '__declspec(align(#)) struct asd {int asd; } asd;'
+                        //        and                    'struct __declspec(align(#)) asd {int asd; } asd;'
+                        // is whether all instances of 'struct asd' are #-aligned or just 'asd'.
+                        //
+                        
+                        if(!is_power_of_two(value)){
+                            report_error(context, declspec, "Alignment must be a power of two.");
+                        }
+                        
+                        if(declspec_alignment != 1){
+                            // @cleanup: warning.
+                            declspec_alignment = max_of(declspec_alignment, value);
                         }else{
-                            u64 value = integer_literal_as_u64(const_expr);
-                            pop_from_ast_arena(context, (struct ast_integer_literal *)const_expr);
-                            
-                            has_declspec_alignment = true;
-                            
-                            //
-                            // struct __declspec(align(0x100)) asd;
-                            //
-                            // @note: the difference between '__declspec(align(#)) struct asd {int asd; } asd;'
-                            //        and                    'struct __declspec(align(#)) asd {int asd; } asd;'
-                            // is whether all instances of 'struct asd' are #-aligned or just 'asd'.
-                            //
-                            
-                            if(!is_power_of_two(value)){
-                                report_error(context, declspec, "Alignment must be a power of two.");
-                            }
-                            
-                            if(declspec_alignment != 1){
-                                // @cleanup: warning.
-                                declspec_alignment = max_of(declspec_alignment, value);
-                            }else{
-                                declspec_alignment = value;
-                            }
+                            declspec_alignment = value;
                         }
                         
                         expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'align'.");
@@ -7250,21 +7372,13 @@ case TOKEN_##type_name:{                                                 \
                                     report_error(context, colon, "Bitfield must be of integer type.");
                                 }
                                 
-                                struct ast *constant = parse_expression(context, true);
-                                if(constant->kind != AST_integer_literal){
-                                    report_error(context, constant->token, "Bitfield width must be constant.");
-                                    constant = ast_push_s32_literal(context, constant->token, 0);
-                                }
-                                
+                                struct ast *constant = parse_constant_integer_expression(context, true, "Bitfield width must be constant.");
                                 s64 width = integer_literal_as_s64(constant);
                                 
                                 if(width < 0){
                                     report_error(context, constant->token, "Bitfield width must be non-negative.");
                                     width = 0;
                                 }
-                                
-                                pop_from_ast_arena(context, (struct ast_integer_literal *)constant);
-                                
                                 
                                 // "As a special case, a bit-field struture member with a width of 0 indicates 
                                 //  that no further bit-field is to be packed into the unit in which the previous 
@@ -7491,15 +7605,9 @@ case TOKEN_##type_name:{                                                 \
                         struct token *ident = expect_token(context, TOKEN_identifier, "Expected an identifier in enum declaration.");
                         
                         if(peek_token_eat(context, TOKEN_equals)){
-                            struct ast *const_expr = parse_expression(context, true);
-                            
-                            if(const_expr->kind != AST_integer_literal){
-                                report_error(context, const_expr->token, "Expression needs to resolve to constant integer.");
-                                const_expr = ast_push_s32_literal(context, const_expr->token, 0);
-                            }
+                            struct ast *const_expr = parse_constant_integer_expression(context, true, "Enum expression needs to be a constant integer.");
                             
                             current_value = integer_literal_as_s64(const_expr);
-                            pop_from_ast_arena(context, (struct ast_integer_literal *)const_expr);
                         }
                         
                         // @note: allow to u32_max, as enums are often used as flag-constants and it just does not matter
@@ -8230,15 +8338,9 @@ func struct ast *parse_imperative_scope(struct context *context);
 void parse_static_assert(struct context *context, struct token *static_assert_token){
     
     expect_token(context, TOKEN_open_paren, "Expected a '(' after _Static_assert.");
-    struct ast *constant_expression = parse_expression(context, /*should_skip_comma_expression*/true);
-    
-    if(constant_expression->kind != AST_integer_literal){
-        report_error(context, constant_expression->token, "First argument to '_Static_assert' is not constant.");
-        return;
-    }
+    struct ast *constant_expression = parse_constant_integer_expression(context, /*should_skip_comma_expression*/true, "First argument to '_Static_assert' is not constant.");
     
     s64 value = integer_literal_as_s64(constant_expression);
-    pop_from_ast_arena(context, (struct ast_integer_literal *)constant_expression);
     
     struct string string_literal = {0};
     
@@ -8286,6 +8388,9 @@ func struct ast *parse_statement(struct context *context){
         case TOKEN_if:{
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'if'.");
             
+            // Allocate an _if-false_ label that parse_expression can use.
+            smm if_false_label = /*context->if_false_label = */context->jump_label_index++;
+            
             struct ast *condition = parse_expression(context, false);
             
             maybe_report_warning_for_assignment_in_condition(context, condition);
@@ -8302,7 +8407,12 @@ func struct ast *parse_statement(struct context *context){
             
             // :ir_refactor - new
             struct ast_jump_if_false *condition_jump = push_expression(context, initial_token, jump_if_false);
-            condition_jump->label_number = context->jump_label_index++; // @cleanup: tell this that it has to jump if false?
+            condition_jump->label_number = if_false_label;
+            
+            // if(context->if_true_label != -1){
+            //     struct ast_jump_label *if_true_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
+            //     if_true_label->label_number = context->if_true_label;
+            // }
             
             // :ir_refactor - old
             struct ast_if *ast_if = push_ast(context, initial_token, if);
@@ -8319,7 +8429,7 @@ func struct ast *parse_statement(struct context *context){
                 jump_over_else->label_number = context->jump_label_index++;
                 
                 struct ast_jump_label *else_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
-                else_label->label_number = condition_jump->label_number;
+                else_label->label_number = if_false_label;
                 
                 ast_if->else_statement = parse_statement(context);
                 
@@ -8332,7 +8442,7 @@ func struct ast *parse_statement(struct context *context){
                 context->current_statement_returns_a_value = statement_returns_a_value | (else_statement_returns_a_value & if_statement_returns_a_value);
             }else{
                 struct ast_jump_label *end_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
-                end_label->label_number = condition_jump->label_number;
+                end_label->label_number = if_false_label;
             }
             
             needs_semicolon = false;
@@ -8682,11 +8792,7 @@ func struct ast *parse_statement(struct context *context){
             // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
             context->current_statement_returns_a_value = 0;
             
-            struct ast *const_expr = parse_expression(context, false);
-            if(const_expr->kind != AST_integer_literal){
-                report_error(context, const_expr->token, "Operand of 'case' has to be constant.");
-                return const_expr;
-            }
+            struct ast *const_expr = parse_constant_integer_expression(context, false, "Operand of 'case' has to be constant.");
             
             struct ast *switch_on = context->current_switch->switch_on;
             struct ast *promoted_const_expr = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, switch_on->resolved_type, switch_on->defined_type, const_expr, const_expr->token);
@@ -8694,7 +8800,6 @@ func struct ast *parse_statement(struct context *context){
             assert(promoted_const_expr->resolved_type == context->current_switch->switch_on->resolved_type);
             
             u64 value = integer_literal_as_u64(promoted_const_expr);
-            pop_from_ast_arena(context, (struct ast_integer_literal *)promoted_const_expr);
             
             for(struct ast_list_node *node = context->current_switch->case_list.first; node; node = node->next){
                 struct ast_case *ast_case = (struct ast_case *)node->value;
@@ -9306,12 +9411,9 @@ break
 // @note: We assume the TOKEN_open_curly was already consumed.
 func struct ast *parse_imperative_scope(struct context *context){
     
-    void *start_in_ast_arena = arena_current(&context->ast_arena);
     
     struct ast_scope *scope = context->current_scope;
     assert(scope);
-    
-    scope->start_in_ast_arena = start_in_ast_arena;
     
     // Keep parsing inputs even after an error has occurred!
     while(true){
@@ -9363,9 +9465,6 @@ func struct ast *parse_imperative_scope(struct context *context){
             ast_list_append(&scope->statement_list, context->arena, statement);
         }
     }
-    
-    scope->end_in_ast_arena = arena_current(&context->ast_arena);
-    
     for(u32 table_index = 0; table_index < scope->current_max_amount_of_declarations; table_index++){
         
         struct ast_declaration *decl = scope->declarations[table_index];
@@ -9381,9 +9480,7 @@ func struct ast *parse_imperative_scope(struct context *context){
         }
     }
     
-    dump_and_check_ast_stack(context, start_in_ast_arena);
-    
-    return cast(struct ast *)scope;
+    return (struct ast *)scope;
 }
 
 func struct declarator_return parse_declarator(struct context* context, struct ast_type *_initial_type, struct ast *_initial_defined_type, enum declarator_kind_flags declarator_kind_flags){
@@ -9752,11 +9849,8 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 array_type->base.size = 0;
                 array_type->base.flags |= TYPE_FLAG_ends_in_array_of_unknown_size;
             }else{
-                struct ast *index_expression = parse_expression(context, false);
-                if(index_expression->kind != AST_integer_literal){
-                    report_error(context, array_type->base.token, "Array subscript is not constant.");
-                    return ret;
-                }
+                struct ast *index_expression = parse_constant_integer_expression(context, false, "Array subscript is not constant.");
+                
                 expect_token(context, TOKEN_closed_index, "Expected ']' ending array declarator.");
                 
                 s64 value = integer_literal_as_s64(index_expression);
@@ -9771,8 +9865,6 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 }
                 
                 array_type->amount_of_elements = value;
-                
-                pop_from_ast_arena(context, (struct ast_integer_literal *)index_expression);
                 
                 if(context->should_exit_statement) return ret;
             }

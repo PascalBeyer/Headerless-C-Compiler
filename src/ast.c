@@ -497,6 +497,9 @@ enum ast_kind{
     AST_pop_expression,
     AST_pop_lhs_expression, // needed for conditional expressions.
     
+    AST_temp,
+    AST_skip,
+    
     AST_emitted_float_literal, // yuck, we copy float-literals in the back-end.
     
     AST_count,
@@ -756,11 +759,21 @@ struct ast_duplicate_lhs{
     struct ast base;
 };
 
+
+struct ast_skip{
+    struct ast base;
+    u32 size_to_skip;
+};
+
 struct ast_swap_lhs_rhs{
     struct ast base;
 };
 
 struct ast_panic{
+    struct ast base;
+};
+
+struct ast_temp{
     struct ast base;
 };
 
@@ -791,6 +804,8 @@ struct ast_jump_label{
     struct ast base;
     smm label_number;
 };
+
+
 
 struct ast_dot_or_arrow{
     struct ast base;
@@ -839,10 +854,6 @@ struct ast_scope{
     
     // old way to iterate the statements
     struct ast_list statement_list;
-    
-    // new way to iterate the statements
-    u8 *start_in_ast_arena;
-    u8 *end_in_ast_arena;
     
     enum scope_flags flags;
     
@@ -935,6 +946,10 @@ struct ast_function{
         };
         struct ast_declaration as_decl;
     };
+    
+    u8 *start_in_ast_arena;
+    u8 *end_in_ast_arena;
+    
     
     u8 *base_of_prolog;
     smm size_of_prolog; // these could be smaller
@@ -1038,6 +1053,12 @@ struct ast_conditional_expression{
     struct ast *if_true;
     struct ast *if_false;
     struct ast *condition;
+};
+
+struct conditional_expression_information{
+    struct ast *condition;
+    struct ast *temp;
+    struct ast_jump *end_jump;
 };
 
 struct ast_asm_block{

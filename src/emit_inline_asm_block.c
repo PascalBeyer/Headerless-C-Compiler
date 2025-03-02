@@ -753,7 +753,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_bswap:{
                 struct emit_location *loaded = emit_load_without_freeing(context, operand);
                 
-                enum rex_encoding rex = ((operand->size == 8) ? REXW : 0) | (register_is_extended(loaded->loaded_register) ? REXR : 0);
+                enum rex_encoding rex = ((operand->size == 8) ? REXW : 0) | (register_is_extended(loaded->loaded_register) ? REXB : 0);
                 if(rex) emit(rex);
                 emit(0x0f);
                 emit(0xc8 + (loaded->loaded_register & 7));
