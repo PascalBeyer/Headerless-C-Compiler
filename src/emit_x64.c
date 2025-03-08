@@ -2212,8 +2212,6 @@ func struct emit_location *emit_code_for_plain_condition(struct context *context
 func struct jump_context emit_code_for_if_condition(struct context *context, struct ast *ast){
     struct jump_context or_jump_context = zero_struct;
     
-    ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
-    
     struct ast *or_it = ast;
     while(true){
         b32 should_loop = true;
@@ -2561,8 +2559,6 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
 func struct emit_location *emit_code_for_ast(struct context *context, struct ast *ast){
     assert(ast->resolved_type);
     
-    ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
-    
     switch(ast->kind){
         case AST_typedef:  return emit_location_invalid(context);
         case AST_function: return emit_location_invalid(context);
@@ -2720,8 +2716,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     
                     struct ast_array_type   *array = (struct ast_array_type *)lhs_type;
                     struct ast_string_literal *lit = (struct ast_string_literal *)initializer->rhs;
-                    
-                    initializer->rhs->byte_offset_in_function = to_s32(get_bytes_emitted(context));
                     
                     // Mark the string literal as being used.
                     sll_push_back(context->string_literals, lit);
@@ -3697,8 +3691,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                 assert_that_no_registers_are_allocated(context);
             }
             
-            scope->scope_end_byte_offset_in_function = to_u32(get_bytes_emitted(context));
-            
             return emit_location_invalid(context);
         }break;
         case AST_if:{
@@ -3815,7 +3807,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
                     // This avoids stack overflows and is faster.
                     if(ast_case->statement->kind == AST_case){
                         ast = ast_case->statement;
-                        ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
                         continue;
                     }
                     
@@ -3838,7 +3829,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             
             struct ast_for *ast_for = cast(struct ast_for *)ast;
             
-            ast_for->scope_for_decl->base.byte_offset_in_function = ast_for->base.byte_offset_in_function;
             
             // save old values, as sort of a stack
             struct jump_context *old_break_jump_context    = context->break_jump_context;
@@ -3903,8 +3893,6 @@ func struct emit_location *emit_code_for_ast(struct context *context, struct ast
             // restore old values
             context->break_jump_context = old_break_jump_context;
             context->continue_jump_context = old_continue_jump_context;
-            
-            ast_for->scope_for_decl->scope_end_byte_offset_in_function = to_u32(get_bytes_emitted(context));
             
             return emit_location_invalid(context);
         }break;
@@ -4659,7 +4647,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
     struct emit_location *emit_location_stack[0x100];
     smm emit_location_stack_at = 0;
     
-    current_function->scope->byte_offset_in_function = to_s32(get_bytes_emitted(context));
     
     struct function_line_information *line_information = current_function->line_information.data;
     smm line_information_size = current_function->line_information.size;
@@ -4674,8 +4661,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             // Here we remap the offset from pointing into the ast_arena to pointing into the emit_pool.
             line_information[line_information_at++].offset = to_s32(get_bytes_emitted(context));
         }
-        
-        ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
         
         switch(ast->kind){
             
@@ -6503,8 +6488,8 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // LET'S GO:
     ////////////////////////////////////////////////
     
-    if(0)
-    // if(1)
+    // if(0)
+    if(1)
     {
         emit_code_for_function__internal(context, function);
     }else{

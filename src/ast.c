@@ -507,7 +507,6 @@ enum ast_kind{
 
 struct ast{
     enum ast_kind kind;
-    s32 byte_offset_in_function;
     struct token *token;
     s64 s;
     struct ast_type *resolved_type;
@@ -866,7 +865,10 @@ struct ast_scope{
     u32 amount_of_compound_types;
     u32 current_max_amount_of_compound_types;
     
-    u32 scope_end_byte_offset_in_function;
+    // These are indices into the `function->line_information` array
+    // and are used to determine which region of code holds which declarations.
+    u32 start_line_index;
+    u32 end_line_index;
 };
 
 struct ast_continue{

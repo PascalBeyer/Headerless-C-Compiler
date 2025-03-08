@@ -594,7 +594,7 @@ struct debug_symbols_relocation_info{
 
 
 void codeview_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast *ast, struct memory_arena *relocation_arena, u8 *debug_symbols_base){
-    assert(ast->byte_offset_in_function >= 0);
+    // assert(ast->byte_offset_in_function >= 0);
     
     switch(ast->kind){
         case AST_scope:{
@@ -614,9 +614,20 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
                     } *block = push_struct(arena, struct codeview_block32);
                     block->length = sizeof(*block) - 2;
                     block->kind   = /*S_BLOCK32*/0x1103;
-                    block->scope_size = scope->scope_end_byte_offset_in_function - scope->base.byte_offset_in_function;
                     
-                    block->offset_in_section = scope->base.byte_offset_in_function; // relocated by relocation.
+                    if(scope->start_line_index == -1){
+                        // Function is empty.
+                        block->scope_size = 0;
+                        block->offset_in_section = 0; // ?
+                    }else{
+                        struct function_line_information start = function->line_information.data[scope->start_line_index];
+                        struct function_line_information end   = function->line_information.data[scope->end_line_index];
+                        
+                        // @cleanup: Does this correctly include function->size_of_prologue?
+                        block->scope_size = end.offset - start.offset;
+                        block->offset_in_section = start.offset; // relocated by relocation.
+                    }
+                    
                     block->section = 0; // filled in by relocation.
                     
                     struct debug_symbols_relocation_info *relocation = push_struct(relocation_arena, struct debug_symbols_relocation_info);
@@ -2105,17 +2116,26 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 // };
                 // 
                 
-                smm line   = function->scope->token->line;
-                smm offset = 0;
-                
                 u8 *lines_start = arena_current(arena);
                 
                 // 
-                // Emit an initial line for the start of the function.
+                // Emit an initial line for the prologue.
                 // 
-                *push_struct(arena, u32) = (u32)offset;
-                *push_struct(arena, u32) = (u32)(line | /*is_statement*/0x80000000);
+                *push_struct(arena, u32) = 0;
+                *push_struct(arena, u32) = (u32)(function->scope->token->line | /*is_statement*/0x80000000);
                 
+                #if 1
+                
+                for(smm index = 0; index < function->line_information.size; index++){
+                    struct function_line_information line = function->line_information.data[index];
+                    
+                    u32 offset = (u32)(line.offset + function->size_of_prolog);
+                    
+                    *push_struct(arena, u32) = (u32)offset;
+                    *push_struct(arena, u32) = (u32)(line.line | /*is_statement*/0x80000000);
+                }
+                
+                #else
                 smm ast_stack_capacity = 32;
                 struct ast_stack_node{
                     struct ast *ast;
@@ -2273,21 +2293,25 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         default:{
                             smm ast_line = ast->token->line;
                             
-                            assert(ast->byte_offset_in_function >= 0);
+                            // assert(ast->byte_offset_in_function >= 0);
                             
                             smm ast_offset = function->size_of_prolog + ast->byte_offset_in_function;
-                            assert(ast_offset >= offset);
                             
-                            offset = ast_offset;
-                            line   = ast_line;
-                            
-                            *push_struct(arena, u32) = (u32)offset;
-                            *push_struct(arena, u32) = (u32)(line | /*is_statement*/0x80000000);
+                            if(ast_offset >= offset){
+                                assert(ast_offset >= offset);
+                                
+                                offset = ast_offset;
+                                line   = ast_line;
+                                
+                                *push_struct(arena, u32) = (u32)offset;
+                                *push_struct(arena, u32) = (u32)(line | /*is_statement*/0x80000000);
+                            }
                         }break;
                     }
                 }
                 
 #undef push_to_stack
+#endif
                 
                 smm lines_size = arena_current(arena) - lines_start;
                 

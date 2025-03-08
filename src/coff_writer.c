@@ -1359,8 +1359,18 @@ func void pdb_emit_regrels_for_scope(struct pdb_write_context *context, struct a
 func struct pdb_location pdb_begin_scope(struct pdb_write_context *context, struct ast_function *function, struct ast_scope *scope){
     
     struct pdb_location pointer_to_end_loc;
-    smm scope_size = scope->scope_end_byte_offset_in_function - scope->base.byte_offset_in_function;
-    smm offset_in_text_section = function->offset_in_text_section + scope->base.byte_offset_in_function + function->size_of_prolog;
+    smm scope_size = 0;
+    smm offset_in_text_section = function->offset_in_text_section;
+    
+    if(scope->start_line_index != -1){ // Only -1 for empty functions.
+        
+        struct function_line_information start = function->line_information.data[scope->start_line_index];
+        struct function_line_information end   = function->line_information.data[scope->end_line_index];
+        
+        // @cleanup: Does this correctly include function->size_of_prologue?
+        scope_size = end.offset - start.offset;
+        offset_in_text_section = function->offset_in_text_section + function->size_of_prolog + start.offset; // relocated by relocation.
+    }
     
     smm scope_offset_in_symbol_stream = pdb_current_offset_from_location(context, context->module_stream_begin);
     begin_symbol(0x1103);{// S_BLOCK32
@@ -1375,7 +1385,7 @@ func struct pdb_location pdb_begin_scope(struct pdb_write_context *context, stru
 }
 
 func void emit_debug_info_for_ast__recursive(struct pdb_write_context *context, struct ast_function *function, struct ast *ast){
-    assert(ast->byte_offset_in_function >= 0);
+    
     switch(ast->kind){
         case AST_scope:{
             // @cleanup: skip if there are no declarations in the scope.
@@ -1478,115 +1488,6 @@ func void emit_one_pdb_line_info(struct pdb_write_context *context){
     context->pdb_amount_of_lines += 1;
 }
 
-func void emit_pdb_line_info_for_ast__recursive(struct pdb_write_context *context, struct ast_function *function, struct ast *ast){
-    
-    switch(ast->kind){
-        case AST_typedef:
-        case AST_function:{
-            // these have no code associated with them.
-        }break;
-        
-        case AST_if:{
-            struct ast_if *ast_if = cast(struct ast_if *)ast;
-            // @cleanup: this did not work... one line if with a 'continue' as the thing! << recheck this
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_if->condition);
-            
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_if->statement);
-            if(ast_if->else_statement){
-                emit_pdb_line_info_for_ast__recursive(context, function, ast_if->else_statement);
-            }
-        }break;
-        case AST_do_while:{
-            struct ast_for *do_while = cast(struct ast_for *)ast;
-            
-            if(do_while->condition){
-                emit_pdb_line_info_for_ast__recursive(context, function, do_while->condition);
-            }
-            
-            emit_pdb_line_info_for_ast__recursive(context, function, do_while->body);
-        }break;
-        case AST_for:{
-            struct ast_for *ast_for = cast(struct ast_for *)ast;
-            if(ast_for->decl){
-                emit_pdb_line_info_for_ast__recursive(context, function, ast_for->decl);
-            }
-            
-            if(ast_for->condition){
-                emit_pdb_line_info_for_ast__recursive(context, function, ast_for->condition);
-            }
-            
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_for->body);
-            
-            if(ast_for->increment){
-                emit_pdb_line_info_for_ast__recursive(context, function, ast_for->increment);
-            }
-        }break;
-        case AST_scope:{
-            struct ast_scope *scope = cast(struct ast_scope *)ast;
-            for_ast_list(scope->statement_list){
-                emit_pdb_line_info_for_ast__recursive(context, function, it->value);
-            }
-        }break;
-        case AST_switch:{
-            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_switch->switch_on);
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_switch->statement);
-        }break;
-        case AST_case:{
-            struct ast_case *ast_case = cast(struct ast_case *)ast;
-            if(ast_case->statement) emit_pdb_line_info_for_ast__recursive(context, function, ast_case->statement);
-        }break;
-        case AST_label:{
-            struct ast_label *ast_label = cast(struct ast_label *)ast;
-            if(ast_label->statement) emit_pdb_line_info_for_ast__recursive(context, function, ast_label->statement);
-        }break;
-        
-        case AST_asm_block:{
-            struct ast_asm_block *asm_block = cast(struct ast_asm_block *)ast;
-            for(struct asm_instruction *inst = asm_block->instructions.first; inst; inst = inst->next){
-                context->pdb_offset_at = inst->byte_offset_in_function + function->size_of_prolog;
-                context->pdb_line_at   = inst->token->line;
-                emit_one_pdb_line_info(context);
-            }
-        }break;
-        
-        case AST_declaration:{
-            struct ast_declaration *decl = (struct ast_declaration *)ast;
-            
-            // dont emit lines for declarations that dont have initializers
-            if(!decl->assign_expr) break;
-            
-            // dont emit lines for declarations that are static
-            if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)) break;
-            
-            if(decl->assign_expr->kind == AST_compound_literal){
-                // recurse into struct literals as these can be (and often are) multi line!
-                struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)decl->assign_expr;
-                for(struct ast_initializer *it = compound_literal->assignment_list.first; it; it = it->next){
-                    emit_pdb_line_info_for_ast__recursive(context, function, it->rhs);
-                }
-                break;
-            }
-        } // fallthrough
-        default:{
-            
-            if(ast->token->line != context->pdb_line_at){
-                assert(ast->byte_offset_in_function >= 0); // make sure we set the value.
-                
-                
-                smm offset_at = ast->byte_offset_in_function + function->size_of_prolog;
-                
-                // @cleanup: if '==' we should have not emit the last entry. I am ignoring this for now.
-                //           This probably means 'emit_one_pdb_line_info' is supposed to be "lazy".
-                assert(offset_at >= context->pdb_offset_at);
-                context->pdb_offset_at = offset_at;
-                context->pdb_line_at   = ast->token->line;
-                emit_one_pdb_line_info(context);
-            }
-        }break;
-    }
-}
-
 func void emit_pdb_line_info_for_function(struct pdb_write_context *context, struct ast_function *function){
     
 #if 0
@@ -1612,9 +1513,7 @@ func void emit_pdb_line_info_for_function(struct pdb_write_context *context, str
         u32 offset = (u32)(line.offset + function->size_of_prolog);
         
         out_int(offset, u32);
-        
         out_int(line.line | is_statement, u32);
-        
     }
     context->pdb_amount_of_lines = function->line_information.size;
     

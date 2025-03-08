@@ -88,7 +88,6 @@ func void *_parser_ast_push(struct context *context, struct memory_arena *arena,
     ast->kind  = kind;
     ast->token = token;
     ast->s = get_unique_ast_serial(context);
-    ast->byte_offset_in_function = -1;
     
     return ast;
 }
@@ -9441,9 +9440,10 @@ break
 // @note: We assume the TOKEN_open_curly was already consumed.
 func struct ast *parse_imperative_scope(struct context *context){
     
-    
     struct ast_scope *scope = context->current_scope;
     assert(scope);
+    
+    scope->start_line_index = (u32)context->current_function->line_information.size;
     
     // Keep parsing inputs even after an error has occurred!
     while(true){
@@ -9495,6 +9495,7 @@ func struct ast *parse_imperative_scope(struct context *context){
             ast_list_append(&scope->statement_list, context->arena, statement);
         }
     }
+    
     for(u32 table_index = 0; table_index < scope->current_max_amount_of_declarations; table_index++){
         
         struct ast_declaration *decl = scope->declarations[table_index];
@@ -9508,6 +9509,11 @@ func struct ast *parse_imperative_scope(struct context *context){
                 report_warning(context, WARNING_local_variable_only_ever_written, decl->base.token, "Local variable is never read, only written.");
             }
         }
+    }
+    
+    scope->end_line_index = (u32)(context->current_function->line_information.size-1);
+    if(scope->start_line_index > scope->end_line_index){
+        scope->start_line_index = scope->end_line_index;
     }
     
     return (struct ast *)scope;
