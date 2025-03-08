@@ -4661,8 +4661,19 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
     
     current_function->scope->byte_offset_in_function = to_s32(get_bytes_emitted(context));
     
+    struct function_line_information *line_information = current_function->line_information.data;
+    smm line_information_size = current_function->line_information.size;
+    smm line_information_at = 0;
+    
     for(u8 *ast_arena_at = current_function->start_in_ast_arena; ast_arena_at < current_function->end_in_ast_arena; ){
         struct ast *ast = (struct ast *)ast_arena_at;
+        
+        if((line_information_at < line_information_size) && (line_information[line_information_at].offset == (u32)(ast_arena_at - current_function->start_in_ast_arena))){
+            // :function_line_information
+            // 
+            // Here we remap the offset from pointing into the ast_arena to pointing into the emit_pool.
+            line_information[line_information_at++].offset = to_s32(get_bytes_emitted(context));
+        }
         
         ast->byte_offset_in_function = to_s32(get_bytes_emitted(context));
         
@@ -6340,6 +6351,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
     }
     
     assert(emit_location_stack_at == 0);
+    assert(line_information_at == line_information_size);
 }
 
 func void emit_code_for_function(struct context *context, struct ast_function *function){

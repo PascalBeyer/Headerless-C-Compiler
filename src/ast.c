@@ -975,6 +975,16 @@ struct ast_function{
     struct ast_list static_variables;    
     
     // debug info:
+    
+    struct{ // @cleanup: should we have a line information arena?
+        struct function_line_information{
+            u32 line;
+            u32 offset;// :function_line_information - This is first the offset in the 'ast_arena', then later the offset in the code.
+        } *data;
+        smm size;
+        smm capacity;
+    } line_information;
+    
     smm debug_size;
     u8 *debug_info;
     u32 debug_symbol_offset;
@@ -982,6 +992,7 @@ struct ast_function{
     
     struct dll_import_node *dll_import_node;
 };
+
 
 struct ast_for{
     struct ast base;

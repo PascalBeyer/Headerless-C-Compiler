@@ -1318,7 +1318,34 @@ func enum ast_kind ast_stack_current(struct context *context){
 
 //_____________________________________________________________________________________________________________________
 
+// :function_line_information
+void function_maybe_add_line_information(struct context *context, struct token *token){
+    if(token->file_index == context->function_file_index && token->line != context->last_line_pushed){
+        context->last_line_pushed = token->line;
+        
+        struct ast_function *current_function = context->current_function;
+        
+        u32 offset = (u32)(arena_current(&context->ast_arena) - current_function->start_in_ast_arena);
+        
+        if(context->last_offset_pushed == offset){
+            // @note: If the last statement did not produce code, we update the line.
+            
+            struct function_line_information *last_entry = current_function->line_information.data + current_function->line_information.size - 1;
+            last_entry->line = token->line;
+        }else{
+            dynarray_maybe_grow(struct function_line_information, context->arena, current_function->line_information.data, current_function->line_information.size, current_function->line_information.capacity);
+            
+            struct function_line_information *new_entry = current_function->line_information.data + current_function->line_information.size++;
+            
+            new_entry->line   = token->line;
+            new_entry->offset = offset;
+        }
+        
+        context->last_offset_pushed = offset;
+    }
+}
 
+//_____________________________________________________________________________________________________________________
 
 func struct ast *parse_constant_integer_expression(struct context *context, int should_skip_comma_expression, char *message){
     
@@ -8377,6 +8404,9 @@ func struct ast *parse_statement(struct context *context){
     b32 needs_semicolon = true;
     
     struct token *initial_token = next_token(context); // Returns the current token.
+    
+    function_maybe_add_line_information(context, initial_token);
+    
     switch(initial_token->type){
         case TOKEN_semicolon:{
             // The token has to be correct, so we can set the right line number.

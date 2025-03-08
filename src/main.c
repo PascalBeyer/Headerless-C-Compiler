@@ -806,6 +806,10 @@ struct context{
     // smm if_true_label;  // Used to track that && and || jump to the correct place if inside 
     // smm if_false_label;
     
+    smm function_file_index;
+    smm last_line_pushed; // :function_line_information
+    smm last_offset_pushed;
+    
     //
     // Error stream
     //
@@ -3138,6 +3142,27 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     log_print("parsing: %.*s", function->identifier->amount, function->identifier->data);
     
     begin_token_array(context, parse_work->tokens);
+    
+    {   // 
+        // Estimate the amount of lines in the function. :function_line_information
+        // 
+        smm amount_of_lines = 8;
+        struct token *first_token = parse_work->tokens.data;
+        struct token *last_token = parse_work->tokens.data + parse_work->tokens.size - 1;
+        if(first_token->file_index == last_token->file_index){
+            amount_of_lines = last_token->line - first_token->line + 1;
+        }
+        
+        function->line_information.data = push_uninitialized_data(context->arena, struct function_line_information, amount_of_lines);
+        function->line_information.capacity = amount_of_lines;
+        
+        // 
+        // Set up data to emit line information.
+        // 
+        context->last_line_pushed = -1;
+        context->last_offset_pushed = -1;
+        context->function_file_index = first_token->file_index;
+    }
     
     assert(function->scope->kind == AST_scope);
     struct ast_scope *scope = (struct ast_scope *)function->scope;

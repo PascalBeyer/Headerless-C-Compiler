@@ -1588,12 +1588,37 @@ func void emit_pdb_line_info_for_ast__recursive(struct pdb_write_context *contex
 }
 
 func void emit_pdb_line_info_for_function(struct pdb_write_context *context, struct ast_function *function){
+    
+#if 0
     context->pdb_amount_of_lines = 0;
     context->pdb_offset_at = 0;
     context->pdb_line_at   = function->scope->token->line;
     emit_one_pdb_line_info(context); // emit an initial one and then we always emit _after_ updating
     
     emit_pdb_line_info_for_ast__recursive(context, function, function->scope);
+#else   
+    
+    const u32 is_statement = 0x80000000;
+    
+    // 
+    // Emit an initial line for the prologue.
+    // 
+    out_int(0, u32);
+    out_int(function->scope->token->line | is_statement, u32);
+    
+    for(smm index = 0; index < function->line_information.size; index++){
+        struct function_line_information line = function->line_information.data[index];
+        
+        u32 offset = (u32)(line.offset + function->size_of_prolog);
+        
+        out_int(offset, u32);
+        
+        out_int(line.line | is_statement, u32);
+        
+    }
+    context->pdb_amount_of_lines = function->line_information.size;
+    
+#endif
     
 }
 
@@ -2681,7 +2706,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
     }
     
-    if (globals.cli_options.no_debug || /*we failed to write the .exe*/globals.an_error_has_occurred) {
+    if(globals.cli_options.no_debug || /*we failed to write the .exe*/globals.an_error_has_occurred){
         end_temporary_memory(temporary_memory);
         return;
     }
