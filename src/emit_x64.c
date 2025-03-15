@@ -3860,9 +3860,13 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         if(argument->size < 16 && argument->register_kind_when_loaded == REGISTER_KIND_xmm){
                             struct emit_location *float_reg = emit_load_float(context, argument);
                             
-                            enum register_encoding expected_register = argument_registers[REGISTER_KIND_gpr][returns_big_struct + argument_index];
-                            enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, expected_register);
-                            
+                            enum register_encoding arg_reg;
+                            if(returns_big_struct + argument_index >= 4){
+                                arg_reg = allocate_register(context, REGISTER_KIND_gpr);
+                            }else{
+                                enum register_encoding expected_register = argument_registers[REGISTER_KIND_gpr][returns_big_struct + argument_index];
+                                arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, expected_register);
+                            }
                             struct emit_location *gpr_reg = emit_location_loaded(context, REGISTER_KIND_gpr, arg_reg, 8);
                             
                             // @cleanup: holy fuck, I really don't understand the prefix convention here...
@@ -3870,9 +3874,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                             emit_register_op__internal(context, create_prefixes(ASM_PREFIX_NON_PACKED_OP_double), two_byte_opcode(MOVQ_REGM_XMM), float_reg->loaded_register, gpr_reg->loaded_register, 8);
                             free_emit_location(context, float_reg);
                             
-                            emit_location_prevent_spilling(context, gpr_reg);
-                            argument_locations[argument_index] = gpr_reg;
-                            continue;
+                            argument = gpr_reg;
                         }
                     }
                     
@@ -4469,11 +4471,6 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     emit(POP_REGISTER_DI);
     
     emit(NEAR_RET_INSTRUCTION);
-    
-    for_ast_list(function->goto_list){
-        struct ast_goto *ast_goto = cast(struct ast_goto *)it->value;
-        jump_node_end_jump(ast_goto->jump_node, ast_goto->label_to_goto->byte_offset_in_function);
-    }
     
     if(context->alloca_patch_nodes.first){
         for(struct alloca_patch_node *alloca_patch_node = context->alloca_patch_nodes.first; alloca_patch_node; alloca_patch_node = alloca_patch_node->next){

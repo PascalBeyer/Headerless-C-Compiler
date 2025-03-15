@@ -956,8 +956,8 @@ struct ast_function{
     
     // @hmm: these were on 'context' back when emitted code immediately after parsing.
     //       now These are here.. We could collect them again in asm emit..
-    struct ast_list goto_list;
-    struct ast_list label_list;
+    // struct ast_list goto_list;
+    // struct ast_list label_list;
     
     // This should replace the goto and label list above. :ir_refactor.
     smm amount_of_jump_labels;
@@ -1008,24 +1008,21 @@ struct ast_function_call{
 };
 
 struct ast_label{
-    struct ast base;
-    struct atom ident;
-    struct ast *statement;
+    struct ast_label *next;
     
-    // for emitting
-    smm byte_offset_in_function;
+    struct token *token;
+    
+    struct atom ident;
     
     // :ir_refactor - new way.
     struct ast_jump_label *jump_label;
 };
 
 struct ast_goto{
-    struct ast base;
-    struct ast_label *label_to_goto;
-    struct atom ident;
+    struct ast_goto *next;
     
-    // for emiting
-    struct jump_node *jump_node;
+    struct token *token;
+    struct atom ident;
     
     // :ir_refactor - new way.
     struct ast_jump *jump;

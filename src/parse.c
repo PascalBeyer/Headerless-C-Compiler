@@ -6393,7 +6393,6 @@ case NUMBER_KIND_##type:{ \
                     
                     set_resolved_type(&cond->base, if_true->resolved_type, defined_type);
                     
-                    
                     operand = &cond->base;
                 }
                 
@@ -8913,19 +8912,19 @@ func void parse_statement(struct context *context){
             
             needs_semicolon = false;
         }break;
+        
         // case TOKEN_closed_curly:{
         //      This should now be done by parse_imperative_block, before 'if(1)}' was a valid statement.
         //      We can still get here tho, for the exact reason, but it should be a syntax error.
         // }break;
+        
         case TOKEN_goto:{
-            struct ast_goto *ast_goto = push_ast(context, initial_token, goto);
+            struct ast_goto *ast_goto = push_struct(&context->scratch, struct ast_goto);
             struct token *ident = expect_token(context, TOKEN_identifier, "Missing identifier after 'goto'.");
             ast_goto->ident = ident->atom;
-            ast_list_append(&context->current_function->goto_list, context->arena, &ast_goto->base);
+            sll_push_back(context->goto_list, ast_goto);
             
             context->current_statement_returns_a_value = 1;
-            
-            set_resolved_type(&ast_goto->base, &globals.typedef_void, null);
             
             // :ir_refactor - new way.
             struct ast_jump *goto_jump = push_expression(context, initial_token, jump);
@@ -8937,22 +8936,19 @@ func void parse_statement(struct context *context){
                 struct atom ident = initial_token->atom;
                 needs_semicolon = false;
                 
-                for_ast_list(context->current_function->label_list){
-                    struct ast_label *label = cast(struct ast_label *)it->value;
+                for(struct ast_label *label = context->label_list.first; label; label = label->next){
                     if(atoms_match(label->ident, ident)){
                         begin_error_report(context);
                         report_error(context, initial_token, "Redefinition of label '%.*s'.", ident.amount, ident.data);
-                        report_error(context, label->base.token, "... Here is the previous definition.");
+                        report_error(context, label->token, "... Here is the previous definition.");
                         end_error_report(context);
                         return;
                     }
                 }
                 
-                struct ast_label *label = push_ast(context, initial_token, label);
+                struct ast_label *label = push_struct(&context->scratch, struct ast_label);
                 label->ident = ident;
-                ast_list_append(&context->current_function->label_list, context->arena, &label->base);
-                
-                set_resolved_type(&label->base, &globals.typedef_void, null);
+                sll_push_back(context->label_list, label);
                 
                 // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
                 context->current_statement_returns_a_value = 0;

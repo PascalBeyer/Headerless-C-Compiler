@@ -810,6 +810,15 @@ struct context{
     smm last_line_pushed; // :function_line_information
     smm last_offset_pushed;
     
+    struct {
+        struct ast_goto *first;
+        struct ast_goto *last;
+    } goto_list;
+    struct {
+    struct ast_label *first;
+        struct ast_label *last;
+    } label_list;
+    
     //
     // Error stream
     //
@@ -2587,6 +2596,9 @@ func void reset_context(struct context *context){
     context->current_break_label = -1;
     context->current_continue_label = -1;
     
+    context->goto_list.first = context->goto_list.last = 0;
+    context->label_list.first = context->label_list.last = 0;
+    
     context->pragma_pack_stack.first = context->pragma_pack_stack.last = null;
 }
 
@@ -3237,20 +3249,20 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     
     parser_scope_pop(context, scope);
     
-    for(struct ast_list_node *node1 = function->goto_list.first; node1; node1 = node1->next){
-        struct ast_goto *ast_goto = cast(struct ast_goto *)node1->value;
+    for(struct ast_goto *ast_goto = context->goto_list.first; ast_goto; ast_goto = ast_goto->next){
+        
         b32 found = false;
-        for(struct ast_list_node *node2 = function->label_list.first; node2; node2 = node2->next){
-            struct ast_label *label = cast(struct ast_label *)node2->value;
+        for(struct ast_label *label = context->label_list.first; label; label = label->next){
+            
             if(atoms_match(label->ident, ast_goto->ident)){
-                ast_goto->label_to_goto = label;
+                ast_goto->jump->label_number = label->jump_label->label_number;
                 found = true;
                 break;
             }
         }
         
         if(!found){
-            report_error(context, ast_goto->base.token, "'goto' to undefined label '%.*s'.", ast_goto->ident.amount, ast_goto->ident.data);
+            report_error(context, ast_goto->token, "'goto' to undefined label '%.*s'.", ast_goto->ident.amount, ast_goto->ident.data);
             return;
         }
     }
