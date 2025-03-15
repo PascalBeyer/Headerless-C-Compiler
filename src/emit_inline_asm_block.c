@@ -133,7 +133,7 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
                 // Evaluate the expression, which should only be members and one identifier.
                 //
                 smm bytes_emitted_for_assert = get_bytes_emitted(context);
-                ret = emit_code_for_ast(context, expression);
+                ret = get_emit_location_for_identifier(context, expression); // :ir_refactor - This should also handle . and []
                 assert(bytes_emitted_for_assert == get_bytes_emitted(context));
                 assert(ret->state == EMIT_LOCATION_register_relative);
             }

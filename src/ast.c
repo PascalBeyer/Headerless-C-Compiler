@@ -471,12 +471,6 @@ enum ast_kind{
     
     AST_empty_statement, 
     AST_return,
-    AST_if,
-    AST_for,
-    AST_do_while,
-    
-    AST_break,
-    AST_continue,
     
     AST_switch,
     AST_case,
@@ -702,7 +696,6 @@ struct ast_emitted_float_literal{
     u32 relative_virtual_address; // @note: float  literals get loaded rip relative, so this is here to patch
 };
 
-
 struct ast_string_literal{
     struct ast base;
     struct ast_string_literal *next;
@@ -718,7 +711,6 @@ struct initializer_list{
     struct ast_initializer *last;
     smm count;
 };
-
 struct ast_compound_literal{
     struct ast base;
     struct ast_declaration *decl;
@@ -727,13 +719,13 @@ struct ast_compound_literal{
     smm trailing_array_size;
 };
 
-smm get_declaration_alignment(struct ast_declaration *decl){
+inline smm get_declaration_alignment(struct ast_declaration *decl){
     smm alignment = decl->type->alignment;
     if(decl->overwrite_alignment) alignment = decl->overwrite_alignment;
     return alignment;
 }
 
-smm get_declaration_size(struct ast_declaration *decl){
+inline smm get_declaration_size(struct ast_declaration *decl){
     smm size = decl->type->size;
     if(decl->assign_expr && decl->assign_expr->kind == AST_compound_literal){
         struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)decl->assign_expr;
@@ -804,8 +796,6 @@ struct ast_jump_label{
     smm label_number;
 };
 
-
-
 struct ast_dot_or_arrow{
     struct ast base;
     struct ast *lhs;
@@ -851,8 +841,14 @@ struct ast_scope{
     struct ast base;
     struct ast_scope *parent;
     
-    // old way to iterate the statements
-    struct ast_list statement_list;
+    struct ast_asm_block *asm_block;
+    
+    struct{
+        struct ast_scope *next;
+        struct ast_scope *first;
+        struct ast_scope *last; // @note: if the order does not matter, we could eliminate this member... not sure.
+        smm count;
+    } subscopes;
     
     enum scope_flags flags;
     
@@ -869,14 +865,6 @@ struct ast_scope{
     // and are used to determine which region of code holds which declarations.
     u32 start_line_index;
     u32 end_line_index;
-};
-
-struct ast_continue{
-    struct ast base;
-};
-
-struct ast_break{
-    struct ast base;
 };
 
 struct compound_member{
@@ -995,27 +983,10 @@ struct ast_function{
     struct dll_import_node *dll_import_node;
 };
 
-
-struct ast_for{
-    struct ast base;
-    struct ast *decl;
-    struct ast *condition;
-    struct ast *increment;
-    struct ast *body;
-    struct ast_scope *scope_for_decl; //  we have an implicit scope for the 'decl' so any for has a scope
-};
-
-struct ast_if{
-    struct ast base;
-    struct ast *condition;
-    struct ast *statement;
-    struct ast *else_statement;
-};
-
 struct ast_switch{
     struct ast base;
     struct ast *switch_on;
-    struct ast *statement;
+    
     struct ast_jump_label *default_jump_label; // Either the default case or the break label.
     struct ast_case *default_case; // :ir_refactor - old 
     
@@ -1025,7 +996,6 @@ struct ast_switch{
 struct ast_case{
     struct ast base;
     u64 value;
-    struct ast *statement;
     
     struct jump_context *jump; // We use this as a label, only used in emit.
 };

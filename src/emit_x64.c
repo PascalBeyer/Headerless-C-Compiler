@@ -1620,8 +1620,6 @@ func void emit_store(struct context *context, struct emit_location *dest, struct
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 
-func struct emit_location *emit_code_for_ast(struct context *context, struct ast *ast);
-
 
 func struct emit_location *emit_binary_op__internal(struct context *context, struct prefixes prefixes, struct emit_location *lhs,
         struct emit_location *rhs, smm size, b32 is_signed, u8 reg_extended, u8 u8_code, u8 opcode){
@@ -1685,34 +1683,6 @@ func struct emit_location *emit_binary_op__internal(struct context *context, str
     return dest;
 }
 
-
-func struct emit_location *emit_binary_op(struct context *context, struct ast *ast, u8 reg_extended, u8 u8_code, u8 opcode){
-    struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-    // @note: @quality: for commutative operations, we could switch dest and source, if rhs is loaded
-    // and lhs is not.
-    
-    // @note: these are not the same, because of pointers
-    assert(op->lhs->resolved_type->size == op->rhs->resolved_type->size);
-    smm size = op->lhs->resolved_type->size;
-    
-    struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-    // @note: we have to load here as we want to evaluate things left to right. E.g.
-    //            (var = 12) + (var = 13) 
-    //        should evaluate to 25, but if we did not load here 'lhs' would be register relative to var.
-    //        Now 'var' gets overwritten with 13 and the expression evaluates to 26, and not the intended 25.
-    //        C does not care about this, but I think I want to be consistent!
-    //                                                                                           -19.09.2021
-    lhs = emit_load(context, lhs);
-    struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-    if(rhs->state == EMIT_LOCATION_conditional) rhs = emit_load(context, rhs);
-    
-    assert(rhs->register_kind_when_loaded == REGISTER_KIND_gpr);
-    assert(lhs->register_kind_when_loaded == REGISTER_KIND_gpr);
-    
-    assert(lhs->size == rhs->size && rhs->size == size);
-    b32 is_signed = type_is_signed(op->rhs->resolved_type);
-    return emit_binary_op__internal(context, no_prefix(), lhs, rhs, size, is_signed, reg_extended, u8_code, opcode);
-}
 
 func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct context *context, struct emit_location *lhs, struct emit_location *rhs, smm size, int is_signed, u8 REG_OPCODE_signed, u8 REG_OPCODE_unsigned, enum ast_kind ast_kind){
     
@@ -1830,24 +1800,6 @@ func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct conte
     }
 }
 
-func struct emit_location *emit_divide_or_mod_or_multiply(struct context *context, struct ast *ast, u8 REG_OPCODE_signed, u8 REG_OPCODE_unsigned, enum ast_kind kind){
-    struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-    
-    smm size = op->lhs->resolved_type->size;
-    b32 is_signed = type_is_signed(ast->resolved_type);
-    
-    struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-    rhs = emit_load(context, rhs);
-    struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-    
-    assert(rhs->register_kind_when_loaded == REGISTER_KIND_gpr);
-    assert(lhs->register_kind_when_loaded == REGISTER_KIND_gpr);
-    
-    assert(op->lhs->resolved_type->size == op->rhs->resolved_type->size);
-    
-    return emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, size, is_signed, REG_OPCODE_signed, REG_OPCODE_unsigned, kind);
-}
-
 func struct emit_location *emit_compound_assignment__internal(struct context *context, struct prefixes prefixes, struct emit_location *lhs,
         struct emit_location *rhs, b32 is_signed, u8 reg_extension, u8 u8_code, u8 opcode){
     
@@ -1894,29 +1846,6 @@ func struct emit_location *emit_compound_assignment__internal(struct context *co
     }
     free_emit_location(context, rhs);
     return lhs;
-}
-
-// '+=', '-=', ...
-func struct emit_location *emit_compound_assignment(struct context *context, struct ast *ast, u8 reg_extension, u8 u8_code, u8 opcode){
-    struct ast_binary_op *assign = cast(struct ast_binary_op *)ast;
-    
-    assert(assign->lhs->resolved_type->kind == AST_integer_type || assign->lhs->resolved_type->kind == AST_pointer_type || assign->lhs->resolved_type->kind == AST_atomic_integer_type);
-    assert(assign->rhs->resolved_type->kind == AST_integer_type);
-    assert(assign->lhs->resolved_type->size == assign->rhs->resolved_type->size);
-    assert(assign->base.resolved_type == assign->lhs->resolved_type);
-    
-    struct emit_location *rhs = emit_code_for_ast(context, assign->rhs);
-    if(rhs->state == EMIT_LOCATION_conditional) rhs = emit_load(context, rhs);
-    struct emit_location *lhs = emit_code_for_ast(context, assign->lhs);
-    
-    b32 is_signed = type_is_signed(assign->base.resolved_type);
-    
-    // @incomplete: This only works for some of the instructions and is technically incorrect, if the the resulting values is read.
-    //              Because I think it will re-fetch the value of the atomic.
-    struct prefixes prefix = no_prefix();
-    if(assign->lhs->resolved_type->kind == AST_atomic_integer_type) prefix.legacy_prefixes |= ASM_PREFIX_lock;
-    
-    return emit_compound_assignment__internal(context, prefix, lhs, rhs, is_signed, reg_extension, u8_code, opcode);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -2186,75 +2115,6 @@ func struct emit_location *emit_compare_to_zero(struct context *context, struct 
     return emit_location_conditional(context, COMP_not_zero);
 }
 
-func struct emit_location *emit_code_for_plain_condition(struct context *context, struct ast *ast){
-    struct emit_location *cond = emit_code_for_ast(context, ast);
-    enum comp_condition condition;
-    if(cond->state == EMIT_LOCATION_conditional){
-        condition = cond->condition;
-        cond = emit_location_conditional(context, condition);
-    }else{
-        
-        struct emit_location *loaded;
-        if(ast->resolved_type->kind == AST_bitfield_type){
-            loaded = emit_load_bitfield(context, cond, (struct ast_bitfield_type *)ast->resolved_type);
-        }else{
-            assert(ast->resolved_type->kind == AST_integer_type || ast->resolved_type->kind == AST_atomic_integer_type || ast->resolved_type->kind == AST_pointer_type || ast->resolved_type->kind == AST_float_type);
-            // @cleanup: atomic integers might need a special load instruction on other architectures?
-            loaded = emit_load(context, cond);
-        }
-        
-        cond = emit_compare_to_zero(context, loaded);
-    }
-    
-    return cond;
-}
-
-func struct jump_context emit_code_for_if_condition(struct context *context, struct ast *ast){
-    struct jump_context or_jump_context = zero_struct;
-    
-    struct ast *or_it = ast;
-    while(true){
-        b32 should_loop = true;
-        struct ast *and_it = or_it;
-        if(or_it->kind == AST_logical_or){
-            struct ast_binary_op *logical_or = cast(struct ast_binary_op *)or_it;
-            and_it = logical_or->lhs;
-            
-            or_it = logical_or->rhs;
-        }else{
-            should_loop = false;
-        }
-        
-        struct jump_context and_jump_context = zero_struct;
-        while(and_it->kind == AST_logical_and){
-            struct ast_binary_op *logical_and = cast(struct ast_binary_op *)and_it;
-            
-            // if this fails we want to jump to the next 'or' block
-            struct emit_location *loc = emit_code_for_plain_condition(context, logical_and->lhs);
-            jump_context_emit(context, &and_jump_context, JUMP_CONTEXT_jump_on_false, loc->condition);
-            
-            and_it = logical_and->rhs;
-        }
-        
-        // if this succeeds we want to jump to the inside of the 'if'
-        // the last one automatically 'jumps' into the if block
-        struct emit_location *loc = emit_code_for_plain_condition(context, and_it);
-        
-        if(!should_loop){
-            jump_context_emit(context, &and_jump_context, JUMP_CONTEXT_jump_on_false, loc->condition);
-            // this is inside the 'if'
-            emit_end_jumps(context, or_jump_context);
-            return and_jump_context;
-        }else{
-            jump_context_emit(context, &or_jump_context, JUMP_CONTEXT_jump_on_true, loc->condition);
-            // after this is the next 'or' block
-            emit_end_jumps(context, and_jump_context);
-        }
-    }
-    
-    invalid_code_path;
-}
-
 func struct emit_location *emit_shift_or_rotate__internal(struct context *context, struct prefixes prefixes, struct emit_location *lhs_loc,
         struct emit_location *rhs_loc, u8 reg_extension, b32 compound){
     
@@ -2312,18 +2172,6 @@ func struct emit_location *emit_shift_or_rotate__internal(struct context *contex
     return ret;
 }
 
-func struct emit_location *emit_shift_or_rotate(struct context *context, struct ast *ast, u8 reg_extension, b32 compound){
-    struct ast_binary_op *shift = cast(struct ast_binary_op *)ast;
-    
-    struct emit_location *rhs_loc = emit_code_for_ast(context, shift->rhs);
-    rhs_loc = emit_load(context, rhs_loc);
-    struct emit_location *lhs_loc = emit_code_for_ast(context, shift->lhs);
-    
-    assert(lhs_loc->size == shift->base.resolved_type->size);
-    
-    return emit_shift_or_rotate__internal(context, no_prefix(), lhs_loc, rhs_loc, reg_extension, compound);
-}
-
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 func void assert_that_no_registers_are_allocated(struct context *context){
@@ -2343,6 +2191,105 @@ func void emit_inline_asm_binary_op(struct context *context, struct prefixes pre
     }else{
         emit_binary_op__internal(context, prefixes, lhs, rhs, lhs->size, is_signed, reg_extended, u8_code, opcode);
     }
+}
+
+struct emit_location *get_emit_location_for_identifier(struct context *context, struct ast *ast){
+    struct ast_identifier *ident = cast(struct ast_identifier *)ast;
+    struct ast_declaration *decl = ident->decl;
+    
+    // There are some cases:
+    //    1) Enum Member  -> immediate
+    //    2) Global       -> rip relative
+    //    3) Local        -> stack relative
+    //    4) big argument -> register relative to stack location
+    //    5) dllimport    -> register relative to rip relative location
+    
+    if(decl->flags & DECLARATION_FLAGS_is_enum_member){
+        // @cleanup: can we even get in here? I thought we resolved them while parsing
+        assert(decl->assign_expr);
+        assert(decl->assign_expr->kind == AST_integer_literal);
+        return emit_location_immediate(context, integer_literal_to_bytes(decl->assign_expr), decl->assign_expr->resolved_type->size);
+    }
+    
+    enum register_kind register_kind = get_register_kind_for_type(decl->type);
+    smm decl_size = decl->type->size;
+    
+    struct emit_location *ret = null;
+    if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+        // 
+        // Loading thread locals:
+        // 
+        //     mov eax, offset(<var>)
+        //     mov ecx, [_tls_index]
+        //     mov rdx, gs:[58h]
+        //     mov rcx, [rdx + rcx*8]
+        //     return [rcx + rax]
+        // 
+        
+        // mov <offset_reg>, offset_in_tls(<decl>)
+        struct emit_location *offset_reg = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), 4);
+        if(register_is_extended(offset_reg->loaded_register)) emit(REXB);
+        emit(MOVE_REG_IMMEDIATE + (offset_reg->loaded_register & 7));
+        smm byte_offset = emit_u32(0);
+        smm rip_at = get_bytes_emitted(context);
+        emit_patch(context, PATCH_section_offset, &decl->base, 0, &context->current_function->as_decl, byte_offset, rip_at);
+        
+        struct emit_location *tls_index = emit_location_rip_relative(context, &globals.tls_index_declaration->base, REGISTER_KIND_gpr, 4);
+        
+        // mov <tls_slots>, gs:[58h]
+        struct emit_location *tls_slots = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), 8);
+        emit(LEGACY_GS_SEGMENT_OVERRIDE_PREFIX);
+        if(register_is_extended(tls_slots->loaded_register)) emit(REXW | REXR); else emit(REXW);
+        emit(MOVE_REG_REGM);
+        emit(make_modrm(MODRM_REGM, (/*reg*/tls_slots->loaded_register & 7), REGISTER_SIB_EXTENSION));
+        emit(make_sib(0, /*no-index*/REGISTER_SP, /*no-base*/REGISTER_BP));
+        emit_u32(0x58);
+        
+        // mov tls_slot, [rdx + rcx*8]
+        struct emit_location *tls_slot_register_relative = emit_location_register_relative(context, REGISTER_KIND_gpr, tls_slots, tls_index, /*offset*/0, /*size*/8);
+        tls_slot_register_relative->log_index_scale = 3;
+        struct emit_location *tls_slot = emit_load(context, tls_slot_register_relative);
+        
+        ret = emit_location_register_relative(context, register_kind, tls_slot, offset_reg, 0, decl_size);
+    }else if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)){
+        
+        if(decl->flags & DECLARATION_FLAGS_is_dllimport){
+            // :dllimport_loading
+            // 
+            // for an dllimport the address out of the dllimport table. The 'memory_location' and 
+            // 'relative_virtual_address' describe the dllimport table address, thus we patch to load this 
+            // address.
+            // Once we have this address, we have a register relative location.
+            // Note that for functions calls similar code special cases dllimports as well, but we dont end
+            // up in here, because if we call an identifier we never recurse into emit_code_for_ast.
+            //                                                                              -08.08.2021
+            
+            struct emit_location *address = emit_location_rip_relative(context, &decl->base, register_kind, 8);
+            ret = emit_location_register_relative(context, register_kind, address, 0, 0, decl_size);
+        }else{
+            ret = emit_location_rip_relative(context, &decl->base, register_kind, decl_size);
+        }
+    }else{
+        
+        // :MemoryLocations 
+        // 
+        // stack memory locations might be negative if the declaration is an argument, but they can never be -1.
+        assert(decl->offset_on_stack != -1);
+        
+        if(decl->flags & DECLARATION_FLAGS_is_big_function_argument){
+            // :PassingStructArguments
+            // 
+            // it is actually a pointer to the declaration, not the declaration itself.
+            // we emit '[[stack_location]]' here. (register relative to register relative
+            
+            struct emit_location *stack_location = emit_location_stack_relative(context, REGISTER_KIND_gpr, decl->offset_on_stack, 8);
+            ret = emit_location_register_relative(context, register_kind, stack_location, 0, 0, decl_size);
+        }else{
+            ret = emit_location_stack_relative(context, register_kind, decl->offset_on_stack, decl_size);
+        }
+    }
+    
+    return ret;
 }
 
 #include "emit_inline_asm_block.c"
@@ -2376,7 +2323,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         // and return rsp + `context->max_amount_of_function_call_arguments * 8`, aligned to a 16-byte boundary.
         // Because `context->max_amount_of_function_call_arguments * 8` is not yet known, we need to emit a "patch".
         // 
-        struct emit_location *size = emit_load(context, argument_locations ? argument_locations[0] : emit_code_for_ast(context, call->call_arguments.first->value));
+        struct emit_location *size = emit_load(context, argument_locations[0]);
 
         // Align-up the size to a 16-byte boundary.
         //    add size, 15
@@ -2467,10 +2414,9 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
     // @note: we use the 'patch_call_source_declaration' here, as the other one might not be defined.
     assert(function->scope->kind == AST_scope);
     struct ast_scope *scope = (struct ast_scope *)function->scope;
-    assert(scope->statement_list.count == 1);
-    assert(scope->statement_list.first->value->kind == AST_asm_block);
-    
-    struct ast_asm_block *asm_block = (struct ast_asm_block *)scope->statement_list.first->value;
+    assert(scope->asm_block);
+
+    struct ast_asm_block *asm_block = scope->asm_block;
     context->in_inline_asm_function = call->identifier_expression->token;
     
     emit_inline_asm_block(context, asm_block);
@@ -2554,2089 +2500,7 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
 }
 
 //_____________________________________________________________________________________________________________________
-// :emit_code_for_ast
-
-func struct emit_location *emit_code_for_ast(struct context *context, struct ast *ast){
-    assert(ast->resolved_type);
-    
-    switch(ast->kind){
-        case AST_typedef:  return emit_location_invalid(context);
-        case AST_function: return emit_location_invalid(context);
-        case AST_declaration:{
-            struct ast_declaration *decl = cast(struct ast_declaration *)ast;
-            
-            if(decl->flags & DECLARATION_FLAGS_is_local_persist){
-                // nothing to do here local_persists don't need to be initialized or allocated at local scope
-                return emit_location_invalid(context);
-            }
-            
-            if(decl->flags & DECLARATION_FLAGS_is_global){
-                // This was an extern variable, nothing to do here.
-                return emit_location_invalid(context);
-            }
-            
-            // @cleanup: constant?
-            if(decl->assign_expr){
-                emit_code_for_ast(context, decl->assign_expr);
-            }
-            
-            return emit_location_invalid(context);
-        }break;
-        case AST_declaration_list:{
-            struct ast_declaration_list *list = cast(struct ast_declaration_list *)ast;
-            for(struct declaration_node *node = list->list.first; node; node = node->next){
-                emit_code_for_ast(context, cast(struct ast *)node->decl); // @speed, we don't have to recurse here...
-            }
-            return emit_location_invalid(context);
-        }break;
-        case AST_identifier:{
-            struct ast_identifier *ident = cast(struct ast_identifier *)ast;
-            struct ast_declaration *decl = ident->decl;
-            
-            // There are some cases:
-            //    1) Enum Member  -> immediate
-            //    2) Global       -> rip relative
-            //    3) Local        -> stack relative
-            //    4) big argument -> register relative to stack location
-            //    5) dllimport    -> register relative to rip relative location
-            
-            if(decl->flags & DECLARATION_FLAGS_is_enum_member){
-                // @cleanup: can we even get in here? I thought we resolved them while parsing
-                assert(decl->assign_expr);
-                assert(decl->assign_expr->kind == AST_integer_literal);
-                return emit_location_immediate(context, integer_literal_to_bytes(decl->assign_expr), decl->assign_expr->resolved_type->size);
-            }
-            
-            enum register_kind register_kind = get_register_kind_for_type(decl->type);
-            smm decl_size = decl->type->size;
-            
-            struct emit_location *ret = null;
-            if(decl->flags & DECLARATION_FLAGS_is_thread_local){
-                // 
-                // Loading thread locals:
-                // 
-                //     mov eax, offset(<var>)
-                //     mov ecx, [_tls_index]
-                //     mov rdx, gs:[58h]
-                //     mov rcx, [rdx + rcx*8]
-                //     return [rcx + rax]
-                // 
-                
-                // mov <offset_reg>, offset_in_tls(<decl>)
-                struct emit_location *offset_reg = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), 4);
-                if(register_is_extended(offset_reg->loaded_register)) emit(REXB);
-                emit(MOVE_REG_IMMEDIATE + (offset_reg->loaded_register & 7));
-                smm byte_offset = emit_u32(0);
-                smm rip_at = get_bytes_emitted(context);
-                emit_patch(context, PATCH_section_offset, &decl->base, 0, &context->current_function->as_decl, byte_offset, rip_at);
-                
-                struct emit_location *tls_index = emit_location_rip_relative(context, &globals.tls_index_declaration->base, REGISTER_KIND_gpr, 4);
-                
-                // mov <tls_slots>, gs:[58h]
-                struct emit_location *tls_slots = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), 8);
-                emit(LEGACY_GS_SEGMENT_OVERRIDE_PREFIX);
-                if(register_is_extended(tls_slots->loaded_register)) emit(REXW | REXR); else emit(REXW);
-                emit(MOVE_REG_REGM);
-                emit(make_modrm(MODRM_REGM, (/*reg*/tls_slots->loaded_register & 7), REGISTER_SIB_EXTENSION));
-                emit(make_sib(0, /*no-index*/REGISTER_SP, /*no-base*/REGISTER_BP));
-                emit_u32(0x58);
-                
-                // mov tls_slot, [rdx + rcx*8]
-                struct emit_location *tls_slot_register_relative = emit_location_register_relative(context, REGISTER_KIND_gpr, tls_slots, tls_index, /*offset*/0, /*size*/8);
-                tls_slot_register_relative->log_index_scale = 3;
-                struct emit_location *tls_slot = emit_load(context, tls_slot_register_relative);
-                
-                ret = emit_location_register_relative(context, register_kind, tls_slot, offset_reg, 0, decl_size);
-            }else if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)){
-                    
-                if(decl->flags & DECLARATION_FLAGS_is_dllimport){
-                    // :dllimport_loading
-                    // 
-                    // for an dllimport the address out of the dllimport table. The 'memory_location' and 
-                    // 'relative_virtual_address' describe the dllimport table address, thus we patch to load this 
-                    // address.
-                    // Once we have this address, we have a register relative location.
-                    // Note that for functions calls similar code special cases dllimports as well, but we dont end
-                    // up in here, because if we call an identifier we never recurse into emit_code_for_ast.
-                    //                                                                              -08.08.2021
-                    
-                    struct emit_location *address = emit_location_rip_relative(context, &decl->base, register_kind, 8);
-                    ret = emit_location_register_relative(context, register_kind, address, 0, 0, decl_size);
-                }else{
-                    ret = emit_location_rip_relative(context, &decl->base, register_kind, decl_size);
-                }
-            }else{
-                
-                // :MemoryLocations 
-                // 
-                // stack memory locations might be negative if the declaration is an argument, but they can never be -1.
-                assert(decl->offset_on_stack != -1);
-                
-                if(decl->flags & DECLARATION_FLAGS_is_big_function_argument){
-                    // :PassingStructArguments
-                    // 
-                    // it is actually a pointer to the declaration, not the declaration itself.
-                    // we emit '[[stack_location]]' here. (register relative to register relative
-                    
-                    struct emit_location *stack_location = emit_location_stack_relative(context, REGISTER_KIND_gpr, decl->offset_on_stack, 8);
-                    ret = emit_location_register_relative(context, register_kind, stack_location, 0, 0, decl_size);
-                }else{
-                    ret = emit_location_stack_relative(context, register_kind, decl->offset_on_stack, decl_size);
-                }
-            }
-            
-            return ret;
-        }break;
-        case AST_compound_literal:{
-            struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)ast;
-            struct ast_declaration *decl = compound_literal->decl;
-            
-            struct emit_location *decl_location = emit_location_stack_relative(context, REGISTER_KIND_gpr, decl->offset_on_stack, decl->type->size);
-            if(decl->type->kind == AST_struct || decl->type->kind == AST_union || decl->type->kind == AST_array_type){
-                emit_memset(context, decl_location, 0);
-            }
-            
-            smm base_offset = decl_location->offset;
-            
-            for(struct ast_initializer *initializer = compound_literal->assignment_list.first; initializer; initializer = initializer->next){
-                
-                decl_location->offset = base_offset + initializer->offset;
-                decl_location->size = initializer->base.resolved_type->size;
-                
-                struct ast_type *lhs_type = initializer->base.resolved_type;
-                
-                if(lhs_type->kind == AST_array_type && initializer->rhs->kind == AST_string_literal){
-                    // 
-                    // for 'char asd[] = "asd";' emit a memcpy
-                    // There are three cases:
-                    //     char asd[10] = "asd"; // copy the string literal zero the upper part of the buffer.
-                    //     char asd[4]  = "asd"; // copy the string literal including the null-terminator
-                    //     char asd[3]  = "asd"; // copy the string literal excluding the null-terminator
-                    //     
-                    
-                    struct ast_array_type   *array = (struct ast_array_type *)lhs_type;
-                    struct ast_string_literal *lit = (struct ast_string_literal *)initializer->rhs;
-                    
-                    // Mark the string literal as being used.
-                    sll_push_back(context->string_literals, lit);
-                    context->string_literals.amount_of_strings += 1;
-                    
-                    smm array_size = array->amount_of_elements * array->element_type->size;
-                    if(array->is_of_unknown_size){
-                        // We are in an initializer like:
-                        // 
-                        // struct s{
-                        //     char array[];
-                        // } arst = {"hello :)"};
-                        // 
-                        // We have made sure to allocate enough space to hold the initializer.
-                        array_size = lit->value.size + array->element_type->size;
-                    }
-                    
-                    smm extra = (array_size == lit->value.size) ? 0 : array->element_type->size;
-                    
-                    if(array->is_of_unknown_size) decl_location->size = array_size;
-                    
-                    if(array_size > lit->value.size + extra){
-                        // @cleanup: We only would have to zero the upper part of the 'lhs'.
-                        emit_memset(context, decl_location, 0);
-                    }
-                    
-                    struct emit_location *rhs = emit_location_rip_relative(context, &lit->base, REGISTER_KIND_gpr, lit->value.size + extra);
-                    emit_memcpy(context, decl_location, rhs);
-                }else{
-                    struct emit_location *rhs = emit_code_for_ast(context, initializer->rhs);
-                    
-                    if(lhs_type->kind == AST_bitfield_type){
-                        struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)lhs_type;
-                        emit_store_bitfield(context, bitfield, decl_location, rhs);
-                    }else if(lhs_type->flags & TYPE_FLAG_is_atomic){
-                        emit_store_atomic_integer(context, decl_location, rhs);
-                    }else{
-                        emit_store(context, decl_location, rhs);
-                    }
-                }
-            }
-            
-            decl_location->offset = base_offset;
-            decl_location->size   = decl->type->size;
-            
-            return decl_location;
-        }break;
-        case AST_member:{
-            struct ast_dot_or_arrow *dot = cast(struct ast_dot_or_arrow *)ast;
-            assert(dot->lhs->resolved_type->kind == AST_struct || dot->lhs->resolved_type->kind == AST_union);
-            
-            struct emit_location *loc = emit_code_for_ast(context, dot->lhs);
-            assert(loc->state == EMIT_LOCATION_register_relative);
-            
-            loc->register_kind_when_loaded = get_register_kind_for_type(dot->base.resolved_type);
-            
-            loc->size    = dot->base.resolved_type->size;
-            loc->offset += dot->member->offset_in_type;
-            
-            return loc;
-        }break;
-        case AST_member_deref:{
-            struct ast_dot_or_arrow *arrow = cast(struct ast_dot_or_arrow *)ast;
-            assert(arrow->lhs->resolved_type->kind == AST_pointer_type);
-            
-            struct emit_location *loc = emit_code_for_ast(context, arrow->lhs);
-            enum register_kind register_kind = get_register_kind_for_type(arrow->base.resolved_type);
-            
-            return emit_location_register_relative(context, register_kind, loc, null, arrow->member->offset_in_type, arrow->base.resolved_type->size);
-        }break;
-        case AST_pointer_subscript:{
-            struct ast_subscript *subscript = (struct ast_subscript *)ast;
-            struct emit_location *pointer = emit_code_for_ast(context, subscript->lhs);
-            struct emit_location *index   = emit_code_for_ast(context, subscript->index);
-            
-            struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)subscript->lhs->resolved_type;
-            
-            return emit_code_for_pointer_subscript(context, pointer_type->pointer_to, pointer, index);
-        }break;
-        case AST_array_subscript:{
-            struct ast_subscript *subscript = (struct ast_subscript *)ast;
-            struct emit_location *array = emit_code_for_ast(context, subscript->lhs);
-            
-            assert(array->state == EMIT_LOCATION_register_relative);
-            
-            u64 size  = subscript->base.resolved_type->size;
-            enum register_kind register_kind = get_register_kind_for_type(subscript->base.resolved_type);
-            
-            array->register_kind_when_loaded = register_kind;
-            array->size = size;
-            
-            if(subscript->index->kind == AST_integer_literal){
-                
-                u64 index = integer_literal_to_bytes(subscript->index);
-                
-                // @cleanup: overflow?
-                if(array->offset + size * index > s32_max){
-                    
-                    struct emit_location *index_register = emit_location_immediate(context, size * index, 8);
-                    
-                    if(array->ast || array->index){
-                        // 'loc' is rip-relative, we cannot have [rip + rax + 0x1337], hence we need to load rip + 0x1337 first.
-                        // Similarly, if 'loc' already has an index register, we need to load it so we can add _another_ index register.
-                        struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
-                        free_emit_location(context, array);
-                        array = emit_location_register_relative(context, register_kind, pointer, index_register, 0, size);
-                    }else{
-                        array->index = index_register;
-                    }
-                }else{
-                    array->offset += size * index;
-                }
-                
-                return array;
-            }else if(size == 1 || size == 2 || size == 4 || size == 8){
-                
-                struct emit_location *index_register = emit_code_for_ast(context, subscript->index);
-                
-                if(array->ast || array->index){
-                    // If 'loc' is rip-relative, we cannot have [rip + rax + 0x1337], hence we need to load rip + 0x1337 first.
-                    // Similarly, if 'loc' already has an index register, we need to load it so we can add _another_ index register.
-                    struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
-                    free_emit_location(context, array);
-                    array = emit_location_register_relative(context, register_kind, pointer, index_register, 0, size);
-                }else{
-                    array->index = index_register;
-                }
-                
-                switch(size){
-                    case 1: array->log_index_scale = 0; break;
-                    case 2: array->log_index_scale = 1; break;
-                    case 4: array->log_index_scale = 2; break;
-                    case 8: array->log_index_scale = 3; break;
-                }
-                
-                return array;
-            }else{
-                struct emit_location *index = emit_code_for_ast(context, subscript->index);
-                
-                //
-                // @cleanup: hack for now: first load the address then call into the 'pointer' case.
-                //
-                
-                struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
-                free_emit_location(context, array);
-                
-                struct ast_array_type *array_type = (struct ast_array_type *)subscript->lhs->resolved_type;
-                
-                return emit_code_for_pointer_subscript(context, array_type->element_type, pointer, index);
-            }
-        }break;
-        
-        case AST_integer_literal:{
-            return emit_location_immediate(context, integer_literal_to_bytes(ast), ast->resolved_type->size);
-        }break;
-        case AST_pointer_literal:{
-            struct ast_pointer_literal *pointer = cast(struct ast_pointer_literal *)ast;
-            return emit_location_immediate(context, (u64)pointer->pointer, ast->resolved_type->size);
-        }break;
-        case AST_float_literal:{
-            struct ast_float_literal *f = cast(struct ast_float_literal *)ast;
-            
-            // @note: This sucks!
-            struct ast_emitted_float_literal *emitted = push_ast(context, f->base.token, emitted_float_literal);
-            emitted->value = f->value;
-            
-            sll_push_back(context->emitted_float_literals, emitted);
-            context->emitted_float_literals.amount_of_float_literals += 1;
-            set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
-            
-            return emit_location_rip_relative(context, &emitted->base, REGISTER_KIND_xmm, f->base.resolved_type->size);
-        }break;
-        case AST_string_literal:{
-            struct ast_string_literal *lit = cast(struct ast_string_literal *)ast;
-            sll_push_back(context->string_literals, lit);
-            context->string_literals.amount_of_strings += 1;
-            return emit_location_rip_relative(context, &lit->base, REGISTER_KIND_gpr, 8);
-        }break;
-        case AST_implicit_address_conversion:
-        case AST_implicit_address_conversion_lhs:
-        case AST_unary_address:{
-            struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-            struct emit_location *loc = emit_code_for_ast(context, op->operand);
-            
-            struct emit_location *loaded = emit_load_address(context, loc, allocate_register(context, REGISTER_KIND_gpr));
-            free_emit_location(context, loc);
-            
-            return loaded;
-        }break;
-        
-        case AST_pointer_literal_deref:{
-            struct ast_pointer_literal *pointer_literal_deref = (struct ast_pointer_literal *)ast;
-            enum register_kind register_kind = get_register_kind_for_type(ast->resolved_type);
-            
-            struct emit_location *loc = emit_location_immediate(context, (u64)pointer_literal_deref->pointer, 8);
-            return emit_location_register_relative(context, register_kind, loc, null, 0, ast->resolved_type->size);
-        }break;
-        
-        case AST_unary_deref:{
-            struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-            struct emit_location *loc = emit_code_for_ast(context, op->operand);
-            enum register_kind register_kind = get_register_kind_for_type(op->base.resolved_type);
-            
-            return emit_location_register_relative(context, register_kind, loc, null, 0, op->base.resolved_type->size);
-        }break;
-        case AST_unary_plus:{
-            struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-            return emit_code_for_ast(context, op->operand);
-        }break;
-        case AST_unary_bitwise_not:
-        case AST_unary_minus:{
-            struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-            struct emit_location *loc = emit_code_for_ast(context, op->operand);
-            struct emit_location *loaded = emit_load(context, loc);
-            
-            if(loaded->register_kind_when_loaded == REGISTER_KIND_xmm){
-                emit_location_prevent_spilling(context, loaded);
-                
-                // 
-                // @note: To allow for -(0) == -0, instead of 0, we have to use an xor.
-                // 
-                
-                enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                struct emit_location *as_gpr = emit_location_loaded(context, REGISTER_KIND_gpr, reg, loaded->size);
-                emit_location_prevent_spilling(context, as_gpr);
-                
-                // movd / movq as_gpr, loaded
-                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_66), two_byte_opcode(0x7E), loaded->loaded_register, as_gpr->loaded_register, loaded->size); // @sigh: internall because of register_kind mismatch
-                
-                if(loaded->size == 4){
-                    // xor as_gpr, 0x80000000
-                    emit_register_op__internal(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_IMMIDIATE), REG_OPCODE_XOR, as_gpr->loaded_register, 4);
-                    emit_u32(0x80000000);
-                }else{
-                    assert(loaded->size == 8);
-                    struct emit_location *loaded_immediate = emit_load(context, emit_location_immediate(context, 0x8000000000000000, 8));
-                    
-                    emit_register_register(context, no_prefix(), one_byte_opcode(XOR_REG_REGM), as_gpr, loaded_immediate);
-                    free_emit_location(context, loaded_immediate);
-                }
-                
-                // movd / movq loaded, as_gpr
-                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_66), two_byte_opcode(0x6E), loaded->loaded_register, as_gpr->loaded_register, loaded->size); // @sigh: internall because of register_kind mismatch
-                
-                emit_location_allow_spilling(context, as_gpr);
-                free_emit_location(context, as_gpr);
-                
-                emit_location_allow_spilling(context, loaded);
-                return loaded;
-            }else{
-                // @cleanup: this needs a one byte case right?
-                
-                u8 extension = (ast->kind == AST_unary_minus) ?  REG_OPCODE_NEGATE_REGM : REG_OPCODE_NOT_REGM;
-                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_UNARY_REGM), extension, loaded);
-                return loaded;
-            }
-        }break;
-        case AST_unary_predec:
-        case AST_unary_preinc:{
-            struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-            struct emit_location *loc = emit_code_for_ast(context, op->operand);
-            assert(loc->state == EMIT_LOCATION_register_relative);
-            
-            if(op->base.resolved_type->kind == AST_pointer_type){
-                struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op->base.resolved_type;
-                u8 reg_inst = (ast->kind == AST_unary_preinc) ? REG_OPCODE_ADD : REG_OPCODE_SUB;
-                smm size = pointer->pointer_to->size;
-                b32 is_big = size > max_s8;
-                
-                assert(size >= 0); // @note: Allow empty structs.
-                assert(size <= 0xffffffff);
-                u8 inst = is_big ? REG_EXTENDED_OPCODE_REGM_IMMIDIATE : REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8;
-                
-                assert(loc->size == 8);
-                struct emit_location *immediate = emit_location_immediate(context, size, is_big ? 4 : 1);
-                emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(inst), reg_inst, loc, immediate);
-            }else if(op->base.resolved_type == &globals.typedef_Bool){
-                
-                // 
-                // For _Bool we want the following:
-                //  ++arst: mov [arst], 1
-                //  --arst: xor [arst], 1
-                
-                struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
-                
-                if(ast->kind == AST_unary_predec){
-                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM8_IMMIDIATE8), REG_OPCODE_XOR, loc, immediate);
-                }else{
-                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(MOVE_REGM8_IMMEDIATE8), 0, loc, immediate);
-                }
-            }else if(op->base.resolved_type->kind == AST_integer_type){
-                u8 inst = (ast->kind == AST_unary_preinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
-                u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
-                emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
-            }else if(op->base.resolved_type->kind == AST_float_type){
-                struct ast_float_literal *one = push_ast(context, op->base.token, float_literal); // :ir_refactor_not_sure_initializer
-                one->value = 1.0;
-                set_resolved_type(&one->base, op->base.resolved_type, null);
-                
-                struct emit_location *rhs = emit_code_for_ast(context, &one->base);
-                assert(rhs->state == EMIT_LOCATION_register_relative);
-                
-                emit_location_prevent_spilling(context, loc);
-                struct emit_location *lhs = emit_load(context, loc);
-                
-                // emit 'op lhs, [float_literal]'
-                emit_register_relative_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode((ast->kind == AST_unary_preinc) ? ADD_XMM : SUB_XMM), lhs->loaded_register, rhs);
-                
-                emit_store(context, loc, lhs);
-                
-                emit_location_allow_spilling(context, loc);
-            }else{
-                assert(op->base.resolved_type->kind == AST_bitfield_type);
-                struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)op->base.resolved_type;
-                
-                emit_location_prevent_spilling(context, loc);
-                
-                // 
-                // Load the bitfield value.
-                // Because usually we also up-convert the value to an int,
-                // 'loaded' is at least of size 4.
-                // 
-                struct emit_location *loaded = emit_load_bitfield(context, loc, bitfield);
-                
-                // Increment/Decrement 'loaded'.
-                u8 inst = (ast->kind == AST_unary_preinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
-                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), inst, loaded);
-                
-                // Truncate the value of loaded again to the size of 'loc', 
-                // as that is what 'emit_store_bitfield' expects.
-                loaded->size = loc->size;
-                emit_store_bitfield(context, bitfield, loc, loaded);
-                
-                emit_location_allow_spilling(context, loc);
-            }
-            
-            return emit_load(context, loc);
-        }break;
-        
-        // @cleanup: This should be unified with the pre{*} case.
-        case AST_unary_postdec:
-        case AST_unary_postinc:{
-            struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-            struct emit_location *loc = emit_code_for_ast(context, op->operand);
-            assert(loc->state == EMIT_LOCATION_register_relative);
-            
-            emit_location_prevent_spilling(context, loc);
-            struct emit_location *loaded = emit_load(context, loc);
-            
-            if(op->base.resolved_type->kind == AST_pointer_type){
-                struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op->base.resolved_type;
-                u8 reg_inst = (ast->kind == AST_unary_postinc) ? REG_OPCODE_ADD : REG_OPCODE_SUB;
-                smm size = pointer->pointer_to->size;
-                b32 is_big = size > max_s8;
-                
-                assert(size >= 0); // @note: allow empty structs to be incremented.
-                assert(size <= 0xffffffff);
-                u8 inst = is_big ? REG_EXTENDED_OPCODE_REGM_IMMIDIATE : REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8;
-                
-                assert(loc->size == 8);
-                struct emit_location *immediate = emit_location_immediate(context, size, is_big ? 4 : 1);
-                emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(inst), reg_inst, loc, immediate);
-            }else if(op->base.resolved_type == &globals.typedef_Bool){
-                
-                // 
-                // For _Bool we want the following:
-                //  ++arst: mov [arst], 1
-                //  --arst: xor [arst], 1
-                
-                struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
-                
-                if(ast->kind == AST_unary_postdec){
-                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM8_IMMIDIATE8), REG_OPCODE_XOR, loc, immediate);
-                }else{
-                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(MOVE_REGM8_IMMEDIATE8), 0, loc, immediate);
-                }
-            }else if(op->base.resolved_type->kind == AST_integer_type){
-                u8 inst = (ast->kind == AST_unary_postinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
-                u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
-                emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
-            }else if(op->base.resolved_type->kind == AST_float_type){
-                struct ast_float_literal *one = push_ast(context, op->base.token, float_literal); // :ir_refactor_not_sure_initializer
-                one->value = 1.0;
-                set_resolved_type(&one->base, op->base.resolved_type, null);
-                
-                struct emit_location *rhs = emit_code_for_ast(context, &one->base);
-                assert(rhs->state == EMIT_LOCATION_register_relative);
-                
-                struct emit_location *lhs = emit_load(context, loc); // @cleanup: This should be a register-to-register move instead.
-                
-                // emit 'op lhs, [float_literal]'
-                emit_register_relative_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode((ast->kind == AST_unary_postinc) ? ADD_XMM : SUB_XMM), lhs->loaded_register, rhs);
-                emit_store(context, loc, lhs);
-            }else{
-                assert(op->base.resolved_type->kind == AST_bitfield_type);
-                struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)op->base.resolved_type;
-                
-                // @note: We return 'loaded' in the end, which is still a bitfield.
-                emit_location_prevent_spilling(context, loaded);
-                
-                // Copy 'loaded' so we retain the original value.
-                enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                struct emit_location *copied = emit_load_into_specific_gpr(context, loaded, reg);
-                
-                // Load the bitfield.
-                copied = emit_load_bitfield(context, copied, bitfield);
-                
-                // Increment/Decrement 'copied'.
-                u8 inst = (ast->kind == AST_unary_postinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
-                u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
-                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(opcode), inst, copied);
-                
-                // Truncate the value of loaded again to the size of 'loc', 
-                // as that is what 'emit_store_bitfield' expects.
-                copied->size = loc->size;
-                
-                // Store copied.
-                emit_store_bitfield(context, bitfield, loc, copied);
-                
-                // "Return" the original "loaded" value.
-                emit_location_allow_spilling(context, loaded);
-            }
-            
-            emit_location_allow_spilling(context, loc);
-            free_emit_location(context, loc);
-            return loaded;
-        }break;
-        case AST_binary_or:{
-            return emit_binary_op(context, ast, REG_OPCODE_OR, OR_REG8_REGM8, OR_REG_REGM);
-        }break;
-        case AST_binary_xor:{
-            return emit_binary_op(context, ast, REG_OPCODE_XOR, XOR_REG8_REGM8, XOR_REG_REGM);
-        }break;
-        case AST_binary_and:{
-            return emit_binary_op(context, ast, REG_OPCODE_AND, AND_REG8_REGM8, AND_REG_REGM);
-        }break;
-        case AST_binary_plus:{
-            
-            if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-                
-                return emit_binary_op_xmm(context, lhs, rhs, ADD_XMM);
-            }
-            return emit_binary_op(context, ast, REG_OPCODE_ADD, ADD_REG8_REGM8, ADD_REG_REGM);
-        }break;
-        case AST_binary_minus:{
-            
-            if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-                
-                return emit_binary_op_xmm(context, lhs, rhs, SUB_XMM);
-            }
-            return emit_binary_op(context, ast, REG_OPCODE_SUB, SUB_REG8_REGM8, SUB_REG_REGM);
-        }break;
-        case AST_binary_times:{
-            
-            if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-                
-                return emit_binary_op_xmm(context, lhs, rhs, MUL_XMM);
-            }
-            
-            return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, ast->kind);
-        }break;
-        
-        case AST_binary_divide:
-        case AST_binary_mod:{
-            
-            if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-                
-                assert(ast->kind == AST_binary_divide);
-                return emit_binary_op_xmm(context, lhs, rhs, DIV_XMM);
-            }
-            return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, ast->kind);
-        }break;
-        case AST_binary_left_shift:{
-            smm is_signed = type_is_signed(ast->resolved_type);
-            u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_LEFT : REG_OPCODE_SHIFT_LEFT;
-            return emit_shift_or_rotate(context, ast, inst, false);
-        }break;
-        case AST_binary_right_shift:{
-            smm is_signed = type_is_signed(ast->resolved_type);
-            u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_RIGHT : REG_OPCODE_SHIFT_RIGHT;
-            return emit_shift_or_rotate(context, ast, inst, false);
-        }break;
-        case AST_unary_logical_not:{
-            struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-            struct emit_location *loc = emit_code_for_plain_condition(context, op->operand);
-            switch(loc->condition){
-                case COMP_equals:                loc->condition = COMP_unequals;              break;
-                case COMP_unequals:              loc->condition = COMP_equals;                break;
-                case COMP_smaller:               loc->condition = COMP_bigger_equals;         break;
-                case COMP_bigger:                loc->condition = COMP_smaller_equals;        break;
-                case COMP_smaller_equals:        loc->condition = COMP_bigger;                break;
-                case COMP_bigger_equals:         loc->condition = COMP_smaller;               break;
-                case COMP_bigger_equals_signed:  loc->condition = COMP_smaller_signed;        break;
-                case COMP_smaller_equals_signed: loc->condition = COMP_bigger_signed;         break;
-                case COMP_bigger_signed:         loc->condition = COMP_smaller_equals_signed; break;
-                case COMP_smaller_signed:        loc->condition = COMP_bigger_equals_signed;  break;
-                invalid_default_case();
-            }
-            return loc;
-        }break;
-        case AST_logical_or:{
-            //        for 'or' switch the branches, i.e:
-            //            if(lhs){
-            //                result = true;
-            //            }else{
-            //                result = rhs;
-            //            }
-            
-            // :spill_all_registers_on_every_branch
-            // Because this has branches, we need to spill all volatile registers, otherwise an expression like
-            //    a + (b || c * d);
-            // might spill a on the right hand side, but not the lhs and thus would be uninitialized if the 
-            // lhs is taken.
-            spill_all_allocated_volatile_registers(context);
-            
-            struct ast_binary_op *op = cast(struct ast_binary_op*)ast;
-            struct jump_context jump_context = emit_code_for_if_condition(context, op->lhs);
-            
-            enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-            struct emit_location *immediate = emit_location_immediate(context, 1, 4);
-            struct emit_location *loaded = emit_load_into_specific_gpr(context, immediate, reg);
-            free_emit_location(context, loaded); // we load it later again.
-            
-            struct jump_context jump_over_else = zero_struct;
-            jump_context_emit(context, &jump_over_else, JUMP_CONTEXT_jump_on_true, COMP_none);
-            emit_end_jumps(context, jump_context);
-            
-            struct emit_location *rhs_loc = emit_code_for_plain_condition(context, op->rhs);
-            loaded = emit_load_into_specific_gpr(context, rhs_loc, reg);
-            
-            emit_end_jumps(context, jump_over_else);
-            return loaded;
-        }break;
-        case AST_logical_and:{
-            // @note: this is only the expression case, i.e int c = (a && b); and not the 'if' case.
-            //        in the 'and' case this becomes the same as
-            //            if(lhs){
-            //                result = rhs;
-            //            }else{
-            //                result = false;
-            //            }
-            
-            // :spill_all_registers_on_every_branch
-            // Because this has branches, we need to spill all volatile registers, otherwise an expression like
-            //    a + (b && c * d);
-            // might spill a on the right hand side, but not the lhs and thus would be uninitialized if the 
-            // lhs is taken.
-            spill_all_allocated_volatile_registers(context);
-            
-            struct ast_binary_op *op = cast(struct ast_binary_op*)ast;
-            struct jump_context jump_context = emit_code_for_if_condition(context, op->lhs);
-            
-            struct emit_location *rhs_loc = emit_code_for_plain_condition(context, op->rhs);
-            struct emit_location *rhs = emit_load(context, rhs_loc);
-            
-            struct jump_context jump_over_else = zero_struct;
-            jump_context_emit(context, &jump_over_else, JUMP_CONTEXT_jump_on_true, COMP_none);
-            emit_end_jumps(context, jump_context);
-            
-            emit_register_register(context, no_prefix(), one_byte_opcode(XOR_REG_REGM), rhs, rhs);
-            emit_end_jumps(context, jump_over_else);
-            
-            return rhs;
-        }break;
-        case AST_binary_bigger:
-        case AST_binary_bigger_equals:
-        case AST_binary_smaller:
-        case AST_binary_smaller_equals:
-        case AST_binary_logical_equals:
-        case AST_binary_logical_unequals:{
-            // @quality: in the case of "cmp [rax], 1" we do not have to load [rax] as cmp does not write
-            struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-            
-            struct emit_location *result;
-            if(op->lhs->resolved_type->kind == AST_float_type){
-                
-                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-                
-                assert(lhs->register_kind_when_loaded == REGISTER_KIND_xmm);
-                assert(rhs->register_kind_when_loaded == REGISTER_KIND_xmm);
-                lhs = emit_load(context, lhs);
-                
-                struct prefixes prefix;
-                if(lhs->size == 8){
-                    prefix = create_prefixes(ASM_PREFIX_NON_PACKED_OP_double);
-                }else{
-                    assert(lhs->size == 4);
-                    prefix = create_prefixes(ASM_PREFIX_NON_PACKED_OP_float);
-                }
-                
-                if(rhs->state == EMIT_LOCATION_loaded){
-                    emit_register_register(context, prefix, two_byte_opcode(COMPARE_XMM), lhs, rhs);
-                }else{
-                    assert(rhs->state == EMIT_LOCATION_register_relative);
-                    emit_register_relative_register(context, prefix, two_byte_opcode(COMPARE_XMM), lhs->loaded_register, rhs);
-                }
-                free_emit_location(context, rhs);
-                result = lhs;
-            }else{
-                result = emit_binary_op(context, ast, REG_OPCODE_CMP, CMP_REG8_REGM8, CMP_REG_REGM);
-            }
-            // @paranoid, technically these should always agree
-            b32 is_signed = type_is_signed(op->lhs->resolved_type) || type_is_signed(op->rhs->resolved_type);
-            free_emit_location(context, result); // we only care about the flags
-            
-            enum comp_condition cond;
-            switch(ast->kind){
-                case AST_binary_logical_equals:{
-                    cond = COMP_equals;
-                }break;
-                case AST_binary_logical_unequals:{
-                    cond = COMP_unequals;
-                }break;
-                case AST_binary_smaller:{
-                    cond = is_signed ? COMP_smaller_signed : COMP_smaller;
-                }break;
-                case AST_binary_smaller_equals:{
-                    cond = is_signed ? COMP_smaller_equals_signed : COMP_smaller_equals;
-                }break;
-                case AST_binary_bigger:{
-                    cond = is_signed ? COMP_bigger_signed : COMP_bigger;
-                }break;
-                case AST_binary_bigger_equals:{
-                    cond = is_signed ? COMP_bigger_equals_signed : COMP_bigger_equals;
-                }break;
-                
-                invalid_default_case(cond = COMP_equals);
-            }
-            
-            return emit_location_conditional(context, cond);
-        }break;
-        case AST_conditional_expression:{
-            
-            // :spill_all_registers_on_every_branch
-            // If there is an expression like 
-            //     a + (b ? c : d * e)
-            // and 'a' gets loaded into 'edx' then we might spill it in the 'd*e' branch, but not in the 
-            // 'c' branch. This would be bad, as a would get reloaded in either case and thus might be unintialized.
-            // To prevent this, we spill all registers prior to the instruction.
-            spill_all_allocated_volatile_registers(context);
-            
-            struct ast_conditional_expression *conditional = cast(struct ast_conditional_expression *)ast;
-            struct ast_type *type = ast->resolved_type;
-            // @note: conditional expressions are not l-values
-            
-            if(type == &globals.typedef_void){
-                //
-                // Special case for void, as we don't have to do any dancing to keep the 'return_value' around.
-                //
-                
-                struct jump_context jump_context = emit_code_for_if_condition(context, conditional->condition);
-                
-                struct emit_location *if_true = emit_code_for_ast(context, conditional->if_true);
-                assert(if_true == emit_location_invalid(context));
-                
-                struct jump_context jump_over_else = zero_struct;
-                jump_context_emit(context, &jump_over_else, JUMP_CONTEXT_jump_on_true, COMP_none);
-                
-                emit_end_jumps(context, jump_context);
-                
-                struct emit_location *if_false = emit_code_for_ast(context, conditional->if_false);
-                assert(if_false == emit_location_invalid(context));
-                
-                emit_end_jumps(context, jump_over_else);
-                
-                return emit_location_invalid(context);
-            }
-            
-            
-            // used if 'should_memcpy'
-            b32 should_memcpy = size_is_big_or_oddly_sized(type->size);
-            struct emit_location *temporary = emit_location_invalid(context);
-            
-            // used if the type is register sized
-            enum register_kind register_kind = get_register_kind_for_type(conditional->base.resolved_type);
-            enum register_encoding reg = INVALID_REGISTER;
-            if(should_memcpy){
-                temporary = emit_allocate_temporary_stack_location(context, REGISTER_KIND_gpr, type->size, type->alignment);
-            }else{
-                reg = allocate_register(context, register_kind);
-            }
-            
-            struct jump_context jump_context = emit_code_for_if_condition(context, conditional->condition);
-            struct emit_location *if_true = emit_code_for_ast(context, conditional->if_true);
-            
-            b32 is_float = (if_true->register_kind_when_loaded == REGISTER_KIND_xmm);
-            
-            struct emit_location *dumb = null;
-            if(should_memcpy){
-                emit_store(context, temporary, if_true);
-            }else if(is_float){
-                dumb = emit_load_float_into_specific_register(context, if_true, reg);
-            }else{
-                dumb = emit_load_into_specific_gpr(context, if_true, reg);
-            }
-            
-            // we have to free it here because we re assign it in the second call, this is kinda dumb
-            if(dumb) free_emit_location(context, dumb);
-            
-            struct jump_context jump_over_else = zero_struct;
-            jump_context_emit(context, &jump_over_else, JUMP_CONTEXT_jump_on_true, COMP_none);
-            
-            emit_end_jumps(context, jump_context);
-            struct emit_location *if_false = emit_code_for_ast(context, conditional->if_false);
-            
-            struct emit_location *loaded = null;
-            if(should_memcpy){
-                emit_store(context, temporary, if_false);
-            }else if(is_float){
-                loaded = emit_load_float_into_specific_register(context, if_false, reg);
-            }else{
-                loaded = emit_load_into_specific_gpr(context, if_false, reg);
-            }
-            
-            if(loaded) free_emit_location(context, loaded);
-            emit_end_jumps(context, jump_over_else);
-            
-            if(should_memcpy) return temporary;
-            
-            loaded = emit_location_loaded(context, register_kind, reg, type->size);
-            
-            if(type->kind == AST_struct || type->kind == AST_union){
-                //
-                // if its a register sized struct we need have a register relative reference to it.
-                //
-                
-                struct emit_location *ret = emit_allocate_temporary_stack_location(context, REGISTER_KIND_gpr, type->size, type->alignment);
-                emit_store(context, ret, loaded);
-                return ret;
-            }
-            
-            return loaded;
-        }break;
-        case AST_comma_expression:{
-            struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-            struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-            if(lhs) free_emit_location(context, lhs);
-            return emit_code_for_ast(context, op->rhs);
-        }break;
-        case AST_empty_statement:{
-            return emit_location_invalid(context);
-        }break;
-        case AST_assignment:{
-            struct ast_binary_op *assign = cast(struct ast_binary_op *)ast;
-            
-            if(assign->rhs->kind == AST_string_literal && assign->lhs->resolved_type->kind == AST_array_type){
-                // 
-                // for 'char asd[] = "asd";' emit a memcpy
-                // There are three cases:
-                //     char asd[10] = "asd"; // copy the string literal zero the upper part of the buffer.
-                //     char asd[4]  = "asd"; // copy the string literal including the null-terminator
-                //     char asd[3]  = "asd"; // copy the string literal excluding the null-terminator
-                //     
-                
-                struct ast_array_type   *array = (struct ast_array_type *)assign->lhs->resolved_type;
-                struct ast_string_literal *lit = (struct ast_string_literal *)assign->rhs;
-                
-                // Mark the string literal as being used.
-                sll_push_back(context->string_literals, lit);
-                context->string_literals.amount_of_strings += 1;
-                
-                smm array_size = array->amount_of_elements * array->element_type->size;
-                if(array->is_of_unknown_size){
-                    // We are in an initializer like:
-                    // 
-                    // struct s{
-                    //     char array[];
-                    // } arst = {"hello :)"};
-                    // 
-                    // We have made sure to allocate enough space to hold the initializer.
-                    array_size = lit->value.size + array->element_type->size;
-                }
-                
-                smm extra = (array_size == lit->value.size) ? 0 : array->element_type->size;
-                
-                struct emit_location *lhs = emit_code_for_ast(context, assign->lhs);
-                if(array->is_of_unknown_size) lhs->size = array_size;
-                
-                if(array_size > lit->value.size + extra){
-                    // @cleanup: We only would have to zero the upper part of the 'lhs'.
-                    emit_memset(context, lhs, 0);
-                }
-                
-                struct emit_location *rhs = emit_location_rip_relative(context, &lit->base, REGISTER_KIND_gpr, lit->value.size + extra);
-                emit_memcpy(context, lhs, rhs);
-                
-                return lhs;
-            }else if(assign->lhs->kind == AST_array_range){
-                // 
-                // GNU extension array range initializer:
-                //     
-                //     [1 ... 5] = expr,
-                // 
-                struct ast_array_range *array_range = (struct ast_array_range *)assign->lhs;
-                
-                // Get the rhs:
-                struct emit_location *rhs = emit_code_for_ast(context, assign->rhs);
-                if(rhs->state == EMIT_LOCATION_conditional) rhs = emit_load(context, rhs);
-                
-                emit_location_prevent_freeing(context, rhs);
-                
-                struct emit_location *lhs_base = emit_code_for_ast(context, array_range->lhs);
-                assert(lhs_base->state == EMIT_LOCATION_register_relative);
-                
-                u64 element_size = array_range->base.resolved_type->size;
-                lhs_base->offset += array_range->start_index * element_size;
-                lhs_base->size = element_size;
-                
-                for(u64 index = array_range->start_index; index <= array_range->end_index; index++, lhs_base->offset += element_size){
-                    emit_store(context, lhs_base, rhs);
-                }
-                
-                emit_location_allow_freeing(context, rhs);
-                free_emit_location(context, rhs);
-                free_emit_location(context, lhs_base);
-                
-                return emit_location_invalid(context);
-            }
-            
-            // 
-            // @note: For assignments its more intuitive to first evaluate the right hand side, and then the left.
-            // 
-            struct emit_location *rhs = emit_code_for_ast(context, assign->rhs);
-            if(rhs->state == EMIT_LOCATION_conditional) rhs = emit_load(context, rhs);
-            struct emit_location *lhs = emit_code_for_ast(context, assign->lhs);
-            
-            if(assign->lhs->resolved_type->kind == AST_bitfield_type){
-                struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)assign->lhs->resolved_type;
-                return emit_store_bitfield(context, bitfield, lhs, rhs);
-            }else if(assign->lhs->resolved_type->flags & TYPE_FLAG_is_atomic){
-                return emit_store_atomic_integer(context, lhs, rhs);
-            }
-            
-            emit_store(context, lhs, rhs);
-            return lhs;
-        }break;
-        case AST_and_assignment:{
-            return emit_compound_assignment(context, ast, REG_OPCODE_AND, AND_REGM8_REG8, AND_REGM_REG);
-        }break;
-        case AST_plus_assignment:{
-            if(ast->resolved_type->kind == AST_float_type){
-                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-                return emit_compound_assignment_xmm(context, lhs, rhs, ADD_XMM);
-            }
-            return emit_compound_assignment(context, ast, REG_OPCODE_ADD, ADD_REGM8_REG8, ADD_REGM_REG);
-        }break;
-        case AST_minus_assignment:{
-            if(ast->resolved_type->kind == AST_float_type){
-                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-                return emit_compound_assignment_xmm(context, lhs, rhs, SUB_XMM);
-            }
-            return emit_compound_assignment(context, ast, REG_OPCODE_SUB, SUB_REGM8_REG8, SUB_REGM_REG);
-        }break;
-        case AST_or_assignment:{
-            return emit_compound_assignment(context, ast, REG_OPCODE_OR, OR_REGM8_REG8, OR_REGM_REG);
-        }break;
-        case AST_xor_assignment:{
-            return emit_compound_assignment(context, ast, REG_OPCODE_XOR, XOR_REGM8_REG8, XOR_REGM_REG);
-        }break;
-        case AST_left_shift_assignment:{
-            smm is_signed = type_is_signed(ast->resolved_type);
-            u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_LEFT : REG_OPCODE_SHIFT_LEFT;
-            return emit_shift_or_rotate(context, ast, inst, true);
-        }break;
-        case AST_right_shift_assignment:{
-            smm is_signed = type_is_signed(ast->resolved_type);
-            u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_RIGHT : REG_OPCODE_SHIFT_RIGHT;
-            return emit_shift_or_rotate(context, ast, inst, true);
-        }break;
-        
-        case AST_times_assignment:{
-            if(ast->resolved_type->kind == AST_float_type){
-                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-                return emit_compound_assignment_xmm(context, lhs, rhs, MUL_XMM);
-            }else{
-                return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, ast->kind);
-            }
-        }break;
-        case AST_modulo_assignment:
-        case AST_divide_assignment:{
-            if(ast->resolved_type->kind == AST_float_type){
-                struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-                struct emit_location *rhs = emit_code_for_ast(context, op->rhs);
-                struct emit_location *lhs = emit_code_for_ast(context, op->lhs);
-                return emit_compound_assignment_xmm(context, lhs, rhs, DIV_XMM);
-            }else{
-                return emit_divide_or_mod_or_multiply(context, ast, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, ast->kind);
-            }
-        }break;
-        
-        case AST_return:{
-            struct ast_return *ret = cast(struct ast_return *)ast;
-            
-            context->gpr_allocator.rolling_index = REGISTER_A;
-            
-            // @note: this is the same as 'ret->expr->resolved_type' whenever we have 'ret->expr', but we would
-            //        only be able to assert 'types_are_equal' as the same types do not necessary live at the same
-            //        address (e.g. pointer types). Hence, no assert :(
-            struct ast_type *return_type = context->current_function->type->return_type;
-            
-            if(ret->expr){
-                struct emit_location *loc = emit_code_for_ast(context, ret->expr);
-                
-                if(return_type == &globals.typedef_void){
-                    // @note: We might have 'ret->expr' even if the return type is void.
-                    //        But in this case we don't need to load it.
-                    assert(loc == emit_location_invalid(context)); // We should have a void return-value, i.e nothing.
-                }else if(type_is_returned_by_address(return_type)){
-                    // :returning_structs :function_epilog
-                    // load the address of what we want to copy into rsi, the actual copy will then happen in
-                    // the epilog
-                    
-                    enum register_encoding rsi = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_SI);
-                    struct emit_location *loaded = emit_load_address(context, loc, rsi);
-                    free_emit_location(context, loc);
-                    free_emit_location(context, loaded);
-                }else{
-                    if(return_type->kind == AST_float_type){
-                        struct emit_location *loaded = emit_load_float_into_specific_register(context, loc, REGISTER_XMM0);
-                        free_emit_location(context, loaded);
-                    }else if(return_type->flags & TYPE_FLAG_is_intrin_type){
-                        loc->register_kind_when_loaded = REGISTER_KIND_xmm;
-                        struct emit_location *loaded = emit_load_float_into_specific_register(context, loc, REGISTER_XMM0);
-                        free_emit_location(context, loaded);
-                    }else{
-                        struct emit_location *loaded = emit_load_into_specific_gpr(context, loc, REGISTER_A);
-                        free_emit_location(context, loaded);
-                    }
-                }
-            }
-            
-            if(!context->should_not_emit_ret_jump){
-                // :function_epilog
-                // jump to the function epilog, this does not have to happen, when we are already at the end of a function
-                jump_context_emit(context, context->jump_to_function_epilog, JUMP_CONTEXT_jump_always, COMP_none);
-            }
-            
-            return emit_location_invalid(context);
-        }break;
-        case AST_scope:{
-            struct ast_scope *scope = cast(struct ast_scope *)ast;
-            context->current_scope = scope;
-            
-            for(struct ast_list_node *it = scope->statement_list.first; it; it = it->next){
-                context->temporary_stack_allocator = 0;
-                
-                // if this is the last statement in a function and it is a return, 
-                // then we should not emit the jump to the epilog, as we are already there
-                context->should_not_emit_ret_jump = !it->next && (scope->flags & SCOPE_FLAG_is_function_scope);
-                
-                struct emit_location *loc = emit_code_for_ast(context, it->value);
-                if(loc) free_emit_location(context, loc);
-                
-                assert_that_no_registers_are_allocated(context);
-            }
-            
-            return emit_location_invalid(context);
-        }break;
-        case AST_if:{
-            struct ast_if *ast_if = cast(struct ast_if *)ast;
-            
-            struct jump_context jump_context = emit_code_for_if_condition(context, ast_if->condition);
-            struct emit_location *loc = emit_code_for_ast(context, ast_if->statement);
-            if(loc) free_emit_location(context, loc);
-            
-            if(ast_if->else_statement){
-                struct jump_context jump_over_else = zero_struct;
-                jump_context_emit(context, &jump_over_else, JUMP_CONTEXT_jump_on_true, COMP_none);
-                emit_end_jumps(context, jump_context);
-                struct emit_location *else_statement = emit_code_for_ast(context, ast_if->else_statement);
-                if(else_statement) free_emit_location(context, else_statement);
-                
-                emit_end_jumps(context, jump_over_else);
-            }else{
-                emit_end_jumps(context, jump_context);
-            }
-            
-            return emit_location_invalid(context);
-        }break;
-        case AST_switch:{
-            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-            
-            struct emit_location *switch_on = emit_code_for_ast(context, ast_switch->switch_on);
-            
-            // do switches at least in 32-bit
-            switch_on = emit_load(context, switch_on);
-            
-            // *** switch ***
-            // if(a == 1) goto loc_1;
-            // if(a == 2) goto loc_2;
-            // if(a == 3) goto loc_3;
-            // ...
-            // {switch->statement}
-            
-            for_ast_list(ast_switch->case_list){
-                struct ast_case *ast_case = (struct ast_case *)it->value;
-                // @speed could do this manually, we know its an immediate, also we know the size should be
-                //        switch_on->size
-                struct emit_location *imm = emit_location_immediate(context, ast_case->value, switch_on->size);
-                assert(imm->state == EMIT_LOCATION_immediate);
-                
-                b32 is_signed = type_is_signed(ast_switch->switch_on->resolved_type);
-                if(imm->size == 8 || ((imm->size == 4) && is_signed && imm->value > s32_max)){
-                    struct emit_location *loaded = emit_load(context, imm);
-                    
-                    emit_register_register(context, no_prefix(), one_byte_opcode(CMP_REG_REGM), switch_on, loaded);
-                    free_emit_location(context, loaded);
-                }else{
-                    
-                    u8 inst = REG_EXTENDED_OPCODE_REGM_IMMIDIATE;
-                    if(imm->size == 1){
-                        if(is_signed || imm->value < s8_max){
-                            inst = REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8;
-                        }else{
-                            imm->size = switch_on->size;
-                        }
-                    }
-                    emit_reg_extended_op(context, no_prefix(), one_byte_opcode(inst), REG_OPCODE_CMP, switch_on);
-                    
-                    if(imm->size == 1){
-                        emit(imm->value);
-                    }else{
-                        switch(switch_on->size){
-                            case 1: emit(imm->value); break;
-                            case 2: emit_u16(imm->value); break;
-                            case 4: emit_u32(imm->value); break;
-                            case 8: emit_u32(imm->value); break;
-                            invalid_default_case();
-                        }
-                    }
-                    
-                }
-                
-                // @cleanup: is this the right arena?
-                struct jump_context *jump = push_struct(context->arena, struct jump_context);
-                jump_context_emit(context, jump, JUMP_CONTEXT_jump_on_true, COMP_equals);
-                ast_case->jump = jump;
-            }
-            free_emit_location(context, switch_on);
-            
-            struct jump_context *old_break_jump_context = context->break_jump_context;
-            struct jump_context break_jumps = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
-            context->break_jump_context = &break_jumps;
-            
-            if(ast_switch->default_case){
-                // @cleanup: is this the right arena?
-                struct jump_context *jump = push_struct(context->arena, struct jump_context);
-                jump_context_emit(context, jump, JUMP_CONTEXT_jump_always, COMP_none);
-                ast_switch->default_case->jump = jump;
-            }else{
-                jump_context_emit(context, &break_jumps, JUMP_CONTEXT_jump_always, COMP_none);
-            }
-            
-            struct emit_location *loc = emit_code_for_ast(context, ast_switch->statement);
-            if(loc) free_emit_location(context, loc);
-            
-            emit_end_jumps(context, break_jumps);
-            context->break_jump_context = old_break_jump_context;
-            
-            return emit_location_invalid(context);
-        }break;
-        case AST_case:{
-            while(true){
-                struct ast_case *ast_case = cast(struct ast_case *)ast;
-                assert(ast_case->jump);
-                emit_end_jumps(context, *ast_case->jump);
-                
-                if(ast_case->statement){ 
-                    // Chain all case statements and do not recurse for them.
-                    // This avoids stack overflows and is faster.
-                    if(ast_case->statement->kind == AST_case){
-                        ast = ast_case->statement;
-                        continue;
-                    }
-                    
-                    struct emit_location *loc = emit_code_for_ast(context, ast_case->statement);
-                    if(loc) free_emit_location(context, loc);
-                }
-                
-                break;
-            }
-            return emit_location_invalid(context);
-        }break;
-        case AST_do_while:
-        case AST_for:{
-            // :AST_while
-            // @note: we desugar while(cond) into for(;cond;)
-            
-            // :AST_do_while
-            // @note: we use struct ast_for for do_while as well, but give it kind AST_do_while.
-            //        We do this as the code is the same modulo one initial jump.
-            
-            struct ast_for *ast_for = cast(struct ast_for *)ast;
-            
-            
-            // save old values, as sort of a stack
-            struct jump_context *old_break_jump_context    = context->break_jump_context;
-            struct jump_context *old_continue_jump_context = context->continue_jump_context;
-            
-            struct jump_context break_jumps    = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
-            struct jump_context continue_jumps = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
-            context->break_jump_context = &break_jumps;
-            context->continue_jump_context = &continue_jumps;
-            
-            // *** This is what a for(decl; cond; inc) body compiles to ***
-            // decl;
-            // loop:
-            //    if(cond){
-            //        body;
-            //        continue:
-            //        inc;
-            //        goto loop;
-            //     }
-            // break:
-            
-            // :AST_do_while, if ast->kind == AST_do_while we emit an initial jump to body.
-            struct jump_context init_jump_for_do_while = zero_struct;
-            if(ast->kind == AST_do_while){
-                jump_context_emit(context, &init_jump_for_do_while, JUMP_CONTEXT_jump_always, COMP_none);
-            }
-            
-            if(ast_for->decl){
-                struct emit_location *loc = emit_code_for_ast(context, ast_for->decl);
-                if(loc) free_emit_location(context, loc);
-            }
-            
-            // loop:
-            smm jump_back_location = get_bytes_emitted(context);
-            // if (!cond) goto break;
-            // @cleanup: ast_for->condition can be null, but maybe we do that in parse
-            struct jump_context end_loop_context = emit_code_for_if_condition(context, ast_for->condition);
-            {
-                if(ast->kind == AST_do_while) emit_end_jumps(context, init_jump_for_do_while);
-                
-                // body;
-                struct emit_location *body = emit_code_for_ast(context, ast_for->body);
-                if(body) free_emit_location(context, body);
-                
-                // continue:
-                emit_end_jumps(context, continue_jumps);
-                
-                // inc;
-                if(ast_for->increment){
-                    struct emit_location *inc = emit_code_for_ast(context, ast_for->increment);
-                    if(inc) free_emit_location(context, inc);
-                }
-                
-                // goto loop:
-                emit_jump(context, jump_back_location, COMP_none, JUMP_CONTEXT_jump_on_true);
-            }
-            
-            // break:
-            emit_end_jumps(context, end_loop_context);
-            emit_end_jumps(context, break_jumps);
-            
-            // restore old values
-            context->break_jump_context = old_break_jump_context;
-            context->continue_jump_context = old_continue_jump_context;
-            
-            return emit_location_invalid(context);
-        }break;
-        case AST_break:{
-            //struct ast_break *ast_break = cast(struct ast_break *)ast;
-            jump_context_emit(context, context->break_jump_context, JUMP_CONTEXT_jump_always, COMP_none);
-            return emit_location_invalid(context);
-        }break;
-        case AST_continue:{
-            //struct ast_continue *ast_continue = cast(struct ast_continue *)ast;
-            jump_context_emit(context, context->continue_jump_context, JUMP_CONTEXT_jump_always, COMP_none);
-            return emit_location_invalid(context);
-        }break;
-        case AST_goto:{
-            struct ast_goto *ast_goto = cast(struct ast_goto *)ast;
-            
-            // @copy from jump context emit
-            struct jump_node *node = push_struct(context->arena, struct jump_node);
-            emit(JUMP_REL32);
-            node->patch_location = context->emit_pool.current;
-            node->jump_from = emit_bytes(context, 4, 0) + 4;
-            
-            ast_goto->jump_node = node;
-            return emit_location_invalid(context);
-        }break;
-        case AST_label:{
-            struct ast_label *label = (struct ast_label *)ast;
-            label->byte_offset_in_function = to_u32(get_bytes_emitted(context));
-            
-            if(label->statement){ 
-                struct emit_location *loc = emit_code_for_ast(context, label->statement);
-                if(loc) free_emit_location(context, loc);
-            }
-            
-            return emit_location_invalid(context);
-        }break;
-        case AST_function_call:{
-            struct ast_function_call *call = cast(struct ast_function_call *)ast;
-            
-            // @note: This case handles both a call to a function as well as a call to a function-pointer.
-            //        We detect this as whether or not the 'call->identifier_expression' is a function or a pointer.
-            //        In the function case we don't have to emit any code here and just set 'identifier_to_call'.
-            //        Otherwise we 'emit_code_for_ast' on the 'call->identifier_expression' and store it in
-            //        'function_pointer_location'.                                        13.06.2021
-            
-            struct ast_function_type *function_type;
-            
-            struct emit_location  *function_pointer_location;
-            struct ast_identifier *identifier_to_call;
-            
-            // This is the declaration which acts as the source for the call. 
-            struct ast_function *patch_call_source_declaration = null; 
-            
-            if(call->identifier_expression->resolved_type->kind == AST_function_type){
-                identifier_to_call = (struct ast_identifier *)call->identifier_expression;
-                function_type = (struct ast_function_type *)identifier_to_call->base.resolved_type;
-                
-                while(identifier_to_call->base.kind == AST_comma_expression){
-                    // @cleanup: This sort of sucks.
-                    //           Maybe we should spitt the function pointer call case 
-                    //           from the function call case.
-                    struct ast_binary_op *comma = (struct ast_binary_op *)identifier_to_call;
-                    struct emit_location *ignored = emit_code_for_ast(context, comma->lhs);
-                    if(ignored) free_emit_location(context, ignored); 
-                    
-                    identifier_to_call = (struct ast_identifier *)comma->rhs;
-                }
-                
-                assert(identifier_to_call->base.kind == AST_identifier);
-                
-                patch_call_source_declaration = (struct ast_function *)identifier_to_call->decl;
-                
-                if(patch_call_source_declaration->as_decl.flags & DECLARATION_FLAGS_is_intrinsic){
-                    // 
-                    // We don't know what the intrinsic wants to do with its arguments,
-                    // for example `__noop` ignores them
-                    // 
-                    return emit_intrinsic(context, patch_call_source_declaration, call, 0);
-                }
-                
-                function_pointer_location = null;
-            }else{
-                struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)call->identifier_expression->resolved_type;
-                assert(pointer->pointer_to->kind == AST_function_type);
-                
-                function_type = cast(struct ast_function_type *)pointer->pointer_to;
-                
-                identifier_to_call = null;
-                function_pointer_location = emit_code_for_ast(context, call->identifier_expression);
-            }
-            
-            // spill all volitile registers, so they are saved
-            spill_all_allocated_volatile_registers(context);
-            
-            smm function_argument_count = function_type->argument_list.count;
-            smm arg_count = call->call_arguments.count;
-            
-            b32 function_is_inline_asm = patch_call_source_declaration && (patch_call_source_declaration->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm);
-            
-            // 
-            // :returning_structs
-            // 
-            // If the function returns a big struct, there is an implicit first argument, which is the
-            // address of the return value. We memcpy in 'case AST_return'.
-            b32 returns_big_struct = type_is_returned_by_address(function_type->return_type);
-            if(returns_big_struct){
-                arg_count += 1;
-                function_argument_count += 1;
-            }
-            
-            context->max_amount_of_function_call_arguments = max_of(context->max_amount_of_function_call_arguments, arg_count);
-            // @cleanup: draw a picture of the stack
-            
-            // :returning_structs
-            struct emit_location *stack_return_location = null;
-            
-            static enum register_encoding argument_registers[REGISTER_KIND_count][4] = {
-                [REGISTER_KIND_gpr][0] = REGISTER_C,
-                [REGISTER_KIND_gpr][1] = REGISTER_D,
-                [REGISTER_KIND_gpr][2] = REGISTER_R8,
-                [REGISTER_KIND_gpr][3] = REGISTER_R9,
-                
-                [REGISTER_KIND_xmm][0] = REGISTER_XMM0,
-                [REGISTER_KIND_xmm][1] = REGISTER_XMM1,
-                [REGISTER_KIND_xmm][2] = REGISTER_XMM2,
-                [REGISTER_KIND_xmm][3] = REGISTER_XMM3,
-            };
-            
-            
-            struct emit_location **emit_locations = push_uninitialized_data(&context->scratch, struct emit_location *, arg_count);
-            // @cleanup: we need this below... we could _re-iterate_ but dunno
-            smm *argument_sizes = push_uninitialized_data(&context->scratch, smm, arg_count);
-            
-            // first 4 arguments are passed in rcx rdx r8 r9 in this order from left to right
-            // all other arguments are passed on the stack
-            {
-                smm arg_at = 0;
-                
-                // :returning_structs
-                if(returns_big_struct){
-                    struct ast_type *return_type = function_type->return_type;
-                    stack_return_location = emit_allocate_temporary_stack_location(context, REGISTER_KIND_gpr, return_type->size, return_type->alignment);
-                    
-                    emit_locations[arg_at] = emit_load_address(context, stack_return_location, allocate_register(context, REGISTER_KIND_gpr));
-                    arg_at++;
-                }
-                
-                struct ast_list_node *it = call->call_arguments.first;
-                struct ast_list_node *type_it = function_type->argument_list.first;
-                
-                for( ;it; arg_at++, it = it->next){
-                    if(arg_at < array_count(*argument_registers)){
-                        context->gpr_allocator.rolling_index = argument_registers[REGISTER_KIND_gpr][arg_at];
-                        context->xmm_allocator.rolling_index = argument_registers[REGISTER_KIND_xmm][arg_at];
-                    }
-                    
-                    struct emit_location *loc = emit_code_for_ast(context, it->value);
-                    if(loc->state == EMIT_LOCATION_conditional) loc = emit_load(context, loc);
-                    
-                    struct ast_type *type = null;
-                    if(!type_it){
-                        assert(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs);
-                        assert(arg_at >= function_argument_count);
-                        type = it->value->resolved_type;
-                        
-                        // @note: Only convert floats and doubles, not intrinsic arguments.
-                        if(loc->size < 16 && loc->register_kind_when_loaded == REGISTER_KIND_xmm){
-                            assert(loc->size == 4 || loc->size == 8);
-                            
-                            // If we are a floating point argument in a vararg function, 
-                            // which is in the '...' arglist we need to transform the argument 
-                            // into a gpr using a movq.
-                            
-                            struct emit_location *float_reg = emit_load_float(context, loc);
-                            
-                            enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                            struct emit_location *gpr_reg = emit_location_loaded(context, REGISTER_KIND_gpr, reg, 8);
-                            
-                            // @cleanup: holy fuck, I really don't understand the prefix convention here...
-                            // prefix to load the _lower_ half (mm|xmm) and we want xmm I guess..
-                            emit_register_op__internal(context, create_prefixes(ASM_PREFIX_NON_PACKED_OP_double), two_byte_opcode(MOVQ_REGM_XMM), float_reg->loaded_register, gpr_reg->loaded_register, 8);
-                            free_emit_location(context, float_reg);
-                            
-                            loc = gpr_reg;
-                        }
-                    }else{
-                        assert(type_it->value->kind == AST_declaration);
-                        type = (cast(struct ast_declaration*)type_it->value)->type;
-                        type_it = type_it->next;
-                    }
-                    
-                    smm size = it->value->resolved_type->size;
-                    assert(size == type->size);
-                    
-                    if(size_is_big_or_oddly_sized(type->size)){ // :PassingStructArguments
-                        
-                        if(function_is_inline_asm && (type->flags & TYPE_FLAG_is_intrin_type)){
-                            //
-                            // If its a type like '__m128' and we are calling an 'inline_asm' function, 
-                            // we want to load the argument into an *mm register.
-                            //
-                            loc->register_kind_when_loaded = REGISTER_KIND_xmm; // @cleanup: maybe this should be set when we find the declaration, we could check the TYPE_FLAG_is_intrin_type
-                            loc = emit_load_float(context, loc);
-                        }else{
-                            //
-                            // big struct arguments are copied by the caller and passed on the stack
-                            //
-                            assert(type->kind == AST_struct || type->kind == AST_union);
-                            
-                            struct emit_location *copy_into = emit_allocate_temporary_stack_location(context, REGISTER_KIND_gpr, type->size, type->alignment);
-                            
-                            if(loc->state == EMIT_LOCATION_loaded){
-                                // this can happen, if we have a simd intrinsic as an argument, e.g
-                                //     do_something(_mm_set_pd(1.0, 2.0));
-                                // I am not 100% sure whats the calling convention is here but for now I am
-                                // gonna just spill it and be done with it
-                                assert(type->flags & TYPE_FLAG_is_intrin_type);
-                                assert(loc->register_kind_when_loaded == REGISTER_KIND_xmm);
-                                
-                                copy_into->register_kind_when_loaded = REGISTER_KIND_xmm;
-                                emit_store(context, copy_into, loc);
-                            }else{
-                                emit_memcpy(context, copy_into, loc);
-                                free_emit_location(context, loc); // @hmm: emit_store frees, emit_memcpy does not
-                            }
-                            
-                            loc = emit_load_address(context, copy_into, allocate_register(context, REGISTER_KIND_gpr));
-                            size = 8;
-                        }
-                    }
-                    
-                    assert(loc->size == size);
-                    emit_locations[arg_at] = loc;
-                    argument_sizes[arg_at] = size;
-                }
-            }
-            
-            
-            if(function_is_inline_asm){
-                //
-                // Here we have emit all emit locations into 'emit_locations' and did all the promotions.
-                // But, importantly we have not loaded all the emit locations!
-                // If we are in an '__declspec(inline_asm)' function, we want to just use these locations 
-                // as the arguments. 
-                // In this way they are the integer literals stay integer literals while all types are
-                // as you would expect. 
-                //                                                                   28.11.2021
-                
-                //
-                // :inline_asm_argument_substitution
-                //
-                {
-                    sll_clear(context->inline_asm_function_arguments);
-                    
-                    int argument_index = 0;
-                    for_ast_list(patch_call_source_declaration->type->argument_list){
-                        struct ast_declaration *decl = (struct ast_declaration *)it->value;
-                        
-                        struct inline_asm_function_argument *inline_asm_argument = push_struct(&context->scratch, struct inline_asm_function_argument);
-                        inline_asm_argument->declaration = decl;
-                        
-                        if(emit_locations[argument_index]->state == EMIT_LOCATION_immediate){
-                            inline_asm_argument->integer_location = emit_locations[argument_index];
-                        }
-                        emit_locations[argument_index] = emit_load(context, emit_locations[argument_index]);
-                        inline_asm_argument->loaded_location = emit_locations[argument_index];
-                        
-                        sll_push_back(context->inline_asm_function_arguments, inline_asm_argument);
-                        
-                        emit_location_prevent_freeing(context, emit_locations[argument_index]);
-                        
-                        argument_index++;
-                    }
-                }
-                
-                //
-                // Carefully get the asm_block
-                //
-                // @note: we use the 'patch_call_source_declaration' here, as the other one might not be defined.
-                struct ast_function *function = (struct ast_function *)patch_call_source_declaration;
-                assert(function->scope->kind == AST_scope);
-                struct ast_scope *scope = (struct ast_scope *)function->scope;
-                assert(scope->statement_list.count == 1);
-                assert(scope->statement_list.first->value->kind == AST_asm_block);
-                
-                struct ast_asm_block *asm_block = (struct ast_asm_block *)scope->statement_list.first->value;
-                context->in_inline_asm_function = call->identifier_expression->token;
-                
-                emit_inline_asm_block(context, asm_block);
-                
-                // free all 'argument_locations'
-                for(u32 i = 0; i < arg_count; i++){
-                    emit_location_allow_freeing(context, emit_locations[i]);
-                    
-                    if(emit_locations[i] != context->asm_block_return){
-                        free_emit_location(context, emit_locations[i]);
-                    }
-                }
-                
-                context->in_inline_asm_function = null;
-                context->inline_asm_mode = null;
-                
-                if(function_type->return_type != &globals.typedef_void){
-                    assert(context->asm_block_return);
-                    
-                    struct emit_location *ret = context->asm_block_return;
-                    context->asm_block_return = null;
-                    assert(ret->state == EMIT_LOCATION_loaded);
-                    
-                    // :asm_block_the_same_register_with_different_sizes
-                    //
-                    // As we sometimes _over-allocate_ the registers which were
-                    // 'inline_asm__was_used_by_user', we have to make sure
-                    // that the return is actually _allocated_.
-                    context->register_allocators[ret->register_kind_when_loaded].emit_location_map[ret->loaded_register] = ret;
-                    ret->inline_asm__was_used_by_user = false;
-                    
-                    struct ast_type *return_type = function_type->return_type;
-                    if(return_type->kind == AST_float_type){
-                        // we allow 'return xmm0' for floats, therefor we have to fix up the size here.
-                        assert(ret->register_kind_when_loaded == REGISTER_KIND_xmm);
-                        ret->size = return_type->size;
-                    }
-                    return ret;
-                }else{
-                    return emit_location_invalid(context);
-                }
-            }
-            
-            {   // store all 'emit_locations' that are not passed in registers onto the stack
-                smm stack_pass_location = 0x20;
-                for(u32 arg_at = array_count(*argument_registers); arg_at < arg_count; arg_at++){
-                    // @note: we cannot _just_ store these here, as we would overwrite these
-                    //        if e.g. the last argument is a function with a lot of arguments
-                    struct emit_location *loc = emit_locations[arg_at];
-                    smm size = argument_sizes[arg_at];
-                    
-                    struct emit_location *store_in = emit_location_register_relative(context, loc->register_kind_when_loaded, context->register_sp, context->register_sp, stack_pass_location, size);
-                    emit_store(context, store_in, loc);
-                    // :MSVC_function_call_stack_increase
-                    stack_pass_location += 8;
-                }
-            }
-            
-            // load all the 'register_locations' into the 'argument_registers'
-            // and lock them so they do not get spilled by the later 'argument_registers'
-            for(u32 i = 0; i < array_count(*argument_registers) && i < arg_count; i++){
-                
-                enum register_kind register_kind = emit_locations[i]->register_kind_when_loaded;
-                
-                if(emit_locations[i]->state == EMIT_LOCATION_loaded){
-                    if(emit_locations[i]->loaded_register == argument_registers[register_kind][i]){
-                        emit_location_prevent_spilling(context, emit_locations[i]);
-                        continue;
-                    }
-                }
-                
-                enum register_encoding arg_reg = allocate_specific_register(context, register_kind, argument_registers[register_kind][i]);
-                
-                // @cleanup: maybe do an emit_load_into_specific_register, that takes a register kind?
-                if(register_kind == REGISTER_KIND_gpr){
-                    emit_locations[i] = emit_load_into_specific_gpr(context, emit_locations[i], arg_reg);
-                }else{
-                    assert(emit_locations[i]->register_kind_when_loaded == REGISTER_KIND_xmm);
-                    emit_locations[i] = emit_load_float_into_specific_register(context, emit_locations[i], arg_reg);
-                }
-                
-                emit_location_prevent_spilling(context, emit_locations[i]);
-            }
-            
-            // :patches_are_32_bit
-            // @note: if we are here that means that this procedure is not yet emitted. Therefore it has to be a procedure we emit for. now we will only allow .text sections to be at most ((2 << 31) - 1) big, so that we can use relative calls everywhere. Thus we know that this is a realive call. -15.19.19
-            // @note: if we want an executable, all patches calls to known locations are in fact 32 bit.
-            //        and we have to patch them all as we later copy the code into the .text section -16.10.19
-            // @note now that we are emiting into a list now, so we have to move the memory in the end so we have to patch in every case -2.12.19
-            
-            if(identifier_to_call){
-                
-                struct ast_function *function = (struct ast_function *)identifier_to_call->decl;
-                assert(function->base.kind == AST_function);
-                
-                if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
-                    // :dllimport_loading
-                    struct emit_location *function_location = emit_location_rip_relative(context, &identifier_to_call->decl->base, REGISTER_KIND_gpr, 8);
-                    emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_CALL_REGM, function_location);
-                }else{
-                    emit(CALL_RELATIVE);
-                    smm patch_offset = emit_bytes(context, sizeof(s32), 0);
-                    
-                    emit_patch(context, PATCH_rip_relative, &patch_call_source_declaration->base, 0, &context->current_function->as_decl, patch_offset, patch_offset + 4);
-                }
-            }else{
-                assert(function_pointer_location);
-                
-                switch(function_pointer_location->state){
-                    case EMIT_LOCATION_register_relative:{
-                        emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_CALL_REGM, function_pointer_location);
-                    }break;
-                    case EMIT_LOCATION_loaded:{
-                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_CALL_REGM, function_pointer_location);
-                    }break;
-                    invalid_default_case();
-                }
-                free_emit_location(context, function_pointer_location);
-            }
-            
-            // free all 'argument_locations'
-            for(u32 i = 0; i < array_count(*argument_registers) && i < arg_count; i++){
-                emit_location_allow_spilling(context, emit_locations[i]);
-                free_emit_location(context, emit_locations[i]);
-            }
-            
-            if(function_type->return_type == &globals.typedef_void){
-                return emit_location_invalid(context);
-            }
-            
-            struct ast_type *return_type = function_type->return_type;
-            
-            
-            // :returning_structs
-            if(stack_return_location){
-                assert(!(return_type->flags & TYPE_FLAG_is_intrin_type));
-                assert(type_is_returned_by_address(return_type));
-                return stack_return_location;
-            }
-            
-            if(return_type->kind == AST_float_type || (return_type->flags & TYPE_FLAG_is_intrin_type)){
-                return emit_location_loaded(context, REGISTER_KIND_xmm, REGISTER_XMM0, return_type->size);
-            }
-            
-            // if we are a compound type or whatever we have return a 'register_relative' emit location, so we
-            // spill rax to the stack.
-            if(return_type->kind == AST_struct || return_type->kind == AST_union || return_type->kind == AST_array_type){
-                // handles like 'struct{u64 a;}' which are returned in 'rax'
-                
-                assert(!type_is_returned_by_address(return_type)); // otherwise it should have allready been handled
-                struct emit_location *ret = emit_allocate_temporary_stack_location(context, REGISTER_KIND_gpr, return_type->size, return_type->alignment);
-                struct emit_location *rax = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
-                emit_store(context, ret, rax);
-                return ret;
-            }
-            
-            assert(return_type->kind == AST_integer_type || return_type->kind == AST_pointer_type);
-            return emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
-        }break;
-        case AST_cast:
-        case AST_cast_lhs:{
-            struct ast_unary_op *cast = cast(struct ast_unary_op *)ast;
-            
-            struct ast *cast_what = cast->operand;
-            struct emit_location *loc = emit_code_for_ast(context, cast_what);
-            struct ast_type *cast_to = cast->base.resolved_type;
-            
-            if(cast_to->kind == AST_bitfield_type){
-                // 'int a : 3 = 123;' we can only get here, if we inserted an implicit assignment cast.
-                // just cast to the base type and let the 'AST_assignment'-case take care of the rest.
-                struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)cast_to;
-                cast_to = bitfield->base_type;
-            }
-            
-            if(cast_what->resolved_type == cast_to){
-                return loc;
-            }
-            
-            if(cast_to == &globals.typedef_void){
-                // dont free if (void)(void) a // @cleanup: is this still necessary after the equality check above?
-                if(loc) free_emit_location(context, loc);
-                return emit_location_invalid(context);
-            }
-            
-            if(cast_what->resolved_type->kind == AST_bitfield_type){
-                // this is where we load bitfields
-                return emit_load_bitfield(context, loc, (struct ast_bitfield_type *)cast_what->resolved_type);
-            }
-            
-            if(cast_what->resolved_type->kind == AST_atomic_integer_type){
-                // @note: It seems to me, that on x64 atomic-loads can simply be implemented as a mov.
-                return emit_load(context, loc);
-            }
-            
-            if(cast_to == &globals.typedef_Bool){
-                loc = emit_load(context, loc);
-                loc = emit_compare_to_zero(context, loc);
-                loc->size = 1; // load the thing as size 1
-                return emit_load(context, loc);
-            }
-            
-            assert(type_is_arithmetic(cast_to) || cast_to->kind == AST_pointer_type);
-            assert(type_is_arithmetic(cast_what->resolved_type) || cast_what->resolved_type->kind == AST_pointer_type);
-            
-            if(loc->state != EMIT_LOCATION_register_relative){
-                loc = emit_load(context, loc);
-            }
-            
-            if(loc->register_kind_when_loaded == REGISTER_KIND_xmm && cast_to->kind == AST_float_type){
-                assert(cast_what->resolved_type->kind == AST_float_type);
-                //
-                // Cast f32 -> f64 or f64 -> f32
-                //
-                
-                // @cleanup: is this the wrong way around, which argument is this prefix for?
-                struct prefixes sse_prefix = get_sse_prefix_for_scalar(loc->size);
-                
-                // cvtsd2ss - convert_scalar_double_to_scalar_single
-                // cvtss2sd - convert_scalar_single_to_scalar_double
-                if(loc->state == EMIT_LOCATION_register_relative){
-                    struct emit_location *loaded = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), cast_to->size);
-                    emit_register_relative_register(context, sse_prefix, two_byte_opcode(0x5A), loaded->loaded_register, loc);
-                    free_emit_location(context, loc);
-                    loc = loaded;
-                }else{
-                    // The last argument of this (4) only decides whether or not we emit a REXW prefix. This instruction does not need REXW.
-                    // So we pass 4, which does not emit any prefixes!
-                    emit_register_op__internal(context, sse_prefix, two_byte_opcode(0x5A), loc->loaded_register, loc->loaded_register, 4);
-                }
-                loc->size = cast_to->size;
-                return loc;
-            }
-            
-            if(loc->register_kind_when_loaded == REGISTER_KIND_xmm){
-                assert(loc->size == 4 || loc->size == 8);
-                
-                // 
-                // We want to cast some float-type to some integer-type.
-                // 
-                // We use the instructions 'cvttsd2si' or 'cvttss2si' based on the 
-                // the floating point type. These instructions convert to *signed* integer type.
-                // Hence, we have to do something special here for unsigned types.
-                // 
-                // If the destination is a 'u8' or 'u16',  we can simply use the 32-bit version and then truncate.
-                // If the destination is a 'u32', we can simply use the 64-bit version and then truncate.
-                // If the destination is a 'u64', we have to check first if the value in the source is large.
-                // 
-                // gcc and msvc compare emit something like this:
-                //     movsd  xmm0, doubled              ; Load the initial value into xmm0.
-                //     comisd xmm0, qword ptr[rip + big] ; Compare against a big number 9.22337e+19 (0x8000000000000000).
-                //     jb simple_conversion              ; We are less then the first value which overflows a s64.
-                //     
-                //     sub xmm0, qword ptr[rip + big]    ; We exceed the big value, subtract it.
-                //     cvttsd2si rax, xmm0               ; Then convert, now the result should be (unless overflow in the correct range).
-                //     mov rcx, 0x8000000000000000       ; Then finally, add the 0x8000000000000000 back into rax.
-                //     add rax, rcx
-                //     jmp end
-                //     
-                // simple_conversion:
-                //     cvttsd2si rax, xmm0               ; We know it is in range, simply convert.
-                //     
-                // end:
-                //     
-                
-                smm size = (cast_to->size < 4) ? 4 : cast_to->size;
-                if(cast_to == &globals.typedef_u32) size = 8;
-                
-                if(cast_to == &globals.typedef_u64){
-                    //
-                    // This is the hard case. @incomplete:
-                    //
-                }
-                
-                struct emit_location *loaded = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), cast_to->size);
-                
-                struct prefixes sse_prefix = get_sse_prefix_for_scalar(loc->size);
-                if(loc->state == EMIT_LOCATION_register_relative){
-                    loc->size = size; // make sure we emit rexw if we should
-                    emit_register_relative_register(context, sse_prefix, two_byte_opcode(0x2c), loaded->loaded_register, loc);
-                }else{
-                    emit_register_op__internal(context, sse_prefix, two_byte_opcode(0x2c), loaded->loaded_register, loc->loaded_register, size);
-                }
-                free_emit_location(context, loc);
-                return loaded;
-            }
-            
-            assert(loc->register_kind_when_loaded == REGISTER_KIND_gpr);
-            b32 source_is_signed = type_is_signed(cast_what->resolved_type);
-            
-            if(cast_to->kind != AST_float_type && loc->size >= cast_to->size){
-                // If it is an integer to integer cast and the cast_to->size fits just truncate and return
-                // this works because of :little_endian
-                loc->size = cast_to->size;
-                return loc;
-            }
-            
-            if(cast_to->kind != AST_float_type || loc->size < 4){
-                // If its an integer to integer cast ints a zero / sign extension.
-                // Thus load the thing into a bigger registers.
-                // If its a float to integer conversion and the integer is small also load value into a bigger register,
-                // because the float to int instructions only take s32 or s64.
-                
-                smm size_to_load_into = cast_to->size;
-                if(loc->register_kind_when_loaded != REGISTER_KIND_gpr) size_to_load_into = 4;
-                
-                struct opcode opcode = get_opcode_for_move_instruction_and_adjust_size(loc, size_to_load_into, source_is_signed);
-                
-                if(loc->state == EMIT_LOCATION_register_relative){
-                    enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                    emit_register_relative_register(context, no_prefix(), opcode, reg, loc);
-                    free_emit_location(context, loc);
-                    loc = emit_location_loaded(context, REGISTER_KIND_gpr, reg, size_to_load_into);
-                }else{
-                    emit_register_register(context, no_prefix(), opcode, loc, loc);
-                    loc->size = size_to_load_into;
-                }
-            }
-            
-            if(cast_to->kind == AST_float_type){
-                assert(loc->register_kind_when_loaded == REGISTER_KIND_gpr);
-                assert(loc->size == 4 || loc->size == 8);
-                assert(cast_what->resolved_type->kind == AST_integer_type); // pointers are disallowed!
-                
-                // Casting from int to float:
-                //
-                // The conversion instructions 'cvtsi2ss' and 'cvtsi2sd' treat the source operand as signed.
-                // This means signed -> float/double is easy, the unsigned int case is more complicated.
-                // For 'u32' we can _extend_ the value into a 64-bit register and then use the 64 bit variant.
-                // For 'u64' it gets complicated (see the code below).
-                
-                enum register_encoding reg = allocate_register(context, REGISTER_KIND_xmm);
-                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, reg, cast_to->size);
-                
-                enum legacy_prefixes prefix = (cast_to == &globals.typedef_f32) ? ASM_PREFIX_SSE_float : ASM_PREFIX_SSE_double;
-                
-                if(cast_what->resolved_type == &globals.typedef_u64){
-                    assert(!source_is_signed && loc->size == 8);
-                    // 
-                    // This is the hard case. 
-                    // We have to shift the u64 down by one and then add it to itself, while keeping rounding correct.
-                    // 
-                    
-                    // The code msvc and gcc emit looks something like this:
-                    //    mov      rax,  u64  ; load the initial value into rax
-                    //    test     rax,  rax  ; check if the top bit is set and set SF <- MSB(rax)
-                    //    js       msb_set    ; jump if 'SF', i.e MSB(rax) is set, to the slow part
-                    //    
-                    //    cvtsi2sd xmm1, rax  ; Convert the value if MSB(rax) is not set
-                    //    jmp      end        ; jump to end as we are done
-                    // 
-                    // msb_set:
-                    //    mov      rcx,  rax  ; save the u64 so we can fix up rounding
-                    //    shr      rax,  1    ; shift the u64, such that the sign bit is not set
-                    //    and      rcx,  1    ; get the parity from the original u64
-                    //    or       rax,  rcx  ; fix up the last bit to be set if either of the last two bits of the original value are set
-                    //    cvtsi2sd xmm1, rax  ; Convert the resulting value
-                    //    addsd    xmm1, xmm1 ; Double it to get back to the desired value
-                    //    
-                    // end:
-                    
-                    // load the value and lock it, so we can copy it
-                    loc = emit_load(context, loc);
-                    emit_location_prevent_spilling(context, loc);
-                    
-                    // test the value
-                    emit_register_register(context, no_prefix(), one_byte_opcode(TEST_REGM_REG), loc, loc);
-                    
-                    struct jump_context msb_set_jump = zero_struct;
-                    jump_context_emit(context, &msb_set_jump, JUMP_CONTEXT_jump_on_true, COMP_negative);
-                    
-                    // we are good, we have passed the test, MSB is not set. just convert the value!
-                    emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, 8);
-                    
-                    struct jump_context jump_to_end = zero_struct;
-                    jump_context_emit(context, &jump_to_end, JUMP_CONTEXT_jump_on_true, COMP_none);
-                    
-                    // msb_set:
-                    emit_end_jumps(context, msb_set_jump);
-                    
-                    // copy the value
-                    enum register_encoding saved_gpr = allocate_register(context, REGISTER_KIND_gpr);
-                    struct emit_location *saved = emit_load_into_specific_gpr(context, loc, saved_gpr);
-                    
-                    // shift the value to the right by 1.
-                    emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_1), REG_OPCODE_SHIFT_RIGHT, loc);
-                    
-                    // extract the last bit of the saved value by and'ing it with 1.
-                    emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8), REG_OPCODE_AND, saved);
-                    emit(1);
-                    
-                    // or the the last bit into the shifted value
-                    emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), loc, saved);
-                    
-                    // convert the value
-                    emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, 8);
-                    
-                    // double the value
-                    emit_register_register(context, create_prefixes(prefix), two_byte_opcode(ADD_XMM), ret, ret);
-                    
-                    // end:
-                    emit_end_jumps(context, jump_to_end);
-                    
-                    free_emit_location(context, saved);
-                    emit_location_allow_spilling(context, loc);
-                    free_emit_location(context, loc);
-                    return ret;
-                }
-                
-                if(cast_what->resolved_type == &globals.typedef_u32){
-                    assert(!source_is_signed && loc->size == 4);
-                    // if the source type is 
-                    // we have to extend 'loc' into a full register, just in case it was casted from 64 bit.
-                    enum register_encoding loaded_gpr = allocate_register(context, REGISTER_KIND_gpr);
-                    struct emit_location *loaded = emit_load_into_specific_gpr(context, loc, loaded_gpr);
-                    loaded->size = 8;
-                    loc = loaded;
-                }
-                
-                if(loc->state == EMIT_LOCATION_loaded){
-                    emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
-                }else{
-                    assert(loc->state == EMIT_LOCATION_register_relative);
-                    emit_register_relative_register(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc);
-                }
-                
-                free_emit_location(context, loc);
-                return ret;
-            }
-            
-            // else 'cast_to' and 'operand' are of integer type, so we are just done as we extended it above
-            assert(loc->size  == cast_to->size);
-            assert(loc->state == EMIT_LOCATION_loaded);
-            return loc;
-        }break;
-        case AST_asm_block:{
-            emit_inline_asm_block(context, (struct ast_asm_block *)ast);
-            
-            // @cleanup: is this neccessary?
-            for(enum register_kind a = 0; a < REGISTER_KIND_count; a++){
-                for(u32 i = 0; i < array_count(context->register_allocators[a].emit_location_map); i++){
-                    context->register_allocators[a].emit_location_map[i] = null;
-                }
-            }
-            
-            context->inline_asm_mode = null;
-            return emit_location_invalid(context);
-        }break;
-        case AST_panic:{
-            // __fastfail
-            emit(0xcd);
-            emit(0x29);
-            return emit_location_immediate(context, 0, 4);
-        }break;
-        
-        invalid_default_case(return null);
-    }
-    //invalid_code_path;
-}
+// :emit_code_for_function__internal
 
 
 // :ir_refactor
@@ -4670,27 +2534,41 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             
             case AST_identifier:{
                 ast_arena_at += sizeof(struct ast_identifier);
-                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+                emit_location_stack[emit_location_stack_at++] = get_emit_location_for_identifier(context, ast);
             }break;
             
             case AST_string_literal:{
                 ast_arena_at += sizeof(struct ast_string_literal);
-                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+                struct ast_string_literal *string_literal = (struct ast_string_literal *)ast;
+                sll_push_back(context->string_literals, string_literal);
+                context->string_literals.amount_of_strings += 1;
+                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &string_literal->base, REGISTER_KIND_gpr, 8);
             }break;
             
             case AST_integer_literal:{
                 ast_arena_at += sizeof(struct ast_integer_literal);
-                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+                emit_location_stack[emit_location_stack_at++] = emit_location_immediate(context, integer_literal_to_bytes(ast), ast->resolved_type->size);
             }break;
             
             case AST_float_literal:{
                 ast_arena_at += sizeof(struct ast_float_literal);
-                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+                struct ast_float_literal *f = cast(struct ast_float_literal *)ast;
+                
+                // @note: This sucks!
+                struct ast_emitted_float_literal *emitted = push_ast(context, f->base.token, emitted_float_literal);
+                emitted->value = f->value;
+                
+                sll_push_back(context->emitted_float_literals, emitted);
+                context->emitted_float_literals.amount_of_float_literals += 1;
+                set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
+                
+                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &emitted->base, REGISTER_KIND_xmm, f->base.resolved_type->size);
             }break;
             
             case AST_pointer_literal:{
                 ast_arena_at += sizeof(struct ast_pointer_literal);
-                emit_location_stack[emit_location_stack_at++] = emit_code_for_ast(context, ast);
+                struct ast_pointer_literal *pointer = cast(struct ast_pointer_literal *)ast;
+                emit_location_stack[emit_location_stack_at++] = emit_location_immediate(context, (u64)pointer->pointer, ast->resolved_type->size);
             }break;
             
             case AST_pointer_literal_deref:{
@@ -5188,7 +3066,21 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     one->value = 1.0;
                     set_resolved_type(&one->base, op->base.resolved_type, null);
                     
-                    struct emit_location *rhs = emit_code_for_ast(context, &one->base);
+                    struct emit_location *rhs;
+                    {   // @cleanup: copy and paste
+                        struct ast_float_literal *f = cast(struct ast_float_literal *)one;
+                        
+                        // @note: This sucks!
+                        struct ast_emitted_float_literal *emitted = push_ast(context, f->base.token, emitted_float_literal);
+                        emitted->value = f->value;
+                        
+                        sll_push_back(context->emitted_float_literals, emitted);
+                        context->emitted_float_literals.amount_of_float_literals += 1;
+                        set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
+                        
+                        rhs = emit_location_rip_relative(context, &emitted->base, REGISTER_KIND_xmm, f->base.resolved_type->size);
+                    }
+                    
                     assert(rhs->state == EMIT_LOCATION_register_relative);
                     
                     struct emit_location *lhs = emit_load(context, loc); // @cleanup: This should be a register-to-register move instead.
@@ -5276,7 +3168,20 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     one->value = 1.0;
                     set_resolved_type(&one->base, op->base.resolved_type, null);
                     
-                    struct emit_location *rhs = emit_code_for_ast(context, &one->base);
+                    struct emit_location *rhs;
+                    {
+                        struct ast_float_literal *f = (struct ast_float_literal *)one;
+                        
+                        // @note: This sucks!
+                        struct ast_emitted_float_literal *emitted = push_ast(context, f->base.token, emitted_float_literal);
+                        emitted->value = f->value;
+                        
+                        sll_push_back(context->emitted_float_literals, emitted);
+                        context->emitted_float_literals.amount_of_float_literals += 1;
+                        set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
+                        
+                        rhs = emit_location_rip_relative(context, &emitted->base, REGISTER_KIND_xmm, f->base.resolved_type->size);
+                    }
                     assert(rhs->state == EMIT_LOCATION_register_relative);
                     
                     emit_location_prevent_spilling(context, loc);
@@ -5509,7 +3414,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack_at -= 1;
                 
                 if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                    emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, MUL_XMM);
+                    emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, DIV_XMM);
                 }else{
                     emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, type_is_signed(ast->resolved_type), REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, ast->kind); // :ir_refactor_is_signed
                 }
@@ -5954,15 +3859,20 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         
                         if(argument->size < 16 && argument->register_kind_when_loaded == REGISTER_KIND_xmm){
                             struct emit_location *float_reg = emit_load_float(context, argument);
-                            enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                            struct emit_location *gpr_reg = emit_location_loaded(context, REGISTER_KIND_gpr, reg, 8);
+                            
+                            enum register_encoding expected_register = argument_registers[REGISTER_KIND_gpr][returns_big_struct + argument_index];
+                            enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, expected_register);
+                            
+                            struct emit_location *gpr_reg = emit_location_loaded(context, REGISTER_KIND_gpr, arg_reg, 8);
                             
                             // @cleanup: holy fuck, I really don't understand the prefix convention here...
                             // prefix to load the _lower_ half (mm|xmm) and we want xmm I guess..
                             emit_register_op__internal(context, create_prefixes(ASM_PREFIX_NON_PACKED_OP_double), two_byte_opcode(MOVQ_REGM_XMM), float_reg->loaded_register, gpr_reg->loaded_register, 8);
                             free_emit_location(context, float_reg);
                             
-                            argument = gpr_reg;
+                            emit_location_prevent_spilling(context, gpr_reg);
+                            argument_locations[argument_index] = gpr_reg;
+                            continue;
                         }
                     }
                     
@@ -6488,13 +4398,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // LET'S GO:
     ////////////////////////////////////////////////
     
-    // if(0)
-    if(1)
-    {
-        emit_code_for_function__internal(context, function);
-    }else{
-        emit_code_for_ast(context, function->scope);
-    }
+    emit_code_for_function__internal(context, function);
     
     ////////////////////////////////////////////////
     

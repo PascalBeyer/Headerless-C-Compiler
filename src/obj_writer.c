@@ -593,158 +593,101 @@ struct debug_symbols_relocation_info{
 };
 
 
-void codeview_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast *ast, struct memory_arena *relocation_arena, u8 *debug_symbols_base){
+void codeview_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast_scope *scope, struct memory_arena *relocation_arena, u8 *debug_symbols_base){
     // assert(ast->byte_offset_in_function >= 0);
     
-    switch(ast->kind){
-        case AST_scope:{
-            struct ast_scope *scope = (struct ast_scope *)ast;
-            
-            if(scope->amount_of_declarations){
-                
-                if(function->scope != ast){
-                    struct codeview_block32{
-                        u16 length;
-                        u16 kind;
-                        u32 pointer_to_parent; // filled in by the linker
-                        u32 pointer_to_end;    // filled in by the linker
-                        u32 scope_size;
-                        u32 offset_in_section;
-                        u16 section;
-                    } *block = push_struct(arena, struct codeview_block32);
-                    block->length = sizeof(*block) - 2;
-                    block->kind   = /*S_BLOCK32*/0x1103;
-                    
-                    if(scope->start_line_index == -1){
-                        // Function is empty.
-                        block->scope_size = 0;
-                        block->offset_in_section = 0; // ?
-                    }else{
-                        struct function_line_information start = function->line_information.data[scope->start_line_index];
-                        struct function_line_information end   = function->line_information.data[scope->end_line_index];
-                        
-                        // @cleanup: Does this correctly include function->size_of_prologue?
-                        block->scope_size = end.offset - start.offset;
-                        block->offset_in_section = start.offset; // relocated by relocation.
-                    }
-                    
-                    block->section = 0; // filled in by relocation.
-                    
-                    struct debug_symbols_relocation_info *relocation = push_struct(relocation_arena, struct debug_symbols_relocation_info);
-                    relocation->destination_offset = (u32)((u8 *)&block->offset_in_section - debug_symbols_base);
-                    relocation->source_declaration = &function->as_decl;
-                }
-                
-                for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
-                    struct ast_declaration *decl = scope->declarations[declaration_index];
-                    if(!decl) continue;
-                    
-                    if(decl->base.kind == AST_typedef){
-                        // @cleanup: S_UDT
-                        continue;
-                    }
-                    
-                    if(decl->base.kind == AST_function){
-                        // @cleanup: What should we do here?
-                        continue;
-                    }
-                    
-                    if(decl->flags & DECLARATION_FLAGS_is_local_persist){
-                        // @cleanup: S_LDATA32
-                        continue;
-                    }
-                    
-                    if(decl->flags & DECLARATION_FLAGS_is_enum_member){
-                        // @cleanup: S_CONSTANT
-                        continue;
-                    }
-                    
-                    // 
-                    // It's a "normal" declaration.
-                    // 
-                    
-                    struct codeview_regrel32{
-                        u16 length;
-                        u16 kind;
-                        u32 offset_of_register;
-                        u32 type_index;
-                        u16 register_index;
-                        u8 identifier[];
-                    } *regrel = push_struct_(arena, offset_in_type(struct codeview_regrel32, identifier) + decl->identifier->string.size + 1, /*alignment*/4);
-                    
-                    regrel->kind = /*S_REGREL32*/0x1111;
-                    regrel->offset_of_register = (s32)(-decl->offset_on_stack);
-                    regrel->type_index = decl->type->pdb_type_index;
-                    regrel->register_index = /*CV_AMD64_RBP*/334;
-                    memcpy(regrel->identifier, decl->identifier->string.data, decl->identifier->string.size);
-                    regrel->identifier[decl->identifier->string.size] = 0;
-                    
-                    push_f3f2f1_align(arena, sizeof(u32));
-                    regrel->length = (u16)(arena_current(arena) - (u8 *)&regrel->kind);
-                }
-            }
-            
-            for_ast_list(scope->statement_list){
-                codeview_emit_debug_information_for_function__recursive(function, arena, it->value, relocation_arena, debug_symbols_base);
-            }
-            
-            if(scope->amount_of_declarations && function->scope != ast){
-                *push_struct(arena, u16) = /*length*/2;
-                *push_struct(arena, u16) = /*S_END*/6;
-            }
-            
-        }break;
+    if(scope->amount_of_declarations){
         
-        case AST_if:{
-            struct ast_if *ast_if = cast(struct ast_if *)ast;
-            codeview_emit_debug_information_for_function__recursive(function, arena, ast_if->statement, relocation_arena, debug_symbols_base);
-            if(ast_if->else_statement){
-                codeview_emit_debug_information_for_function__recursive(function, arena, ast_if->else_statement, relocation_arena, debug_symbols_base);
-            }
-        }break;
-        
-        case AST_do_while: case AST_for:{
-            struct ast_for *ast_for = (struct ast_for *)ast;
+        if((struct ast_scope *)function->scope != scope){
+            struct codeview_block32{
+                u16 length;
+                u16 kind;
+                u32 pointer_to_parent; // filled in by the linker
+                u32 pointer_to_end;    // filled in by the linker
+                u32 scope_size;
+                u32 offset_in_section;
+                u16 section;
+            } *block = push_struct(arena, struct codeview_block32);
+            block->length = sizeof(*block) - 2;
+            block->kind   = /*S_BLOCK32*/0x1103;
             
-            if(ast_for->scope_for_decl->amount_of_declarations){
-                // 
-                // @hack: The statement_list of the 'ast_for->scope_for_decl' is actually empty, 
-                //        not containing the 'ast_for->body'. Hence, we have introduce the S_BLOCK32
-                //        then somehow the 'ast_for->body' and finally end with the 'S_END'.
-                //        We do this is the most hacky way, by first emitting the code for the 'scope_for_decl'
-                //        this will end for an 'S_END', we "pop" this 'S_END' and emit the code for the 'ast_for->body'.
-                //        Finally, we re-emit the 'S_END'.
-                // 
-                
-                codeview_emit_debug_information_for_function__recursive(function, arena, &ast_for->scope_for_decl->base, relocation_arena, debug_symbols_base);
-                arena->current -= 4;
-                codeview_emit_debug_information_for_function__recursive(function, arena, ast_for->body, relocation_arena, debug_symbols_base);
-                *push_struct(arena, u16) = /*length*/2;
-                *push_struct(arena, u16) = /*S_END*/6;
-                
+            if(scope->start_line_index == -1){
+                // Function is empty.
+                block->scope_size = 0;
+                block->offset_in_section = 0; // ?
             }else{
-                // 
-                // We don't need a scope for the body.
-                // 
-                codeview_emit_debug_information_for_function__recursive(function, arena, ast_for->body, relocation_arena, debug_symbols_base);
+                struct function_line_information start = function->line_information.data[scope->start_line_index];
+                struct function_line_information end   = function->line_information.data[scope->end_line_index];
+                
+                // @cleanup: Does this correctly include function->size_of_prologue?
+                block->scope_size = end.offset - start.offset;
+                block->offset_in_section = start.offset; // relocated by relocation.
             }
-        }break;
+            
+            block->section = 0; // filled in by relocation.
+            
+            struct debug_symbols_relocation_info *relocation = push_struct(relocation_arena, struct debug_symbols_relocation_info);
+            relocation->destination_offset = (u32)((u8 *)&block->offset_in_section - debug_symbols_base);
+            relocation->source_declaration = &function->as_decl;
+        }
         
-        case AST_switch:{
-            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-            codeview_emit_debug_information_for_function__recursive(function, arena, ast_switch->statement, relocation_arena, debug_symbols_base);
-        }break;
-        case AST_label:{
-            struct ast_label *ast_label = cast(struct ast_label *)ast;
-            if(ast_label->statement) codeview_emit_debug_information_for_function__recursive(function, arena, ast_label->statement, relocation_arena, debug_symbols_base);
-        }break;
-        case AST_case:{
-            struct ast_case *ast_case = cast(struct ast_case *)ast;
-            if(ast_case->statement) codeview_emit_debug_information_for_function__recursive(function, arena, ast_case->statement, relocation_arena, debug_symbols_base);
-        }break;
-        default: break;
+        for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
+            struct ast_declaration *decl = scope->declarations[declaration_index];
+            if(!decl) continue;
+            
+            if(decl->base.kind == AST_typedef){
+                // @cleanup: S_UDT
+                continue;
+            }
+            
+            if(decl->base.kind == AST_function){
+                // @cleanup: What should we do here?
+                continue;
+            }
+            
+            if(decl->flags & DECLARATION_FLAGS_is_local_persist){
+                // @cleanup: S_LDATA32
+                continue;
+            }
+            
+            if(decl->flags & DECLARATION_FLAGS_is_enum_member){
+                // @cleanup: S_CONSTANT
+                continue;
+            }
+            
+            // 
+            // It's a "normal" declaration.
+            // 
+            
+            struct codeview_regrel32{
+                u16 length;
+                u16 kind;
+                u32 offset_of_register;
+                u32 type_index;
+                u16 register_index;
+                u8 identifier[];
+            } *regrel = push_struct_(arena, offset_in_type(struct codeview_regrel32, identifier) + decl->identifier->string.size + 1, /*alignment*/4);
+            
+            regrel->kind = /*S_REGREL32*/0x1111;
+            regrel->offset_of_register = (s32)(-decl->offset_on_stack);
+            regrel->type_index = decl->type->pdb_type_index;
+            regrel->register_index = /*CV_AMD64_RBP*/334;
+            memcpy(regrel->identifier, decl->identifier->string.data, decl->identifier->string.size);
+            regrel->identifier[decl->identifier->string.size] = 0;
+            
+            push_f3f2f1_align(arena, sizeof(u32));
+            regrel->length = (u16)(arena_current(arena) - (u8 *)&regrel->kind);
+        }
     }
     
+    for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+        codeview_emit_debug_information_for_function__recursive(function, arena, subscope, relocation_arena, debug_symbols_base);
+    }
+    
+    if(scope->amount_of_declarations && (struct ast_scope *)function->scope != scope){
+        *push_struct(arena, u16) = /*length*/2;
+        *push_struct(arena, u16) = /*S_END*/6;
+    }
 }
 
 void print_obj(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
@@ -1669,116 +1612,52 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
             smm ast_stack_capacity = 32;
             struct ast_stack_node{
-                struct ast *ast;
+                struct ast_scope *scope;
             } *stack = push_uninitialized_data(&stack_arena, struct ast_stack_node, ast_stack_capacity);
-            stack[0].ast = function->scope;
+            stack[0].scope = (struct ast_scope *)function->scope;
             
-#define push_to_stack(ast_to_push) {\
+#define push_to_stack(scope_to_push) {\
     if(ast_stack_size == ast_stack_capacity){\
         push_uninitialized_data(&stack_arena, struct ast_stack_node, ast_stack_capacity);\
         ast_stack_capacity *= 2;\
     }\
-    stack[ast_stack_size++].ast = (ast_to_push);\
+    stack[ast_stack_size++].scope = (scope_to_push);\
 }
             
             for(smm ast_stack_size = 1; ast_stack_size > 0; ){
                 
-                struct ast *ast = stack[--ast_stack_size].ast;
+                struct ast_scope *scope = stack[--ast_stack_size].scope;
                 
-                switch(ast->kind){
-                    
-                    case AST_typedef: case AST_declaration:{
-                        struct ast_declaration *decl = (struct ast_declaration *)ast;
-                        register_type(&type_index_allocator, arena, scratch, decl->type);
-                    }break;
-                    
-                    case AST_declaration_list:{
-                        struct ast_declaration_list *list = cast(struct ast_declaration_list *)ast;
-                        for(struct declaration_node *node = list->list.first; node; node = node->next){
-                            register_type(&type_index_allocator, arena, scratch, node->decl->type);
-                        }
-                    }break;
-                    
-                    case AST_if:{
-                        struct ast_if *ast_if = (struct ast_if *)ast;
-                        
-                        // 
-                        // First recurse into the 'condition', then the 'statement', then the 'else_statement'.
-                        // 
-                        
-                        if(ast_if->else_statement) push_to_stack(ast_if->else_statement);
-                        push_to_stack(ast_if->statement);
-                        push_to_stack(ast_if->condition);
-                    }break;
-                    
-                    case AST_do_while:{
-                        struct ast_for *do_while = (struct ast_for *)ast;
-                        
-                        // 
-                        // First recurse into the 'body', and then into the 'condition'.
-                        // 
-                        
-                        if(do_while->condition) push_to_stack(do_while->condition);
-                        push_to_stack(do_while->body);
-                    }break;
-                    
-                    case AST_for:{
-                        struct ast_for *ast_for = (struct ast_for *)ast;
-                        
-                        // 
-                        // First recurse into the 'decl', then the 'condition', 
-                        // then the 'body' and finially the 'increment'.
-                        // 
-                        if(ast_for->increment) push_to_stack(ast_for->increment);
-                        push_to_stack(ast_for->body);
-                        if(ast_for->condition) push_to_stack(ast_for->condition);
-                        if(ast_for->decl) push_to_stack(ast_for->decl);
-                    }break;
-                    
-                    case AST_scope:{
-                        struct ast_scope *scope = (struct ast_scope *)ast;
-                        
-                        // 
-                        // Push all the statements to the ast stack in reverse order.
-                        // 
-                        
-                        smm statement_list_count = scope->statement_list.count;
-                        
-                        if(ast_stack_size + statement_list_count > ast_stack_capacity){
-                            push_uninitialized_data(&stack_arena, struct ast_stack_node, statement_list_count);
-                        }
-                        
-                        ast_stack_size += statement_list_count;
-                        
-                        smm statement_index = 0;
-                        for_ast_list(scope->statement_list){
-                            stack[ast_stack_size - (statement_index++ + 1)].ast = it->value;
-                        }
-                        assert(statement_index == statement_list_count);
-                    }break;
-                    
-                    case AST_switch:{
-                        struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-                        
-                        // 
-                        // First recurse into the thing we 'switch_on' then the 'statement'.
-                        // 
-                        
-                        push_to_stack(ast_switch->statement);
-                        push_to_stack(ast_switch->switch_on);
-                    }break;
-                    
-                    case AST_label:{
-                        struct ast_label *ast_label = cast(struct ast_label *)ast;
-                        if(ast_label->statement) push_to_stack(ast_label->statement);
-                    }break;
-                    case AST_case:{
-                        struct ast_case *ast_case = cast(struct ast_case *)ast;
-                        if(ast_case->statement) push_to_stack(ast_case->statement);
-                    }break;
-                    
-                    default: break;
+                for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
+                    struct ast_declaration *decl = scope->declarations[declaration_index];
+                    if(!decl) continue;
+                    register_type(&type_index_allocator, arena, scratch, decl->type);
                 }
+                
+                for(smm compound_index = 0; compound_index < scope->current_max_amount_of_compound_types; compound_index++){
+                    struct ast_compound_type *compound = scope->compound_types[compound_index];
+                    if(!compound) continue;
+                    register_type(&type_index_allocator, arena, scratch, &compound->base);
+                }
+                
+                // 
+                // Push all the statements to the ast stack in reverse order.
+                // 
+                
+                smm subscope_count = scope->subscopes.count;
+                
+                if(ast_stack_size + subscope_count > ast_stack_capacity){
+                    push_uninitialized_data(&stack_arena, struct ast_stack_node, subscope_count);
+                }
+                
+                ast_stack_size += subscope_count;
+                
+                smm subscope_index = 0;
+                for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+                    stack[ast_stack_size - (subscope_index++ + 1)].scope = subscope;
+                }
+                
+                assert(subscope_index == subscope_count);
             }
         }
         
@@ -2056,7 +1935,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 *frameproc_length = (u16)(arena_current(arena) - (u8 *)(frameproc_length + 1));
                 
-                codeview_emit_debug_information_for_function__recursive(function, arena, function->scope, scratch, debug_symbols_base);
+                codeview_emit_debug_information_for_function__recursive(function, arena, (struct ast_scope *)function->scope, scratch, debug_symbols_base);
                 
                 *push_struct(arena, u16) = 2; // length
                 *push_struct(arena, u16) = /*S_PROC_ID_END*/0x114f;

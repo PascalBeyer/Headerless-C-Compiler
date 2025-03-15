@@ -3215,7 +3215,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             context->current_statement_returns_a_value = 1;
         }
         
-        ast_list_append(&scope->statement_list, context->arena, &asm_block->base);
+        scope->asm_block = asm_block;
         
         for_ast_list(function->type->argument_list){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
@@ -3272,8 +3272,6 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             struct ast_return *ast_return = push_expression(context, end_curly, return);
             ast_return->expr = expression;
             set_resolved_type(&ast_return->base, &globals.typedef_void, null);
-            
-            ast_list_append(&scope->statement_list, context->arena, &ast_return->base);
         }
     }
     

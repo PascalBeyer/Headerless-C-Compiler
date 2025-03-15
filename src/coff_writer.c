@@ -1274,54 +1274,22 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
     }
 }
 
-func void tpi_register_all_types_in_ast__recursive(struct pdb_write_context *context, struct ast *ast){
-    switch(ast->kind){
-        case AST_declaration:{
-            struct ast_declaration *decl = cast(struct ast_declaration *)ast;
-            tpi_register_type(context, decl->type);
-        }break;
-        case AST_declaration_list:{
-            struct ast_declaration_list *list = cast(struct ast_declaration_list *)ast;
-            for(struct declaration_node *node = list->list.first; node; node = node->next){
-                tpi_register_type(context, node->decl->type);
-            }
-        }break;
-        case AST_if:{
-            struct ast_if *ast_if = cast(struct ast_if *)ast;
-            tpi_register_all_types_in_ast__recursive(context, ast_if->statement);
-            if(ast_if->else_statement){
-                tpi_register_all_types_in_ast__recursive(context, ast_if->else_statement);
-            }
-        }break;
-        case AST_do_while:
-        case AST_for:{
-            struct ast_for *ast_for = cast(struct ast_for *)ast;
-            // @yuck @ugly @hack: ast_for->decl is any statement right now
-            if(ast_for->decl) tpi_register_all_types_in_ast__recursive(context, ast_for->decl);
-            tpi_register_all_types_in_ast__recursive(context, &ast_for->scope_for_decl->base);
-            tpi_register_all_types_in_ast__recursive(context, ast_for->body);
-        }break;
-        case AST_scope:{
-            struct ast_scope *scope = cast(struct ast_scope *)ast;
-            for_ast_list(scope->statement_list){
-                tpi_register_all_types_in_ast__recursive(context, it->value);
-            }
-        }break;
-        case AST_switch:{
-            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-            tpi_register_all_types_in_ast__recursive(context, ast_switch->statement);
-        }break;
-        case AST_label:{
-            struct ast_label *ast_label = cast(struct ast_label *)ast;
-            if(ast_label->statement) tpi_register_all_types_in_ast__recursive(context, ast_label->statement);
-        }break;
-        case AST_case:{
-            struct ast_case *ast_case = cast(struct ast_case *)ast;
-            if(ast_case->statement) tpi_register_all_types_in_ast__recursive(context, ast_case->statement);
-        }break;
-        default:{
-            // everything else is fine.
-        }break;
+func void tpi_register_all_types_in_scope__recursive(struct pdb_write_context *context, struct ast_scope *scope){
+    
+    for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
+        struct ast_declaration *decl = scope->declarations[declaration_index];
+        if(!decl) continue;
+        tpi_register_type(context, decl->type);
+    }
+    
+    for(smm compound_index = 0; compound_index < scope->current_max_amount_of_compound_types; compound_index++){
+        struct ast_compound_type *compound = scope->compound_types[compound_index];
+        if(!compound) continue;
+        tpi_register_type(context, &compound->base);
+    }
+    
+    for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+        tpi_register_all_types_in_scope__recursive(context, subscope);
     }
 }
 
@@ -1384,94 +1352,39 @@ func struct pdb_location pdb_begin_scope(struct pdb_write_context *context, stru
     return pointer_to_end_loc;
 }
 
-func void emit_debug_info_for_ast__recursive(struct pdb_write_context *context, struct ast_function *function, struct ast *ast){
+func void emit_debug_info_for_scope__recursive(struct pdb_write_context *context, struct ast_function *function, struct ast_scope *scope){
     
-    switch(ast->kind){
-        case AST_scope:{
-            // @cleanup: skip if there are no declarations in the scope.
-            
-            
-            struct pdb_location pointer_to_end_loc = zero_struct;
-            struct ast_scope *scope = cast(struct ast_scope *)ast;
-            smm old_offset = context->current_block32_offset_in_stream;
-            
-            if(ast != function->scope){
-                // @note: do not emit a scope for the initial scope as it is implied by the frameproc
-                pointer_to_end_loc = pdb_begin_scope(context, function, scope);
-            }
-            
-            pdb_emit_regrels_for_scope(context, scope);
-            
-            for_ast_list(scope->statement_list){
-                emit_debug_info_for_ast__recursive(context, function, it->value);
-            }
-            
-            if(ast != function->scope){
-                u32 diff = pdb_current_offset_from_location(context, context->module_stream_begin);
-                stream_write_bytes(context, &pointer_to_end_loc, &diff, sizeof(u32));
-                begin_symbol(0x6);{ // S_END
-                }end_symbol();
-            }
-            context->current_block32_offset_in_stream = old_offset; // @cleanup: should maybe be called pointer
-            
-        }break;
-        case AST_if:{
-            struct ast_if *ast_if = cast(struct ast_if *)ast;
-            emit_debug_info_for_ast__recursive(context, function, ast_if->statement);
-            if(ast_if->else_statement){
-                emit_debug_info_for_ast__recursive(context, function, ast_if->else_statement);
-            }
-        }break;
-        case AST_do_while:
-        case AST_for:{
-            struct ast_for *ast_for = cast(struct ast_for *)ast;
-            
-            // 
-            // @clenaup: This is really ugly.
-            //           The body for the ast_for is at 'ast_for->body', 
-            //           but the declaration lives in 'ast_for->scope_for_decl'.
-            //           The 'ast_for->scope_for_decl' is empty and does not contain 'ast_for->body'.
-            //           Hence, we have to emit a block manually.
-            // 
-            
-            
-            smm old_offset = context->current_block32_offset_in_stream;
-            struct pdb_location pointer_to_end_loc = pdb_begin_scope(context, function, ast_for->scope_for_decl);
-            pdb_emit_regrels_for_scope(context, ast_for->scope_for_decl);
-            
-            if(ast_for->decl){
-                emit_debug_info_for_ast__recursive(context, function, ast_for->decl);
-            }
-            emit_debug_info_for_ast__recursive(context, function, ast_for->body);
-            
-            // end the scope for the _for_ declaration.
-            u32 diff = pdb_current_offset_from_location(context, context->module_stream_begin);
-            stream_write_bytes(context, &pointer_to_end_loc, &diff, sizeof(u32));
-            begin_symbol(0x6);{ // S_END
-            }end_symbol();
-            context->current_block32_offset_in_stream = old_offset; // @cleanup: should maybe be called pointer
-        }break;
-        case AST_switch:{
-            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-            emit_debug_info_for_ast__recursive(context, function, ast_switch->statement);
-        }break;
-        case AST_label:{
-            struct ast_label *ast_label = cast(struct ast_label *)ast;
-            if(ast_label->statement) emit_debug_info_for_ast__recursive(context, function, ast_label->statement);
-        }break;
-        case AST_case:{
-            struct ast_case *ast_case = cast(struct ast_case *)ast;
-            if(ast_case->statement) emit_debug_info_for_ast__recursive(context, function, ast_case->statement);
-        }break;
-        default: break;
+    // @cleanup: skip if there are no declarations in the scope.
+    
+    
+    struct pdb_location pointer_to_end_loc = zero_struct;
+    smm old_offset = context->current_block32_offset_in_stream;
+    
+    if(scope != (struct ast_scope *)function->scope){
+        // @note: do not emit a scope for the initial scope as it is implied by the frameproc
+        pointer_to_end_loc = pdb_begin_scope(context, function, scope);
     }
+    
+    pdb_emit_regrels_for_scope(context, scope);
+    
+    for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+        emit_debug_info_for_scope__recursive(context, function, subscope);
+    }
+    
+    if(scope != (struct ast_scope *)function->scope){
+        u32 diff = pdb_current_offset_from_location(context, context->module_stream_begin);
+        stream_write_bytes(context, &pointer_to_end_loc, &diff, sizeof(u32));
+        begin_symbol(0x6);{ // S_END
+        }end_symbol();
+    }
+    context->current_block32_offset_in_stream = old_offset; // @cleanup: should maybe be called pointer
 }
 
 
 func void emit_debug_info_for_function(struct pdb_write_context *context, struct ast_function *function){
     // @cleanup: is this needed somewhere else?
     context->current_block32_offset_in_stream = function->debug_symbol_offset;
-    emit_debug_info_for_ast__recursive(context, function, function->scope);
+    emit_debug_info_for_scope__recursive(context, function, (struct ast_scope *)function->scope);
 }
 
 //_____________________________________________________________________________________________________________________
@@ -2896,7 +2809,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             // @incomplete:
             for_ast_list(*functions_with_a_body){
                 struct ast_function *function = cast(struct ast_function *)it->value;
-                tpi_register_all_types_in_ast__recursive(context, function->scope);
+                tpi_register_all_types_in_scope__recursive(context, (struct ast_scope *)function->scope);
             }
             
             
