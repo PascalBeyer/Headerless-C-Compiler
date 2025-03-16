@@ -2958,7 +2958,11 @@ struct ast *maybe_insert_implicit_nodes_for_varargs_argument(struct context *con
     return expr;
 }
 
+#if 0
 void printlike__infer_format_string_and_arguments_for_argument(struct context *context, struct ast *argument, struct string_list *pretty_print_list, struct ast_list *pretty_print_argument_list, struct string flags, struct string field_width, struct string precision, struct string type_specifiers){
+    
+    
+
     
     struct ast_type *argument_type = argument->resolved_type;
     
@@ -3020,9 +3024,14 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
         get_pretty_print_string_for_type(context, pretty_print_list, pretty_print_argument_list, argument, -1, field_width, precision, type_specifiers);
     }
 }
+#endif
 
 struct ast *check_call_to_printlike_function(struct context *context, struct ast_function_call *call, struct ast *operand){
+    (void)context;
+    (void)call;
+    (void)operand;
     
+    #if 0
     struct ast_function_type *printlike_function_type = (struct ast_function_type *)call->identifier_expression->resolved_type;
     assert(printlike_function_type->base.kind == AST_function_type);
     
@@ -3876,6 +3885,7 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
 #endif
     
     call->call_arguments = new_call_arguments;
+    #endif
     return null;
 }
 
@@ -4779,7 +4789,8 @@ case NUMBER_KIND_##type:{ \
                 if(!check_unary_for_basic_types(context, index, CHECK_integer, test)) return operand;
                 
                 if(operand->resolved_type->kind == AST_struct){
-                    
+                    not_implemented;
+                    #if 0
                     // :hlc_extension
                     // for structs that contain a field '.data' and a field '.size' map
                     //     struct s { char *data; u64 size } s;
@@ -4866,6 +4877,7 @@ case NUMBER_KIND_##type:{ \
                     set_resolved_type(operand, data->resolved_type, data->defined_type);
                     
                     index = &i_ident->base;
+                    #endif
                 }
                 
                 if(operand->resolved_type->kind != AST_pointer_type && operand->resolved_type->kind != AST_array_type){
@@ -8974,375 +8986,6 @@ func void parse_statement(struct context *context){
     }
     
     return;
-}
-
-void dump_and_check_ast_stack(struct context *context, void *start_in_ast_arena){
-    
-    if(context->error) return;
-    // if(0) return;
-    if(1) return;
-    
-    if(start_in_ast_arena == arena_current(&context->ast_arena)) return; // Check for empty block.
-    
-    struct ast *start_of_expression_ast = (struct ast *)start_in_ast_arena;
-    debug_print_error(context, start_of_expression_ast->token, "EXPRESSION:");
-    
-    if(start_of_expression_ast->token->line == 309) os_debug_break();
-    
-    struct ast *ast_stack[1024];
-    smm ast_stack_at = 0;
-    
-    for(u8 *current = start_in_ast_arena; current < arena_current(&context->ast_arena); ){
-        struct ast *ast = (void *)current;
-        struct string string = ast->token->string;
-        
-#define primary(ast_kind) \
-case AST_##ast_kind: \
-current += sizeof(struct ast_##ast_kind);\
-debug_print_error(context, ast->token, "    [%lld] %p primary-" #ast_kind ": %.*s", ast_stack_at, ast, string.size, string.data); \
-ast_stack[ast_stack_at++] = ast;\
-break
-        
-#define unary(ast_kind) \
-case AST_##ast_kind: \
-current += sizeof(struct ast_unary_op);\
-debug_print_error(context, ast->token, "    [%lld] %p unary-" #ast_kind ": %.*s %p", ast_stack_at, ast, string.size, string.data, ((struct ast_unary_op *)ast)->operand); \
-if(!ast_stack_at || ast_stack[ast_stack_at-1] != ((struct ast_unary_op *)ast)->operand){\
-    print(">>>> Wrong!\n");\
-    os_panic(1);\
-}\
-ast_stack[ast_stack_at-1] = ast;\
-break
-        
-        
-#define binary(ast_kind) \
-case AST_##ast_kind: \
-current += sizeof(struct ast_binary_op);\
-debug_print_error(context, ast->token, "    [%lld] %p binary-" #ast_kind ": %.*s %p %p", ast_stack_at, ast, string.size, string.data, ((struct ast_binary_op *)ast)->lhs, ((struct ast_binary_op *)ast)->rhs); \
-if(ast_stack_at < 2 || ast_stack[ast_stack_at-2] != ((struct ast_binary_op *)ast)->lhs || ast_stack[ast_stack_at-1] != ((struct ast_binary_op *)ast)->rhs){\
-    print(">>>> Wrong!\n");\
-    os_panic(1);\
-}\
-ast_stack_at -= 1;\
-ast_stack[ast_stack_at-1] = ast;\
-break
-        
-        switch(ast->kind){
-            
-            case AST_initializer:{
-                current += sizeof(struct ast_initializer);
-                struct ast_initializer *initializer = (struct ast_initializer *)ast;
-                print("    %p initializer 0x%llx <- %p\n", ast, initializer->offset, initializer->rhs);
-                
-                if(!ast_stack_at || ast_stack[ast_stack_at-1] != initializer->rhs){
-                    print(">>>> Wrong!\n");
-                    os_panic(1);
-                }
-                
-                ast_stack_at -= 1;
-            }break;
-            
-            primary(identifier);
-            primary(string_literal);
-            primary(integer_literal);
-            primary(float_literal);
-            primary(pointer_literal);
-            primary(compound_literal);
-            case AST_pointer_literal_deref:{
-                current += sizeof(struct ast_pointer_literal);
-                print("    %p primary-AST_pointer_literal_deref: %.*s\n", ast, string.size, string.data);
-                ast_stack[ast_stack_at++] = ast;
-            }break;
-            
-            unary(cast);
-            unary(unary_postinc);
-            unary(unary_preinc);
-            unary(unary_postdec);
-            unary(unary_predec);
-            unary(unary_logical_not);
-            unary(unary_bitwise_not);
-            unary(unary_deref);
-            unary(unary_array_index);
-            unary(unary_function_call);
-            unary(unary_minus);
-            unary(unary_plus);
-            unary(unary_address);
-            
-            unary(sizeof);
-            unary(alignof);
-            
-            unary(implicit_address_conversion);
-            
-            case AST_cast_lhs:
-            case AST_implicit_address_conversion_lhs:{
-                current += sizeof(struct ast_unary_op);
-                char *kind = AST_cast_lhs == ast->kind ? "cast_lhs" : "implicit_address_conversion_lhs";
-                print("    %p unary-%s: %.*s %p\n", ast, kind, string.size, string.data, ((struct ast_unary_op *)ast)->operand); 
-                if(ast_stack_at < 2 || ast_stack[ast_stack_at-2] != ((struct ast_unary_op *)ast)->operand){
-                    print(">>>> Wrong!\n");
-                    os_panic(1);
-                }
-                ast_stack[ast_stack_at-2] = ast;
-            }break;
-            
-            binary(binary_times);
-            binary(binary_divide);
-            binary(binary_mod);
-            binary(binary_plus);
-            binary(binary_minus);
-            binary(binary_left_shift);
-            binary(binary_right_shift);
-            binary(binary_and);
-            binary(binary_or);
-            binary(binary_xor);
-            binary(binary_logical_equals);
-            binary(binary_logical_unequals);
-            binary(binary_bigger_equals);
-            binary(binary_smaller_equals);
-            binary(binary_bigger);
-            binary(binary_smaller);
-            binary(logical_and);
-            binary(logical_or);
-            binary(assignment);
-            binary(and_assignment);
-            binary(or_assignment);
-            binary(xor_assignment);
-            binary(plus_assignment);
-            binary(minus_assignment);
-            binary(left_shift_assignment);
-            binary(right_shift_assignment);
-            binary(times_assignment);
-            binary(divide_assignment);
-            binary(modulo_assignment);
-            binary(comma_expression);
-            
-            // @note: These are technically ast_subscript, but that is the sam as ast_binary_op currently...
-            binary(pointer_subscript);
-            binary(array_subscript);
-            
-            case AST_member:
-            case AST_member_deref:{
-                current += sizeof(struct ast_dot_or_arrow);
-                struct ast_dot_or_arrow *dot_or_arrow = (struct ast_dot_or_arrow *)ast;
-                char *kind_string = ast->kind == AST_member ? "member" : "member_deref";
-                print("    %p %s %.*s\n", ast, kind_string, dot_or_arrow->member->name->size, dot_or_arrow->member->name->data);
-                
-                if(!ast_stack_at || ast_stack[ast_stack_at-1] != dot_or_arrow->lhs){
-                    print(">>>> Wrong!\n");
-                    os_panic(1);
-                }
-                
-                if(!ast_stack_at) ast_stack_at += 1;
-                ast_stack[ast_stack_at-1] = ast;
-            }break;
-            
-            case AST_swap_lhs_rhs:{
-                current += sizeof(struct ast);
-                
-                print("    %p swap_lhs_rhs\n", ast);
-                if(ast_stack_at < 2){
-                    print(">>>> Wrong!\n");
-                    os_panic(1);
-                }
-                
-                struct ast *temp = ast_stack[ast_stack_at-1];
-                ast_stack[ast_stack_at-1] = ast_stack[ast_stack_at-2];
-                ast_stack[ast_stack_at-2] = temp;
-            }break;
-            
-            case AST_duplicate_lhs:{
-                current += sizeof(struct ast_duplicate_lhs);
-                print("    %p duplicate lhs\n", current);
-                
-                struct ast *should_break = 0;
-                while(current < arena_current(&context->ast_arena) && !should_break){
-                    ast = (void *)current;
-                    switch(ast->kind){
-                        
-                        case AST_cast_lhs:
-                        case AST_cast:{
-                            current += sizeof(struct ast_unary_op);
-                        }break;
-                        
-                        case AST_binary_times:
-                        
-                        case AST_binary_divide:
-                        case AST_binary_mod:
-                        
-                        case AST_binary_plus:
-                        case AST_binary_minus:
-                        
-                        case AST_binary_left_shift:
-                        case AST_binary_right_shift:
-                        
-                        case AST_binary_and:
-                        case AST_binary_or:
-                        case AST_binary_xor:{
-                            current += sizeof(struct ast_binary_op);
-                        }break;
-                        
-                        case AST_assignment:{
-                            current += sizeof(struct ast_binary_op);
-                            should_break = ast;
-                        }break;
-                        
-                        default:{
-                            print("UNHANDLED!\n");
-                            os_panic(1);
-                        }break;
-                    }
-                }
-                
-                if(ast_stack_at < 2 || !should_break){
-                    print(">>>> Wrong!\n");
-                    os_panic(1);
-                }
-                
-                ast_stack_at -= 1;
-                ast_stack[ast_stack_at-1] = should_break;
-            }break;
-            
-            case AST_function_call:{
-                current += sizeof(struct ast_function_call);
-                struct ast_function_call *call = (struct ast_function_call *)ast;
-                print("    %p function_call %lld arguments %p(", ast, call->call_arguments.count, call->identifier_expression);
-                for_ast_list(call->call_arguments){
-                    print("%p", it->value);
-                    if(it != call->call_arguments.last) print(", ");
-                }
-                print(")\n");
-                
-                smm args = call->call_arguments.count;
-                if(ast_stack_at < args + 1){
-                    print(">>>> Wrong! (too little args)\n");
-                    os_panic(1);
-                }else if(call->identifier_expression != ast_stack[ast_stack_at - (args + 1)]){
-                    print(">>>> Wrong! Identifier expression\n");
-                    os_panic(1);
-                }else{
-                    smm index = 0;
-                    int arg_wrong = 0;
-                    for_ast_list(call->call_arguments){
-                        if(ast_stack[ast_stack_at - args + index] != it->value){
-                            print(">>>> Argument %d Wrong! %p vs %p\n", index, ast_stack[ast_stack_at - args + index], it->value);
-                            arg_wrong = 1;
-                        }
-                        index++;
-                    }
-                    if(arg_wrong) os_panic(1);
-                }
-                
-                if(ast_stack_at >= args + 1) ast_stack_at -= args;
-                if(!ast_stack_at) ast_stack_at += 1;
-                ast_stack[ast_stack_at-1] = ast;
-            }break;
-            
-            // new nodes.
-            
-            case AST_jump_if_true:{
-                current += sizeof(struct ast_jump_if_true);
-                struct ast_jump_if_true *jump = (struct ast_jump_if_true *)ast;
-                print("    jump_if_true %lld\n", jump->label_number);
-                ast_stack_at -= 1;
-            }break;
-            
-            case AST_jump_if_false:{
-                current += sizeof(struct ast_jump_if_false);
-                struct ast_jump_if_false *jump = (struct ast_jump_if_false *)ast;
-                print("    jump_if_false %lld\n", jump->label_number);
-                ast_stack_at -= 1;
-            }break;
-            
-            case AST_switch:{
-                current += sizeof(struct ast_switch);
-                struct ast_switch *ast_switch = (struct ast_switch *)ast;
-                print("    switch %p\n", ast_switch->switch_on);
-                ast_stack_at -= 1;
-            }break;
-            
-            
-            case AST_jump:{
-                current += sizeof(struct ast_jump);
-                struct ast_jump *jump = (struct ast_jump *)ast;
-                print("    jump %lld\n", jump->label_number);
-            }break;
-            
-            case AST_jump_label:{
-                current += sizeof(struct ast_jump_label);
-                struct ast_jump_label *label = (struct ast_jump_label *)ast;
-                print(".%lld:\n", label->label_number);
-            }break;
-            
-            case AST_pop_expression:{
-                current += sizeof(struct ast);
-                print("    %p pop-ast\n", ast);
-                if(ast_stack_at < 1){
-                    print(">>>> Wrong!\n");
-                }
-                ast_stack_at -= 1;
-            }break;
-            
-            case AST_asm_block:{
-                current += sizeof(struct ast_asm_block);
-                print("    %p asm_block\n", ast);
-            }break;
-            
-            // @cleanup: This has to go away.
-            
-            case AST_conditional_expression:{
-                current += sizeof(struct ast_conditional_expression);
-                struct ast_conditional_expression *cond = (struct ast_conditional_expression *)ast;
-                print("    %p conditional_expression %p ? %p : %p\n", ast, cond->condition, cond->if_true, cond->if_false);
-                
-                if(ast_stack_at < 3 || ast_stack[ast_stack_at-3] != cond->condition || ast_stack[ast_stack_at-2] != cond->if_true || ast_stack[ast_stack_at-1] != cond->if_false){
-                    print(">>>> Wrong!\n");
-                    os_panic(1);
-                }
-                
-                if(ast_stack_at >= 3) ast_stack_at -= 2;
-                if(!ast_stack_at) ast_stack_at += 1;
-                ast_stack[ast_stack_at-1] = ast;
-            }break;
-            
-            
-            // 
-            // Statements: 
-            // 
-            
-            case AST_return:{
-                current += sizeof(struct ast_return);
-                print("    %p return %p\n", ast, ((struct ast_return *)ast)->expr);
-                
-                if(context->current_function->type->return_type != &globals.typedef_void){
-                    if(ast_stack_at < 1){
-                        print(">>>> Wrong!\n");
-                    }
-                    
-                    ast_stack_at -= 1;
-                }
-            }break;
-            
-            default:{
-                debug_print_error(context, ast->token, "UNHANDLED!");
-                invalid_code_path;
-            }break;
-        }
-        
-        assert(current != (u8 *)ast); // We should have incremented.
-    }
-    print("\n");
-    
-    if(ast_stack_at != 0){
-        print("WRONG! Ast stack at %d\n", ast_stack_at);
-        for(smm index = 0; index < ast_stack_at; index++){
-            print("    %p\n", ast_stack[index]);
-        }
-        os_panic(1);
-    }
-#undef primary
-#undef unary
-#undef binary
-    
 }
 
 // @note: We assume the TOKEN_open_curly was already consumed.
