@@ -303,15 +303,15 @@ static struct ast_type *defined_type_to_type(struct ast *defined_type){
     }
 }
 
-func struct ast *defined_type_for_binary_op(struct ast_binary_op *op){
+func struct ast *defined_type_for_binary_op(struct ast *op_lhs, struct ast *op_rhs){
     
     // 
     // The defined type for a binary op should be the smallest defined type,
     // which fits both of the arguments.
     // 
     
-    struct ast *lhs = op->lhs->defined_type;
-    struct ast *rhs = op->rhs->defined_type;
+    struct ast *lhs = op_lhs->defined_type;
+    struct ast *rhs = op_rhs->defined_type;
     
     if(lhs && rhs){
         struct ast_type *lhs_type = defined_type_to_type(lhs);
@@ -320,8 +320,8 @@ func struct ast *defined_type_for_binary_op(struct ast_binary_op *op){
         return (rhs_type->size > lhs_type->size) ? rhs : lhs;
     }
     
-    smm lhs_size = lhs ? defined_type_to_type(lhs)->size : op->lhs->resolved_type->size;
-    smm rhs_size = rhs ? defined_type_to_type(rhs)->size : op->rhs->resolved_type->size;
+    smm lhs_size = lhs ? defined_type_to_type(lhs)->size : op_lhs->resolved_type->size;
+    smm rhs_size = rhs ? defined_type_to_type(rhs)->size : op_rhs->resolved_type->size;
     
     if(lhs && lhs_size >= rhs_size) return lhs;
     if(rhs && rhs_size >= lhs_size) return rhs;
@@ -3900,40 +3900,16 @@ func struct ast *punt_compound_assignment(struct context *context, struct ast *l
     // With the old system we do this:
     //     a op= b -> ((unnamed) = &a,  *(unnamed) = *(unnamed) op b)
     
-    struct ast_duplicate_lhs *dup = push_expression(context, site, duplicate_lhs);
-    set_resolved_type(&dup->base, &globals.typedef_void, 0); // ?
-    
-    struct ast_type *pointer_type = parser_push_pointer_type(context, lhs->resolved_type, lhs->defined_type, site);
-    
-    // @note: Use `context->arena` so the new system does not see it.
-    struct ast_unary_op *address = (struct ast_unary_op *)_parser_ast_push(context, context->arena, site, sizeof(struct ast_unary_op), alignof(struct ast_unary_op), AST_unary_address);
-    address->operand = lhs;
-    set_resolved_type(&address->base, pointer_type, null);
-    
-    struct ast_declaration *unnamed_decl = push_unnamed_declaration(context, pointer_type, null, site);
-    struct ast_identifier *unnamed = push_ast(context, unnamed_decl->identifier, identifier); // @note: `context->arena`.
-    unnamed->decl = unnamed_decl;
-    set_resolved_type(&unnamed->base, unnamed_decl->type, unnamed_decl->defined_type);
-    
-    struct ast_binary_op *address_assignment = _parser_ast_push(context, context->arena, site, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_assignment);
-    address_assignment->lhs = &unnamed->base;
-    address_assignment->rhs = &address->base;
-    set_resolved_type(&address_assignment->base, pointer_type, null);
-    
-    struct ast_unary_op *deref = (struct ast_unary_op *)_parser_ast_push(context, context->arena, site, sizeof(struct ast_unary_op), alignof(struct ast_unary_op), AST_unary_deref);
-    deref->operand = &unnamed->base;
-    set_resolved_type(&deref->base, lhs->resolved_type, lhs->defined_type);
-    
-    struct ast *op_lhs = &deref->base;
+    struct ast *dup = (struct ast *)push_expression(context, site, duplicate_lhs);
+    set_resolved_type(dup, lhs->resolved_type, lhs->defined_type); // ?
     
     // 
     // AST_op:
     // 
-    maybe_insert_arithmetic_conversion_casts(context, &op_lhs, &rhs);
+    maybe_insert_arithmetic_conversion_casts(context, &dup, &rhs);
     
-    assert(op_lhs->resolved_type == rhs->resolved_type);
-    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, AST_binary_op, site, op_lhs, rhs);
-    set_resolved_type(&op->base, op->lhs->resolved_type, op->lhs->defined_type);
+    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, AST_binary_op, site, dup, rhs);
+    set_resolved_type(&op->base, dup->resolved_type, dup->defined_type);
     
     // 
     // AST_assignment:
@@ -3941,17 +3917,10 @@ func struct ast *punt_compound_assignment(struct context *context, struct ast *l
     
     rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, &op->base, site);
     
-    // @WARNING: we reuse 'deref' here, I don't think this should be a problem, but if there is weird behaviour
-    //           this might be the culprit
-    struct ast *value_assignment = ast_push_binary_expression(context, AST_assignment, site, &deref->base, rhs);
+    struct ast *value_assignment = ast_push_binary_expression(context, AST_assignment, site, lhs, rhs);
     set_resolved_type(value_assignment, lhs->resolved_type, lhs->defined_type);
     
-    struct ast_binary_op *comma = _parser_ast_push(context, context->arena, site, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_comma_expression);
-    comma->lhs = &address_assignment->base;
-    comma->rhs = value_assignment;
-    set_resolved_type(&comma->base, lhs->resolved_type, lhs->defined_type);
-    
-    return &comma->base;
+    return value_assignment;
 }
 
 // @cleanup: Eventually, we should implement this ourselves.
@@ -5664,7 +5633,7 @@ case NUMBER_KIND_##type:{ \
                         
                         // @note: For '%', the right hand side defined type "bounds" the lhs type as this is an and.
                         //        Hence, we simply reuse the defined type of the rhs.
-                        struct ast *defined_type = (ast_kind == AST_binary_mod) ? op_rhs->defined_type : defined_type_for_binary_op(op);
+                        struct ast *defined_type = (ast_kind == AST_binary_mod) ? op_rhs->defined_type : defined_type_for_binary_op(op_lhs, op_rhs);
                         set_resolved_type(&op->base, op_lhs->resolved_type, defined_type);
                         
                         operand = &op->base;
@@ -5738,7 +5707,7 @@ case NUMBER_KIND_##type:{ \
                         }
                         
                         struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
-                        set_resolved_type(&op->base, op->lhs->resolved_type, defined_type_for_binary_op(op));
+                        set_resolved_type(&op->base, op_lhs->resolved_type, defined_type_for_binary_op(op_lhs, op_rhs));
                         operand = &op->base;
                     }
                 }
@@ -5835,7 +5804,7 @@ case NUMBER_KIND_##type:{ \
                 struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
                 
                 // "the type of the result is that of the promoted left operand"
-                set_resolved_type(&op->base, op->lhs->resolved_type, op->lhs->defined_type);
+                set_resolved_type(&op->base, op_lhs->resolved_type, op_lhs->defined_type);
                 
                 operand = &op->base;
                 context->in_lhs_expression = false;
@@ -5988,7 +5957,7 @@ case NUMBER_KIND_##type:{ \
                     
                     // @note: The right hand side defined type "bounds" the lhs type as this is an and.
                     //        Hence, we simply reuse the defined type of the rhs.
-                    set_resolved_type(&op->base, op->lhs->resolved_type, op->rhs->defined_type);
+                    set_resolved_type(&op->base, op_lhs->resolved_type, op_rhs->defined_type);
                     operand = &op->base;
                     
                     context->in_lhs_expression = false;
@@ -6032,7 +6001,7 @@ case NUMBER_KIND_##type:{ \
                     }
                     
                     struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
-                    set_resolved_type(&op->base, op->lhs->resolved_type, defined_type_for_binary_op(op));
+                    set_resolved_type(&op->base, op_lhs->resolved_type, defined_type_for_binary_op(op_lhs, op_rhs));
                     operand = &op->base;
                     
                     context->in_lhs_expression = false;
@@ -6075,7 +6044,7 @@ case NUMBER_KIND_##type:{ \
                     }
                     
                     struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
-                    set_resolved_type(&op->base, op->lhs->resolved_type, defined_type_for_binary_op(op));
+                    set_resolved_type(&op->base, op_lhs->resolved_type, defined_type_for_binary_op(op_lhs, op_rhs));
                     operand = &op->base;
                     
                     context->in_lhs_expression = false;
@@ -6168,12 +6137,7 @@ case NUMBER_KIND_##type:{ \
                     
                     // ... in the end, temp is on top of the stack, the expression we return.
                     
-                    // :ir_refactor - old
-                    struct ast_binary_op *op = (struct ast_binary_op *)_parser_ast_push(context, context->arena, stack_entry->token, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_logical_and);
-                    op->lhs = op_lhs;
-                    op->rhs = op_rhs;
-                    
-                    operand = &op->base;
+                    operand = &temp->base;
                 }
                 
                 set_resolved_type(operand, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
@@ -6263,14 +6227,7 @@ case NUMBER_KIND_##type:{ \
                     struct ast_jump_label *end_label = push_expression(context, stack_entry->token, jump_label);
                     end_label->label_number = jump_end->label_number;
                     
-                    
-                    
-                    // :ir_refactor - old
-                    struct ast_binary_op *op = (struct ast_binary_op *)_parser_ast_push(context, context->arena, stack_entry->token, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_logical_or);
-                    op->lhs = op_lhs;
-                    op->rhs = op_rhs;
-                    
-                    operand = &op->base;
+                    operand = &temp->base;
                 }
                 set_resolved_type(operand, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 context->in_lhs_expression = false;
@@ -6415,7 +6372,7 @@ case NUMBER_KIND_##type:{ \
                 operand = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, operand, stack_entry->token);
                 
                 struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, operand);
-                set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
                 operand = &assignment->base;
                 
                 context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
@@ -6495,7 +6452,7 @@ case NUMBER_KIND_##type:{ \
                     rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
                     struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
-                    set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
                     operand = &assignment->base;
                 }
                 
@@ -6538,7 +6495,7 @@ case NUMBER_KIND_##type:{ \
                     rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
                     struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
-                    set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
                     operand = &assignment->base;
                 }
                 
@@ -6566,7 +6523,7 @@ case NUMBER_KIND_##type:{ \
                     rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
                     struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
-                    set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
                     operand = &assignment->base;
                 }
                 
@@ -6626,7 +6583,7 @@ case NUMBER_KIND_##type:{ \
                     rhs = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
                     struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
-                    set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
                     operand = &assignment->base;
                 }
                 
@@ -6649,7 +6606,7 @@ case NUMBER_KIND_##type:{ \
                     rhs = push_cast(context, AST_cast, &globals.typedef_u8, null, rhs);
                     
                     struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, lhs, rhs);
-                    set_resolved_type(&assignment->base, assignment->lhs->resolved_type, assignment->lhs->defined_type);
+                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
                     operand = &assignment->base;
                 }
                 
@@ -6659,12 +6616,7 @@ case NUMBER_KIND_##type:{ \
             case AST_comma_expression:{
                 assert(!should_skip_comma_expression);
                 
-                struct ast_binary_op *op = (struct ast_binary_op *)_parser_ast_push(context, context->arena, stack_entry->token, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_comma_expression);
-                op->lhs = stack_entry->operand;
-                op->rhs = operand;
-                
-                set_resolved_type(&op->base, operand->resolved_type, operand->defined_type);
-                operand = &op->base;
+                // Operand stays the same.
                 context->in_lhs_expression = false; // @hmm: should we allow (3, a) = 3; probably not
             }break;
             
@@ -8854,11 +8806,8 @@ func void parse_statement(struct context *context){
                 end_error_report(context);
             }
             
-            struct ast_case *ast_case = push_ast(context, initial_token, case);
             expect_token(context, TOKEN_colon, "Expected ':' after 'default'.");
             needs_semicolon = false;
-            set_resolved_type(&ast_case->base, &globals.typedef_void, null);
-            context->current_switch->default_case = ast_case;
             
             struct ast_jump_label *default_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
             default_label->label_number = context->jump_label_index++;

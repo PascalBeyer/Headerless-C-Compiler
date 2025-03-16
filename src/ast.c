@@ -151,6 +151,7 @@ enum token_type{
     TOKEN___func__,
     TOKEN_static_assert,
     TOKEN_declspec,
+    
     TOKEN_ptr32,
     TOKEN_ptr64,
     TOKEN_stdcall,
@@ -474,8 +475,6 @@ enum ast_kind{
     
     AST_switch,
     AST_case,
-    AST_label,
-    AST_goto,
     
     AST_asm_block,
     AST_embed,
@@ -953,13 +952,7 @@ struct ast_function{
     
     smm stack_space_needed; // after parsing this is what we need for declarations, and then in emit 
     // it gets adjusted to the full thing (including stack spilling usw)
-    
-    // @hmm: these were on 'context' back when emitted code immediately after parsing.
-    //       now These are here.. We could collect them again in asm emit..
-    // struct ast_list goto_list;
-    // struct ast_list label_list;
-    
-    // This should replace the goto and label list above. :ir_refactor.
+
     smm amount_of_jump_labels;
     
     struct ast_list static_variables;    
@@ -988,7 +981,6 @@ struct ast_switch{
     struct ast *switch_on;
     
     struct ast_jump_label *default_jump_label; // Either the default case or the break label.
-    struct ast_case *default_case; // :ir_refactor - old 
     
     struct ast_list case_list;
 };
