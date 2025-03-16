@@ -2516,15 +2516,8 @@ func u8 *evaluate_static_initializer(struct context *context, struct ast_declara
         assignment_list = compound_literal->assignment_list;
         data_size += compound_literal->trailing_array_size;
     }else{
-        
-        struct ast_binary_op *assignment = (struct ast_binary_op *)decl->assign_expr;
-        
-        struct ast_initializer *dummy = _parser_ast_push(context, &context->scratch, initializer->token, sizeof(struct ast_initializer), alignof(struct ast_initializer), AST_initializer);
-        dummy->offset = 0;
-        dummy->rhs = assignment->rhs;
-        set_resolved_type(&dummy->base, decl->type, null);
-        
-        sll_push_back(assignment_list, dummy);
+        assert(initializer->kind == AST_initializer);
+        sll_push_back(assignment_list, (struct ast_initializer *)initializer);
     }
     
     push_zero_align(context->arena, decl->type->alignment); // @cleanup: Do we need this? Also get_declaration_alignment.

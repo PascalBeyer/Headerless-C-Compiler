@@ -2583,12 +2583,7 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
         ast_initializer->rhs    = expr;
         set_resolved_type(&ast_initializer->base, lhs->base.resolved_type, lhs->base.defined_type);
         
-        struct ast_binary_op *op = (void *)_parser_ast_push(context, context->arena, equals, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), AST_assignment);
-        op->lhs = &lhs->base;
-        op->rhs = expr;
-        
-        set_resolved_type(&op->base, lhs->base.resolved_type, lhs->base.defined_type);
-        ret = &op->base;
+        ret = &ast_initializer->base;
     }
     
     push_expression(context, get_current_token_for_error_report(context), pop_expression);
@@ -8260,11 +8255,11 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                         // Reset the trailing array size, to not overallocate later on.
                         compound_literal->trailing_array_size = 0;
                     }else{
-                        assert(rhs->kind == AST_assignment);
-                        struct ast_binary_op *assignment = (struct ast_binary_op *)rhs;
+                        assert(rhs->kind == AST_initializer);
+                        struct ast_initializer *initializer = (struct ast_initializer *)rhs;
                         
-                        assert(assignment->rhs->resolved_type->kind == AST_array_type);
-                        struct ast_array_type *array = (struct ast_array_type *)assignment->rhs->resolved_type;
+                        assert(initializer->rhs->resolved_type->kind == AST_array_type);
+                        struct ast_array_type *array = (struct ast_array_type *)initializer->rhs->resolved_type;
                         array_length = array->amount_of_elements;
                     }
                     
@@ -8279,12 +8274,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     patch_array_size(context, array_type, array_length, equals);
                     
                     type = &array_type->base;
-                    
-                    if(rhs->kind == AST_assignment){
-                        struct ast_binary_op *assignment = (struct ast_binary_op *)rhs;
-                        // We control the 'ident', so just patch in the new type.
-                        set_resolved_type(assignment->lhs, type, decl->defined_type);
-                    }
                 }
                 
                 if(!context->current_scope){
