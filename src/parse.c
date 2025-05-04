@@ -1816,13 +1816,10 @@ func struct ast_type *get_current_object_type_for_designator_node(struct designa
     return current_object_type;
 }
 
-func struct initializer_list parse_initializer_list(struct context *context, struct ast_type *type_to_initialize, u64 base_offset, smm *out_trailing_initializer_size){
-    
+func void parse_initializer_list(struct context *context, struct ast_type *type_to_initialize, u64 base_offset, smm *out_trailing_initializer_size){
     
     struct token *initial_open_curly = next_token(context);
     assert(initial_open_curly->type == TOKEN_open_curly);
-    
-    struct initializer_list ret = {0};
     
     if(type_to_initialize->kind != AST_array_type && type_to_initialize->kind != AST_struct && type_to_initialize->kind != AST_union){
         // 
@@ -1838,9 +1835,9 @@ func struct initializer_list parse_initializer_list(struct context *context, str
             // We found an initializer like 'int a = {{1}};', or '(int){{1}}'.
             // This is sort of stupid, but legal.
             // 
-            ret = parse_initializer_list(context, type_to_initialize, base_offset, out_trailing_initializer_size);
+            parse_initializer_list(context, type_to_initialize, base_offset, out_trailing_initializer_size);
             expect_token(context, TOKEN_closed_curly, "Expected '}'."); // :Error, but it does not matter, noones ever going to see this.
-            return ret;
+            return;
         }
         
         struct ast *initializer = null;
@@ -1872,11 +1869,7 @@ func struct initializer_list parse_initializer_list(struct context *context, str
         ast_initializer->rhs    = initializer;
         
         set_resolved_type(&ast_initializer->base, type_to_initialize, null); // @cleanup: defined type?
-        
-        sll_push_back(ret, ast_initializer);
-        ret.count += 1;
-        
-        return ret;
+        return;
     }
     
     //
@@ -2192,7 +2185,8 @@ func struct initializer_list parse_initializer_list(struct context *context, str
             // 
             
             smm trailing_sub_initializer_size = 0;
-            struct initializer_list sub_initializers = parse_initializer_list(context, current_object_type, designator_stack.first->offset_at, &trailing_sub_initializer_size);
+            
+            parse_initializer_list(context, current_object_type, designator_stack.first->offset_at, &trailing_sub_initializer_size);
             
             // :trailing_arrays
             // 
@@ -2200,12 +2194,6 @@ func struct initializer_list parse_initializer_list(struct context *context, str
             //     struct { int a; int trailling_array[]; } asd = {1, {1, 2, 3}};
             //
             trailing_initializer_size = max_of(trailing_initializer_size, trailing_sub_initializer_size);
-            
-            // 
-            // Append the assignments to our list.
-            // 
-            sll_push_back_list(ret, sub_initializers);
-            ret.count += sub_initializers.count;
             
         }else if(peek_token(context, TOKEN_embed)){
             // 
@@ -2237,9 +2225,6 @@ func struct initializer_list parse_initializer_list(struct context *context, str
             initializer->offset = designator_node->offset_at;
             initializer->rhs = &ast_embed->base;
             set_resolved_type(&initializer->base, current_object_type, null);
-            
-            sll_push_back(ret, initializer);
-            ret.count += 1;
             
             // @note: We need to add -1 here, because the code below assumes it was not incremented.
             designator_node->array_at  += (file_data.size - 1); 
@@ -2283,9 +2268,6 @@ func struct initializer_list parse_initializer_list(struct context *context, str
                     initializer->rhs    = expression;
                     set_resolved_type(&initializer->base, current_object_type, null);
                     
-                    sll_push_back(ret, initializer);
-                    ret.count += 1;
-                    
                     continue;
                 }
             }
@@ -2314,9 +2296,6 @@ func struct initializer_list parse_initializer_list(struct context *context, str
                         initializer->offset = designator_stack.first->offset_at;
                         initializer->rhs    = expression;
                         set_resolved_type(&initializer->base, current_object_type, null);
-                        
-                        sll_push_back(ret, initializer);
-                        ret.count += 1;
                         break;
                     }
                 }
@@ -2330,10 +2309,6 @@ func struct initializer_list parse_initializer_list(struct context *context, str
                     initializer->offset = designator_stack.first->offset_at;
                     initializer->rhs    = expression;
                     set_resolved_type(&initializer->base, current_object_type, null);
-                    
-                    sll_push_back(ret, initializer);
-                    ret.count += 1;
-                    
                     break;
                 }
                 
@@ -2367,10 +2342,6 @@ func struct initializer_list parse_initializer_list(struct context *context, str
                     initializer->offset = designator_stack.first->offset_at;
                     initializer->rhs    = expression;
                     set_resolved_type(&initializer->base, current_object_type, null);
-                    
-                    sll_push_back(ret, initializer);
-                    ret.count += 1;
-                    
                     break;
                 }
                 
@@ -2451,10 +2422,12 @@ func struct initializer_list parse_initializer_list(struct context *context, str
     *out_trailing_initializer_size = trailing_initializer_size;
     
     error:; // @cleanup: Why do we have this?
-    return ret;
+    return;
 }
 
-func struct ast *parse_initializer(struct context *context, struct ast_declaration *decl, struct token *identifier, struct token *equals){
+
+// This routine patches 'decl->assign_expr' and 'decl->type' instead of returning them.
+func void parse_initializer(struct context *context, struct ast_declaration *decl, struct token *identifier, struct token *equals){
     
     struct ast_skip *ast_skip = null;
     if(decl->flags & DECLARATION_FLAGS_is_local_persist){
@@ -2477,7 +2450,8 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
     //     5) struct s a = ?;
     //     6) struct s a = {?};
     // 
-    struct ast *ret = null;
+    struct ast *initializer_start = null;
+    struct ast_type *type = decl->type;
     
     if(peek_token(context, TOKEN_open_curly)){
         // 
@@ -2489,17 +2463,44 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
         
         compound_literal->decl = decl;
         
-        compound_literal->assignment_list = parse_initializer_list(context, decl->type, 0, &compound_literal->trailing_array_size);
-        ret = &compound_literal->base;
+        parse_initializer_list(context, decl->type, 0, &compound_literal->trailing_array_size);
         
-        if(context->should_exit_statement) return ret;
+        initializer_start = &compound_literal->base;
+        
+        compound_literal->initializer_size = arena_current(&context->ast_arena) - (u8 *)(compound_literal + 1);
+        
+        if(type_is_array_of_unknown_size(type)){
+            // 
+            // If we initialized an array of unknown type, we have to patch in the type.
+            // @copy_and_paste from :struct_literal
+            // 
+            
+            struct ast_array_type *array_of_unknown_size = (struct ast_array_type *)type;
+            smm array_length = 0;
+            if(compound_literal->trailing_array_size){
+                array_length = compound_literal->trailing_array_size/array_of_unknown_size->element_type->size;
+            }
+            
+            // 
+            // Create a new array type, with the newly discovered bounds.
+            struct ast_array_type *array_type = parser_type_push(context, compound_literal->base.token, array_type); // @cleanup: Better token.
+            array_type->element_type              = array_of_unknown_size->element_type;
+            array_type->element_type_defined_type = array_of_unknown_size->element_type_defined_type;
+            
+            patch_array_size(context, array_type, array_length, compound_literal->base.token);
+            
+            // Set the new type.
+            type = &array_type->base;
+            set_resolved_type(&compound_literal->base, &array_type->base, null);
+            
+            // Reset the trailing array size, to not overallocate later on.
+            compound_literal->trailing_array_size = 0;
+        }
+        
     }else{
-        struct ast_type *type = decl->type;
-        
         struct ast_identifier *lhs = push_expression(context, identifier, identifier);
         lhs->decl = decl;
         set_resolved_type(&lhs->base, decl->type, decl->defined_type);
-        
         
         // 
         // Parse an initializer like:
@@ -2511,8 +2512,6 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
         // 'int a = 1, 2, 3;' Is not legal.
         //
         struct ast *expr = parse_expression(context, /*skip_comma_expression*/true);
-        
-        if(context->should_exit_statement) return expr;
         
         if(type->kind == AST_array_type){
             // 
@@ -2536,7 +2535,7 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
             if(expr->kind != AST_string_literal){
                 // :Error print the string literal thing only for integer arrays?
                 report_error(context, equals, "Array can only be initialized by {initializer-list} or \"string literal\".");
-                return expr;
+                return;
             }
             
             // If type is an array of unknown size, patch in the size
@@ -2546,23 +2545,22 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
             
             if(lhs_type->element_type->kind != AST_integer_type){
                 report_error(context, equals, "Array initialized by string literal has to be of integer type.");
-                return expr;
+                return;
             }
             
             if(lhs_type->element_type->size != rhs_type->element_type->size){
                 // :error
                 report_error(context, equals, "Mismatching array element types.");
-                return expr;
+                return;
             }
             
             // @note: For string literals we can right now have signed unsigned mismatches.
             
             if(lhs_type->is_of_unknown_size){
                 // 
-                // This might be called recursively from 'parse_initializer_list'. // @cleanup: 'parse_initializer_list' does not call 'parse_initializer' anymore I think.
-                // Hence, don't patch the array size here, as we would not want to patch it for
-                // trailing arrays of structures.
+                // We want the type to be patched to the type of the string literal.
                 // 
+                type = &rhs_type->base;
             }else if(lhs_type->amount_of_elements == (rhs_type->amount_of_elements - 1)){
                 // 
                 // Here we are in the 'char a[3] = "asd"' case.
@@ -2570,7 +2568,7 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
                 // 
             }else if(lhs_type->amount_of_elements < rhs_type->amount_of_elements){
                 report_error(context, equals, "Array initialized to string literal of size %lld, but the array size is only %lld.", rhs_type->amount_of_elements, lhs_type->amount_of_elements);
-                return expr;
+                return;
             }
             
         }else{
@@ -2583,7 +2581,10 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
         ast_initializer->rhs    = expr;
         set_resolved_type(&ast_initializer->base, lhs->base.resolved_type, lhs->base.defined_type);
         
-        ret = &ast_initializer->base;
+        // The 'assign_expr' is only used for 'evaluate_static_initializer'.
+        // In this case we have to re-iterate the whole expression.
+        // This starts right after the lhs and ends at the 'ast_initializer'.
+        initializer_start = &lhs->base;
     }
     
     push_expression(context, get_current_token_for_error_report(context), pop_expression);
@@ -2592,7 +2593,17 @@ func struct ast *parse_initializer(struct context *context, struct ast_declarati
         ast_skip->size_to_skip = (u32)(arena_current(&context->ast_arena) - (u8*)ast_skip);
     }
     
-    return ret;
+    if(!context->current_scope){
+        if(context->should_exit_statement) return;
+        
+        // If we are at global scope, submit that this is actually a definition.
+        parser_register_definition(context, decl, initializer_start, type);
+    }else{
+        // If we are at local scope, we control this declaration, thus we can just plug in
+        // its expression and type slot.
+        decl->assign_expr = initializer_start;
+        decl->type = type;
+    }
 }
 
 // @note: for compare_exressions we set the resolved_type afterwards
@@ -4017,8 +4028,11 @@ func struct ast *parse_expression(struct context *context, b32 should_skip_comma
                     compound_literal->decl = compound_literal_declaration;
                     compound_literal->decl->assign_expr = &compound_literal->base;
                     
-                    compound_literal->assignment_list = parse_initializer_list(context, compound_literal_declaration->type, 0, &compound_literal->trailing_array_size);
+                    parse_initializer_list(context, compound_literal_declaration->type, 0, &compound_literal->trailing_array_size);
+                    
                     if(context->should_exit_statement) return invalid_ast(context);
+                    
+                    compound_literal->initializer_size = arena_current(&context->ast_arena) - (u8 *)(compound_literal + 1);
                     
                     if(type_is_array_of_unknown_size(type_to_cast_to.type)){
                         struct ast_array_type *array_of_unknown_size = (struct ast_array_type *)type_to_cast_to.type;
@@ -8249,55 +8263,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 // :DeclarationReferenceThreadingBug
                 context->current_declaration = decl;
                 
-                struct ast *rhs = parse_initializer(context, decl, declarator.ident, equals);
-                if(context->should_exit_statement) goto end;
-                
-                struct ast_type *type = decl->type;
-                
-                if(type_is_array_of_unknown_size(type)){
-                    
-                    smm array_length = 0;
-                    if(rhs->kind == AST_compound_literal){
-                        struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)rhs;
-                        struct ast_array_type *array = (struct ast_array_type *)type;
-                        if(compound_literal->trailing_array_size){
-                            array_length = compound_literal->trailing_array_size/array->element_type->size;
-                        }
-                        
-                        // Reset the trailing array size, to not overallocate later on.
-                        compound_literal->trailing_array_size = 0;
-                    }else{
-                        assert(rhs->kind == AST_initializer);
-                        struct ast_initializer *initializer = (struct ast_initializer *)rhs;
-                        
-                        assert(initializer->rhs->resolved_type->kind == AST_array_type);
-                        struct ast_array_type *array = (struct ast_array_type *)initializer->rhs->resolved_type;
-                        array_length = array->amount_of_elements;
-                    }
-                    
-                    struct ast_array_type *array_of_unknown_size = (struct ast_array_type *)type;
-                    
-                    // 
-                    // Create a new array type, with the newly discovered bounds.
-                    struct ast_array_type *array_type = parser_type_push(context, decl->identifier, array_type);
-                    array_type->element_type              = array_of_unknown_size->element_type;
-                    array_type->element_type_defined_type = array_of_unknown_size->element_type_defined_type;
-                    
-                    patch_array_size(context, array_type, array_length, equals);
-                    
-                    type = &array_type->base;
-                }
-                
-                if(!context->current_scope){
-                    // If we are at global scope, submit that this is actually a definition.
-                    parser_register_definition(context, decl, rhs, type);
-                }else{
-                    // If we are at local scope, we control this declaration, thus we can just plug in
-                    // its expression and type slot.
-                    decl->assign_expr = rhs;
-                    decl->type = type;
-                }
-                
+                parse_initializer(context, decl, declarator.ident, equals);
                 if(context->should_exit_statement) goto end;
             }
         }
