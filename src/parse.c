@@ -6722,7 +6722,7 @@ case NUMBER_KIND_##type:{ \
             struct token *question_mark = binary_expression;
             
             operand = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, operand);
-            
+            operand = maybe_insert_cast_from_special_int_to_int(context, AST_cast, operand);
             if(!casts_implicitly_to_bool(operand)){
                 report_error(context, question_mark, "Left hand side of '?' has no implicit conversion to bool.");
                 return operand;
@@ -8328,13 +8328,16 @@ void parse_static_assert(struct context *context, struct token *static_assert_to
 
 func void parse_statement(struct context *context){
     
+    struct token *initial_token = next_token(context); // Returns the current token. Do this before the stack exhaustion check to "make progress".
+    
     if(maybe_report_error_for_stack_exhaustion(context, get_current_token_for_error_report(context), "Scoping nests to deep.")) return;
     
     b32 needs_semicolon = true;
     
-    struct token *initial_token = next_token(context); // Returns the current token.
-    
-    function_maybe_add_line_information(context, initial_token);
+    if(initial_token->type != TOKEN_semicolon){
+        // The only statement that produces 0 ir instructions is the empty statement.
+        function_maybe_add_line_information(context, initial_token);
+    }
     
     switch(initial_token->type){
         case TOKEN_semicolon:{
@@ -8350,6 +8353,7 @@ func void parse_statement(struct context *context){
             
             maybe_report_warning_for_assignment_in_condition(context, condition);
             condition = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, condition);
+            condition = maybe_insert_cast_from_special_int_to_int(context, AST_cast, condition);
             if(!casts_implicitly_to_bool(condition)){
                 // :Error
                 report_error(context, condition->token, "'if' condition has to cast to bool.");
@@ -8450,6 +8454,7 @@ func void parse_statement(struct context *context){
                     maybe_report_warning_for_assignment_in_condition(context, condition);
                     
                     condition = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, condition);
+                    condition = maybe_insert_cast_from_special_int_to_int(context, AST_cast, condition);
                     if(!casts_implicitly_to_bool(condition)){
                         // :Error
                         report_error(context, condition->token, "'for' condition has to cast to bool.");
@@ -8529,6 +8534,7 @@ func void parse_statement(struct context *context){
             maybe_report_warning_for_assignment_in_condition(context, condition);
             
             condition = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, condition);
+            condition = maybe_insert_cast_from_special_int_to_int(context, AST_cast, condition);
             if(!casts_implicitly_to_bool(condition)){
                 report_error(context, condition->token, "'while' condition has to cast to bool.");
                 return;
@@ -8594,10 +8600,11 @@ func void parse_statement(struct context *context){
             struct ast_jump_label *continue_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
             continue_label->label_number = continue_label_index;
             
-            struct ast *condition = condition = parse_expression(context, false);
+            struct ast *condition = parse_expression(context, false);
             maybe_report_warning_for_assignment_in_condition(context, condition);
             
             condition = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, condition);            
+            condition = maybe_insert_cast_from_special_int_to_int(context, AST_cast, condition);
             if(!casts_implicitly_to_bool(condition)){
                 report_error(context, condition->token, "'while' condition has to cast to bool.");
                 return;

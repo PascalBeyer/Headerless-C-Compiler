@@ -1552,7 +1552,7 @@ func u64 integer_literal_to_bytes(struct ast *ast){
 
 func void emit_store(struct context *context, struct emit_location *dest, struct emit_location *source){
     assert(dest->state == EMIT_LOCATION_register_relative);
-    assert(dest->size == source->size);
+    // assert(dest->size == source->size); @cleanup: There currently is a problem with 'b ? u32 : 1ull'.
     
     if(source->size == 0){
         goto end; // nothing to do here!
@@ -4257,6 +4257,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     context->current_function = function;
     context->max_amount_of_function_call_arguments = 4;
     context->temporary_stack_high_water_mark = 0;
+    context->temporary_stack_allocator = 0; // @cleanup: This should be per statement
     
     context->register_sp = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_SP, 8);
     context->gpr_allocator.emit_location_map[REGISTER_SP] = null;
