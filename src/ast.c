@@ -800,14 +800,11 @@ struct ast_jump_label{
 
 struct ast_dot_or_arrow{
     struct ast base;
-    struct ast *lhs;
     struct compound_member *member; // @cleanup: This should probably be an index.
 };
 
 struct ast_subscript{
     struct ast base;
-    struct ast *lhs;
-    struct ast *index;
 };
 
 struct ast_array_range{ // array[1 ... 5] - only allowed in initializers.
@@ -819,14 +816,12 @@ struct ast_array_range{ // array[1 ... 5] - only allowed in initializers.
 
 struct ast_initializer{
     struct ast base;
-    
     u64 offset;
-    struct ast *rhs; // @note: The lhs is implicit because this is part of an initializer_list
 };
 
 struct ast_return{
     struct ast base;
-    struct ast *expr;
+    // struct ast *expr;
 };
 
 enum scope_flags{

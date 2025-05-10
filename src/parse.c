@@ -1255,7 +1255,7 @@ func struct ast *push_dot_or_arrow(struct context *context, struct compound_memb
         return &pointer_literal_deref->base;
     }else{
         struct ast_dot_or_arrow *op = (struct ast_dot_or_arrow *)_parser_ast_push(context, &context->ast_arena, test, sizeof(struct ast_dot_or_arrow), alignof(struct ast_dot_or_arrow), ast_kind);
-        op->lhs = operand;
+        // op->lhs = operand;
         op->member = found;
         
         set_resolved_type(&op->base, found->type, found->defined_type);
@@ -1625,8 +1625,6 @@ func struct ast *push_nodes_for_subscript(struct context *context, struct ast *l
     index = push_cast(context, AST_cast, &globals.typedef_s64, NULL, index);
     
     struct ast_subscript *subscript = _parser_ast_push(context, &context->ast_arena, token, sizeof(struct ast_subscript), alignof(struct ast_subscript), subscript_kind);
-    subscript->index = index;
-    subscript->lhs = lhs;
     
     set_resolved_type(&subscript->base, dereferenced_resolved_type, dereferenced_defined_type);
     
@@ -1872,7 +1870,6 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         
         struct ast_initializer *ast_initializer = push_expression(context, initializer->token, initializer);
         ast_initializer->offset = base_offset;
-        ast_initializer->rhs    = initializer;
         
         set_resolved_type(&ast_initializer->base, type_to_initialize, null); // @cleanup: defined type?
         return;
@@ -2225,11 +2222,10 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                 goto error;
             }
             
-            struct ast_embed *ast_embed = push_expression(context, embed, embed);
+            /*struct ast_embed *ast_embed = */push_expression(context, embed, embed); // @note: This gets its value from the token.
             
             struct ast_initializer *initializer = push_expression(context, embed, initializer);
             initializer->offset = designator_node->offset_at;
-            initializer->rhs = &ast_embed->base;
             set_resolved_type(&initializer->base, current_object_type, null);
             
             // @note: We need to add -1 here, because the code below assumes it was not incremented.
@@ -2271,7 +2267,6 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     
                     struct ast_initializer *initializer = push_expression(context, expression->token, initializer);
                     initializer->offset = designator_stack.first ? designator_stack.first->offset_at : base_offset;
-                    initializer->rhs    = expression;
                     set_resolved_type(&initializer->base, current_object_type, null);
                     
                     continue;
@@ -2300,7 +2295,6 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         
                         struct ast_initializer *initializer = push_expression(context, expression->token, initializer);
                         initializer->offset = designator_stack.first->offset_at;
-                        initializer->rhs    = expression;
                         set_resolved_type(&initializer->base, current_object_type, null);
                         break;
                     }
@@ -2313,7 +2307,6 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     
                     struct ast_initializer *initializer = push_expression(context, expression->token, initializer);
                     initializer->offset = designator_stack.first->offset_at;
-                    initializer->rhs    = expression;
                     set_resolved_type(&initializer->base, current_object_type, null);
                     break;
                 }
@@ -2346,7 +2339,6 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     
                     struct ast_initializer *initializer = push_expression(context, expression->token, initializer);
                     initializer->offset = designator_stack.first->offset_at;
-                    initializer->rhs    = expression;
                     set_resolved_type(&initializer->base, current_object_type, null);
                     break;
                 }
@@ -2584,7 +2576,6 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
         
         struct ast_initializer *ast_initializer = push_expression(context, equals, initializer);
         ast_initializer->offset = 0;
-        ast_initializer->rhs    = expr;
         set_resolved_type(&ast_initializer->base, lhs->base.resolved_type, lhs->base.defined_type);
         
         // The 'assign_expr' is only used for 'evaluate_static_initializer'.
@@ -8742,7 +8733,6 @@ func void parse_statement(struct context *context){
             }
             
             struct ast_return *ast_return = push_expression(context, initial_token, return);
-            ast_return->expr = return_expression;
             set_resolved_type(&ast_return->base, &globals.typedef_void, null);
         }break;
         case TOKEN_open_curly:{

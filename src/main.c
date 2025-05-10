@@ -3252,9 +3252,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             
             // @cleanup: is this the correct token?
             struct token *end_curly = get_current_token_for_error_report(context);
-            struct ast *expression = ast_push_s32_literal(context, end_curly, 0);
+            ast_push_s32_literal(context, end_curly, 0);
             struct ast_return *ast_return = push_expression(context, end_curly, return);
-            ast_return->expr = expression;
             set_resolved_type(&ast_return->base, &globals.typedef_void, null);
         }
     }

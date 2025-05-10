@@ -1330,17 +1330,19 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
         if(expr->kind == AST_identifier) break;
         
         if(expr->kind == AST_member){
-            struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)expr;
-            expr = dot->lhs;
+            not_implemented;
+            // struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)expr;
+            // expr = dot->lhs;
             continue;
         }
         
         if(expr->kind == AST_array_subscript){
-            struct ast_subscript *subscript = (struct ast_subscript *)expr;
-            if(subscript->index->kind == AST_integer_literal){
-                expr = subscript->lhs;
-                continue;
-            }
+            not_implemented;
+            // struct ast_subscript *subscript = (struct ast_subscript *)expr;
+            // if(subscript->index->kind == AST_integer_literal){
+                // expr = subscript->lhs;
+                // continue;
+            // }
         }
         
         report_error(context, expr->token, "Currently, only expressions of the form 'a.b.c' or 'array[<const>]' are allowed as inline asm operands.");
