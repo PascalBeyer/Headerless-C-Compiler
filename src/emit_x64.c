@@ -2730,7 +2730,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             
             case AST_cast:
             case AST_cast_lhs:{
-                struct ast_unary_op *cast = (struct ast_unary_op *)ast;
+                struct ast_cast *cast = (struct ast_cast *)ast;
                 ast_arena_at += sizeof(*cast);
                 
                 // @cleanup: This should not need to be here.

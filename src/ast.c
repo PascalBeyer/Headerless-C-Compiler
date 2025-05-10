@@ -736,11 +736,15 @@ inline smm get_declaration_size(struct ast_declaration *decl){
 
 struct ast_unary_op{
     struct ast base;
-    struct ast *operand;
 };
 
 struct ast_binary_op{
     struct ast base;
+};
+
+struct ast_cast{ // @ir_refactor: In the future there should be more than just `AST_cast` such that we can get rid of the `operand` member.
+    struct ast base;
+    struct ast *operand;
 };
 
 // :ir_refactor - This is how all "ast" should look.

@@ -148,8 +148,9 @@ func struct ast *ast_push_binary_expression(struct context *context, enum ast_ki
 }
 
 func struct ast *ast_push_unary_expression(struct context *context, enum ast_kind kind, struct token *token, struct ast *operand){
+    assert(kind != AST_cast); // @note: This used to be a unary op.
     struct ast_unary_op *op = cast(struct ast_unary_op *)_parser_ast_push(context, &context->ast_arena, token, sizeof(struct ast_unary_op), alignof(struct ast_unary_op), kind);
-    op->operand = operand;
+    (void)operand;
     return cast(struct ast*)op;
 }
 
@@ -521,8 +522,11 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
         // no constant propagation
         struct token *token = get_current_token_for_error_report(context);
         if(cast_what) token = cast_what->token;
+        struct ast_cast *ast_cast = push_expression(context, token, cast);
+        ast_cast->base.kind = lhs_or_rhs;
+        ast_cast->operand = cast_what;
         
-        cast = ast_push_unary_expression(context, lhs_or_rhs, token, cast_what);
+        cast = &ast_cast->base;
         set_resolved_type(cast, cast_to, cast_to_defined_type);
     }
     
@@ -4901,17 +4905,7 @@ case NUMBER_KIND_##type:{ \
             }break;
             case TOKEN_open_paren:{
                 
-                if(operand->kind == AST_unary_deref && operand->resolved_type->kind == AST_function_type){
-                    // 
-                    // Convert '(*function_pointer)()' to 'function_pointer()'.
-                    // 
-                    struct ast_unary_op *unary = (struct ast_unary_op *)operand;
-                    operand = unary->operand;
-                    pop_from_ast_arena(context, unary);
-                }
-                
                 struct token *call_token = test;
-                
                 if(operand->kind == AST_identifier) call_token = operand->token;
                 
                 struct ast_type *type = operand->resolved_type;
@@ -4936,6 +4930,14 @@ case NUMBER_KIND_##type:{ \
                 
                 maybe_resolve_unresolved_type_or_sleep_or_error(context, &function_type->return_type);
                 if(context->should_exit_statement) return operand;
+                
+                if(operand->kind == AST_unary_deref && operand->resolved_type->kind == AST_function_type){
+                    // 
+                    // Convert '(*function_pointer)()' to 'function_pointer()'.
+                    // 
+                    struct ast_unary_op *unary = (struct ast_unary_op *)operand;
+                    pop_from_ast_arena(context, unary);
+                }
                 
                 if(function_type->flags & FUNCTION_TYPE_FLAGS_is_printlike){
                     //
@@ -4987,7 +4989,7 @@ case NUMBER_KIND_##type:{ \
                             if(!(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs)){
                                 // :Error
                                 report_error(context, call_token, "Too many arguments to function.");
-                                return operand;
+                                return expr;
                             }else{
                                 
                                 if(expr->resolved_type == &globals.typedef_void){
@@ -5011,7 +5013,10 @@ case NUMBER_KIND_##type:{ \
                     begin_error_report(context);
                     struct string type_string = push_type_string(&context->scratch, &context->scratch, &function_type->base);
                     report_error(context, call_token, "Too few arguments to function of type '%.*s'.", type_string.size, type_string.data);
-                    if(operand->kind == AST_identifier){
+                    
+                    // @note: Careful here, the we pop the operand when we are converting `(*function_pointer)()` to `function_pointer()`.
+                    //        Therefore, we also have to check that the token is an identifier.
+                    if(call_token->type == TOKEN_identifier && operand->kind == AST_identifier){
                         struct ast_identifier *ident = (struct ast_identifier *)operand;
                         report_error(context, ident->decl->base.token, "... Here is the declaration of the function.");
                     }
@@ -5200,7 +5205,6 @@ case NUMBER_KIND_##type:{ \
                 set_resolved_type(&op->base, operand->resolved_type, operand->defined_type);
                 context->in_lhs_expression = false;
                 
-                op->operand = operand;
                 operand = prefix; // sets in op->operand in the next iteration
             }break;
             
@@ -5414,13 +5418,17 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
+                #if 0
                 if(operand->kind == AST_unary_address){
                     // const_prop '*&a' to 'a'
                     struct ast_unary_op *address = cast(struct ast_unary_op *)operand;
                     assert(address->base.resolved_type->kind == AST_pointer_type);
                     operand = address->operand;
                     pop_from_ast_arena(context, address);
-                }else if(operand->kind == AST_pointer_literal){
+                }else 
+                #endif
+                
+                if(operand->kind == AST_pointer_literal){
                     operand->kind = AST_pointer_literal_deref;
                     struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)operand->resolved_type;
                     set_resolved_type(operand, pointer_type->pointer_to, pointer_type->pointer_to_defined_type);
@@ -5450,13 +5458,17 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
+                #if 0
                 if(operand->kind == AST_unary_deref){
                     // @note: const prop '&*a' to 'a'
                     struct ast_unary_op *deref = cast(struct ast_unary_op *)operand;
                     operand = deref->operand;
                     assert(operand->resolved_type->kind == AST_pointer_type);
                     pop_from_ast_arena(context, deref);
-                }else if(operand->kind == AST_pointer_literal_deref){
+                }else 
+                #endif
+                
+                if(operand->kind == AST_pointer_literal_deref){
                     operand->kind = AST_pointer_literal;
                     
                     struct ast_type *ptr = parser_push_pointer_type(context, operand->resolved_type, operand->defined_type, operand->token);

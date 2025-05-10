@@ -2254,7 +2254,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             
             case AST_cast_lhs:
             case AST_cast:{
-                ast_offset += sizeof(struct ast_unary_op);
+                ast_offset += sizeof(struct ast_cast);
                 
                 int stack_offset = ast->kind == AST_cast ? 1 : 2;
                 if(ast_stack[ast_stack_at - stack_offset].is_address){
