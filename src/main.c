@@ -795,6 +795,7 @@ struct context{
     struct ast_function *current_function;       // This is set by `worker_parse_function` and later by `worker_emit_code`.
     struct ast_declaration *current_declaration; // This is set by `worker_parse_global_scope_entry`.
     struct ast_switch *current_switch;
+    struct ast *current_switch_on;
     struct compilation_unit *current_compilation_unit;
     
     struct token *in_inline_asm_function;

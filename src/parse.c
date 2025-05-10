@@ -8603,10 +8603,11 @@ func void parse_statement(struct context *context){
             context->current_break_label = break_label_index;
             
             struct ast_switch *ast_switch = push_expression(context, initial_token, switch);
-            ast_switch->switch_on = switch_on;
             
             struct ast_switch *previous_switch = context->current_switch;
+            struct ast        *previous_switch_on = context->current_switch_on;
             context->current_switch = ast_switch;
+            context->current_switch_on = switch_on;
             
             // Get the initial "returns a value state".
             int statement_returns_a_value = context->current_statement_returns_a_value;
@@ -8616,7 +8617,8 @@ func void parse_statement(struct context *context){
             parse_statement(context);
             parser_scope_pop(context, scope);
             
-            context->current_switch = previous_switch;
+            context->current_switch    = previous_switch;
+            context->current_switch_on = previous_switch_on;
             
             // The switch returns a value, if its statement does, there is a default case (or in the future if its exhaustive ) and there was no alive break.
             int switch_returns_a_value = context->current_statement_returns_a_value && ast_switch->default_jump_label && !(scope->flags & SCOPE_FLAG_found_an_alive_break);
@@ -8644,10 +8646,10 @@ func void parse_statement(struct context *context){
             
             struct ast *const_expr = parse_constant_integer_expression(context, false, "Operand of 'case' has to be constant.");
             
-            struct ast *switch_on = context->current_switch->switch_on;
+            struct ast *switch_on = context->current_switch_on;
             struct ast *promoted_const_expr = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, switch_on->resolved_type, switch_on->defined_type, const_expr, const_expr->token);
             assert(promoted_const_expr->kind == AST_integer_literal);
-            assert(promoted_const_expr->resolved_type == context->current_switch->switch_on->resolved_type);
+            assert(promoted_const_expr->resolved_type == context->current_switch_on->resolved_type);
             
             u64 value = integer_literal_as_u64(promoted_const_expr);
             

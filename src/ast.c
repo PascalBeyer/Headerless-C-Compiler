@@ -821,7 +821,6 @@ struct ast_initializer{
 
 struct ast_return{
     struct ast base;
-    // struct ast *expr;
 };
 
 enum scope_flags{
@@ -976,7 +975,6 @@ struct ast_function{
 
 struct ast_switch{
     struct ast base;
-    struct ast *switch_on;
     
     struct ast_jump_label *default_jump_label; // Either the default case or the break label.
     
