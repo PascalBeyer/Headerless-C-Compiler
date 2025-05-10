@@ -979,7 +979,7 @@ func void add_global_reference_for_declaration(struct memory_arena *arena, struc
     
     struct declaration_reference_node *node = push_struct(arena, struct declaration_reference_node);
     node->declaration = declaration;
-    node->token = declaration->base.token;
+    node->token = declaration->identifier;
     
     struct declaration_reference_node *list;
     do{
@@ -1593,7 +1593,7 @@ func struct ast_declaration *lookup_typedef(struct context *context, struct comp
             
             begin_error_report(context);
             report_error(context, type_name, "Expected a type, got a declaration.");
-            report_error(context, decl->base.token, "... Here is the declaration.");
+            report_error(context, decl->identifier, "... Here is the declaration.");
             end_error_report(context);
         }
         return null;
@@ -1726,8 +1726,8 @@ func void parser_register_declaration_in_scope(struct context *context, struct a
             
             if(!have_reported_warning){
                 begin_error_report(context);
-                report_warning(context, WARNING_shadowing_in_same_scope, decl->base.token, "Declaration hides previous declaration in same scope.");
-                report_warning(context, WARNING_shadowing_in_same_scope, redecl->base.token, "... Here is the previous declaration.");
+                report_warning(context, WARNING_shadowing_in_same_scope, decl->identifier, "Declaration hides previous declaration in same scope.");
+                report_warning(context, WARNING_shadowing_in_same_scope, redecl->identifier, "... Here is the previous declaration.");
                 end_error_report(context);
             }
             
@@ -1749,17 +1749,17 @@ func struct ast_declaration *register_declaration(struct context *context, struc
     if(scope){
         parser_register_declaration_in_scope(context, scope, decl);
         
-        if((warning_enabled[WARNING_shadowing_local] || warning_enabled[WARNING_shadowing_global]) && !(scope->flags & SCOPE_FLAG_is_function_scope) && should_report_warning_for_token(context, decl->base.token)){
+        if((warning_enabled[WARNING_shadowing_local] || warning_enabled[WARNING_shadowing_global]) && !(scope->flags & SCOPE_FLAG_is_function_scope) && should_report_warning_for_token(context, decl->identifier)){
             struct ast_declaration *redecl = lookup_declaration(scope->parent, context->current_compilation_unit, decl->identifier->atom);
             
             if(redecl){
                 begin_error_report(context);
                 if(redecl->flags & DECLARATION_FLAGS_is_global){
-                    report_warning(context, WARNING_shadowing_global, decl->base.token, "Declaration hides previous global declaration.");
-                    report_warning(context, WARNING_shadowing_global, redecl->base.token, "... Here is the previous global declaration.");
+                    report_warning(context, WARNING_shadowing_global, decl->identifier, "Declaration hides previous global declaration.");
+                    report_warning(context, WARNING_shadowing_global, redecl->identifier, "... Here is the previous global declaration.");
                 }else{
-                    report_warning(context, WARNING_shadowing_local, decl->base.token, "Declaration hides previous declaration.");
-                    report_warning(context, WARNING_shadowing_local, redecl->base.token, "... Here is the previous declaration.");
+                    report_warning(context, WARNING_shadowing_local, decl->identifier, "Declaration hides previous declaration.");
+                    report_warning(context, WARNING_shadowing_local, redecl->identifier, "... Here is the previous declaration.");
                 }
                 end_error_report(context);
             }
@@ -1771,7 +1771,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
         
         int declaration_is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(compilation_unit, decl->identifier->atom) == IDENTIFIER_is_static;
         struct ast_table *table = declaration_is_static ? &compilation_unit->static_declaration_table : &globals.global_declarations;
-        struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(table, &decl->base, decl->base.token);
+        struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(table, &decl->base, decl->identifier);
         
         // @note: if there is a redeclaration this should always return this redeclaraton (the global one, that we can find in the table)
         //        or error in which case whatever.
@@ -1799,11 +1799,11 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     // but are there races all over the place, where people check if its an array of unknown size?
                     //                                                                                   02.05.2021
                     
-                    patch_array_size(context, redecl_type, decl_type->amount_of_elements, redecl->base.token);
+                    patch_array_size(context, redecl_type, decl_type->amount_of_elements, redecl->identifier);
                 }
                 
                 if(decl_type->is_of_unknown_size && !redecl_type->is_of_unknown_size){
-                    patch_array_size(context, decl_type, redecl_type->amount_of_elements, decl->base.token);
+                    patch_array_size(context, decl_type, redecl_type->amount_of_elements, decl->identifier);
                 }
             }
             
@@ -1820,8 +1820,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 
                 if(attribute){
                     begin_error_report(context);
-                    report_error(context, decl->base.token, "[%lld] Redeclaration differs in %s attribute.", decl->compilation_unit->index, attribute);
-                    report_error(context, redecl->base.token, "[%lld] ... Here was the previous declaration.", redecl->compilation_unit->index);
+                    report_error(context, decl->identifier, "[%lld] Redeclaration differs in %s attribute.", decl->compilation_unit->index, attribute);
+                    report_error(context, redecl->identifier, "[%lld] ... Here was the previous declaration.", redecl->compilation_unit->index);
                     end_error_report(context);
                 }else{
                     if((decl_extended_attributes & DECLARATION_FLAGS_is_selectany) != (redecl_extended_attributes & DECLARATION_FLAGS_is_selectany)){
@@ -1835,8 +1835,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     
                     if(attribute){
                         begin_error_report(context);
-                        report_warning(context, WARNING_declaration_differs_in_attribute, decl->base.token, "[%lld] Redeclaration differs in %s attribute.", decl->compilation_unit->index, attribute);
-                        report_warning(context, WARNING_declaration_differs_in_attribute, redecl->base.token, "[%lld] ... Here was the previous declaration.", redecl->compilation_unit->index);
+                        report_warning(context, WARNING_declaration_differs_in_attribute, decl->identifier, "[%lld] Redeclaration differs in %s attribute.", decl->compilation_unit->index, attribute);
+                        report_warning(context, WARNING_declaration_differs_in_attribute, redecl->identifier, "[%lld] ... Here was the previous declaration.", redecl->compilation_unit->index);
                         end_error_report(context);
                         
                         redecl->flags |= decl_extended_attributes;
@@ -1861,8 +1861,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                         return redecl; // This is fine, we redefine the literal as it self.
                     }else{
                         begin_error_report(context);
-                        report_error(context, decl->base.token, "[%lld] Redeclaration of enum value as '%d'.", decl->compilation_unit->index, decl_lit->_s32);
-                        report_error(context, redecl->base.token, "[%lld] ... Here was the previous declaration of value '%d'.", redecl->compilation_unit->index, redecl_lit->_s32);
+                        report_error(context, decl->identifier, "[%lld] Redeclaration of enum value as '%d'.", decl->compilation_unit->index, decl_lit->_s32);
+                        report_error(context, redecl->identifier, "[%lld] ... Here was the previous declaration of value '%d'.", redecl->compilation_unit->index, redecl_lit->_s32);
                         end_error_report(context);
                         return decl;
                     }
@@ -1887,8 +1887,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     struct string redecl_type = push_type_string(context->arena, &context->scratch, redecl->type);
                     
                     begin_error_report(context);
-                    report_error(context, decl->base.token, "[%lld] Redeclaration with mismatching type '%.*s'.", decl->compilation_unit->index, decl_type.size, decl_type.data);
-                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration of type '%.*s'.", redecl->compilation_unit->index, redecl_type.size, redecl_type.data);
+                    report_error(context, decl->identifier, "[%lld] Redeclaration with mismatching type '%.*s'.", decl->compilation_unit->index, decl_type.size, decl_type.data);
+                    report_error(context, redecl->identifier, "[%lld] ... Here is the previous declaration of type '%.*s'.", redecl->compilation_unit->index, redecl_type.size, redecl_type.data);
                     end_error_report(context);
                     return decl;
                 }
@@ -1900,8 +1900,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     struct string redecl_type = push_type_string(context->arena, &context->scratch, redecl->type);
                     
                     begin_error_report(context);
-                    report_error(context, decl->base.token, "[%lld] Redeclaration of typedef with mismatching type '%.*s'.", decl->compilation_unit->index, decl_type.size, decl_type.data);
-                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous typedef of type '%.*s'.", redecl->compilation_unit->index, redecl_type.size, redecl_type.data);
+                    report_error(context, decl->identifier, "[%lld] Redeclaration of typedef with mismatching type '%.*s'.", decl->compilation_unit->index, decl_type.size, decl_type.data);
+                    report_error(context, redecl->identifier, "[%lld] ... Here is the previous typedef of type '%.*s'.", redecl->compilation_unit->index, redecl_type.size, redecl_type.data);
                     end_error_report(context);
                     return decl;
                 }
@@ -1915,8 +1915,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     
                     begin_error_report(context);
                     // :Error maybe print compilation units
-                    report_error(context, decl->base.token, "[%lld] Redeclaration of function with different type '%.*s'.", decl->compilation_unit->index, decl_type.size, decl_type.data);
-                    report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration with type '%.*s'.", redecl->compilation_unit->index, redecl_type.size, redecl_type.data);
+                    report_error(context, decl->identifier, "[%lld] Redeclaration of function with different type '%.*s'.", decl->compilation_unit->index, decl_type.size, decl_type.data);
+                    report_error(context, redecl->identifier, "[%lld] ... Here is the previous declaration with type '%.*s'.", redecl->compilation_unit->index, redecl_type.size, redecl_type.data);
                     end_error_report(context);
                     return decl;
                 }
@@ -1946,8 +1946,8 @@ func struct ast_declaration *register_declaration(struct context *context, struc
             if(decl->base.kind == AST_function) decl_kind = "function";
             
             begin_error_report(context);
-            report_error(context, decl->base.token, "[%lld] Redeclaration of different kind. It is a %s.", decl->compilation_unit->index, decl_kind);
-            report_error(context, redecl->base.token, "[%lld] ... Here is the previous declaration. It is a %s.", redecl->compilation_unit->index, redecl_kind);
+            report_error(context, decl->identifier, "[%lld] Redeclaration of different kind. It is a %s.", decl->compilation_unit->index, decl_kind);
+            report_error(context, redecl->identifier, "[%lld] ... Here is the previous declaration. It is a %s.", redecl->compilation_unit->index, redecl_kind);
             end_error_report(context);
             return decl;
         }
@@ -2174,7 +2174,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 if(!(decl->flags & (DECLARATION_FLAGS_is_global|DECLARATION_FLAGS_is_local_persist))){
                     // begin_error_report(context);
                     report_error(context, ast->token, "Referencing non-constant variable in constant initializer.");
-                    report_error(context, decl->base.token, "... Here is the referenced declaration.");
+                    report_error(context, decl->identifier, "... Here is the referenced declaration.");
                     // end_error_report(context);
                     return;
                 }
@@ -2182,7 +2182,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 if(decl->flags & DECLARATION_FLAGS_is_thread_local){
                     // begin_error_report(context);
                     report_error(context, ast->token, "Cannot reference _Thread_local declaration in constant initializer.");
-                    report_error(context, decl->base.token, "... Here is the referenced declaration.");
+                    report_error(context, decl->identifier, "... Here is the referenced declaration.");
                     // end_error_report(context);
                 }
                 
@@ -2190,10 +2190,10 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                     // begin_error_report(context);
                     if(decl->base.kind == AST_declaration){
                         report_error(context, ast->token, "Cannot reference __declspec(dllimport) declaration in constant initializer.");
-                        report_error(context, decl->base.token, "... Here is the referenced declaration.");
+                        report_error(context, decl->identifier, "... Here is the referenced declaration.");
                     }else if(decl->base.kind == AST_function){
                         report_warning(context, WARNING_reference_to_dllimport_inserts_stub, ast->token, "Constant reference of __declspec(dllimport)-function '%.*s' causes a stub to be generated. This causes `==` to potentially produce undesired results.", decl->identifier->size, decl->identifier->data);
-                        report_warning(context, WARNING_reference_to_dllimport_inserts_stub, decl->base.token, "... Here is the referenced declaration.");
+                        report_warning(context, WARNING_reference_to_dllimport_inserts_stub, decl->identifier, "... Here is the referenced declaration.");
                         if(!(decl->flags & DECLARATION_FLAGS_need_dllimport_stub_function)) decl->flags |= DECLARATION_FLAGS_need_dllimport_stub_function;
                     }else invalid_code_path;
                     // end_error_report(context);
@@ -3188,14 +3188,14 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         struct ast_asm_block *asm_block = push_ast(context, function->scope->token, asm_block);
         set_resolved_type(&asm_block->base, &globals.typedef_void, null);
         
-        context->in_inline_asm_function = function->base.token;
+        context->in_inline_asm_function = function->identifier;
         parse_asm_block(context, asm_block);
         context->in_inline_asm_function = null;
         
         if(function->type->return_type != &globals.typedef_void){
             if(asm_block->instructions.last == null || asm_block->instructions.last->memonic != MEMONIC_return_from_inline_asm_function){
                 struct string type_string = push_type_string(&context->scratch, &context->scratch, function->type->return_type);
-                report_error(context, function->base.token, "__declspec(inline_asm)-function has return type '%.*s' but last instruction was not 'return'.", type_string.size, type_string.data);
+                report_error(context, function->identifier, "__declspec(inline_asm)-function has return type '%.*s' but last instruction was not 'return'.", type_string.size, type_string.data);
             }
             context->current_statement_returns_a_value = 1;
         }
@@ -3206,7 +3206,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
             
             if(decl->_times_referenced == 0){
-                report_warning(context, WARNING_unused_local_variable, decl->base.token, "Function argument of __declspec(inline_asm)-function is not referenced.");
+                report_warning(context, WARNING_unused_local_variable, decl->identifier, "Function argument of __declspec(inline_asm)-function is not referenced.");
             }
         }
     }else{
@@ -3405,37 +3405,37 @@ func struct ast_function *get_entry_point_or_error(struct context *context){
     }
     
     if(function->base.kind != AST_function){
-        report_error(context, function->base.token, "Specified entry point '%.*s' is not a function.", entry_point.length, entry_point.data);
+        report_error(context, function->identifier, "Specified entry point '%.*s' is not a function.", entry_point.length, entry_point.data);
         globals.an_error_has_occurred = true;
         return null;
     }
     
     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
-        report_error(context, function->base.token, "Entry point cannot be '__declspec(dllimport)'.");
+        report_error(context, function->identifier, "Entry point cannot be '__declspec(dllimport)'.");
         globals.an_error_has_occurred = true;
         return null;
     }
     
     if(function->as_decl.flags & DECLARATION_FLAGS_is_static){
-        report_error(context, function->base.token, "Entry point cannot be static.");
+        report_error(context, function->identifier, "Entry point cannot be static.");
         globals.an_error_has_occurred = true;
         return null;
     }
     
     if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic){
-        report_error(context, function->base.token, "Entry point cannot be an intrinsic function.");
+        report_error(context, function->identifier, "Entry point cannot be an intrinsic function.");
         globals.an_error_has_occurred = true;
         return null;
     }
     
     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm){
-        report_error(context, function->base.token, "Entry point cannot be declarated __declspec(inline_asm).");
+        report_error(context, function->identifier, "Entry point cannot be declarated __declspec(inline_asm).");
         globals.an_error_has_occurred = true;
         return null;
     }
     
     if(!function->scope){
-        report_error(context, function->base.token, "Entry point has to be defined.");
+        report_error(context, function->identifier, "Entry point has to be defined.");
         globals.an_error_has_occurred = true;
         return null;
     }
@@ -4452,7 +4452,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.tls_index_declaration = push_declaration_for_declarator(context, _tls_index_declarator);
         globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_intrinsic;
         globals.tls_index_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
-        ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->base, globals.tls_index_declaration->base.token);
+        ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->base, globals.tls_index_declaration->identifier);
     }
     
 #if PRINT_ADDITIONAL_INCLUDE_DIRECTORIES
@@ -5112,7 +5112,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         //        compilation stage, and do not have to do it atomically.
         struct declaration_reference_node *entry_point_node = push_struct(arena, struct declaration_reference_node);
         entry_point_node->declaration = &globals.entry_point->as_decl;
-        entry_point_node->token       = globals.entry_point->base.token;
+        entry_point_node->token       = globals.entry_point->identifier;
         entry_point_node->next = globals.globally_referenced_declarations;
         globals.globally_referenced_declarations = entry_point_node;
     }
@@ -5238,7 +5238,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             if(globals.output_file_type != OUTPUT_FILE_obj){
                                 
                                 if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
-                                    report_error(context, function->base.token, "A referenced function marked '__declspec(dllexport)' must be defined."); // :Error
+                                    report_error(context, function->identifier, "A referenced function marked '__declspec(dllexport)' must be defined."); // :Error
                                     report_error(context, node->at->token, "... Here the function was referenced.");
                                 }else{
                                     lookup_declaration_in_libraries(context, &function->as_decl, node->at->token);
@@ -5262,8 +5262,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             // which is set to zero on program startup."
                             // 
                             
-                            report_warning(context, WARNING_array_of_unknown_size_never_filled_in, declaration->base.token, "Bounds for array of unknown size were never filled in. Assuming an array length of one.");
-                            patch_array_size(context, (struct ast_array_type *)declaration->type, 1, declaration->base.token);
+                            report_warning(context, WARNING_array_of_unknown_size_never_filled_in, declaration->identifier, "Bounds for array of unknown size were never filled in. Assuming an array length of one.");
+                            patch_array_size(context, (struct ast_array_type *)declaration->type, 1, declaration->identifier);
                         }
                         
                         if(declaration->assign_expr){

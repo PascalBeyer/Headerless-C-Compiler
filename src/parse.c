@@ -1126,7 +1126,7 @@ func struct ast *parse_declaration_list_in_imperative_scope(struct context *cont
     // push 'AST_declaration_list' for this 'declaration_list'
     
     struct token *token = get_current_token_for_error_report(context);
-    if(list.first) token = list.first->decl->base.token;
+    if(list.first) token = list.first->decl->identifier;
     
     struct ast_declaration_list *decl_list = push_ast(context, token, declaration_list);
     decl_list->list = list;
@@ -5009,7 +5009,7 @@ case NUMBER_KIND_##type:{ \
                     //        Therefore, we also have to check that the token is an identifier.
                     if(call_token->type == TOKEN_identifier && operand->kind == AST_identifier){
                         struct ast_identifier *ident = (struct ast_identifier *)operand;
-                        report_error(context, ident->decl->base.token, "... Here is the declaration of the function.");
+                        report_error(context, ident->decl->identifier, "... Here is the declaration of the function.");
                     }
                     end_error_report(context);
                     return operand;
@@ -7907,7 +7907,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 
                 // @cleanup: dllexport and such
                 if(function->type->flags & FUNCTION_TYPE_FLAGS_is_varargs){
-                    report_error(context, function->base.token, "A function declared '__declspec(inline_asm)' cannot be varargs.\n");
+                    report_error(context, function->identifier, "A function declared '__declspec(inline_asm)' cannot be varargs.\n");
                 }
                 
                 function->type->flags |= FUNCTION_TYPE_FLAGS_is_inline_asm;
@@ -7918,7 +7918,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(specifiers.specifier_flags & SPECIFIER_dllexport){
                 if(specifiers.specifier_flags & SPECIFIER_static){
                     // :error
-                    report_error(context, function->base.token, "Cannot export static function.");
+                    report_error(context, function->identifier, "Cannot export static function.");
                     goto end;
                 }
                 
@@ -7928,12 +7928,12 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
             
             if(specifiers.alignment > 0){
-                report_warning(context, WARNING_function_alignment, function->base.token, "'__declspec(align(_))' is ignored for functions.");
+                report_warning(context, WARNING_function_alignment, function->identifier, "'__declspec(align(_))' is ignored for functions.");
             }
             
             if(specifiers.specifier_flags & SPECIFIER_dllimport){
                 if(specifiers.specifier_flags & SPECIFIER_static){
-                    report_error(context, function->base.token, "Cannot '__declspec(dllimport)' a static function.");
+                    report_error(context, function->identifier, "Cannot '__declspec(dllimport)' a static function.");
                     goto end;
                 }
                 
@@ -7943,7 +7943,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 
                 if(context->current_scope){
                     // @incomplete: For now disallow __declspec(dllimport) at local scope.
-                    report_error(context, function->base.token, "@incomplete: Currently, __declspec(dllimport) is not allowed inside a function.");
+                    report_error(context, function->identifier, "@incomplete: Currently, __declspec(dllimport) is not allowed inside a function.");
                 }
             }
             
@@ -7955,7 +7955,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 struct ast_function_type *function_type = function->type;
                 
                 if(!(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs)){
-                    report_error(context, function->base.token, "'__declspec(printlike)' function needs to be varargs.");
+                    report_error(context, function->identifier, "'__declspec(printlike)' function needs to be varargs.");
                     goto end;
                 }
                 
@@ -7976,7 +7976,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 }
                 
                 if(error){
-                    report_error(context, function->base.token, "'__declspec(printlike)' function needs to have an argument of type 'char *' as its last named argument.");
+                    report_error(context, function->identifier, "'__declspec(printlike)' function needs to have an argument of type 'char *' as its last named argument.");
                     goto end;
                 }
                 
@@ -7987,13 +7987,13 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(peek_token(context, TOKEN_open_curly)){
                 
                 if(specifiers.specifier_flags & SPECIFIER_dllimport){
-                    report_error(context, function->base.token, "Cannot define a function that is declared '__declspec(dllimport)'.");
+                    report_error(context, function->identifier, "Cannot define a function that is declared '__declspec(dllimport)'.");
                     goto end;
                 }
                 
                 if(!sll_is_empty(ret)){
                     // :Error
-                    report_error(context, function->base.token, "Cannot define a function in a compound declaration list.");
+                    report_error(context, function->identifier, "Cannot define a function in a compound declaration list.");
                     return ret;
                 }
                 
@@ -8124,7 +8124,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(context->current_scope && specifiers.specifier_flags & SPECIFIER_dllimport){
                 // @incomplete: For now disallow __declspec(dllimport) at local scope.
-                report_error(context, decl->base.token, "@incomplete: Currently, __declspec(dllimport) is not allowed inside a function.");
+                report_error(context, decl->identifier, "@incomplete: Currently, __declspec(dllimport) is not allowed inside a function.");
             }
             
             // 
@@ -8911,9 +8911,9 @@ func struct ast *parse_imperative_scope(struct context *context){
         
         if(decl->base.kind == AST_declaration){
             if(decl->_times_referenced == 0){
-                report_warning(context, WARNING_unused_local_variable, decl->base.token, "Local variable is never used.");
+                report_warning(context, WARNING_unused_local_variable, decl->identifier, "Local variable is never used.");
             }else if(decl->_times_referenced == decl->_times_written){
-                report_warning(context, WARNING_local_variable_only_ever_written, decl->base.token, "Local variable is never read, only written.");
+                report_warning(context, WARNING_local_variable_only_ever_written, decl->identifier, "Local variable is never read, only written.");
             }
         }
     }

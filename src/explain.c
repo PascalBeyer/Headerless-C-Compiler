@@ -366,10 +366,10 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     if(!ar_import_header && !object_file_library_name.data){
         // We have not found the symbol.
         if(is_dll_import){
-            report_error(context, declaration->base.token, "%s is not contained in any of the imported dlls.", Function_or_Declaration);
+            report_error(context, declaration->identifier, "%s is not contained in any of the imported dlls.", Function_or_Declaration);
             report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
         }else{
-            report_error(context, declaration->base.token, "External %s was declared and referenced but never defined.", function_or_declaration);
+            report_error(context, declaration->identifier, "External %s was declared and referenced but never defined.", function_or_declaration);
             report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
         }
         return;
@@ -383,7 +383,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         
         if(!success){
             // @incomplete:
-            report_error(context, declaration->base.token, "%s is defined in library '%.*s', but static linking is currently not supported.", Function_or_Declaration, object_file_library_name.size, object_file_library_name.data);
+            report_error(context, declaration->identifier, "%s is defined in library '%.*s', but static linking is currently not supported.", Function_or_Declaration, object_file_library_name.size, object_file_library_name.data);
             report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
         }
         return;
@@ -393,17 +393,17 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         assert(object_file_library_name.data);
         
         // :Error no static linking
-        report_error(context, declaration->base.token, "Referenced %s declared `__declspec(dllimport)` is defined in library '%.*s'.", function_or_declaration, object_file_library_name.size, object_file_library_name.data);
+        report_error(context, declaration->identifier, "Referenced %s declared `__declspec(dllimport)` is defined in library '%.*s'.", function_or_declaration, object_file_library_name.size, object_file_library_name.data);
         report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
         return;
     }
     
     if(object_file_library_name.data){
-        report_warning(context, WARNING_imported_function_is_also_defined, declaration->base.token, "%s is imported from '%.*s', but also defined in library '%.*s'.", Function_or_Declaration, import_library_name.size, import_library_name.data, object_file_library_name.size, object_file_library_name.data);
+        report_warning(context, WARNING_imported_function_is_also_defined, declaration->identifier, "%s is imported from '%.*s', but also defined in library '%.*s'.", Function_or_Declaration, import_library_name.size, import_library_name.data, object_file_library_name.size, object_file_library_name.data);
     }
     
     if(declaration->base.kind == AST_declaration){
-        report_error(context, declaration->base.token, "@incomplete: Currently no __declspec(dllimport) for data declarations?");
+        report_error(context, declaration->identifier, "@incomplete: Currently no __declspec(dllimport) for data declarations?");
         return;
     }
     
@@ -447,9 +447,9 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         // This works fine, because we do this before we emit code for functions.
         // 
         
-        if(!globals.file_table.data[declaration->base.token->file_index]->is_system_include){ // @note: Manually shut this warning up, as we are currently in a big error_report.
+        if(!globals.file_table.data[declaration->identifier->file_index]->is_system_include){ // @note: Manually shut this warning up, as we are currently in a big error_report.
             // @cleanup: I currently don't see a way of how we can get the name of the library or dll.
-            report_warning(context, WARNING_function_is_implicitly_dllimport, declaration->base.token, "%s is treated as dllimport, but was not declared '__declspec(dllimport)'.", Function_or_Declaration);
+            report_warning(context, WARNING_function_is_implicitly_dllimport, declaration->identifier, "%s is treated as dllimport, but was not declared '__declspec(dllimport)'.", Function_or_Declaration);
         }
         
         function->as_decl.flags |= DECLARATION_FLAGS_is_dllimport;

@@ -474,7 +474,7 @@ func smm emit_bytes(struct context *context, smm size, u64 data){
         emit_pool->end = emit_pool->base + emit_pool->capacity;
         return emit_bytes_unchecked(context, size, data);
     }else{
-        report_error(context, context->current_function->base.token, "Too many bytes of code. Maximally %lld allowed.", emit_pool->capacity);
+        report_error(context, context->current_function->identifier, "Too many bytes of code. Maximally %lld allowed.", emit_pool->capacity);
         return emit_pool->capacity; // @cleanup: test this path
     }
 }
