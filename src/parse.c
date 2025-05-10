@@ -4950,7 +4950,6 @@ case NUMBER_KIND_##type:{ \
                     
                     // @incomplete: This has the wrong order for the new system. :ir_refactor
                     struct ast_function_call *call = push_expression(context, call_token, function_call);
-                    call->identifier_expression = operand;
                     
                     set_resolved_type(&call->base, function_type->return_type, function_type->return_type_defined_type);
                     operand = &call->base;
@@ -4962,7 +4961,8 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
-                struct ast_list call_arguments = zero_struct;
+                // @note: For var_args functions the 'call_arguments_count' can differ from the 'function_type->argument_list.count'.
+                smm call_arguments_count = 0;
                 
                 struct ast_list_node* function_argument_iterator = function_type->argument_list.first;
                 if(!peek_token_eat(context, TOKEN_closed_paren)){
@@ -4998,7 +4998,7 @@ case NUMBER_KIND_##type:{ \
                             }
                         }
                         
-                        ast_list_append(&call_arguments, context->arena, expr);
+                        call_arguments_count += 1;
                         
                         if(!peek_token_eat(context, TOKEN_comma)) break;
                         if(peek_token(context, TOKEN_closed_paren)) break; // Allow trailling ',' in function calls.
@@ -5006,7 +5006,7 @@ case NUMBER_KIND_##type:{ \
                     expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of parameter list.");
                 }
                 
-                if(function_type->argument_list.count > call_arguments.count){
+                if(function_type->argument_list.count > call_arguments_count){
                     // :Error
                     begin_error_report(context);
                     struct string type_string = push_type_string(&context->scratch, &context->scratch, &function_type->base);
@@ -5025,8 +5025,7 @@ case NUMBER_KIND_##type:{ \
                 
                 struct ast_function_call *call = push_expression(context, call_token, function_call);
                 call->function_type = function_type;
-                call->identifier_expression = operand;
-                call->call_arguments = call_arguments;
+                call->call_arguments_count = call_arguments_count;
                 
                 set_resolved_type(&call->base, function_type->return_type, function_type->return_type_defined_type);
                 operand = &call->base;

@@ -994,8 +994,7 @@ struct ast_case{
 struct ast_function_call{
     struct ast base;
     struct ast_function_type *function_type;
-    struct ast *identifier_expression; // @cleanup: garbage name
-    struct ast_list call_arguments;
+    smm call_arguments_count;
 };
 
 struct ast_label{

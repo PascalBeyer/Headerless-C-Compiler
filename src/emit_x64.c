@@ -2300,7 +2300,7 @@ struct alloca_patch_node{
 };
 
 func struct emit_location *emit_intrinsic(struct context *context, struct ast_function *function, struct ast_function_call *call, struct emit_location **argument_locations){
-    assert(call->identifier_expression->kind == AST_identifier);
+    (void)call; // @cleanup: How is this not used?
     struct string identifier = function->identifier->string;
     
     if(string_match(identifier, string("_alloca"))){
@@ -2369,6 +2369,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
 }
 
 func struct emit_location *emit_call_to_inline_asm_function(struct context *context, struct ast_function *function, struct ast_function_call *call, struct emit_location **emit_locations){
+    (void)call;
     //
     // Here we have emit all emit locations into 'emit_locations' and did all the promotions.
     // But, importantly we have not loaded all the emit locations!
@@ -2417,7 +2418,7 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
     assert(scope->asm_block);
 
     struct ast_asm_block *asm_block = scope->asm_block;
-    context->in_inline_asm_function = call->identifier_expression->token;
+    context->in_inline_asm_function = asm_block->base.token;
     
     emit_inline_asm_block(context, asm_block);
     
@@ -3790,7 +3791,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 // @incomplete: varargs functions might have argument_count != parameter_count.
                 
                 smm parameter_count = function_type->argument_list.count;
-                smm  argument_count = call->call_arguments.count;
+                smm  argument_count = call->call_arguments_count;
                 
                 emit_location_stack_at -= argument_count + 1;
                 
