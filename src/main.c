@@ -794,9 +794,11 @@ struct context{
     struct ast_scope *current_scope;
     struct ast_function *current_function;       // This is set by `worker_parse_function` and later by `worker_emit_code`.
     struct ast_declaration *current_declaration; // This is set by `worker_parse_global_scope_entry`.
+    struct compilation_unit *current_compilation_unit;
+    
     struct ast_switch *current_switch;
     struct ast *current_switch_on;
-    struct compilation_unit *current_compilation_unit;
+    struct token *current_switch_default_label_token;
     
     struct token *in_inline_asm_function;
     b32 current_asm_flags;
@@ -1959,8 +1961,9 @@ func struct ast_declaration *register_declaration(struct context *context, struc
     return decl;
 }
 
-func int parser_register_definition(struct context *context, struct ast_declaration *decl, struct ast *initializer, struct ast_type *type){
+func int parser_register_definition(struct context *context, struct ast_declaration *decl, struct ast *initializer, struct token *initializer_token, struct ast_type *type){
     assert(!context->should_sleep);
+    assert(!(decl->flags & DECLARATION_FLAGS_is_enum_member));
     
     // @note: Used by functions and declarations as of -03.04.2021, 
     //        its either the initializer or the scope.
@@ -1969,7 +1972,7 @@ func int parser_register_definition(struct context *context, struct ast_declarat
     // 
     
     if(decl->flags & DECLARATION_FLAGS_is_intrinsic){
-        report_error(context, initializer->token, "Cannot define intrinsic declaration '%.*s'.", decl->identifier->size, decl->identifier->data);
+        report_error(context, initializer_token, "Cannot define intrinsic declaration '%.*s'.", decl->identifier->size, decl->identifier->data);
         return 0;
     }
     
@@ -1979,8 +1982,8 @@ func int parser_register_definition(struct context *context, struct ast_declarat
         // 
         if(!(decl->flags & DECLARATION_FLAGS_is_selectany)){
             begin_error_report(context);
-            report_error(context, initializer->token, "[%lld] Redefinition of '%.*s'.", context->current_compilation_unit->index, decl->identifier->atom.size, decl->identifier->atom.data);
-            report_error(context, decl->assign_expr->token, "[%lld] ... Here is the previous definition.", decl->compilation_unit->index);
+            report_error(context, initializer_token, "[%lld] Redefinition of '%.*s'.", context->current_compilation_unit->index, decl->identifier->atom.size, decl->identifier->atom.data);
+            report_error(context, get_initializer_token(decl), "[%lld] ... Here is the previous definition.", decl->compilation_unit->index);
             end_error_report(context);
         }
         return 0;
@@ -2044,11 +2047,11 @@ func void register_compound_type(struct context *context, struct ast_type *type,
     redecl = ast_table_add_or_return_previous_entry(&globals.compound_types, cast(struct ast*)type, ident);
     
     if(redecl){
-        // If we have same token we are the same type so we can.
-        if(redecl->token == type->token) return;
-        
         struct ast_compound_type *old = (struct ast_compound_type *)redecl;
         struct ast_compound_type *new = (struct ast_compound_type *)type;
+        
+        // If we have same token we are the same type so we can. @cleanup: Is this correct?
+        if(old->base.token == new->base.token) return;
         
         // 
         // Reallow declarations of the same type.
@@ -2056,8 +2059,8 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         if(types_are_equal((struct ast_type *)redecl, type)) return;
         
         begin_error_report(context);
-        report_error(context, type->token, "[%lld] Redeclaration of type.", new->compilation_unit->index);
-        report_error(context, redecl->token, "[%lld] ... Here was the previous declaration.", old->compilation_unit->index);
+        report_error(context, new->base.token, "[%lld] Redeclaration of type.", new->compilation_unit->index);
+        report_error(context, old->base.token, "[%lld] ... Here was the previous declaration.", old->compilation_unit->index);
         end_error_report(context);
         return;
     }
@@ -2098,6 +2101,9 @@ func void parser_emit_memory_location(struct context *context, struct ast_declar
 
 
 func void evaluate_static_initializer__internal(struct context *context, struct ast *initializer, struct ast_declaration *patch_declaration, u8 *data, smm data_size, smm root_offset){
+    
+    // @cleanup: There has to be a better solution.
+    struct token *error_token = get_initializer_token(patch_declaration);
     
     smm initializer_end = 0x80000000;
     
@@ -2173,7 +2179,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 
                 if(!(decl->flags & (DECLARATION_FLAGS_is_global|DECLARATION_FLAGS_is_local_persist))){
                     // begin_error_report(context);
-                    report_error(context, ast->token, "Referencing non-constant variable in constant initializer.");
+                    report_error(context, /*ast->token*/error_token, "Referencing non-constant variable in constant initializer.");
                     report_error(context, decl->identifier, "... Here is the referenced declaration.");
                     // end_error_report(context);
                     return;
@@ -2181,7 +2187,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 
                 if(decl->flags & DECLARATION_FLAGS_is_thread_local){
                     // begin_error_report(context);
-                    report_error(context, ast->token, "Cannot reference _Thread_local declaration in constant initializer.");
+                    report_error(context, /*ast->token*/error_token, "Cannot reference _Thread_local declaration in constant initializer.");
                     report_error(context, decl->identifier, "... Here is the referenced declaration.");
                     // end_error_report(context);
                 }
@@ -2189,10 +2195,10 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 if(decl->flags & DECLARATION_FLAGS_is_dllimport){
                     // begin_error_report(context);
                     if(decl->base.kind == AST_declaration){
-                        report_error(context, ast->token, "Cannot reference __declspec(dllimport) declaration in constant initializer.");
+                        report_error(context, /*ast->token*/error_token, "Cannot reference __declspec(dllimport) declaration in constant initializer.");
                         report_error(context, decl->identifier, "... Here is the referenced declaration.");
                     }else if(decl->base.kind == AST_function){
-                        report_warning(context, WARNING_reference_to_dllimport_inserts_stub, ast->token, "Constant reference of __declspec(dllimport)-function '%.*s' causes a stub to be generated. This causes `==` to potentially produce undesired results.", decl->identifier->size, decl->identifier->data);
+                        report_warning(context, WARNING_reference_to_dllimport_inserts_stub, /*ast->token*/error_token, "Constant reference of __declspec(dllimport)-function '%.*s' causes a stub to be generated. This causes `==` to potentially produce undesired results.", decl->identifier->size, decl->identifier->data);
                         report_warning(context, WARNING_reference_to_dllimport_inserts_stub, decl->identifier, "... Here is the referenced declaration.");
                         if(!(decl->flags & DECLARATION_FLAGS_need_dllimport_stub_function)) decl->flags |= DECLARATION_FLAGS_need_dllimport_stub_function;
                     }else invalid_code_path;
@@ -2262,7 +2268,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                     if(ast->resolved_type->size == 8){
                         // We are good, casting pointer to integer.
                     }else{
-                        report_error(context, ast->token, "Cannot truncate a pointer at compile time.");
+                        report_error(context, /*ast->token*/error_token, "Cannot truncate a pointer at compile time.");
                     }
                 }else{
                     goto initializer_not_constant;
@@ -2284,7 +2290,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 if(index->kind == AST_integer_literal){
                     ast_stack[ast_stack_at-1].offset += integer_literal_as_u64(index) * subscript->base.resolved_type->size;
                 }else{
-                    report_error(context, ast->token, "Expected a constant in array subscript, when evaluating initializer at compile time.");
+                    report_error(context, /*ast->token*/error_token, "Expected a constant in array subscript, when evaluating initializer at compile time.");
                     return;
                 }
             }break;
@@ -2467,8 +2473,9 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                             //           We want to rework intialization pretty soon anyway.
                             //           
                             //                                                        23.11.2023
+                            struct ast_embed *embed = (struct ast_embed *)rhs;
                             
-                            struct string file_data = rhs->token->string;
+                            struct string file_data = embed->token->string;
                             assert(offset + file_data.size <= data_size); // Make sure it fits.
                             
                             memcpy(data + offset, file_data.data, file_data.size);
@@ -2487,7 +2494,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             default:{
                 initializer_not_constant:;
                 // @cleanup: This token sucks. We have to think of something better eventually.
-                report_error(context, ast->token, "Initializer is not a constant.");
+                report_error(context, /*ast->token*/error_token, "Initializer is not a constant.");
                 return;
             }break;
         }
@@ -2552,6 +2559,8 @@ func void reset_context(struct context *context){
     context->current_emit_offset_of_rsp = 0;
     context->current_scope              = null;
     context->current_switch             = null;
+    context->current_switch_on          = null;
+    context->current_switch_default_label_token = null;
     context->sleep_on                   = null;
     context->sleeping_ident             = null;
     //context->spill_allocator          = 0; zeroed before every statement anyway
@@ -3185,7 +3194,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         // Special case for __declspec(inline_asm) in this case we only want a single 'ast_asm_block'
         //
         
-        struct ast_asm_block *asm_block = push_ast(context, function->scope->token, asm_block);
+        struct ast_asm_block *asm_block = push_ast(context, asm_block);
+        asm_block->token = scope->token;
         set_resolved_type(&asm_block->base, &globals.typedef_void, null);
         
         context->in_inline_asm_function = function->identifier;
@@ -3251,10 +3261,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             
             context->current_statement_returns_a_value = 1;
             
-            // @cleanup: is this the correct token?
-            struct token *end_curly = get_current_token_for_error_report(context);
-            ast_push_s32_literal(context, end_curly, 0);
-            struct ast_return *ast_return = push_expression(context, end_curly, return);
+            ast_push_s32_literal(context, 0);
+            struct ast_return *ast_return = push_expression(context, return); // @cleanup: is this the correct token?
             set_resolved_type(&ast_return->base, &globals.typedef_void, null);
         }
     }
@@ -3378,7 +3386,7 @@ func struct token *push_dummy_token(struct memory_arena *arena, struct atom toke
 
 func void register_intrinsic_function_declaration(struct context *context, struct token *token, struct ast_function_type *type){
     
-    struct ast_function *declaration = push_ast(context, token, function);
+    struct ast_function *declaration = push_ast(context, function);
     declaration->identifier = token;
     declaration->type = type;
     declaration->offset_in_text_section = -1;
@@ -4430,12 +4438,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         
         globals.empty_statement.kind = AST_empty_statement;
-        globals.empty_statement.token = push_dummy_token(arena, atom_for_string(string(";")), TOKEN_semicolon);
         set_resolved_type(&globals.empty_statement, &globals.typedef_void, null);
         
         globals.invalid_identifier_token = push_dummy_token(arena, globals.invalid_identifier, TOKEN_identifier);
-        
-        globals.guard_ast.token = &globals.invalid_token;
         globals.guard_ast.resolved_type = &globals.typedef_void;
         
         struct declarator_return poison_declarator = {.ident = globals.invalid_identifier_token, .type = &globals.typedef_poison };
@@ -4778,7 +4783,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         if(destination && destination->assign_expr){
             begin_error_report(context);
             report_error(context, alternate_name->token, "/ALTERNATENAME currently does not support linking to defined identifiers.");
-            report_error(context, destination->assign_expr->token, "Here, the destination '%.*s' was defined.", alternate_name->destination.size, alternate_name->destination.data);
+            report_error(context, get_initializer_token(destination), "Here, the destination '%.*s' was defined.", alternate_name->destination.size, alternate_name->destination.data);
             end_error_report(context);
             continue;
         }

@@ -1414,11 +1414,13 @@ func void emit_pdb_line_info_for_function(struct pdb_write_context *context, str
     
     const u32 is_statement = 0x80000000;
     
+    struct ast_scope *scope = (struct ast_scope *)function->scope;
+    
     // 
     // Emit an initial line for the prologue.
     // 
     out_int(0, u32);
-    out_int(function->scope->token->line | is_statement, u32);
+    out_int(scope->token->line | is_statement, u32);
     
     for(smm index = 0; index < function->line_information.size; index++){
         struct function_line_information line = function->line_information.data[index];
@@ -2321,7 +2323,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
                 }else{
                     if(patch->source->kind != AST_string_literal){
-                        report_internal_compiler_error(patch->source->token, "Not a string literal, but %d\n", patch->source->kind);
+                        report_internal_compiler_error(null, "Not a string literal, but %d\n", patch->source->kind);
                         continue;
                     }
                     
@@ -3413,6 +3415,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // now comes the line info
         for_ast_list(*functions_with_a_body){
             struct ast_function *function = cast(struct ast_function *)it->value;
+            struct ast_scope *scope = (struct ast_scope *)function->scope;
             
             out_int(0xf2, u32); // DEBUG_S_LINES
             struct pdb_location size_loc = stream_allocate_bytes(context, sizeof(u32));
@@ -3427,7 +3430,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct pdb_location block_begin = get_current_pdb_location(context);
             
             // offset of the file info in the 0xf4 DEBUG_S_SECTION
-            out_int(globals.file_table.data[function->scope->token->file_index]->offset_in_f4, u32);
+            out_int(globals.file_table.data[scope->token->file_index]->offset_in_f4, u32);
             struct pdb_location amount_of_lines_loc = stream_allocate_bytes(context, sizeof(u32));
             struct pdb_location block_write = stream_allocate_bytes(context, sizeof(u32));
             

@@ -507,7 +507,6 @@ enum ast_kind{
 struct ast{
     enum ast_kind kind;
     s32 s;
-    struct token *token;
     struct ast_type *resolved_type;
     struct ast *defined_type; 
     // :defined_types
@@ -592,6 +591,11 @@ struct ast_declaration{
     smm symbol_table_index;
     struct compilation_unit *compilation_unit;
     
+    // @note: The 'assign_expr' is either a 'AST_compound_literal' or an 'AST_identifier'.
+    //        Both of these start with an 'ast_identifier'.
+    //        This is sort of confusing, as the 'initializer' has to be "interpreted",
+    //        and starts of with the "lhs".
+    //        For enum members this is an AST_integer_literal.
     struct ast *assign_expr; // the rhs of '=' if it exists, @WARNING: same slot as function->scope
     
     s64 overwrite_alignment;
@@ -835,6 +839,7 @@ enum scope_flags{
 
 struct ast_scope{
     struct ast base;
+    struct token *token;
     struct ast_scope *parent;
     
     struct ast_asm_block *asm_block;
@@ -862,6 +867,19 @@ struct ast_scope{
     u32 start_line_index;
     u32 end_line_index;
 };
+
+static struct token *get_initializer_token(struct ast_declaration *decl){
+    if(decl->flags & DECLARATION_FLAGS_is_enum_member) return decl->identifier;
+    
+    if(decl->base.kind == AST_function){
+        struct ast_scope *scope = (struct ast_scope *)decl->assign_expr;
+        return scope->token;
+    }
+    
+    assert(decl->assign_expr && (decl->assign_expr->kind == AST_identifier || decl->assign_expr->kind == AST_compound_literal));
+    struct ast_identifier *ident = (struct ast_identifier *)decl->assign_expr;
+    return ident->decl->identifier;
+}
 
 struct compound_member{
     struct token *name;
@@ -983,6 +1001,7 @@ struct ast_switch{
 
 struct ast_case{
     struct ast base;
+    struct token *token;
     u64 value;
     
     struct jump_context *jump; // We use this as a label, only used in emit.
@@ -1027,6 +1046,7 @@ struct conditional_expression_information{
 
 struct ast_asm_block{
     struct ast base;
+    struct token *token;
     struct{
         struct asm_instruction *first;
         struct asm_instruction *last;
@@ -1035,6 +1055,7 @@ struct ast_asm_block{
 
 struct ast_embed{
     struct ast base;
+    struct token *token;
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////

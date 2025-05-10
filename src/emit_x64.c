@@ -2418,7 +2418,7 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
     assert(scope->asm_block);
 
     struct ast_asm_block *asm_block = scope->asm_block;
-    context->in_inline_asm_function = asm_block->base.token;
+    context->in_inline_asm_function = asm_block->token;
     
     emit_inline_asm_block(context, asm_block);
     
@@ -2556,7 +2556,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct ast_float_literal *f = cast(struct ast_float_literal *)ast;
                 
                 // @note: This sucks!
-                struct ast_emitted_float_literal *emitted = push_ast(context, f->base.token, emitted_float_literal);
+                struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
                 emitted->value = f->value;
                 
                 sll_push_back(context->emitted_float_literals, emitted);
@@ -3063,7 +3063,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
                     emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
                 }else if(op->base.resolved_type->kind == AST_float_type){
-                    struct ast_float_literal *one = push_ast(context, op->base.token, float_literal); // :ir_refactor_not_sure_initializer
+                    struct ast_float_literal *one = push_ast(context, float_literal); // :ir_refactor_not_sure_initializer
                     one->value = 1.0;
                     set_resolved_type(&one->base, op->base.resolved_type, null);
                     
@@ -3072,7 +3072,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         struct ast_float_literal *f = cast(struct ast_float_literal *)one;
                         
                         // @note: This sucks!
-                        struct ast_emitted_float_literal *emitted = push_ast(context, f->base.token, emitted_float_literal);
+                        struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
                         emitted->value = f->value;
                         
                         sll_push_back(context->emitted_float_literals, emitted);
@@ -3165,7 +3165,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
                     emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
                 }else if(op->base.resolved_type->kind == AST_float_type){
-                    struct ast_float_literal *one = push_ast(context, op->base.token, float_literal); // :ir_refactor_not_sure_initializer
+                    struct ast_float_literal *one = push_ast(context, float_literal); // :ir_refactor_not_sure_initializer
                     one->value = 1.0;
                     set_resolved_type(&one->base, op->base.resolved_type, null);
                     
@@ -3174,7 +3174,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         struct ast_float_literal *f = (struct ast_float_literal *)one;
                         
                         // @note: This sucks!
-                        struct ast_emitted_float_literal *emitted = push_ast(context, f->base.token, emitted_float_literal);
+                        struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
                         emitted->value = f->value;
                         
                         sll_push_back(context->emitted_float_literals, emitted);
@@ -4256,7 +4256,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             }break;
             
             default:{
-                report_internal_compiler_error(ast->token, __FUNCTION__ ": Unhandled ast");
+                report_internal_compiler_error(null, __FUNCTION__ ": Unhandled ast");
             }break;
         }
         

@@ -1976,7 +1976,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 relocation->destination_offset = (u32)((u8 *)&lines_header->offset_in_section_contribution - debug_symbols_base);
                 relocation->source_declaration = &function->as_decl;
                 
-                u32 file_index = function->scope->token->file_index;
+                struct ast_scope *scope = (struct ast_scope *)function->scope;
+                u32 file_index = scope->token->file_index;
                 struct file *file = globals.file_table.data[file_index];
                 
                 struct codeview_lines_block{
@@ -2001,7 +2002,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 // Emit an initial line for the prologue.
                 // 
                 *push_struct(arena, u32) = 0;
-                *push_struct(arena, u32) = (u32)(function->scope->token->line | /*is_statement*/0x80000000);
+                *push_struct(arena, u32) = (u32)(scope->token->line | /*is_statement*/0x80000000);
                 
                 for(smm index = 0; index < function->line_information.size; index++){
                     struct function_line_information line = function->line_information.data[index];
