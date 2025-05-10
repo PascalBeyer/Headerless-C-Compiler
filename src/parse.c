@@ -44,8 +44,8 @@ func b32 skip_until_tokens_are_balanced(struct context *context, struct token *i
 // unique_serial
 // unique()
 // :unique
-func s64 get_unique_ast_serial(struct context *context){
-    s64 ret = context->ast_serializer++;
+func s32 get_unique_ast_serial(struct context *context){
+    s32 ret = context->ast_serializer++;
     
 #if 0
     if(ret == 25) os_debug_break();

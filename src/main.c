@@ -765,7 +765,7 @@ struct context{
 #define MAX_STACK_USAGE kilo_bytes(512)
     u8 *low_stack_address;
     b32 in_lhs_expression;
-    s64 ast_serializer;
+    s32 ast_serializer;
     
     struct{
         struct pragma_pack_node *first;
@@ -2534,7 +2534,7 @@ func void init_context(struct context *context, struct thread_info *info, struct
     context->thread_info = info;
     context->arena = arena;
     context->ast_arena = create_memory_arena(giga_bytes(8), 1.0f, mega_bytes(1));
-    context->ast_serializer = (thread_index << 48);
+    context->ast_serializer = (s32)(thread_index << 24);
     
     smm emit_pool_capacity = mega_bytes(100);
     struct os_virtual_buffer emit_pool_buf = os_reserve_memory(0, emit_pool_capacity);

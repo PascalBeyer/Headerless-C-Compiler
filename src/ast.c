@@ -506,8 +506,8 @@ enum ast_kind{
 
 struct ast{
     enum ast_kind kind;
+    s32 s;
     struct token *token;
-    s64 s;
     struct ast_type *resolved_type;
     struct ast *defined_type; 
     // :defined_types
