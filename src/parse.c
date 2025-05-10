@@ -140,8 +140,10 @@ func struct ast_type *parser_push_pointer_type(struct context *context, struct a
 func struct ast *ast_push_binary_expression(struct context *context, enum ast_kind kind, struct token *token, struct ast *lhs, struct ast *rhs){
     struct ast *ast = _parser_ast_push(context, &context->ast_arena, token, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), kind);
     struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-    op->lhs = lhs;
-    op->rhs = rhs;
+    (void)lhs;
+    (void)rhs;
+    // op->lhs = lhs;
+    // op->rhs = rhs;
     return cast(struct ast *)op;
 }
 
@@ -3902,9 +3904,6 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
 
 // :compound_assignments
 func struct ast *punt_compound_assignment(struct context *context, struct ast *lhs, struct ast *rhs, struct token *site, enum ast_kind AST_binary_op){
-    // @cleanup: we could reuse 'assignment'
-    
-    // :ir_refactor - With the new system we do this:
     // 
     // AST_duplicate_lhs:
     //     {lhs, rhs} -> {lhs, lhs, rhs}
@@ -3913,8 +3912,6 @@ func struct ast *punt_compound_assignment(struct context *context, struct ast *l
     // AST_assignment:
     //     {lhs, result} -> {result}
     //     
-    // With the old system we do this:
-    //     a op= b -> ((unnamed) = &a,  *(unnamed) = *(unnamed) op b)
     
     struct ast *dup = (struct ast *)push_expression(context, site, duplicate_lhs);
     set_resolved_type(dup, lhs->resolved_type, lhs->defined_type); // ?
@@ -3935,7 +3932,6 @@ func struct ast *punt_compound_assignment(struct context *context, struct ast *l
     
     struct ast *value_assignment = ast_push_binary_expression(context, AST_assignment, site, lhs, rhs);
     set_resolved_type(value_assignment, lhs->resolved_type, lhs->defined_type);
-    
     return value_assignment;
 }
 
@@ -4804,94 +4800,6 @@ case NUMBER_KIND_##type:{ \
                 
                 if(operand->resolved_type->kind == AST_struct){
                     not_implemented;
-                    #if 0
-                    // :hlc_extension
-                    // for structs that contain a field '.data' and a field '.size' map
-                    //     struct s { char *data; u64 size } s;
-                    //     s[index];
-                    // to
-                    //     (struct s *<s> = &s, u64 <i> = index, <i> >= <s>->size ? panic() : 0, <s>->data)[<i>]
-                    
-                    struct ast_compound_type *compound = (struct ast_compound_type *)operand->resolved_type; 
-                    
-                    // struct s *<s> = &s
-                    struct ast_type *s_ident_type = parser_push_pointer_type(context, &compound->base, null, test);
-                    
-                    operand = ast_push_unary_expression(context, AST_unary_address, test, operand);
-                    set_resolved_type(operand, s_ident_type, null);
-                    
-                    struct ast_declaration *struct_declaration = push_unnamed_declaration(context, s_ident_type, null, test);
-                    
-                    struct ast_identifier *s_ident = push_expression(context, struct_declaration->identifier, identifier);
-                    s_ident->decl = struct_declaration;
-                    set_resolved_type(&s_ident->base, struct_declaration->type, struct_declaration->defined_type);
-                    
-                    
-                    struct ast *s_assign = ast_push_binary_expression(context, AST_assignment, operand->token, &s_ident->base, operand);
-                    set_resolved_type(s_assign, s_ident_type, null);
-                    
-                    // <s>->data and <s>->size
-                    struct compound_member *data_member = find_member_in_compound(compound, globals.keyword_data);
-                    struct compound_member *size_member = find_member_in_compound(compound, globals.keyword_size);
-                    if(!data_member){
-                        // :error
-                        report_error(context, test, "Left hand side of [] is of struct type but does not contain a '.data' member.");
-                        return operand;
-                    }
-                    
-                    if(!size_member){
-                        // :error
-                        report_error(context, test, "Left hand side of [] is of struct type but does not contain a '.size' member.");
-                        return operand;
-                    }
-                    
-                    if(data_member->type->kind != AST_pointer_type){
-                        report_error(context, test, "Struct subscript has a '.data' member, but it is not a pointer.");
-                        return operand;
-                    }
-                    
-                    if(size_member->type != &globals.typedef_u64 && size_member->type != &globals.typedef_s64){
-                        report_error(context, test, "Struct subscript has a '.size' member, but it is not a 64-bit integer type.");
-                        return operand;
-                    }
-                    
-                    struct ast *data = push_dot_or_arrow(context, data_member, &s_ident->base, AST_member_deref, test);
-                    struct ast *size = push_dot_or_arrow(context, size_member, &s_ident->base, AST_member_deref, test);
-                    
-                    // maybe cast the index to the index type
-                    index = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, size->resolved_type, size->defined_type, index, test);
-                    
-                    // u64 <i> = index
-                    struct ast_declaration *i_decl = push_unnamed_declaration(context, size->resolved_type, size->defined_type, test);
-                    
-                    struct ast_identifier *i_ident = push_expression(context, i_decl->identifier, identifier);
-                    i_ident->decl = i_decl;
-                    set_resolved_type(&i_ident->base, i_decl->type, i_decl->defined_type);
-                    
-                    struct ast *i_assign = ast_push_binary_expression(context, AST_assignment, operand->token, &i_ident->base, index);
-                    set_resolved_type(i_assign, size->resolved_type, size->defined_type);
-                    
-                    // <i> >= <s>->size ? panic() : 0
-                    struct ast_conditional_expression *cond = push_expression(context, test, conditional_expression);
-                    cond->condition = ast_push_binary_expression(context, AST_binary_bigger_equals, test, &i_ident->base, size);
-                    set_resolved_type(cond->condition, &globals.typedef_s32, null);
-                    cond->if_true  = &(push_expression(context, test, panic))->base;
-                    set_resolved_type(cond->if_true, &globals.typedef_s32, null);
-                    cond->if_false = ast_push_s32_literal(context, test, 0);
-                    set_resolved_type(&cond->base, &globals.typedef_s32, 0);
-                    
-                    // glue them together using comma expressions
-                    operand = ast_push_binary_expression(context, AST_comma_expression, test, s_assign, i_assign);
-                    set_resolved_type(operand, data->resolved_type, data->defined_type);
-                    
-                    operand = ast_push_binary_expression(context, AST_comma_expression, test, operand, &cond->base);
-                    set_resolved_type(operand, &globals.typedef_s32, null);
-                    
-                    operand = ast_push_binary_expression(context, AST_comma_expression, test, operand, data);
-                    set_resolved_type(operand, data->resolved_type, data->defined_type);
-                    
-                    index = &i_ident->base;
-                    #endif
                 }
                 
                 if(operand->resolved_type->kind != AST_pointer_type && operand->resolved_type->kind != AST_array_type){
@@ -5877,6 +5785,9 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                 }
+
+                if(type_is_signed(match)) ast_kind += AST_binary_bigger_equals_signed - AST_binary_bigger_equals;
+                // if(match->kind == AST_float_type) ast_kind += AST_binary_bigger_equals_float - AST_binary_bigger_equals;
                 
                 struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, stack_entry->token, op_lhs, op_rhs);
                 set_resolved_type(&op->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
@@ -6365,9 +6276,6 @@ case NUMBER_KIND_##type:{ \
                     set_resolved_type(&end_label->base, if_true->resolved_type, defined_type);
                     
                     struct ast_conditional_expression *cond = push_ast(context, question_mark, conditional_expression);
-                    cond->condition = condition;
-                    cond->if_true   = if_true;
-                    cond->if_false  = if_false;
                     
                     set_resolved_type(&cond->base, if_true->resolved_type, defined_type);
                     

@@ -427,10 +427,16 @@ enum ast_kind{
     // compare AST_* same order as the tokens
     AST_binary_logical_equals,
     AST_binary_logical_unequals,
+    
     AST_binary_bigger_equals,
     AST_binary_smaller_equals,
     AST_binary_bigger,
     AST_binary_smaller,
+    
+    AST_binary_bigger_equals_signed,
+    AST_binary_smaller_equals_signed,
+    AST_binary_bigger_signed,
+    AST_binary_smaller_signed,
     
     AST_logical_and,
     AST_logical_or,
@@ -735,8 +741,6 @@ struct ast_unary_op{
 
 struct ast_binary_op{
     struct ast base;
-    struct ast *lhs;
-    struct ast *rhs;
 };
 
 // :ir_refactor - This is how all "ast" should look.
@@ -1017,9 +1021,6 @@ struct ast_goto{
 
 struct ast_conditional_expression{
     struct ast base;
-    struct ast *if_true;
-    struct ast *if_false;
-    struct ast *condition;
 };
 
 struct conditional_expression_information{

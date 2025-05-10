@@ -3436,7 +3436,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack_at -= 1;
                 
                 struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                struct ast_type *lhs_type = op->lhs->resolved_type;
+                struct ast_type *lhs_type = op->base.resolved_type;
                 
                 if(lhs_type->kind == AST_bitfield_type){
                     struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)lhs_type;
@@ -3455,6 +3455,12 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             case AST_binary_bigger_equals:
             case AST_binary_smaller:
             case AST_binary_smaller_equals:
+            
+            case AST_binary_bigger_equals_signed:
+            case AST_binary_smaller_equals_signed:
+            case AST_binary_bigger_signed:
+            case AST_binary_smaller_signed:
+            
             case AST_binary_logical_equals:
             case AST_binary_logical_unequals:{
                 // @quality: in the case of "cmp [rax], 1" we do not have to load [rax] as cmp does not write
@@ -3466,7 +3472,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack_at -= 1;
                 
                 struct emit_location *result;
-                if(op->lhs->resolved_type->kind == AST_float_type){ // :ir_refactor_float
+                if(lhs->register_kind_when_loaded == REGISTER_KIND_xmm){
                     
                     assert(lhs->register_kind_when_loaded == REGISTER_KIND_xmm);
                     assert(rhs->register_kind_when_loaded == REGISTER_KIND_xmm);
@@ -3492,8 +3498,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     result = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_CMP, CMP_REG8_REGM8, CMP_REG_REGM); // :ir_refactor_is_signed
                 }
                 
-                // @paranoid, technically these should always agree
-                b32 is_signed = type_is_signed(op->lhs->resolved_type) || type_is_signed(op->rhs->resolved_type);
                 free_emit_location(context, result); // we only care about the flags
                 
                 enum comp_condition cond;
@@ -3504,17 +3508,33 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     case AST_binary_logical_unequals:{
                         cond = COMP_unequals;
                     }break;
+                    
                     case AST_binary_smaller:{
-                        cond = is_signed ? COMP_smaller_signed : COMP_smaller;
+                        cond = COMP_smaller;
                     }break;
+                    case AST_binary_smaller_signed:{
+                        cond = COMP_smaller_signed;
+                    }break;
+                    
                     case AST_binary_smaller_equals:{
-                        cond = is_signed ? COMP_smaller_equals_signed : COMP_smaller_equals;
+                        cond = COMP_smaller_equals;
                     }break;
+                    case AST_binary_smaller_equals_signed:{
+                        cond = COMP_smaller_equals_signed;
+                    }break;
+                    
                     case AST_binary_bigger:{
-                        cond = is_signed ? COMP_bigger_signed : COMP_bigger;
+                        cond = COMP_bigger;
                     }break;
+                    case AST_binary_bigger_signed:{
+                        cond = COMP_bigger_signed;
+                    }break;
+                    
                     case AST_binary_bigger_equals:{
-                        cond = is_signed ? COMP_bigger_equals_signed : COMP_bigger_equals;
+                        cond = COMP_bigger_equals;
+                    }break;
+                    case AST_binary_bigger_equals_signed:{
+                        cond = COMP_bigger_equals_signed;
                     }break;
                     
                     invalid_default_case(cond = COMP_equals);
