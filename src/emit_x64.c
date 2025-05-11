@@ -2720,6 +2720,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     invalid_default_case();
                 }
                 emit_location_stack[emit_location_stack_at - 1] = loc;
+                
+                // @cleanup: Does this not have to check if the next thing is a jump?
+                
             }break;
             
             case AST_cast:
@@ -3354,7 +3357,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
                 struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
                 emit_location_stack_at -= 1;
-                
                 
                 smm is_signed = type_is_signed(ast->resolved_type);
                 u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_RIGHT : REG_OPCODE_SHIFT_RIGHT;
@@ -4121,15 +4123,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ast_arena_at += sizeof(struct ast_pop_expression);
                 emit_location_stack_at -= 1;
                 if(emit_location_stack[emit_location_stack_at]) free_emit_location(context, emit_location_stack[emit_location_stack_at]);
-            }break;
-            
-            case AST_pop_lhs_expression:{
-                ast_arena_at += sizeof(struct ast_pop_lhs_expression);
-                emit_location_stack_at -= 1;
-                
-                if(emit_location_stack[emit_location_stack_at-1]) free_emit_location(context, emit_location_stack[emit_location_stack_at-1]);
-                
-                emit_location_stack[emit_location_stack_at-1] = emit_location_stack[emit_location_stack_at];
             }break;
             
             case AST_duplicate_lhs:{

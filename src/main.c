@@ -786,7 +786,7 @@ struct context{
         enum ast_kind ast_kind;
         struct token *token;
         
-        struct ast *operand;
+        struct expr operand;
         void *other;
     } ast_stack[1024];
     smm ast_stack_at;

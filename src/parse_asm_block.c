@@ -1288,7 +1288,7 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     struct asm_operand operand = {0};
     
     // @cleanup: ASM_ARG_declaration_dereference for '*decl' and 'decl[10]'.
-    struct expression_return expr = parse_expression(context, /*skip_comma = */true);
+    struct expr expr = parse_expression(context, /*skip_comma = */true);
     if(context->should_exit_statement) return operand;
     
     if(expr.ast->kind == AST_integer_literal){

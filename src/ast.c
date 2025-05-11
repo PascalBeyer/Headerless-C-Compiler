@@ -394,9 +394,11 @@ enum ast_kind{
     AST_implicit_address_conversion_lhs,
     
     AST_unary_postinc,
-    AST_unary_preinc,
     AST_unary_postdec,
+    
+    AST_unary_preinc,
     AST_unary_predec,
+    
     AST_unary_logical_not,
     AST_unary_bitwise_not,
     AST_unary_deref,
@@ -504,7 +506,6 @@ enum ast_kind{
     AST_jump_label,
     
     AST_pop_expression,
-    AST_pop_lhs_expression, // needed for conditional expressions.
     
     AST_temp,
     AST_skip,
@@ -514,9 +515,22 @@ enum ast_kind{
     AST_count,
 };
 
+
 struct ast{
     enum ast_kind kind;
     s32 s;
+    struct ast_type *resolved_type;
+    struct ast *defined_type; 
+    // :defined_types
+    // if the ast has a 'AST_typedef' or 'AST_enum' type, we store it here for error reporting. 
+    // Also if it is just promoted, we retain that information, so we can warn on 'u8 = u8 + u8' usw.
+    // :retain_type_information_through_promotion 
+};
+
+struct expr{
+    struct ast *ast;
+    struct token *token;
+    
     struct ast_type *resolved_type;
     struct ast *defined_type; 
     // :defined_types
