@@ -140,7 +140,7 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
             
             if(operand->kind == ASM_ARG_declaration_dereference){
                 // @cleanup: in the future 'index' might not always be null.
-                ret = emit_location_register_relative(context, ret->register_kind_when_loaded, ret, null, 0, operand->size);
+                ret = emit_location_register_relative(context, ret, null, 0, operand->size);
             }
             
             return ret;
@@ -155,8 +155,7 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
                 index = asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, operand->index, 8);
             }
             
-            // @cleanup: REGISTER_KIND_?
-            struct emit_location *ret = emit_location_register_relative(context, 0, base, index, operand->offset, operand->size);
+            struct emit_location *ret = emit_location_register_relative(context, base, index, operand->offset, operand->size);
             
             switch(operand->scale){
                 case 1: ret->log_index_scale = 0; break;
@@ -535,7 +534,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             }break;
             
             case MEMONIC_movsx: case MEMONIC_movzx:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_gpr(context, lhs);
                 
                 assert(rhs->size == 1 || rhs->size == 2);
                 
@@ -553,7 +552,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             }break;
             
             case MEMONIC_popcnt:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_gpr(context, lhs);
                 
                 if(rhs->state == EMIT_LOCATION_loaded){
                     emit_register_register(context, create_prefixes(ASM_PREFIX_F3), two_byte_opcode(0xb8), loaded, rhs);
@@ -580,7 +579,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 u8 OP_REG_REGM   = opcode_base + 3;
                 
                 if(lhs->state == EMIT_LOCATION_register_relative){
-                    struct emit_location *loaded = emit_load(context, rhs);
+                    struct emit_location *loaded = emit_load_gpr(context, rhs);
                     
                     loaded->prevent_freeing += 1;
                     emit_compound_assignment__internal(context, user_prefixes, lhs, loaded, false, REG_OPCODE, OP_REGM8_REG8, OP_REGM_REG);
@@ -696,7 +695,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                     rhs = temp;
                 }
                 
-                struct emit_location *loaded = emit_load(context, rhs);
+                struct emit_location *loaded = emit_load_gpr(context, rhs);
                 
                 u8 op = memonic_to_opcode[inst->memonic];
                 struct opcode opcode = (lhs->size == 1) ? one_byte_opcode(op) : one_byte_opcode(op + 1);
@@ -712,7 +711,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 if(loaded != rhs) emit_store(context, rhs, loaded);
             }break;
             case MEMONIC_cmpxchg: case MEMONIC_xadd:{
-                struct emit_location *loaded = emit_load_without_freeing(context, rhs);
+                struct emit_location *loaded = emit_load_without_freeing_gpr(context, rhs);
                 
                 u8 op = memonic_to_opcode[inst->memonic];
                 struct opcode opcode = (lhs->size == 1) ? two_byte_opcode(op) : two_byte_opcode(op + 1);
@@ -751,7 +750,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             }break;
             
             case MEMONIC_bswap:{
-                struct emit_location *loaded = emit_load_without_freeing(context, operand);
+                struct emit_location *loaded = emit_load_without_freeing_gpr(context, operand);
                 
                 enum rex_encoding rex = ((operand->size == 8) ? REXW : 0) | (register_is_extended(loaded->loaded_register) ? REXB : 0);
                 if(rex) emit(rex);
@@ -782,7 +781,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_cmovno: case MEMONIC_cmovnc: case MEMONIC_cmovnz: case MEMONIC_cmovnbe: case MEMONIC_cmovns: case MEMONIC_cmovnp: case MEMONIC_cmovnl: case MEMONIC_cmovnle:{
                 struct opcode opcode = two_byte_opcode((u8)(0x40 + inst->memonic - MEMONIC_cmovo));
                 
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_gpr(context, lhs);
                 
                 if(rhs->state == EMIT_LOCATION_loaded){
                     emit_register_register(context, no_prefix(), opcode, /*reg*/loaded, /*regm*/rhs);
@@ -806,7 +805,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                         emit_register_relative_extended(context, no_prefix(), two_byte_opcode(0xBA), REG_OPCODE, lhs);
                     }
                 }else{
-                    struct emit_location *loaded = emit_load(context, rhs);
+                    struct emit_location *loaded = emit_load_gpr(context, rhs);
                     if(lhs->state == EMIT_LOCATION_loaded){
                         emit_register_register(context, no_prefix(), two_byte_opcode(opcode), /*reg*/loaded, /*regm*/lhs);
                     }else{
@@ -819,7 +818,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             
             case MEMONIC_lzcnt:
             case MEMONIC_bsf: case MEMONIC_bsr:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_gpr(context, lhs);
                 
                 if(rhs->state == EMIT_LOCATION_loaded){
                     emit_register_register(context, create_prefixes(memonic_to_prefix[inst->memonic]), two_byte_opcode(memonic_to_opcode[inst->memonic]), /*reg*/loaded, /*regm*/rhs);
@@ -839,8 +838,8 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_cmpeqpd:  case MEMONIC_cmpltpd:  case MEMONIC_cmplepd:  case MEMONIC_cmpunordpd:
             case MEMONIC_cmpneqpd: case MEMONIC_cmpnltpd: case MEMONIC_cmpnlepd: case MEMONIC_cmpordpd:
             case MEMONIC_cmpps: case MEMONIC_cmppd: case MEMONIC_cmpss: case MEMONIC_cmpsd:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
-                assert(loaded->register_kind_when_loaded == REGISTER_KIND_xmm);
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
+                assert(loaded->register_kind == REGISTER_KIND_xmm);
                 
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 struct opcode opcode = two_byte_opcode(0xc2);
@@ -885,8 +884,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_movhlps:  case MEMONIC_movlhps:
             case MEMONIC_cvtdq2pd: case MEMONIC_cvtpd2dq: case MEMONIC_cvttpd2dq:
             case MEMONIC_cvtdq2ps: case MEMONIC_cvtps2dq: case MEMONIC_cvttps2dq:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
-                assert(loaded->register_kind_when_loaded == REGISTER_KIND_xmm);
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
                 
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 
@@ -930,8 +928,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 
                 // @cleanup: 8-byte versions?
                 
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
-                assert(loaded->register_kind_when_loaded == REGISTER_KIND_xmm);
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
                 
                 struct opcode opcode = two_byte_opcode(memonic_to_opcode[inst->memonic]);
                 if(rhs->state == EMIT_LOCATION_loaded){
@@ -957,7 +954,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                         emit_register_relative_register(context, prefix, two_byte_opcode(MOVE_UNALIGNED_XMM_REGM), lhs->loaded_register, rhs);
                     }
                 }else{
-                    struct emit_location *loaded = emit_load(context, rhs);
+                    struct emit_location *loaded = emit_load_float(context, rhs);
                     emit_register_relative_register(context, prefix, two_byte_opcode(MOVE_UNALIGNED_REGM_XMM), loaded->loaded_register, lhs);
                     if(loaded != rhs) free_emit_location(context, loaded);
                 }
@@ -967,7 +964,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_psrlw: case MEMONIC_psrld: case MEMONIC_psrlq:
             case MEMONIC_psraw: case MEMONIC_psrad:
             case MEMONIC_psrldq: case MEMONIC_pslldq:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
                 
                 if(rhs->state == EMIT_LOCATION_immediate){
                     // [66] 71 2   psrlw xmm, imm8
@@ -1004,7 +1001,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             }break;
             
             case MEMONIC_cvtsi2ss: case MEMONIC_cvtsi2sd:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
                 
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 struct opcode opcode = two_byte_opcode(memonic_to_opcode[inst->memonic]);
@@ -1022,7 +1019,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_movmskps:  case MEMONIC_movmskpd:
             case MEMONIC_cvttss2si: case MEMONIC_cvttsd2si:
             case MEMONIC_cvtss2si:  case MEMONIC_cvtsd2si:{
-                struct emit_location *loaded = emit_load(context, rhs);
+                struct emit_location *loaded = emit_load_float(context, rhs);
                 
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 struct opcode opcode = two_byte_opcode(memonic_to_opcode[inst->memonic]);
@@ -1040,7 +1037,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             // op xmm1, xmm2/m128, imm8
             case MEMONIC_shufps: case MEMONIC_shufpd:
             case MEMONIC_pshuflw: case MEMONIC_pshufhw: case MEMONIC_pshufd:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 struct opcode opcode = two_byte_opcode(memonic_to_opcode[inst->memonic]);
                 
@@ -1061,7 +1058,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_C, 8);
             }/*fall_through*/
             case MEMONIC_palignr:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
                 struct prefixes prefix = create_prefixes(ASM_PREFIX_P_BIG);
                 struct opcode   opcode = three_byte_opcode(0x3a, memonic_to_opcode[inst->memonic]);
                 
@@ -1096,7 +1093,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 if(lhs->state == EMIT_LOCATION_register_relative){
                     opcode = two_byte_opcode(memonic_to_opcode[inst->memonic] + 1);
                     
-                    struct emit_location *loaded = emit_load(context, rhs);
+                    struct emit_location *loaded = emit_load_float(context, rhs);
                     emit_register_relative_register(context, prefix, opcode, loaded->loaded_register, lhs);
                     if(loaded != rhs) free_emit_location(context, loaded);
                 }else{
@@ -1119,7 +1116,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 
                 if(lhs->state == EMIT_LOCATION_register_relative){
-                    struct emit_location *loaded = emit_load(context, rhs);
+                    struct emit_location *loaded = emit_load_float(context, rhs);
                     emit_register_relative_register(context, prefix, two_byte_opcode(0x7f), loaded->loaded_register, lhs);
                     if(loaded != rhs) free_emit_location(context, loaded);
                 }else{
@@ -1135,20 +1132,20 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             
             case MEMONIC_movnti:{
                 assert(lhs->state == EMIT_LOCATION_register_relative);
-                struct emit_location *loaded = emit_load(context, rhs);
+                struct emit_location *loaded = emit_load_float(context, rhs);
                 emit_register_relative_register(context, no_prefix(), two_byte_opcode(0xc3), loaded->loaded_register, lhs);
                 if(loaded != rhs) free_emit_location(context, loaded);
             }break;
             
             case MEMONIC_movntdq: case MEMONIC_movntpd: case MEMONIC_movntps:{
                 assert(lhs->state == EMIT_LOCATION_register_relative);
-                struct emit_location *loaded = emit_load(context, rhs);
+                struct emit_location *loaded = emit_load_float(context, rhs);
                 emit_register_relative_register(context, create_prefixes(memonic_to_prefix[inst->memonic]), two_byte_opcode(memonic_to_opcode[inst->memonic]), loaded->loaded_register, lhs);
                 if(loaded != rhs) free_emit_location(context, loaded);
             }break;
             
             case MEMONIC_pextrb: case MEMONIC_pextrw: case MEMONIC_pextrd: case MEMONIC_pextrq:{
-                struct emit_location *loaded = emit_load(context, rhs);
+                struct emit_location *loaded = emit_load_float(context, rhs);
                 struct prefixes prefix = create_prefixes(ASM_PREFIX_P_BIG);
                 struct opcode   opcode = three_byte_opcode(0x3A, memonic_to_opcode[inst->memonic]);
                 
@@ -1164,7 +1161,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             }break;
             
             case MEMONIC_pinsrb: case MEMONIC_pinsrw: case MEMONIC_pinsrd: case MEMONIC_pinsrq:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
                 struct prefixes prefix = create_prefixes(ASM_PREFIX_P_BIG);
                 struct opcode   opcode = three_byte_opcode(0x3A, memonic_to_opcode[inst->memonic]);
                 
@@ -1192,8 +1189,8 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 // 66 0F 7E /r MOVQ r/m64, xmm
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 
-                if(lhs->register_kind_when_loaded == REGISTER_KIND_gpr){
-                    struct emit_location *loaded = emit_load(context, rhs);
+                if(lhs->size < 16){
+                    struct emit_location *loaded = emit_load_float(context, rhs);
                     
                     if(lhs->state == EMIT_LOCATION_register_relative){
                         emit_register_relative_register(context, prefix, two_byte_opcode(0x7E), loaded->loaded_register, lhs);
@@ -1203,9 +1200,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                     
                     if(loaded != rhs) free_emit_location(context, loaded);
                 }else{
-                    assert(lhs->register_kind_when_loaded == REGISTER_KIND_xmm);
-                    
-                    struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                    struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
                     
                     if(rhs->state == EMIT_LOCATION_register_relative){
                         emit_register_relative_register(context, prefix, two_byte_opcode(0x6E), loaded->loaded_register, rhs);
@@ -1220,8 +1215,8 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_vpmovmskb:
             case MEMONIC_pmovmskb:{
                 // pmovmskb r32, xmm
-                struct emit_location *first  = emit_load(context, operands[0]);
-                struct emit_location *second = emit_load(context, operands[1]);
+                struct emit_location *first  = emit_load_gpr(context, operands[0]);
+                struct emit_location *second = emit_load_float(context, operands[1]);
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 
                 emit_register_op__internal(context, prefix, two_byte_opcode(0xD7), first->loaded_register, second->loaded_register, second->size);
@@ -1244,7 +1239,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 struct emit_location *first = (operands[0]->state == EMIT_LOCATION_loaded) ? operands[0] : 
                         emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), operands[0]->size);
                 
-                struct emit_location *vex = emit_load(context, operands[1]);
+                struct emit_location *vex = emit_load_float(context, operands[1]);
                 prefix.vex_register = vex->loaded_register;
                 
                 if(operands[2]->state == EMIT_LOCATION_register_relative){
@@ -1270,7 +1265,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 struct emit_location *first = (operands[0]->state == EMIT_LOCATION_loaded) ? operands[0] : 
                         emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), operands[0]->size);
                 
-                struct emit_location *vex = emit_load(context, operands[1]);
+                struct emit_location *vex = emit_load_float(context, operands[1]);
                 prefix.vex_register = vex->loaded_register;
                 
                 if(operands[2]->state == EMIT_LOCATION_register_relative){
@@ -1305,7 +1300,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             case MEMONIC_aesdec: case MEMONIC_pshufb:
             case MEMONIC_ptest:
             case MEMONIC_vptest:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
                 
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 struct opcode opcode   = three_byte_opcode(0x38, memonic_to_opcode[inst->memonic]);
@@ -1321,7 +1316,7 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
             }break;
             
             case MEMONIC_crc32:{
-                struct emit_location *loaded = emit_load_without_freeing(context, lhs);
+                struct emit_location *loaded = emit_load_without_freeing_gpr(context, lhs);
                 struct prefixes prefix = create_prefixes(ASM_PREFIX_F2);
                 struct opcode opcode = three_byte_opcode(0x38, 0xf1);
                 
@@ -1356,7 +1351,11 @@ func void emit_inline_asm_block(struct context *context, struct ast_asm_block *a
                 //
                 // @cleanup: should this jump out (if its not the last memonic)?
                 //
-                context->asm_block_return = emit_load(context, operand);
+                if(context->current_function->type->return_type->kind == AST_float_type){
+                    context->asm_block_return = emit_load_float(context, operand);
+                }else{
+                    context->asm_block_return = emit_load_gpr(context, operand);
+                }
             }break;
             
             case MEMONIC_bytes:{

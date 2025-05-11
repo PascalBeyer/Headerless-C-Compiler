@@ -5813,10 +5813,10 @@ case NUMBER_KIND_##type:{ \
                         report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, stack_entry->token);
                         return (struct expression_return){operand, stack_entry->token};
                     }
+                }else{
+                    if(type_is_signed(match)) ast_kind += AST_binary_bigger_equals_signed - AST_binary_bigger_equals;
+                    if(match->kind == AST_float_type) ast_kind += AST_binary_bigger_equals_float - AST_binary_bigger_equals;
                 }
-
-                if(type_is_signed(match)) ast_kind += AST_binary_bigger_equals_signed - AST_binary_bigger_equals;
-                // if(match->kind == AST_float_type) ast_kind += AST_binary_bigger_equals_float - AST_binary_bigger_equals;
                 
                 struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
                 set_resolved_type(&op->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
@@ -5870,6 +5870,8 @@ case NUMBER_KIND_##type:{ \
                         report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, op_token);
                         return (struct expression_return){operand, stack_entry->token};
                     }
+                }else{
+                    if(match->kind == AST_float_type) ast_kind += AST_binary_logical_equals_float - AST_binary_logical_equals;
                 }
                 
                 struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);

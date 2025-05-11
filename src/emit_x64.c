@@ -760,10 +760,11 @@ struct emit_location{
     u32 prevent_spilling;
     u32 prevent_freeing;
     
-    enum register_kind register_kind_when_loaded;
+    
     union{
         struct{
             enum register_encoding loaded_register;
+            enum register_kind register_kind;
             
             //:inline_asm_user_referenced_registers
             b32 inline_asm__was_used_by_user;
@@ -794,7 +795,7 @@ func struct emit_location *emit_location_loaded(struct context *context, enum re
     assert(!context->register_allocators[kind].emit_location_map[reg]);
     
     struct emit_location *ret = push_struct(&context->scratch, struct emit_location);
-    ret->register_kind_when_loaded = kind;
+    ret->register_kind = kind;
     ret->state = EMIT_LOCATION_loaded;
     ret->loaded_register = reg;
     ret->size = size;
@@ -811,16 +812,14 @@ func struct emit_location *emit_location_loaded(struct context *context, enum re
 
 func struct emit_location *emit_location_conditional(struct context *context, enum comp_condition condition){
     struct emit_location *ret = push_struct(&context->scratch, struct emit_location);
-    ret->register_kind_when_loaded = REGISTER_KIND_gpr;
     ret->state = EMIT_LOCATION_conditional;
     ret->condition = condition;
     ret->size = 4;
     return ret;
 }
 
-func struct emit_location *emit_location_register_relative__internal(struct context *context, enum register_kind kind, struct emit_location *base, struct emit_location *index_register, smm offset, smm size, struct ast *ast){
+func struct emit_location *emit_location_register_relative__internal(struct context *context, struct emit_location *base, struct emit_location *index_register, smm offset, smm size, struct ast *ast){
     struct emit_location *ret = push_struct(&context->scratch, struct emit_location);
-    ret->register_kind_when_loaded = kind;
     ret->state = EMIT_LOCATION_register_relative;
     ret->base = base;
     ret->index = index_register;
@@ -832,17 +831,17 @@ func struct emit_location *emit_location_register_relative__internal(struct cont
 }
 
 
-func struct emit_location *emit_location_register_relative(struct context *context, enum register_kind kind, struct emit_location *base, struct emit_location *index_register, smm offset, smm size){
-    return emit_location_register_relative__internal(context, kind, base, index_register, offset, size, null);
+func struct emit_location *emit_location_register_relative(struct context *context, struct emit_location *base, struct emit_location *index_register, smm offset, smm size){
+    return emit_location_register_relative__internal(context, base, index_register, offset, size, null);
 }
 
-func struct emit_location *emit_location_rip_relative(struct context *context, struct ast *ast, enum register_kind kind, smm size){
-    return emit_location_register_relative__internal(context, kind, context->register_bp, null, 0, size, ast);
+func struct emit_location *emit_location_rip_relative(struct context *context, struct ast *ast, smm size){
+    return emit_location_register_relative__internal(context, context->register_bp, null, 0, size, ast);
 }
 
-func struct emit_location *emit_location_stack_relative(struct context *context, enum register_kind kind, smm offset, smm size){
+func struct emit_location *emit_location_stack_relative(struct context *context, smm offset, smm size){
     // @note: note the inversion in the offset @hmm.
-    return emit_location_register_relative__internal(context, kind, context->register_bp, null, -offset, size, null);
+    return emit_location_register_relative__internal(context, context->register_bp, null, -offset, size, null);
 }
 
 func struct emit_location *emit_location_immediate(struct context *context, u64 value, smm size){
@@ -856,14 +855,14 @@ func struct emit_location *emit_location_immediate(struct context *context, u64 
 //_____________________________________________________________________________________________________________________
 
 
-func struct emit_location *emit_allocate_temporary_stack_location(struct context *context, enum register_kind kind, smm size, smm alignment){
+func struct emit_location *emit_allocate_temporary_stack_location(struct context *context, smm size, smm alignment){
     
     context->temporary_stack_allocator  = align_up(context->temporary_stack_allocator, alignment);
     context->temporary_stack_allocator += size;
     context->temporary_stack_high_water_mark = max_of(context->temporary_stack_high_water_mark, context->temporary_stack_allocator);
     // :stack_space_needed
     smm stack_location_to_allocate = context->current_function->stack_space_needed + context->temporary_stack_allocator;
-    return emit_location_stack_relative(context, kind, stack_location_to_allocate, size);
+    return emit_location_stack_relative(context, stack_location_to_allocate, size);
 }
 
 func void spill_register(struct context *context, enum register_kind allocator, enum register_encoding register_to_spill){
@@ -882,7 +881,7 @@ func void spill_register(struct context *context, enum register_kind allocator, 
     assert(is_power_of_two(location_to_spill->size));
     
     // @note: for basic types we have alignment == size
-    *location_to_spill = *emit_allocate_temporary_stack_location(context, allocator, location_to_spill->size, location_to_spill->size);
+    *location_to_spill = *emit_allocate_temporary_stack_location(context, location_to_spill->size, location_to_spill->size);
     location_to_spill->prevent_freeing = prevent_freeing;
     
     alloc->emit_location_map[register_to_spill] = null;
@@ -1064,7 +1063,7 @@ func void free_emit_location(struct context *context, struct emit_location *loc)
             }
             
             enum register_encoding reg = loc->loaded_register;
-            struct register_allocator *alloc = &context->register_allocators[loc->register_kind_when_loaded];
+            struct register_allocator *alloc = &context->register_allocators[loc->register_kind];
             
             assert(reg < array_count(alloc->emit_location_map));
             alloc->emit_location_map[reg] = null;
@@ -1087,7 +1086,7 @@ func void free_emit_location(struct context *context, struct emit_location *loc)
     loc->state = EMIT_LOCATION_freed;
 }
 
-func struct emit_location *emit_load(struct context *context, struct emit_location *loc);
+func struct emit_location *emit_load_gpr(struct context *context, struct emit_location *loc);
 
 
 //
@@ -1110,10 +1109,10 @@ func void emit_location_allow_freeing(struct context *context, struct emit_locat
 func void emit_location_prevent_spilling(struct context *context, struct emit_location *loc){
     loc->prevent_spilling += 1;
     if(loc->state == EMIT_LOCATION_register_relative){
-        loc->base = emit_load(context, loc->base);
+        loc->base = emit_load_gpr(context, loc->base);
         loc->base->prevent_spilling += 1;
         if(loc->index){
-            loc->index = emit_load(context, loc->index);
+            loc->index = emit_load_gpr(context, loc->index);
             loc->index->prevent_spilling += 1;
         }
     }
@@ -1152,11 +1151,11 @@ func void emit_reg_extended_op(struct context *context, struct prefixes prefixes
 func void emit_register_register(struct context *context, struct prefixes prefixes, struct opcode opcode, struct emit_location *_reg, struct emit_location *_regm){
     assert(_reg->state == EMIT_LOCATION_loaded);
     assert(_regm->state == EMIT_LOCATION_loaded);
-    assert(_reg->register_kind_when_loaded == _regm->register_kind_when_loaded);
+    assert(_reg->register_kind == _regm->register_kind);
     
     // @note: allow mismatches for xmm, as it gets weird in inline_asm blocks.
     // @cleanup: is this still true?
-    assert(_reg->register_kind_when_loaded == REGISTER_KIND_xmm || _reg->size == _regm->size);
+    assert(_reg->register_kind == REGISTER_KIND_xmm || _reg->size == _regm->size);
     
     enum register_encoding reg  = _reg->loaded_register;
     enum register_encoding regm = _regm->loaded_register;
@@ -1261,7 +1260,7 @@ func void emit_register_relative_register(struct context *context, struct prefix
 //   'op [base + scale * index + offset], immediate'
 // caller has to make sure that the 'opcode' matches the 'immediate->size'
 func void emit_register_relative_immediate(struct context *context, struct prefixes prefixes, struct opcode opcode, u8 reg_extension, struct emit_location *register_relative, struct emit_location *immediate){
-    assert(register_relative->register_kind_when_loaded == REGISTER_KIND_gpr);
+    // assert(register_relative->register_kind_when_loaded == REGISTER_KIND_gpr);
     emit_register_relative__internal(context, prefixes, opcode, reg_extension, register_relative, immediate);
 }
 
@@ -1320,10 +1319,10 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
     
     assert(source->size == 1 || source->size == 2 || source->size == 4 || source->size == 8);
     
-    assert(source->register_kind_when_loaded == REGISTER_KIND_gpr);
-    
     switch(source->state){
         case EMIT_LOCATION_loaded:{
+            assert(source->register_kind == REGISTER_KIND_gpr);
+            
             // If we have the desired register there is nothing to do.
             if(source->loaded_register == register_to_load_into) return source;
             
@@ -1422,7 +1421,7 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
 
 func struct emit_location *emit_load_float_into_specific_register(struct context *context, struct emit_location *loc, enum register_encoding reg){
     
-    assert(loc->register_kind_when_loaded == REGISTER_KIND_xmm);
+    
     if(loc->state == EMIT_LOCATION_loaded && loc->loaded_register == reg) return loc;
     
     struct prefixes sse_prefix;
@@ -1437,6 +1436,7 @@ func struct emit_location *emit_load_float_into_specific_register(struct context
     
     switch(loc->state){
         case EMIT_LOCATION_loaded:{
+            assert(loc->register_kind == REGISTER_KIND_xmm);
             emit_register_register(context, sse_prefix, two_byte_opcode(MOVE_UNALIGNED_XMM_REGM), ret, loc);
         }break;
         case EMIT_LOCATION_register_relative:{
@@ -1453,22 +1453,24 @@ func struct emit_location *emit_load_float(struct context *context, struct emit_
     return emit_load_float_into_specific_register(context, loc, allocate_register(context, REGISTER_KIND_xmm));
 }
 
-func struct emit_location *emit_load(struct context *context, struct emit_location *loc){
-    // @cleanup: this really should set the register_to_load_into to loc->loaded_register
+func struct emit_location *emit_load_gpr(struct context *context, struct emit_location *loc){
     if(loc->state == EMIT_LOCATION_loaded) return loc;
     
-    if(loc->register_kind_when_loaded == REGISTER_KIND_gpr){
-        enum register_encoding register_to_load_into = allocate_register(context, REGISTER_KIND_gpr);
-        struct emit_location *ret = emit_load_into_specific_gpr(context, loc, register_to_load_into);
-        return ret;
-    }else{
-        return emit_load_float(context, loc);
-    }
+    enum register_encoding register_to_load_into = allocate_register(context, REGISTER_KIND_gpr);
+    struct emit_location *ret = emit_load_into_specific_gpr(context, loc, register_to_load_into);
+    return ret;
 }
 
-func struct emit_location *emit_load_without_freeing(struct context *context, struct emit_location *loc){
+func struct emit_location *emit_load_without_freeing_float(struct context *context, struct emit_location *loc){
     loc->prevent_freeing += 1;
-    struct emit_location *ret = emit_load(context, loc);
+    struct emit_location *ret = emit_load_float(context, loc);
+    loc->prevent_freeing -= 1;
+    return ret;
+}
+
+func struct emit_location *emit_load_without_freeing_gpr(struct context *context, struct emit_location *loc){
+    loc->prevent_freeing += 1;
+    struct emit_location *ret = emit_load_gpr(context, loc);
     loc->prevent_freeing -= 1;
     return ret;
 }
@@ -1552,7 +1554,7 @@ func u64 integer_literal_to_bytes(struct ast *ast){
 
 func void emit_store(struct context *context, struct emit_location *dest, struct emit_location *source){
     assert(dest->state == EMIT_LOCATION_register_relative);
-    // assert(dest->size == source->size); @cleanup: There currently is a problem with 'b ? u32 : 1ull'.
+    assert(dest->size /*==*/ >= source->size); // @cleanup: There currently is a problem with 'b ? u32 : 1ull'.
     
     if(source->size == 0){
         goto end; // nothing to do here!
@@ -1571,17 +1573,17 @@ func void emit_store(struct context *context, struct emit_location *dest, struct
             }
             
             // load 'source' for it's natural size, the store will then happen at 'dest->size'
-            source = emit_load(context, source);
+            source = emit_load_gpr(context, source);
             goto loaded;
         }break;
         case EMIT_LOCATION_conditional:{
             // @cleanup: we could emit SET_REGM8 here
-            source = emit_load(context, source);
+            source = emit_load_gpr(context, source);
             goto loaded;
         }break;
         case EMIT_LOCATION_loaded:{
             loaded:;
-            if(source->register_kind_when_loaded == REGISTER_KIND_xmm){
+            if(source->register_kind == REGISTER_KIND_xmm){
                 assert(source->size == dest->size);
                 
                 struct prefixes sse_prefix;
@@ -1601,7 +1603,7 @@ func void emit_store(struct context *context, struct emit_location *dest, struct
         }break;
         case EMIT_LOCATION_immediate:{
             if(source->size == 8) {
-                source = emit_load(context, source);
+                source = emit_load_gpr(context, source);
                 goto loaded;
             }
             u8 inst = (dest->size == 1) ? MOVE_REGM8_IMMEDIATE8 : MOVE_REGM_IMMEDIATE;
@@ -1624,7 +1626,7 @@ func void emit_store(struct context *context, struct emit_location *dest, struct
 func struct emit_location *emit_binary_op__internal(struct context *context, struct prefixes prefixes, struct emit_location *lhs,
         struct emit_location *rhs, smm size, b32 is_signed, u8 reg_extended, u8 u8_code, u8 opcode){
     
-    struct emit_location *dest   = emit_load(context, lhs);
+    struct emit_location *dest   = emit_load_gpr(context, lhs);
     struct emit_location *source = rhs;
     
     emit_location_prevent_spilling(context, dest);
@@ -1634,7 +1636,7 @@ func struct emit_location *emit_binary_op__internal(struct context *context, str
             // if REXW is present, the immediate is of size 4 and gets sign-extended.
             // so we have to make sure, that if we are not signed we sign_extend
             if(source->size == 8 || ((source->size == 4) && !is_signed && source->value > s32_max)){
-                source = emit_load(context, source);
+                source = emit_load_gpr(context, source);
                 source->size = dest->size;
                 goto loaded;
             }
@@ -1744,7 +1746,7 @@ func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct conte
         emit_register_relative_extended(context, no_prefix(), one_byte_opcode(inst), extension, rhs);
         free_emit_location(context, rhs);
     }else{
-        struct emit_location *loaded_rhs = emit_load(context, rhs);
+        struct emit_location *loaded_rhs = emit_load_gpr(context, rhs);
         emit_reg_extended_op(context, no_prefix(), one_byte_opcode(inst), extension, loaded_rhs);
         free_emit_location(context, loaded_rhs);
     }
@@ -1817,7 +1819,7 @@ func struct emit_location *emit_compound_assignment__internal(struct context *co
         case EMIT_LOCATION_conditional:
         case EMIT_LOCATION_register_relative:{
             // @note: if lhs is bigger then upconvert, otherwise load and truncate afterwards
-            rhs = emit_load(context, rhs);
+            rhs = emit_load_gpr(context, rhs);
             goto loaded;
         }break;
         case EMIT_LOCATION_immediate:{
@@ -1831,10 +1833,10 @@ func struct emit_location *emit_compound_assignment__internal(struct context *co
                     rhs->size = lhs->size;
                 }
             }else if(rhs->size == 8){
-                rhs = emit_load(context, rhs);
+                rhs = emit_load_gpr(context, rhs);
                 goto loaded;
             }else if(rhs->size == 4 && is_signed && rhs->value > s32_max){
-                rhs = emit_load(context, rhs);
+                rhs = emit_load_gpr(context, rhs);
                 goto loaded;
             }else{
                 rhs->size = lhs->size;
@@ -1853,13 +1855,13 @@ func struct emit_location *emit_compound_assignment__internal(struct context *co
 func struct emit_location *emit_binary_op_xmm(struct context *context, struct emit_location *lhs, struct emit_location *rhs, u8 inst){
     
     assert(lhs->size == rhs->size);
-    assert(lhs->register_kind_when_loaded == REGISTER_KIND_xmm);
-    assert(rhs->register_kind_when_loaded == REGISTER_KIND_xmm);
-    lhs = emit_load(context, lhs);
+    
+    lhs = emit_load_float(context, lhs);
     
     struct prefixes sse_prefix = get_sse_prefix_for_scalar(lhs->size);
     
     if(rhs->state == EMIT_LOCATION_loaded){
+        assert(rhs->register_kind == REGISTER_KIND_xmm);
         emit_register_register(context, sse_prefix, two_byte_opcode(inst), lhs, rhs);
     }else{
         assert(rhs->state == EMIT_LOCATION_register_relative);
@@ -1874,13 +1876,11 @@ func struct emit_location *emit_compound_assignment_xmm(struct context *context,
     assert(lhs->state == EMIT_LOCATION_register_relative);
     emit_location_prevent_spilling(context, lhs);
     
-    rhs = emit_load(context, rhs);
+    rhs = emit_load_float(context, rhs);
     emit_location_prevent_spilling(context, rhs);
-    struct emit_location *lhs_loaded = emit_load(context, lhs);
+    struct emit_location *lhs_loaded = emit_load_float(context, lhs);
     
     assert(lhs->size == rhs->size);
-    assert(lhs->register_kind_when_loaded == REGISTER_KIND_xmm);
-    assert(rhs->register_kind_when_loaded == REGISTER_KIND_xmm);
     
     // emit 'op lhs, rhs'
     emit_register_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode(inst), lhs_loaded, rhs);
@@ -1995,7 +1995,7 @@ func void emit_jump(struct context *context, smm location, enum comp_condition c
 
 func struct emit_location *emit_load_bitfield(struct context *context, struct emit_location *loc, struct ast_bitfield_type *bitfield){
     
-    loc = emit_load(context, loc);
+    loc = emit_load_gpr(context, loc);
     emit_location_prevent_spilling(context, loc);
     
     // Adjust the size of 'loc' to be at least 4.
@@ -2032,12 +2032,12 @@ struct emit_location *emit_store_bitfield(struct context *context, struct ast_bi
     
     emit_location_prevent_spilling(context, lhs);
     
-    struct emit_location *rhs_loaded = emit_load(context, rhs);
+    struct emit_location *rhs_loaded = emit_load_gpr(context, rhs);
     emit_location_prevent_spilling(context, rhs_loaded);
     
     // Truncate the right hand side.
     struct emit_location *mask = emit_location_immediate(context, (1ull << bitfield->width) - 1, lhs->size);
-    struct emit_location *mask_loaded = emit_load(context, mask);
+    struct emit_location *mask_loaded = emit_load_gpr(context, mask);
     emit_register_register(context, no_prefix(), one_byte_opcode(AND_REG_REGM), rhs_loaded, mask_loaded);
     free_emit_location(context, mask_loaded);
     
@@ -2048,11 +2048,11 @@ struct emit_location *emit_store_bitfield(struct context *context, struct ast_bi
     }
     
     // Put the rest of the result in its place.
-    struct emit_location *lhs_loaded = emit_load(context, lhs);
+    struct emit_location *lhs_loaded = emit_load_gpr(context, lhs);
     emit_location_prevent_spilling(context, lhs_loaded);
     
     mask = emit_location_immediate(context, ~(((1ull << bitfield->width) - 1) << bitfield->bit_index), lhs->size);
-    mask_loaded = emit_load(context, mask);
+    mask_loaded = emit_load_gpr(context, mask);
     emit_register_register(context, no_prefix(), one_byte_opcode(AND_REG_REGM), lhs_loaded, mask_loaded);
     free_emit_location(context, mask_loaded);
     
@@ -2078,7 +2078,7 @@ struct emit_location *emit_store_atomic_integer(struct context *context, struct 
     // A plain move is not enough to store with memory_order_seq_cst, we have to use an xchg instruction instead.
     
     emit_location_prevent_spilling(context, lhs);
-    struct emit_location *rhs_loaded = emit_load(context, rhs);
+    struct emit_location *rhs_loaded = emit_load_gpr(context, rhs);
     
     // xchg lhs, rhs_loaded
     u8 inst = (lhs->size == 1) ? EXCHANGE_REG8_REGM8 : EXCHANGE_REG_REGM;
@@ -2095,7 +2095,7 @@ struct emit_location *emit_store_atomic_integer(struct context *context, struct 
 func struct emit_location *emit_compare_to_zero(struct context *context, struct emit_location *loaded){
     assert(loaded->state == EMIT_LOCATION_loaded);
     
-    if(loaded->register_kind_when_loaded == REGISTER_KIND_gpr){
+    if(loaded->register_kind == REGISTER_KIND_gpr){
         u8 inst = TEST_REGM_REG;
         if(loaded->size == 1) inst = TEST_REGM8_REG8;
         
@@ -2120,9 +2120,6 @@ func struct emit_location *emit_shift_or_rotate__internal(struct context *contex
     
     smm size = lhs_loc->size;
     
-    assert(rhs_loc->register_kind_when_loaded == REGISTER_KIND_gpr);
-    assert(lhs_loc->register_kind_when_loaded == REGISTER_KIND_gpr);
-    
     if(compound){
         assert(lhs_loc->state == EMIT_LOCATION_register_relative);
     }
@@ -2140,7 +2137,7 @@ func struct emit_location *emit_shift_or_rotate__internal(struct context *contex
             emit_register_relative_extended(context, prefixes, one_byte_opcode(inst), reg_extension, lhs_loc);
             ret = lhs_loc;
         }else{
-            struct emit_location *lhs = emit_load(context, lhs_loc);
+            struct emit_location *lhs = emit_load_gpr(context, lhs_loc);
             emit_reg_extended_op(context, prefixes, one_byte_opcode(inst), reg_extension, lhs);
             ret = lhs;
         }
@@ -2161,7 +2158,7 @@ func struct emit_location *emit_shift_or_rotate__internal(struct context *contex
             emit_register_relative_extended(context, prefixes, one_byte_opcode(inst), reg_extension, lhs_loc);
             ret = lhs_loc;
         }else{
-            struct emit_location *lhs = emit_load(context, lhs_loc);
+            struct emit_location *lhs = emit_load_gpr(context, lhs_loc);
             emit_reg_extended_op(context, prefixes, one_byte_opcode(SHIFT_OR_ROTATE_REGM_CL), reg_extension, lhs);
             lhs->size = size; // truncate it
             ret = lhs;
@@ -2211,7 +2208,6 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
         return emit_location_immediate(context, integer_literal_to_bytes(decl->assign_expr), decl->assign_expr->resolved_type->size);
     }
     
-    enum register_kind register_kind = get_register_kind_for_type(decl->type);
     smm decl_size = decl->type->size;
     
     struct emit_location *ret = null;
@@ -2234,7 +2230,7 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
         smm rip_at = get_bytes_emitted(context);
         emit_patch(context, PATCH_section_offset, &decl->base, 0, &context->current_function->as_decl, byte_offset, rip_at);
         
-        struct emit_location *tls_index = emit_location_rip_relative(context, &globals.tls_index_declaration->base, REGISTER_KIND_gpr, 4);
+        struct emit_location *tls_index = emit_location_rip_relative(context, &globals.tls_index_declaration->base, 4);
         
         // mov <tls_slots>, gs:[58h]
         struct emit_location *tls_slots = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), 8);
@@ -2246,11 +2242,11 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
         emit_u32(0x58);
         
         // mov tls_slot, [rdx + rcx*8]
-        struct emit_location *tls_slot_register_relative = emit_location_register_relative(context, REGISTER_KIND_gpr, tls_slots, tls_index, /*offset*/0, /*size*/8);
+        struct emit_location *tls_slot_register_relative = emit_location_register_relative(context, tls_slots, tls_index, /*offset*/0, /*size*/8);
         tls_slot_register_relative->log_index_scale = 3;
-        struct emit_location *tls_slot = emit_load(context, tls_slot_register_relative);
+        struct emit_location *tls_slot = emit_load_gpr(context, tls_slot_register_relative);
         
-        ret = emit_location_register_relative(context, register_kind, tls_slot, offset_reg, 0, decl_size);
+        ret = emit_location_register_relative(context, tls_slot, offset_reg, 0, decl_size);
     }else if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)){
         
         if(decl->flags & DECLARATION_FLAGS_is_dllimport){
@@ -2264,10 +2260,10 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
             // up in here, because if we call an identifier we never recurse into emit_code_for_ast.
             //                                                                              -08.08.2021
             
-            struct emit_location *address = emit_location_rip_relative(context, &decl->base, register_kind, 8);
-            ret = emit_location_register_relative(context, register_kind, address, 0, 0, decl_size);
+            struct emit_location *address = emit_location_rip_relative(context, &decl->base, 8);
+            ret = emit_location_register_relative(context, address, 0, 0, decl_size);
         }else{
-            ret = emit_location_rip_relative(context, &decl->base, register_kind, decl_size);
+            ret = emit_location_rip_relative(context, &decl->base, decl_size);
         }
     }else{
         
@@ -2282,10 +2278,10 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
             // it is actually a pointer to the declaration, not the declaration itself.
             // we emit '[[stack_location]]' here. (register relative to register relative
             
-            struct emit_location *stack_location = emit_location_stack_relative(context, REGISTER_KIND_gpr, decl->offset_on_stack, 8);
-            ret = emit_location_register_relative(context, register_kind, stack_location, 0, 0, decl_size);
+            struct emit_location *stack_location = emit_location_stack_relative(context, decl->offset_on_stack, 8);
+            ret = emit_location_register_relative(context, stack_location, 0, 0, decl_size);
         }else{
-            ret = emit_location_stack_relative(context, register_kind, decl->offset_on_stack, decl_size);
+            ret = emit_location_stack_relative(context, decl->offset_on_stack, decl_size);
         }
     }
     
@@ -2323,7 +2319,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         // and return rsp + `context->max_amount_of_function_call_arguments * 8`, aligned to a 16-byte boundary.
         // Because `context->max_amount_of_function_call_arguments * 8` is not yet known, we need to emit a "patch".
         // 
-        struct emit_location *size = emit_load(context, argument_locations[0]);
+        struct emit_location *size = emit_load_gpr(context, argument_locations[0]);
 
         // Align-up the size to a 16-byte boundary.
         //    add size, 15
@@ -2361,7 +2357,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         emit(0xcc);
         return emit_location_invalid(context);
     }else if(string_match(identifier, string("_AddressOfReturnAddress"))){
-        struct emit_location *return_address = emit_location_stack_relative(context, REGISTER_KIND_gpr, -(8 + 8 * /*amount_of_saved_registers*/2), /*size*/8);
+        struct emit_location *return_address = emit_location_stack_relative(context, -(8 + 8 * /*amount_of_saved_registers*/2), /*size*/8);
         return emit_load_address(context, return_address, allocate_register(context, REGISTER_KIND_gpr));
     }else{
         invalid_code_path;
@@ -2398,7 +2394,11 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
             if(emit_locations[argument_index]->state == EMIT_LOCATION_immediate){
                 inline_asm_argument->integer_location = emit_locations[argument_index];
             }
-            emit_locations[argument_index] = emit_load(context, emit_locations[argument_index]);
+            if(get_register_kind_for_type(decl->type) == REGISTER_KIND_xmm){
+                emit_locations[argument_index] = emit_load_float(context, emit_locations[argument_index]);
+            }else{
+                emit_locations[argument_index] = emit_load_gpr(context, emit_locations[argument_index]);
+            }
             inline_asm_argument->loaded_location = emit_locations[argument_index];
             
             sll_push_back(context->inline_asm_function_arguments, inline_asm_argument);
@@ -2446,13 +2446,13 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
         // As we sometimes _over-allocate_ the registers which were
         // 'inline_asm__was_used_by_user', we have to make sure
         // that the return is actually _allocated_.
-        context->register_allocators[ret->register_kind_when_loaded].emit_location_map[ret->loaded_register] = ret;
+        context->register_allocators[ret->register_kind].emit_location_map[ret->loaded_register] = ret;
         ret->inline_asm__was_used_by_user = false;
         
         struct ast_type *return_type = function_type->return_type;
         if(return_type->kind == AST_float_type){
             // we allow 'return xmm0' for floats, therefor we have to fix up the size here.
-            assert(ret->register_kind_when_loaded == REGISTER_KIND_xmm);
+            assert(ret->register_kind == REGISTER_KIND_xmm);
             ret->size = return_type->size;
         }
         return ret;
@@ -2471,7 +2471,6 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
     // We want to return a register relative emit_location which as a base has 'pointer' and
     // as 'index' has either a premultiplied 'index' or uses a 'scale'
     //
-    enum register_kind register_kind = get_register_kind_for_type(deref_type);
     
     #if 0
     int log_scale = -1;
@@ -2488,7 +2487,7 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
         return loc;
     }
     #endif
-    index = emit_load(context, index);
+    index = emit_load_gpr(context, index);
     
     // @incomplete:
     assert((s32)deref_type->size == deref_type->size);
@@ -2497,7 +2496,7 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
     emit_register_register(context, no_prefix(), one_byte_opcode(IMUL_REG_REGM_IMMIDIATE), index, index);
     emit_u32(deref_type->size);
     
-    return emit_location_register_relative(context, register_kind, pointer, index, 0, deref_type->size);
+    return emit_location_register_relative(context, pointer, index, 0, deref_type->size);
 }
 
 //_____________________________________________________________________________________________________________________
@@ -2543,7 +2542,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct ast_string_literal *string_literal = (struct ast_string_literal *)ast;
                 sll_push_back(context->string_literals, string_literal);
                 context->string_literals.amount_of_strings += 1;
-                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &string_literal->base, REGISTER_KIND_gpr, 8);
+                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &string_literal->base, 8);
             }break;
             
             case AST_integer_literal:{
@@ -2563,7 +2562,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 context->emitted_float_literals.amount_of_float_literals += 1;
                 set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
                 
-                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &emitted->base, REGISTER_KIND_xmm, f->base.resolved_type->size);
+                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &emitted->base, f->base.resolved_type->size);
             }break;
             
             case AST_pointer_literal:{
@@ -2576,10 +2575,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct ast_pointer_literal *pointer_literal_deref = (struct ast_pointer_literal *)ast;
                 ast_arena_at += sizeof(*pointer_literal_deref);
                 
-                enum register_kind register_kind = get_register_kind_for_type(ast->resolved_type);
-                
                 struct emit_location *loc = emit_location_immediate(context, (u64)pointer_literal_deref->pointer, 8);
-                emit_location_stack[emit_location_stack_at++] = emit_location_register_relative(context, register_kind, loc, null, 0, ast->resolved_type->size);
+                emit_location_stack[emit_location_stack_at++] = emit_location_register_relative(context, loc, null, 0, ast->resolved_type->size);
             }break;
             
             case AST_compound_literal:{
@@ -2589,7 +2586,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct ast_declaration *decl = compound_literal->decl;
                 struct ast_type *type = decl->type;
                 
-                struct emit_location *decl_location = emit_location_stack_relative(context, REGISTER_KIND_gpr, decl->offset_on_stack, type->size);
+                struct emit_location *decl_location = emit_location_stack_relative(context, decl->offset_on_stack, type->size);
                 if(type->kind == AST_struct || type->kind == AST_union || type->kind == AST_array_type){
                     emit_memset(context, decl_location, 0);
                 }
@@ -2602,9 +2599,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ast_arena_at += sizeof(*temp);
                 
                 struct ast_type *type = temp->base.resolved_type;
-                enum register_kind register_kind = get_register_kind_for_type(type);
                 
-                emit_location_stack[emit_location_stack_at++] = emit_allocate_temporary_stack_location(context, register_kind, type->size, type->alignment);
+                emit_location_stack[emit_location_stack_at++] = emit_allocate_temporary_stack_location(context, type->size, type->alignment);
             }break;
             
             // 
@@ -2624,9 +2620,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 u64 offset = initializer->offset;
                 struct ast_type *lhs_type = initializer->base.resolved_type;
                 
-                enum register_kind register_kind = get_register_kind_for_type(lhs_type);
-                
-                struct emit_location *dest = emit_location_stack_relative(context, register_kind, 0, lhs_type->size);
+                struct emit_location *dest = emit_location_stack_relative(context, 0, lhs_type->size);
                 dest->offset = decl_location->offset + offset; // @cleanup: my system is way to confusing about stack offsets
                 
                 if(lhs_type->kind == AST_array_type){
@@ -2660,7 +2654,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     }
                     
                     // @cleanup: this seems stupid, this should just be how string literals work, no?
-                    struct emit_location *rhs = emit_location_rip_relative(context, &lit->base, REGISTER_KIND_gpr, lit->value.size + extra);
+                    struct emit_location *rhs = emit_location_rip_relative(context, &lit->base, lit->value.size + extra);
                     emit_memcpy(context, dest, rhs);
                     
                 }else if(lhs_type->kind == AST_bitfield_type){
@@ -2708,7 +2702,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 struct emit_location *loc = emit_location_stack[emit_location_stack_at - 1];
                 if(loc->state != EMIT_LOCATION_conditional){
-                    loc = emit_load(context, loc);
+                    if(loc->state != EMIT_LOCATION_loaded) loc = emit_load_gpr(context, loc);
                     loc = emit_compare_to_zero(context, loc);
                 }
                 
@@ -2769,15 +2763,15 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 if(cast_what->resolved_type->kind == AST_atomic_integer_type){
                     // @note: It seems to me, that on x64 atomic-loads can simply be implemented as a mov.
-                    emit_location_stack[stack_index] = emit_load(context, loc);
+                    emit_location_stack[stack_index] = emit_load_gpr(context, loc);
                     break;
                 }
                 
                 if(cast_to == &globals.typedef_Bool){
-                    loc = emit_load(context, loc);
+                    if(loc->state != EMIT_LOCATION_loaded) loc = emit_load_gpr(context, loc);
                     loc = emit_compare_to_zero(context, loc);
                     loc->size = 1; // load the thing as size 1
-                    emit_location_stack[stack_index] = emit_load(context, loc);
+                    emit_location_stack[stack_index] = emit_load_gpr(context, loc);
                     break;
                 }
                 
@@ -2785,11 +2779,15 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 assert(type_is_arithmetic(cast_what->resolved_type) || cast_what->resolved_type->kind == AST_pointer_type);
                 
                 if(loc->state != EMIT_LOCATION_register_relative){
-                    loc = emit_load(context, loc);
+                    if(cast_what->resolved_type->kind == AST_float_type){
+                        loc = emit_load_float(context, loc);
+                    }else{
+                        loc = emit_load_gpr(context, loc);
+                    }
                 }
                 
-                if(loc->register_kind_when_loaded == REGISTER_KIND_xmm && cast_to->kind == AST_float_type){
-                    assert(cast_what->resolved_type->kind == AST_float_type);
+                if(cast_what->resolved_type->kind == AST_float_type && cast_to->kind == AST_float_type){
+                    
                     //
                     // Cast f32 -> f64 or f64 -> f32
                     //
@@ -2814,7 +2812,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     break;
                 }
                 
-                if(loc->register_kind_when_loaded == REGISTER_KIND_xmm){
+                if(cast_what->resolved_type->kind == AST_float_type){
                     assert(loc->size == 4 || loc->size == 8);
                     
                     // 
@@ -2868,7 +2866,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     break;
                 }
                 
-                assert(loc->register_kind_when_loaded == REGISTER_KIND_gpr);
                 b32 source_is_signed = type_is_signed(cast_what->resolved_type);
                 
                 if(cast_to->kind != AST_float_type && loc->size >= cast_to->size){
@@ -2886,7 +2883,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     // because the float to int instructions only take s32 or s64.
                     
                     smm size_to_load_into = cast_to->size;
-                    if(loc->register_kind_when_loaded != REGISTER_KIND_gpr) size_to_load_into = 4;
                     
                     struct opcode opcode = get_opcode_for_move_instruction_and_adjust_size(loc, size_to_load_into, source_is_signed);
                     
@@ -2902,7 +2898,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 }
                 
                 if(cast_to->kind == AST_float_type){
-                    assert(loc->register_kind_when_loaded == REGISTER_KIND_gpr);
                     assert(loc->size == 4 || loc->size == 8);
                     assert(cast_what->resolved_type->kind == AST_integer_type); // pointers are disallowed!
                     
@@ -2944,7 +2939,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         // end:
                         
                         // load the value and lock it, so we can copy it
-                        loc = emit_load(context, loc);
+                        loc = emit_load_gpr(context, loc);
                         emit_location_prevent_spilling(context, loc);
                         
                         // test the value
@@ -3029,7 +3024,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 assert(loc->state == EMIT_LOCATION_register_relative);
                 
                 emit_location_prevent_spilling(context, loc);
-                struct emit_location *loaded = emit_load(context, loc);
+                struct emit_location *loaded = op->base.resolved_type->kind == AST_float_type ? emit_load_float(context, loc) : emit_load_gpr(context, loc);
                 
                 if(op->base.resolved_type->kind == AST_pointer_type){
                     struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op->base.resolved_type;
@@ -3079,12 +3074,12 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         context->emitted_float_literals.amount_of_float_literals += 1;
                         set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
                         
-                        rhs = emit_location_rip_relative(context, &emitted->base, REGISTER_KIND_xmm, f->base.resolved_type->size);
+                        rhs = emit_location_rip_relative(context, &emitted->base, f->base.resolved_type->size);
                     }
                     
                     assert(rhs->state == EMIT_LOCATION_register_relative);
                     
-                    struct emit_location *lhs = emit_load(context, loc); // @cleanup: This should be a register-to-register move instead.
+                    struct emit_location *lhs = emit_load_float(context, loc); // @cleanup: This should be a register-to-register move instead.
                     
                     // emit 'op lhs, [float_literal]'
                     emit_register_relative_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode((ast->kind == AST_unary_postinc) ? ADD_XMM : SUB_XMM), lhs->loaded_register, rhs);
@@ -3181,12 +3176,12 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         context->emitted_float_literals.amount_of_float_literals += 1;
                         set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
                         
-                        rhs = emit_location_rip_relative(context, &emitted->base, REGISTER_KIND_xmm, f->base.resolved_type->size);
+                        rhs = emit_location_rip_relative(context, &emitted->base, f->base.resolved_type->size);
                     }
                     assert(rhs->state == EMIT_LOCATION_register_relative);
                     
                     emit_location_prevent_spilling(context, loc);
-                    struct emit_location *lhs = emit_load(context, loc);
+                    struct emit_location *lhs = emit_load_float(context, loc);
                     
                     // emit 'op lhs, [float_literal]'
                     emit_register_relative_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode((ast->kind == AST_unary_preinc) ? ADD_XMM : SUB_XMM), lhs->loaded_register, rhs);
@@ -3219,7 +3214,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     emit_location_allow_spilling(context, loc);
                 }
                 
-                emit_location_stack[emit_location_stack_at-1] = emit_load(context, loc);
+                struct emit_location *loaded = op->base.resolved_type->kind == AST_float_type ? emit_load_float(context, loc) : emit_load_gpr(context, loc);
+                emit_location_stack[emit_location_stack_at-1] = loaded;
             }break;
             
             case AST_unary_deref:{
@@ -3227,9 +3223,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ast_arena_at += sizeof(*op);
                 
                 struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
-                enum register_kind register_kind = get_register_kind_for_type(op->base.resolved_type);
                 
-                emit_location_stack[emit_location_stack_at-1] = emit_location_register_relative(context, register_kind, loc, null, 0, op->base.resolved_type->size);
+                emit_location_stack[emit_location_stack_at-1] = emit_location_register_relative(context, loc, null, 0, op->base.resolved_type->size);
             }break;
             
             case AST_unary_plus:{
@@ -3244,9 +3239,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ast_arena_at += sizeof(*op);
                 
                 struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
-                struct emit_location *loaded = emit_load(context, loc);
                 
-                if(loaded->register_kind_when_loaded == REGISTER_KIND_xmm){
+                struct emit_location *loaded = op->base.resolved_type->kind == AST_float_type ? emit_load_float(context, loc) : emit_load_gpr(context, loc);;
+                
+                if(loaded->register_kind == REGISTER_KIND_xmm){
                     emit_location_prevent_spilling(context, loaded);
                     
                     // 
@@ -3266,7 +3262,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         emit_u32(0x80000000);
                     }else{
                         assert(loaded->size == 8);
-                        struct emit_location *loaded_immediate = emit_load(context, emit_location_immediate(context, 0x8000000000000000, 8));
+                        struct emit_location *loaded_immediate = emit_load_gpr(context, emit_location_immediate(context, 0x8000000000000000, 8));
                         
                         emit_register_register(context, no_prefix(), one_byte_opcode(XOR_REG_REGM), as_gpr, loaded_immediate);
                         free_emit_location(context, loaded_immediate);
@@ -3301,8 +3297,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
                 assert(loc->state == EMIT_LOCATION_register_relative);
                 
-                loc->register_kind_when_loaded = get_register_kind_for_type(dot->base.resolved_type);
-                
                 loc->size    = dot->base.resolved_type->size;
                 loc->offset += dot->member->offset_in_type;
             }break;
@@ -3312,9 +3306,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ast_arena_at += sizeof(*arrow);
                 
                 struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
-                enum register_kind register_kind = get_register_kind_for_type(arrow->base.resolved_type);
-                
-                emit_location_stack[emit_location_stack_at-1] = emit_location_register_relative(context, register_kind, loc, null, arrow->member->offset_in_type, arrow->base.resolved_type->size);
+                emit_location_stack[emit_location_stack_at-1] = emit_location_register_relative(context, loc, null, arrow->member->offset_in_type, arrow->base.resolved_type->size);
             }break;
             
             // 
@@ -3463,7 +3455,15 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             case AST_binary_smaller_signed:
             
             case AST_binary_logical_equals:
-            case AST_binary_logical_unequals:{
+            case AST_binary_logical_unequals:
+            
+            case AST_binary_logical_equals_float:
+            case AST_binary_logical_unequals_float:
+            
+            case AST_binary_bigger_equals_float:
+            case AST_binary_smaller_equals_float:
+            case AST_binary_bigger_float:
+            case AST_binary_smaller_float:{
                 // @quality: in the case of "cmp [rax], 1" we do not have to load [rax] as cmp does not write
                 struct ast_binary_op *op = (struct ast_binary_op *)ast;
                 ast_arena_at += sizeof(*op);
@@ -3473,11 +3473,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack_at -= 1;
                 
                 struct emit_location *result;
-                if(lhs->register_kind_when_loaded == REGISTER_KIND_xmm){
+                if(AST_binary_logical_equals_float <= ast->kind && ast->kind <= AST_binary_smaller_float){
                     
-                    assert(lhs->register_kind_when_loaded == REGISTER_KIND_xmm);
-                    assert(rhs->register_kind_when_loaded == REGISTER_KIND_xmm);
-                    lhs = emit_load(context, lhs);
+                    lhs = emit_load_float(context, lhs);
                     
                     struct prefixes prefix;
                     if(lhs->size == 8){
@@ -3503,13 +3501,16 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 enum comp_condition cond;
                 switch(ast->kind){
+                    case AST_binary_logical_equals_float:
                     case AST_binary_logical_equals:{
                         cond = COMP_equals;
                     }break;
+                    case AST_binary_logical_unequals_float:
                     case AST_binary_logical_unequals:{
                         cond = COMP_unequals;
                     }break;
                     
+                    case AST_binary_smaller_float:
                     case AST_binary_smaller:{
                         cond = COMP_smaller;
                     }break;
@@ -3517,6 +3518,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         cond = COMP_smaller_signed;
                     }break;
                     
+                    case AST_binary_smaller_equals_float:
                     case AST_binary_smaller_equals:{
                         cond = COMP_smaller_equals;
                     }break;
@@ -3524,6 +3526,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         cond = COMP_smaller_equals_signed;
                     }break;
                     
+                    case AST_binary_bigger_float:
                     case AST_binary_bigger:{
                         cond = COMP_bigger;
                     }break;
@@ -3531,6 +3534,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         cond = COMP_bigger_signed;
                     }break;
                     
+                    case AST_binary_bigger_equals_float:
                     case AST_binary_bigger_equals:{
                         cond = COMP_bigger_equals;
                     }break;
@@ -3550,7 +3554,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         // 
                         // If we have a condition, load it unless it leads directly into a conditional jump.
                         // 
-                        conditional = emit_load(context, conditional);
+                        conditional = emit_load_gpr(context, conditional);
                     }
                 }
                 
@@ -3718,9 +3722,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 assert(array->state == EMIT_LOCATION_register_relative);
                 
                 u64 size = subscript->base.resolved_type->size;
-                enum register_kind register_kind = get_register_kind_for_type(subscript->base.resolved_type);
                 
-                array->register_kind_when_loaded = register_kind;
                 array->size = size;
                 
                 if(index_loc->state == EMIT_LOCATION_immediate){
@@ -3737,7 +3739,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                             // Similarly, if 'loc' already has an index register, we need to load it so we can add _another_ index register.
                             struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
                             free_emit_location(context, array);
-                            array = emit_location_register_relative(context, register_kind, pointer, index_register, 0, size);
+                            array = emit_location_register_relative(context, pointer, index_register, 0, size);
                             emit_location_stack[emit_location_stack_at - 1] = array;
                         }else{
                             array->index = index_register;
@@ -3752,7 +3754,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         // Similarly, if 'loc' already has an index register, we need to load it so we can add _another_ index register.
                         struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
                         free_emit_location(context, array);
-                        array = emit_location_register_relative(context, register_kind, pointer, index_loc, 0, size);
+                        array = emit_location_register_relative(context, pointer, index_loc, 0, size);
                         emit_location_stack[emit_location_stack_at - 1] = array;
                     }else{
                         array->index = index_loc;
@@ -3857,11 +3859,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         // First copy it to a temporary stack location.
                         // 
                         
-                        struct emit_location *copy_into = emit_allocate_temporary_stack_location(context, REGISTER_KIND_gpr, argument->size, 0x10); // @cleanup: alignment.
+                        struct emit_location *copy_into = emit_allocate_temporary_stack_location(context, argument->size, 0x10); // @cleanup: alignment.
                         
                         if(argument->state == EMIT_LOCATION_loaded){
                             // This can happen if we have a function that returns an intrinsic type.
-                            copy_into->register_kind_when_loaded = REGISTER_KIND_xmm;
                             emit_store(context, copy_into, argument);
                         }else{
                             emit_memcpy(context, copy_into, argument);
@@ -3878,7 +3879,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         // We need to transform floating point arguments to integer arguments using movq.
                         // 
                         
-                        if(argument->size < 16 && argument->register_kind_when_loaded == REGISTER_KIND_xmm){
+                        if(argument->state == EMIT_LOCATION_loaded && argument->register_kind == REGISTER_KIND_xmm && argument->size < 16){
                             struct emit_location *float_reg = emit_load_float(context, argument);
                             
                             enum register_encoding arg_reg;
@@ -3909,12 +3910,28 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         
                         smm stack_pass_location = (returns_big_struct + argument_index) * 8;
                         
-                        struct emit_location *store_in = emit_location_register_relative(context, argument->register_kind_when_loaded, context->register_sp, context->register_sp, stack_pass_location, argument->size);
+                        struct emit_location *store_in = emit_location_register_relative(context, context->register_sp, context->register_sp, stack_pass_location, argument->size);
                         emit_store(context, store_in, argument);
                         continue;
                     }
                     
-                    enum register_encoding expected_register = argument_registers[argument->register_kind_when_loaded][returns_big_struct + argument_index];
+                    // 
+                    // Yikes, get the expected register kind. We need that because the `argument` does not know it anymore.
+                    // 
+                    
+                    enum register_kind expected_register_kind = REGISTER_KIND_gpr;
+                    if(argument_index < parameter_count){
+                        struct ast_list_node *node = function_type->argument_list.first;
+                        for(smm index = 0; index < argument_index; index++) node = node->next;
+                        struct ast_declaration *decl = (struct ast_declaration *)node->value;
+                        
+                        if(decl->type == &globals.typedef_f32 || decl->type == &globals.typedef_f64){
+                            // @note: Intrinsic types get passed on the stack for whatever reason.
+                            expected_register_kind = REGISTER_KIND_xmm;
+                        }
+                    }
+                    
+                    enum register_encoding expected_register = argument_registers[expected_register_kind][returns_big_struct + argument_index];
                     
                     if(argument->state == EMIT_LOCATION_loaded && argument->loaded_register == expected_register){
                         // The argument is already in the correct slot.
@@ -3923,9 +3940,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         continue;
                     }
                     
-                    enum register_encoding arg_reg = allocate_specific_register(context, argument->register_kind_when_loaded, expected_register);
+                    enum register_encoding arg_reg = allocate_specific_register(context, expected_register_kind, expected_register);
                     
-                    if(argument->register_kind_when_loaded == REGISTER_KIND_gpr){
+                    if(expected_register_kind == REGISTER_KIND_gpr){
                         argument = emit_load_into_specific_gpr(context, argument, arg_reg);
                     }else{
                         argument = emit_load_float_into_specific_register(context, argument, arg_reg);
@@ -3971,7 +3988,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct emit_location *stack_return_location = null;
                 struct emit_location *locked_pointer_to_stack_location = null; 
                 if(returns_big_struct){
-                    stack_return_location = emit_allocate_temporary_stack_location(context, REGISTER_KIND_gpr, return_type->size, return_type->alignment);
+                    stack_return_location = emit_allocate_temporary_stack_location(context, return_type->size, return_type->alignment);
                     
                     locked_pointer_to_stack_location = emit_load_address(context, stack_return_location, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_C));
                     emit_location_prevent_spilling(context, locked_pointer_to_stack_location); // Just so we dont stomp it in the `EMIT_LOCATION_register_relative` case in the call to a function pointer.
@@ -4041,7 +4058,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     // This handles 'struct{u64 a;}' which are returned in 'rax'.
                     
                     assert(!type_is_returned_by_address(return_type)); // Otherwise, it should have already been handled.
-                    struct emit_location *ret = emit_allocate_temporary_stack_location(context, REGISTER_KIND_gpr, return_type->size, return_type->alignment);
+                    struct emit_location *ret = emit_allocate_temporary_stack_location(context, return_type->size, return_type->alignment);
                     struct emit_location *rax = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
                     emit_store(context, ret, rax);
                     emit_location_stack[emit_location_stack_at++] = ret;
@@ -4078,7 +4095,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                             struct emit_location *loaded = emit_load_float_into_specific_register(context, return_location, REGISTER_XMM0);
                             free_emit_location(context, loaded);
                         }else if(return_type->flags & TYPE_FLAG_is_intrin_type){
-                            return_location->register_kind_when_loaded = REGISTER_KIND_xmm;
                             struct emit_location *loaded = emit_load_float_into_specific_register(context, return_location, REGISTER_XMM0);
                             free_emit_location(context, loaded);
                         }else{
@@ -4173,7 +4189,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 struct emit_location *condition = emit_location_stack[emit_location_stack_at];
                 if(condition->state != EMIT_LOCATION_conditional){
-                    condition = emit_load(context, condition);
+                    if(condition->state != EMIT_LOCATION_loaded) condition = emit_load_gpr(context, condition);
                     condition = emit_compare_to_zero(context, condition);
                 }
                 
@@ -4189,7 +4205,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ast_arena_at += sizeof(*ast_switch);
                 
                 emit_location_stack_at -= 1;
-                struct emit_location *switch_on = emit_load(context, emit_location_stack[emit_location_stack_at]);
+                struct emit_location *switch_on = emit_load_gpr(context, emit_location_stack[emit_location_stack_at]);
                 
                 
                 // *** switch ***
@@ -4209,7 +4225,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     
                     b32 is_signed = 0; // :ir_refactor is_signed type_is_signed(ast_switch->switch_on->resolved_type);
                     if(imm->size == 8 || ((imm->size == 4) && is_signed && imm->value > s32_max)){
-                        struct emit_location *loaded = emit_load(context, imm);
+                        struct emit_location *loaded = emit_load_gpr(context, imm);
                         
                         emit_register_register(context, no_prefix(), one_byte_opcode(CMP_REG_REGM), switch_on, loaded);
                         free_emit_location(context, loaded);
@@ -4365,7 +4381,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                 
                 enum register_encoding at = argument_registers[register_kind][i];
                 
-                struct emit_location *dest = emit_location_stack_relative(context, register_kind, stack_at, 8);
+                struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
                 
                 struct emit_location *source = emit_location_loaded(context, register_kind,
                         allocate_specific_register(context, register_kind, at), 8);
@@ -4466,16 +4482,16 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
         // Get the value of the implicit return value, which was passed as an implicit first operand.
         // And thus is contained in the first argument location.
         // We should return this again, thus load it into rax.
-        struct emit_location *location_of_rax = emit_location_stack_relative(context, REGISTER_KIND_gpr, -(16 + 8 * amount_of_saved_registers), 8);
+        struct emit_location *location_of_rax = emit_location_stack_relative(context, -(16 + 8 * amount_of_saved_registers), 8);
         enum register_encoding rax = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_A);
         struct emit_location *address_of_return_struct = emit_load_into_specific_gpr(context, location_of_rax, rax);
-        struct emit_location *dest = emit_location_register_relative(context, REGISTER_KIND_gpr, address_of_return_struct, 0, 0, return_type->size);
+        struct emit_location *dest = emit_location_register_relative(context, address_of_return_struct, 0, 0, return_type->size);
         
         // In the AST_return, we have loaded the location of the return struct into rsi now we want to emit a memcpy for 
         // 'return_type->size' bytes to the saved rax.
         enum register_encoding rsi = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_SI);
         struct emit_location *rsi_loc = emit_location_loaded(context, REGISTER_KIND_gpr, rsi, 8); 
-        struct emit_location *source = emit_location_register_relative(context, REGISTER_KIND_gpr, rsi_loc, 0, 0, return_type->size);
+        struct emit_location *source = emit_location_register_relative(context, rsi_loc, 0, 0, return_type->size);
         
         emit_memcpy(context, dest, source);
         

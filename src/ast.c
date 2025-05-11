@@ -438,6 +438,16 @@ enum ast_kind{
     AST_binary_bigger_signed,
     AST_binary_smaller_signed,
     
+    // Float comparisons @WARNING: we use the order.
+    AST_binary_logical_equals_float,
+    AST_binary_logical_unequals_float,
+    
+    AST_binary_bigger_equals_float,
+    AST_binary_smaller_equals_float,
+    AST_binary_bigger_float,
+    AST_binary_smaller_float,
+    
+    
     AST_logical_and,
     AST_logical_or,
     
