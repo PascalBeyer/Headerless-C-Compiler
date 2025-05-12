@@ -466,6 +466,7 @@ enum ast_kind{
     AST_divide_assignment,
     AST_modulo_assignment,
     
+    AST_duplicate,
     AST_duplicate_lhs, // For punting compound assignments.
     AST_swap_lhs_rhs,  // For weird stuff like `integer + pointer` or `integer[array]`.
     

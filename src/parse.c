@@ -2457,8 +2457,6 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         
     } while(peek_token_eat(context, TOKEN_comma));
     
-    
-    
     expect_token(context, TOKEN_closed_curly, "Expected '}' at the end of initializer list.");
     
     *out_trailing_initializer_size = trailing_initializer_size;
@@ -2835,96 +2833,30 @@ func struct ast_declaration *push_unnamed_declaration(struct context *context, s
     return decl;
 }
 
-#if 0
-func void get_pretty_print_string_for_type(struct context *context, struct string_list *format_list, struct ast_list *arguments, struct ast *value, s32 depth_or_minus_one, struct string field_width, struct string precision, struct string type_specifiers){
-    struct ast_type *type = value->resolved_type;
+void maybe_insert_implicit_nodes_for_varargs_argument(struct context *context, struct expr *expr, struct token *token){
+    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expr, token);
+    
+    if(expr->resolved_type->kind == AST_integer_type || expr->resolved_type->kind == AST_bitfield_type){
+        // "The integer promotions are performed on each argument."
+        maybe_insert_integer_promotion_cast(context, AST_cast, expr, token);
+    }
+    
+    if(expr->resolved_type == &globals.typedef_f32){
+        // "Arguments that have type float are promoted to double."
+        // :retain_type_information_through_promotion
+        expr->ast = push_cast(context, AST_cast, &globals.typedef_f64, (struct ast *)expr->resolved_type, expr->ast, token);
+        expr->defined_type = (struct ast *)expr->resolved_type;
+        expr->resolved_type = &globals.typedef_f64;
+    }
+}
+
+
+func void get_pretty_print_string_for_type(struct context *context, struct string_list *format_list, struct ast_type *type, struct string field_width, struct string precision, struct string type_specifiers){
     
     switch(type->kind){
-        case AST_union:
-        case AST_struct:{
-            struct ast_compound_type *compound = (struct ast_compound_type *)type;
-            
-            // @cleanup: Check the 'defined_type'?
-            string_list_postfix(format_list, &context->scratch, type->kind == AST_struct ? string("(struct ") : string("(union "));
-            string_list_postfix(format_list, &context->scratch, compound->identifier.string);
-            string_list_postfix(format_list, &context->scratch, string(")"));
-            
-            if(depth_or_minus_one == -1){
-                string_list_postfix(format_list, &context->scratch, string("{"));
-            }else{
-                string_list_postfix(format_list, &context->scratch, string("{\n"));
-            }
-            
-            struct string spaces = zero_struct;
-            if(depth_or_minus_one != -1){
-                spaces = push_format_string(&context->scratch, "%*s", (depth_or_minus_one + 1) * 4, "");
-            }
-            
-            for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
-                struct compound_member *member = &compound->members[member_index];
-                if(member->name == globals.invalid_identifier_token) continue;
-                
-                if(depth_or_minus_one != -1){
-                    string_list_postfix(format_list, &context->scratch, spaces);
-                }
-                
-                string_list_postfix(format_list, &context->scratch, string("."));
-                string_list_postfix(format_list, &context->scratch, member->name->string);
-                string_list_postfix(format_list, &context->scratch, string(" = "));
-                
-                struct ast *value_to_recurse = push_dot_or_arrow(context, member, value, AST_member, value->token);
-                if(depth_or_minus_one == -1){
-                    get_pretty_print_string_for_type(context, format_list, arguments, value_to_recurse, -1, field_width, precision, type_specifiers);
-                    if(member_index + 1 < compound->amount_of_members){
-                        string_list_postfix(format_list, &context->scratch, string(", "));
-                    }
-                }else{
-                    get_pretty_print_string_for_type(context, format_list, arguments, value_to_recurse, depth_or_minus_one + 1, field_width, precision, type_specifiers);
-                    string_list_postfix(format_list, &context->scratch, string(",\n"));
-                }
-            }
-            
-            if(depth_or_minus_one != -1){
-                string_list_postfix(format_list, &context->scratch, create_string(spaces.data, spaces.size - 4));
-            }
-            string_list_postfix(format_list, &context->scratch, string("}"));
-        }break;
-        
-        case AST_array_type:{
-            struct ast_array_type *array = cast(struct ast_array_type *)type;
-            
-            int is_string = 0;
-            if(array->element_type == &globals.typedef_s8){
-                for(u32 index = 0; index < type_specifiers.size; index++){
-                    if(type_specifiers.data[index] == 's') is_string = 1;
-                }
-            }
-            
-            if(is_string){
-                char *dot = precision.size ? "." : "";
-                struct string format_string = push_format_string(&context->scratch, "%%%.*s%s%.*ss", field_width.size, field_width.data, dot, precision.size, precision.data);
-                string_list_postfix(format_list, &context->scratch, format_string);
-                ast_list_append(arguments, context->arena, value);
-            }else{
-                string_list_postfix(format_list, &context->scratch, string("{"));
-                for(int i = 0; i < array->amount_of_elements; i++){
-                    struct ast *index = ast_push_s32_literal(context, value->token, i);
-                    
-                    struct ast *value_to_recurse = push_nodes_for_subscript(context, value, index, value->token);
-                    
-                    // @cleanup: for now we don't specify the depth here... maybe we should
-                    get_pretty_print_string_for_type(context, format_list, arguments, value_to_recurse, -1, field_width, precision, type_specifiers);
-                    if(i + 1 != array->amount_of_elements){
-                        string_list_postfix(format_list, &context->scratch, string(", "));
-                    }
-                }
-                string_list_postfix(format_list, &context->scratch, string("}"));
-            }
-        }break;
         case AST_enum:{
             // @cleanup:
             string_list_postfix(format_list, &context->scratch, string("enum(%d)"));
-            ast_list_append(arguments, context->arena, value);
             // not_implemented;
         }break;
         case AST_pointer_type:{
@@ -2946,14 +2878,9 @@ func void get_pretty_print_string_for_type(struct context *context, struct strin
             }
             
             string_list_postfix(format_list, &context->scratch, format_string);
-            
-            ast_list_append(arguments, context->arena, value);
         }break;
         case AST_bitfield_type:
         case AST_integer_type:{
-            
-            // for va_args: "the integer promotions are performed on each argument" 
-            value = maybe_insert_integer_promotion_cast(context, AST_cast, value, value->token);
             
             // struct string field_width, struct string precision, struct string type_specifiers
             
@@ -2975,7 +2902,6 @@ func void get_pretty_print_string_for_type(struct context *context, struct strin
             struct string format_string = push_format_string(&context->scratch, "%s%%%.*s%s%.*s%s%s", prefix, field_width.size, field_width.data, dot, precision.size, precision.data, length_modifier, type_specifier);
             
             string_list_postfix(format_list, &context->scratch, format_string);
-            ast_list_append(arguments, context->arena, value);
         }break;
         case AST_float_type:{
             
@@ -2985,42 +2911,18 @@ func void get_pretty_print_string_for_type(struct context *context, struct strin
             struct string format_string = push_format_string(&context->scratch, "%%%.*s%s%.*sf%s", field_width.size, field_width.data, dot, precision.size, precision.data, postfix);
             
             string_list_postfix(format_list, &context->scratch, format_string);
-            
-            if(type->size == 4){
-                // for va_args: "arguments that have type float are promoted to double"
-                // :retain_type_information_through_promotion
-                value = push_cast(context, AST_cast, &globals.typedef_f64, cast(struct ast *)value->resolved_type, value, value->token);
-            }
-            
-            ast_list_append(arguments, context->arena, value);
+        }break;
+        case AST_void_type:{
+            assert(context->error);
         }break;
         invalid_default_case();
     }
 }
-#endif
 
-void maybe_insert_implicit_nodes_for_varargs_argument(struct context *context, struct expr *expr, struct token *token){
-    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expr, token);
-    
-    if(expr->resolved_type->kind == AST_integer_type || expr->resolved_type->kind == AST_bitfield_type){
-        // "The integer promotions are performed on each argument."
-        maybe_insert_integer_promotion_cast(context, AST_cast, expr, token);
-    }
-    
-    if(expr->resolved_type == &globals.typedef_f32){
-        // "Arguments that have type float are promoted to double."
-        // :retain_type_information_through_promotion
-        expr->ast = push_cast(context, AST_cast, &globals.typedef_f64, (struct ast *)expr->resolved_type, expr->ast, token);
-        expr->defined_type = (struct ast *)expr->resolved_type;
-        expr->resolved_type = &globals.typedef_f64;
-    }
-}
-
-#if 0
-void printlike__infer_format_string_and_arguments_for_argument(struct context *context, struct ast *argument, struct string_list *pretty_print_list, struct ast_list *pretty_print_argument_list, struct string flags, struct string field_width, struct string precision, struct string type_specifiers){
-    
-    
-
+// 
+// @cleanup: This function is sort of useless now.
+// 
+void printlike__infer_format_string_and_arguments_for_argument(struct context *context, struct expr *argument, struct string_list *pretty_print_list, struct string flags, struct string field_width, struct string precision, struct string type_specifiers, smm *call_arguments_count){
     
     struct ast_type *argument_type = argument->resolved_type;
     
@@ -3036,210 +2938,257 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
             }
         }
         
-        //
-        // Save the struct to the compound in a temporary declaration, so we do not evaluate 'argument' more than once.
-        // @cleanup: Why are we doing this by value?
-        //           Maybe this is one answer: We cannot always take the address of 'argument', e.g.: 
-        //           
-        //               struct small_struct{ u64 value; };
-        //               struct small_struct returns_small_struct(){ return (struct small_struct){0}; }
-        //               print("{}", returns_small_struct());
-        //
-        struct ast_declaration *struct_declaration = push_unnamed_declaration(context, argument->resolved_type, null, argument->token);
+        struct ast_compound_type *root_compound = (struct ast_compound_type *)argument_type;
         
-        struct ast_identifier *struct_identifier = push_expression(context, argument->token, identifier);
-        struct_identifier->decl = struct_declaration;
-        set_resolved_type(&struct_identifier->base, struct_declaration->type, struct_declaration->defined_type);
+        // @cleanup: Check the 'defined_type'?
+        string_list_postfix_no_copy(pretty_print_list, &context->scratch, argument_type->kind == AST_struct ? string("(struct ") : string("(union "));
+        string_list_postfix_no_copy(pretty_print_list, &context->scratch, root_compound->identifier.string);
+        string_list_postfix_no_copy(pretty_print_list, &context->scratch, (depth_or_minus_one == -1) ? string("){") : string("){\n"));
         
-        struct ast *assign = ast_push_binary_expression(context, AST_assignment, argument->token, &struct_identifier->base, argument);
-        set_resolved_type(assign, argument->resolved_type, argument->defined_type);
-        
-        if(argument->resolved_type->flags & TYPE_FLAG_ends_in_array_of_unknown_size){
-            // :compounds_with_trailing_array
-            parser_emit_memory_location(context, struct_identifier->decl);
-        }
-        
-        
-        struct ast_list_node *argument_before_our_first = pretty_print_argument_list->last;
-        
-        //
-        // Actually pretty print the argument to string.
-        //
-        get_pretty_print_string_for_type(context, pretty_print_list, pretty_print_argument_list, &struct_identifier->base, depth_or_minus_one, field_width, precision, type_specifiers);
-        
-        struct ast_list_node *our_first_argument = argument_before_our_first ? argument_before_our_first->next : pretty_print_argument_list->first;
-        
-        if(our_first_argument){
-            struct ast *expr = maybe_insert_implicit_nodes_for_varargs_argument(context, our_first_argument->value);
+        struct stack_node{
+            struct stack_node *next;
+            struct stack_node *prev;
             
-            struct ast *comma = ast_push_binary_expression(context, AST_comma_expression, argument->token, assign, expr);
-            set_resolved_type(comma, expr->resolved_type, expr->defined_type);
-            our_first_argument->value = comma;
-        }
-    }else{
-        // No need to push a declaration for these, they are just read once anyway, 
-        // also no need to specify a depth.
-        get_pretty_print_string_for_type(context, pretty_print_list, pretty_print_argument_list, argument, -1, field_width, precision, type_specifiers);
-    }
-}
-#endif
-
-struct ast *check_call_to_printlike_function(struct context *context, struct ast_function_call *call, struct ast *operand){
-    (void)context;
-    (void)call;
-    (void)operand;
-    
-    #if 0
-    struct ast_function_type *printlike_function_type = (struct ast_function_type *)call->identifier_expression->resolved_type;
-    assert(printlike_function_type->base.kind == AST_function_type);
-    
-    //
-    // Parse the arguments, without inserting any promotions.
-    //
-    if(!peek_token_eat(context, TOKEN_closed_paren)){
-        do{
-            struct ast *expr = parse_expression(context, true);
-            if(context->should_exit_statement) return expr;
+            struct ast_type *lhs_type;
+            union{
+                smm member_at;
+                smm array_at;
+            };
+        } initial_node = {
+            .lhs_type = argument_type,
+        };
+        
+        struct{
+            struct stack_node *first;
+            struct stack_node *last;
+        } designator_stack = {.first = &initial_node, .last = &initial_node};
+        
+        while(designator_stack.first){
             
-            if(expr->resolved_type == &globals.typedef_void){
-                report_error(context, expr->token, "Expression of type void cannot be used as function argument.");
+            while(true){
+                // 
+                // Go as deep as we can!
+                // 
+                struct stack_node *node = designator_stack.first;
+                struct ast_type *type = node->lhs_type;
+                
+                struct stack_node *new_node = null;
+                
+                if(type->kind == AST_struct || type->kind == AST_union){
+                    struct ast_compound_type *compound = (struct ast_compound_type *)type;
+                    type = compound->members[node->member_at].type; // @cleanup: empty structures.
+                    
+                    new_node = push_struct(&context->scratch, struct stack_node);
+                    new_node->lhs_type = type;
+                    new_node->member_at = 0;
+                }else if(type->kind == AST_array_type){
+                    struct ast_array_type *array_type = (struct ast_array_type *)type;
+                    type = array_type->element_type;// @cleanup: empty arrays.
+                    
+                    new_node = push_struct(&context->scratch, struct stack_node);
+                    new_node->lhs_type = type;
+                    new_node->array_at = 0;
+                }else{
+                    break;
+                }
+                
+                dll_push_front(designator_stack, new_node);
             }
             
-            ast_list_append(&call->call_arguments, context->arena, expr);
-        }while(peek_token_eat(context, TOKEN_comma));
-        expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of parameter list.");
-    }
-    
-    // @cleanup: allow -1 to allow 'print()' just printint a newline?
-    if(printlike_function_type->argument_list.count > call->call_arguments.count){
-        begin_error_report(context);
-        struct string type_string = push_type_string(&context->scratch, &context->scratch, &printlike_function_type->base);
-        report_error(context, call->base.token, "Too few arguments to function of type '%.*s'.", type_string.size, type_string.data);
-        if(call->identifier_expression->kind == AST_identifier){
-            struct ast_identifier *ident = (struct ast_identifier *)call->identifier_expression;
-            report_error(context, ident->decl->base.token, "... Here is the declaration of the function.");
-        }
-        end_error_report(context);
-        return operand;
-    }
-    
-    //
-    // Get the varargs array, by skipping the fixed arguments.
-    //
-    struct ast_list_node *last_fixed_argument = null;
-    
-    struct ast_list variable_arguments = call->call_arguments;
-    for(u32 argument_index = 0; argument_index < printlike_function_type->argument_list.count - 1; argument_index++){
-        
-        if(argument_index == printlike_function_type->argument_list.count - 2){
-            last_fixed_argument = variable_arguments.first;
-        }
-        
-        variable_arguments.count -= 1;
-        variable_arguments.first = variable_arguments.first->next;
-    }
-    
-    //
-    // Build the fixed arguments, these are the arguments before the 'format-string' argument.
-    //
-    struct ast_list fixed_arguments = zero_struct;
-    
-    if(last_fixed_argument){
-        last_fixed_argument->next = null;
-        fixed_arguments.first = call->call_arguments.first;
-        fixed_arguments.last  = last_fixed_argument;
-        fixed_arguments.count = printlike_function_type->argument_list.count - 1;
-    }
-    
-    //
-    // Insert promotions casts for the 'fixed_arguments'.
-    //
-    for(struct ast_list_node *argument_node = fixed_arguments.first, *parameter_node = printlike_function_type->argument_list.first; argument_node; argument_node = argument_node->next, parameter_node = parameter_node->next){
-        struct ast_declaration *decl = (struct ast_declaration *)parameter_node->value; 
-        struct ast *expr = argument_node->value;
-        
-        if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return expr;
-        
-        expr = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expr);
-        argument_node->value = maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, decl->type, decl->defined_type, expr, expr->token);
-    }
-    
-    
-    // 
-    // The first argument in the 'variable_arguments' is the format string, or if not present
-    // the format string should be either {} or {:#}.
-    // For large structures, more than 3 members we use the {:#}.
-    // For small structures we use {}. If there is more than one argument the format string should be always {}.
-    //
-    
-    struct ast_list_node *format_string_node = format_string_node = null;
-    struct ast_string_literal *format_string_literal = null;
-    if(variable_arguments.first->value->kind == AST_string_literal){
-        //
-        // We found the argument. Remove it from the list.
-        //
-        format_string_literal = (struct ast_string_literal *)variable_arguments.first->value;
-        format_string_node = variable_arguments.first;
-        
-        variable_arguments.first = variable_arguments.first->next;
-        variable_arguments.count -= 1;
-    }
-    
-    struct string format_string = zero_struct;
-    
-    if(format_string_literal){
-        format_string = format_string_literal->value;
-    }else{
-        //
-        // We don't have a string literal. Build one based on the arguments. @cleanup: warn on 'char *' pointer?
-        //
-        
-        //
-        // @cleanup: add names if they are easy to add.
-        //
-        
-        if(variable_arguments.count == 1){
+            // 
+            // Duplicate the emit_location on the stack.
+            // 
+            _parser_ast_push(context, &context->ast_arena, sizeof(struct ast), alignof(struct ast), AST_duplicate);
             
-            struct ast *argument = variable_arguments.first->value;
-            if(argument->resolved_type->kind == AST_struct || argument->resolved_type->kind == AST_union){
-                struct ast_compound_type *compound = (struct ast_compound_type *)argument->resolved_type;
+            if(depth_or_minus_one != -1){
+                string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("    "));
+            }
+            
+            // 
+            // Create expression.
+            // 
+            for(struct stack_node *node = designator_stack.last; node; node = node->prev){
+                struct ast_type *type = node->lhs_type;
                 
-                if(compound->amount_of_members > 3){
-                    format_string = string("{:#}\n");
+                if(type->kind == AST_struct || type->kind == AST_union){
+                    struct ast_compound_type *compound = (struct ast_compound_type *)type;
+                    
+                    struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)_parser_ast_push(context, &context->ast_arena, sizeof(struct ast_dot_or_arrow), alignof(struct ast_dot_or_arrow), AST_member);
+                    dot->member = &compound->members[node->member_at];
+                    
+                    string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("."));
+                    string_list_postfix_no_copy(pretty_print_list, &context->scratch, dot->member->name->string);
+                    
+                }else if(type->kind == AST_array_type){
+                    struct ast_array_type *array_type = (struct ast_array_type *)type;
+                    
+                    ast_push_u64_literal(context, node->array_at);
+                    struct ast *subscript = _parser_ast_push(context, &context->ast_arena, sizeof(struct ast_subscript), alignof(struct ast_subscript), AST_array_subscript);
+                    set_resolved_type(subscript, array_type->element_type, null);
+                    
+                    struct string string = push_format_string(&context->scratch, "[%llu]", node->array_at);
+                    string_list_postfix_no_copy(pretty_print_list, &context->scratch, string);
                 }
             }
             
-            if(!format_string.data){
-                format_string = string("{}\n");
-            }
-            
-            if(argument->kind == AST_identifier){
-                format_string = push_format_string(context->arena, "%.*s = %.*s", argument->token->size, argument->token->data, format_string.size, format_string.data);
-            }
-        }else{
-            struct string_list format_string_list = zero_struct;
-            
-            for(struct ast_list_node *argument_node = variable_arguments.first; argument_node; argument_node = argument_node->next){
-                string_list_postfix(&format_string_list, &context->scratch, string("{} "));
-            }
-            
-            format_string = string_list_flatten(format_string_list, &context->scratch);
+            string_list_postfix_no_copy(pretty_print_list, &context->scratch, string(" = "));
             
             //
-            // Replace the last " " with a newline.
+            // Actually pretty print the argument to string.
             //
-            assert(format_string.size);
-            format_string.data[format_string.size-1] = '\n';
+            get_pretty_print_string_for_type(context, pretty_print_list, designator_stack.first->lhs_type, field_width, precision, type_specifiers);
+            *call_arguments_count += 1;
+            
+            // 
+            // Swap in the correct result.
+            // 
+            _parser_ast_push(context, &context->ast_arena, sizeof(struct ast), alignof(struct ast), AST_swap_lhs_rhs);
+            
+            dll_remove(designator_stack, designator_stack.first);
+            
+            while(designator_stack.first){
+                struct stack_node *node = designator_stack.first;
+                struct ast_type *type = node->lhs_type;
+                
+                if(type->kind == AST_struct){
+                    struct ast_compound_type *compound = (struct ast_compound_type *)type;
+                    struct compound_member *member = &compound->members[node->member_at];
+                    
+                    node->member_at += member->next_member_increment;
+                    
+                    if(node->member_at < compound->amount_of_members) break; // We found the next member!
+                }else if(type->kind == AST_union){
+                    // Pop the union, only ever print one member.
+                }else{
+                    struct ast_array_type *array = (struct ast_array_type *)type;
+                    
+                    node->array_at++;
+                    
+                    if(node->array_at < array->amount_of_elements) break; // We found the next member!
+                }
+                
+                dll_remove(designator_stack, designator_stack.first);
+            }
+            
+            if(designator_stack.first){
+                string_list_postfix_no_copy(pretty_print_list, &context->scratch, (depth_or_minus_one == -1) ? string(", ") : string(",\n"));
+            }else{
+                if(depth_or_minus_one != -1) string_list_postfix_no_copy(pretty_print_list, &context->scratch, string(",\n"));
+            }
         }
+        
+        string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("}"));
+        
+        // 
+        // Pop on the expression.
+        // 
+        push_expression(context, pop_expression);
+        
+    }else{
+        // No need to push a declaration for these, they are just read once anyway, 
+        // also no need to specify a depth.
+        get_pretty_print_string_for_type(context, pretty_print_list, argument->resolved_type, field_width, precision, type_specifiers);
+        *call_arguments_count += 1;
+    }
+}
+
+// @WARNING: identifier_expression->ast might not be accurate.
+static void parse_call_to_printlike_function_arguments(struct context *context, struct ast_function_type *printlike_function_type, struct expr *identifier_expression, struct expr *format_string_argument, smm *call_arguments_count){
+    
+    (void)printlike_function_type;
+    
+    if(format_string_argument->ast->kind != AST_string_literal){
+        
+        // 
+        // The first argument in the 'variable_arguments' is the format string, or if not present
+        // the format string should be either {} or {:#}.
+        // For large structures, more than 3 members we use the {:#}.
+        // For small structures we use {}. If there is more than one argument the format string should be always {}.
+        //
+        
+        struct expr expr = *format_string_argument;
+        
+        // 
+        // Build the string literal and then swap it into the correct position.
+        // 
+        struct ast_string_literal *format_string_literal = push_expression(context, string_literal);
+        format_string_literal->string_kind = STRING_KIND_utf8;
+        
+        ast_push_unary_expression(context, AST_implicit_address_conversion, format_string_literal);
+        push_expression(context, swap_lhs_rhs);
+        
+        struct string_list pretty_print_list = zero_struct;
+        
+        struct string flags = zero_struct, field_width = zero_struct, precision = zero_struct, type_specifiers = zero_struct;
+        
+        while(true){
+            printlike__infer_format_string_and_arguments_for_argument(context, &expr, &pretty_print_list, flags, field_width, precision, type_specifiers, call_arguments_count);
+            
+            if(!peek_token_eat(context, TOKEN_comma)) break;
+            
+            expr = parse_expression(context, /*should_skip_comma_expression*/true);
+        }
+        
+        format_string_literal->value = string_list_flatten(pretty_print_list, context->arena);
+        
+#if 0
+        //
+        // We don't have a string literal. Build one based on the arguments. @cleanup: warn on 'char *' pointer?
+        //
+        struct string identifier = zero_struct;
+        format_string = string("{}\n");
+        
+        if(format_string_argument->ast->kind == AST_identifier){
+            struct ast_identifier *ast_identifier = (struct ast_identifier *)format_string_argument->ast;
+            identifier = ast_identifier->decl->identifier->string;
+        }
+        
+        struct ast_type *type = format_string_argument->resolved_type;
+        if(type->kind == AST_struct || type->kind == AST_union){
+            struct ast_compound_type *compound = (struct ast_compound_type *)type;
+            if(compound->amount_of_members > 3){
+                format_string = string("{:#}\n");
+            }
+        }
+        
+        if(identifier.size){
+            format_string = push_format_string(context->arena, "%.*s = %.*s", identifier.size, identifier.data, format_string.size, format_string.data);
+        }
+        
+        // 
+        // Build the string literal and then swap it into the correct position.
+        // 
+        
+        struct ast_string_literal *lit = push_expression(context, string_literal);
+        lit->value = format_string;
+        lit->string_kind = STRING_KIND_utf8;
+        
+        ast_push_unary_expression(context, AST_implicit_address_conversion, lit);
+        
+        push_expression(context, swap_lhs_rhs);
+        
+        argument = *format_string_argument;
+        *call_arguments_count += 1;
+#endif
+        return;
     }
     
-    struct ast_list_node *argument_node = variable_arguments.first;
+    if(!peek_token_eat(context, TOKEN_comma) && !peek_token(context, TOKEN_closed_paren)){
+        report_error(context, get_current_token_for_error_report(context), "Expected ',' or ')' after format string argument of __declspec(printlike)-function.");
+        return;
+    }
     
-    //
-    // The arguments and the format string we will fill in.
-    //
-    struct string_list pretty_print_list          = zero_struct;
-    struct ast_list    pretty_print_argument_list = zero_struct;
+    struct ast_string_literal *format_string_literal = (struct ast_string_literal *)format_string_argument->ast;
+    struct string format_string = format_string_literal->value;
+    
+    // Once we have the string literal, we can add the `implicit_address_conversion`.
+    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, format_string_argument, format_string_argument->token);
+    
+    // 
+    // Start parsing the format string.
+    // 
+    
+    struct string_list pretty_print_list = zero_struct;
     
     while(format_string.size){
         struct string start = string_eat_until_characters_front(&format_string, "{%");
@@ -3310,79 +3259,74 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                 start.size += 2;                     // keep both of the '%'.
                 string_list_postfix(&pretty_print_list, &context->scratch, start);
                 continue;
-            }else{
-                //
-                // Copy every thing that happened before the argument to the _pretty print format string_
-                //
-                string_list_postfix(&pretty_print_list, &context->scratch, start);
             }
             
-            struct string it = format_string;
+            //
+            // Copy every thing that happened before the argument to the _pretty print format string._
+            //
+            string_list_postfix(&pretty_print_list, &context->scratch, start);
             
+            struct string it = format_string;
             string_eat_front(&it, 1); // eat the '%'
             
             struct string flags = string_eat_characters_front(&it, "+- #0");
             struct string field_width = zero_struct;
             struct string precision   = zero_struct;
             
-            //
-            // parse field width
-            //
+            // 
+            // Parse field width.
+            // 
             if(it.size && it.data[0] == '*'){
                 field_width = string_eat_front(&it, 1);
                 
-                //
-                // @cleanup: these arguments have to be preserved
-                //
+                if(peek_token(context, TOKEN_closed_paren)) goto too_few_args_for_print;
                 
-                if(!argument_node) goto too_few_args_for_print;
+                struct expr argument = parse_expression(context, /*should_skip_comma_expression*/true);
+                *call_arguments_count += 1;
                 
-                if(argument_node->value->resolved_type->kind != AST_integer_type){
-                    struct string type_string = push_type_string(context->arena, &context->scratch, argument_node->value->resolved_type);
-                    report_error(context,  argument_node->value->token, "Field width specifier '*' requires an integer argument. Given argument is of type '%.*s'.", type_string.size, type_string.data);
-                    return operand;
+                if(!peek_token_eat(context, TOKEN_comma) && !peek_token(context, TOKEN_closed_paren)) break;
+                
+                maybe_insert_implicit_nodes_for_varargs_argument(context, &argument, argument.token);
+                
+                if(argument.resolved_type->kind != AST_integer_type){
+                    struct string type_string = push_type_string(context->arena, &context->scratch, argument.resolved_type);
+                    report_error(context,  argument.token, "Field width specifier '*' requires an integer argument. Given argument is of type '%.*s'.", type_string.size, type_string.data);
+                    return;
                 }
-                
-                struct ast_list_node *next = argument_node->next;
-                sll_push_back(pretty_print_argument_list, argument_node);
-                pretty_print_argument_list.count++;
-                argument_node = next;
             }else{
                 field_width = string_eat_characters_front(&it, "0123456789");
             }
             
-            //
-            // parse precision
-            //
+            // 
+            // Parse precision.
+            // 
             if(it.size && it.data[0] == '.'){
                 string_eat_front(&it, 1); // eat the '.'
                 
                 if(it.size && it.data[0] == '*'){
                     precision = string_eat_front(&it, 1);
                     
-                    //
-                    // @cleanup: these arguments have to be preserved
-                    //
+                    if(peek_token(context, TOKEN_closed_paren)) goto too_few_args_for_print;
                     
-                    if(!argument_node) goto too_few_args_for_print;
+                    struct expr argument = parse_expression(context, /*should_skip_comma_expression*/true);
+                    *call_arguments_count += 1;
                     
-                    if(argument_node->value->resolved_type->kind != AST_integer_type){
-                        struct string type_string = push_type_string(context->arena, &context->scratch, argument_node->value->resolved_type);
-                        report_error(context,  argument_node->value->token, "Precision specifier '*' requires an integer argument. Given argument is of type '%.*s'.", type_string.size, type_string.data);
-                        return operand;
+                    if(!peek_token_eat(context, TOKEN_comma) && !peek_token(context, TOKEN_closed_paren)) break;
+                    
+                    maybe_insert_implicit_nodes_for_varargs_argument(context, &argument, argument.token);
+                    
+                    if(argument.resolved_type->kind != AST_integer_type){
+                        struct string type_string = push_type_string(context->arena, &context->scratch, argument.resolved_type);
+                        report_error(context,  argument.token, "Precision specifier '*' requires an integer argument. Given argument is of type '%.*s'.", type_string.size, type_string.data);
+                        return;
                     }
-                    
-                    struct ast_list_node *next = argument_node->next;
-                    sll_push_back(pretty_print_argument_list, argument_node);
-                    pretty_print_argument_list.count++;
-                    argument_node = next;
                 }else{
                     precision = string_eat_characters_front(&it, "0123456789");
-                }    
+                }
             }
             
             //
-            // parse length modifiers
+            // Parse length modifiers.
             //
             int length_modifier = 0;
             if(string_front_match_eat(&it, "hh")){
@@ -3404,12 +3348,11 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
             }
             
             if(!it.size){
-                report_error(context, call->base.token, "Missing format specifier after '%.*s' in format string.", format_string.size, format_string.data);
-                return operand;
+                report_error(context, format_string_argument->token, "Missing format specifier after '%.*s' in format string.", format_string.size, format_string.data);
+                return;
             }
             
             u8 conversion_specifier = it.data[0];
-            
             string_eat_front(&it, 1);
             
             struct string format_specifier = {
@@ -3417,534 +3360,452 @@ struct ast *check_call_to_printlike_function(struct context *context, struct ast
                 .size = it.data - format_string.data,
             };
             
-            // we are done with parsing _commit_ the format string. 
+            // We are done with parsing _commit_ the format string. 
             // This is sort of stupid, we should probably get rid of 'it'
             format_string = it;
             
-            if(!argument_node) goto too_few_args_for_print;
+            if(peek_token(context, TOKEN_closed_paren)) goto too_few_args_for_print;
+            
+            struct expr argument = parse_expression(context, /*should_skip_comma_expression*/true);
+            *call_arguments_count += 1;
+            
+            if(!peek_token_eat(context, TOKEN_comma) && !peek_token(context, TOKEN_closed_paren)) break;
             
             if(conversion_specifier == '?'){
                 //
                 // Special format specifier '?'. Infer the type!
                 //
-                
-                struct string type_specifiers = {0};
-                
-                struct ast *argument = argument_node->value;
-                argument_node = argument_node->next;
-                
                 if(length_modifier){
-                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Length specifiers (hh, h, l, ll etc.) do not apply to format specifier '?'.");
+                    report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Length specifiers (hh, h, l, ll etc.) do not apply to format specifier '?'.");
                 }
                 
-                printlike__infer_format_string_and_arguments_for_argument(context, argument, &pretty_print_list, &pretty_print_argument_list, flags, field_width, precision, type_specifiers);
-            }else{
-                //
-                // Classic c format specifiers. Append the format specifier to the pretty print list as the user put it there.
-                // Append the argument to the argument list.
-                // Check the format string for possible errors.
-                //
-                string_list_postfix(&pretty_print_list, &context->scratch, format_specifier);
-                
-                struct ast_list_node *next = argument_node->next;
-                struct ast *argument = argument_node->value;
-                
-                sll_push_back(pretty_print_argument_list, argument_node);
-                pretty_print_argument_list.count += 1;
-                
-                argument_node = next;
-                
-                //
-                // d,   i,   o,   u,   x,   X   (signed or unsigned int)
-                // hhd, hhi, hho, hhu, hhx, hhX (signed or unsigned char)
-                // hd,  hi,  ho,  hu,  hx,  hX  (signed or unsigned short)
-                // ld,  li,  lo,  lu,  lx,  lX  (signed or unsigned long int)
-                // lld, lli, llo, llu, llx, llX (signed or unsigned long long int)
-                // jd,  ji,  jo,  ju,  jx,  jX  (intmax_t or uintmax_t)
-                // zd,  zi,  zo,  zu,  zx,  zX  (signed size_t or size_t)
-                // td,  ti,  to,  tu,  tx,  tX  (ptrdiff_t or unsigned ptrdiff_t)
-                // 
-                // n same as the above, but pointer to that type.
-                // 
-                // lc wint_t
-                // ls wchar_t 
-                // l has no effect on aA eE fF gG
-                // L coverts to long double for aA eE fF gG.
-                // 
-                
-                struct ast *defined_type = argument->defined_type;
-                struct ast_type *promoted_type = argument->resolved_type;
-                struct ast_type *unpromoted_type = promoted_type;
-                if(conversion_specifier == 'n'){
-                    if(promoted_type->kind != AST_pointer_type){
-                        report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects a pointer.", (char *)&length_modifier, conversion_specifier);
-                    }else{
-                        struct ast_pointer_type *pointer = (struct ast_pointer_type *)promoted_type;
-                        defined_type    = pointer->pointer_to_defined_type;
-                        unpromoted_type = pointer->pointer_to;
-                        
-                        conversion_specifier = 'd';
-                    }
-                }
-                
-                // :retain_type_information_through_promotion
-                if(defined_type){
-                    struct ast_type *original = unpromoted_type;
-                    
-                    if(defined_type->kind == AST_typedef){
-                        unpromoted_type = ((struct ast_declaration *)defined_type)->type;
-                    }else{
-                        unpromoted_type = (struct ast_type *)defined_type;
-                    }
-                    
-                    if(unpromoted_type->kind != AST_integer_type && unpromoted_type->kind != AST_float_type){
-                        // might have been like an enum or something just go back to the defined type.
-                        unpromoted_type = original;
-                    }
-                }
-                
-                switch(conversion_specifier){
-                    case 'd': case 'i': case 'u': case 'o': case 'x': case 'X':{
-                        
-                        // @cleanup: For now we don't report warnings for things that have precision.
-                        if(precision.size) break;
-                        
-                        if(length_modifier == 'j' || length_modifier == 'z' || length_modifier == 't'){
-                            
-                            char *should_warn = null;
-                            
-                            struct string type_string = string("");
-                            
-                            if(defined_type && defined_type->kind == AST_typedef){
-                                struct ast_declaration *ast_typedef = (struct ast_declaration *)defined_type;
-                                type_string = ast_typedef->identifier->string;
-                            }
-                            
-                            if(length_modifier == 'j'){
-                                if((conversion_specifier == 'd' || conversion_specifier == 'i')){
-                                    if(!string_match(type_string, string("intmax_t"))) should_warn = "intmax_t";
-                                }else if(conversion_specifier == 'u'){
-                                    if(!string_match(type_string, string("uintmax_t"))) should_warn = "uintmax_t";
-                                }else{
-                                    // for the rest (o, x, X) allow either
-                                    if(!string_match(type_string, string("intmax_t")) && !string_match(type_string, string("uintmax_t")))  should_warn = "intmax_t or uintmax_t";
-                                }
-                            }else if(length_modifier == 'z'){
-                                if(!string_match(type_string, string("size_t"))) should_warn = "size_t";
-                            }else if(length_modifier == 't'){
-                                if(!string_match(type_string, string("ptrdiff_t"))) should_warn = "ptrdiff_t";
-                            }
-                            
-                            if(should_warn){
-                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects %s.", (char *)&length_modifier, conversion_specifier, should_warn);
-                            }
-                        }else if(length_modifier == 0 || length_modifier == 'hh' || length_modifier == 'h' || length_modifier == 'l' || length_modifier == 'll'){
-                            //
-                            // Integral conversion specifier, go by the list of expected types.
-                            //
-                            
-                            if(conversion_specifier == 'd' || conversion_specifier == 'i'){
-                                struct ast_type *expected_type = &globals.typedef_s32;
-                                if(length_modifier == 'hh') expected_type = &globals.typedef_s8;
-                                if(length_modifier == 'h')  expected_type = &globals.typedef_s16;
-                                if(length_modifier == 'l')  expected_type = &globals.typedef_s32;
-                                if(length_modifier == 'll') expected_type = &globals.typedef_s64;
-                                
-                                if(expected_type != unpromoted_type && expected_type != promoted_type){
-                                    struct string expected_type_string = push_type_string(context->arena, &context->scratch, expected_type);
-                                    struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
-                                }
-                            }else if(conversion_specifier == 'u'){
-                                struct ast_type *expected_type = &globals.typedef_u32;
-                                if(length_modifier == 'hh') expected_type = &globals.typedef_u8;
-                                if(length_modifier == 'h')  expected_type = &globals.typedef_u16;
-                                if(length_modifier == 'l')  expected_type = &globals.typedef_u32;
-                                if(length_modifier == 'll') expected_type = &globals.typedef_u64;
-                                
-                                if(expected_type != unpromoted_type && expected_type != promoted_type){
-                                    struct string expected_type_string = push_type_string(context->arena, &context->scratch, expected_type);
-                                    struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
-                                }
-                            }else{
-                                //
-                                // Allow either signed an unsigned for 'o' 'x' 'X'.
-                                //
-                                struct ast_type *expected_signed_type = &globals.typedef_s32;
-                                if(length_modifier == 'hh') expected_signed_type = &globals.typedef_s8;
-                                if(length_modifier == 'h')  expected_signed_type = &globals.typedef_s16;
-                                if(length_modifier == 'l')  expected_signed_type = &globals.typedef_s32;
-                                if(length_modifier == 'll') expected_signed_type = &globals.typedef_s64;
-                                
-                                struct ast_type *expected_unsigned_type = &globals.typedef_u32;
-                                if(length_modifier == 'hh') expected_unsigned_type = &globals.typedef_u8;
-                                if(length_modifier == 'h')  expected_unsigned_type = &globals.typedef_u16;
-                                if(length_modifier == 'l')  expected_unsigned_type = &globals.typedef_u32;
-                                if(length_modifier == 'll') expected_unsigned_type = &globals.typedef_u64;
-                                
-                                if(expected_signed_type != unpromoted_type && expected_unsigned_type != unpromoted_type && expected_signed_type != promoted_type && expected_unsigned_type != promoted_type){
-                                    struct string signed_type_string   = push_type_string(context->arena, &context->scratch, expected_signed_type);
-                                    struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                    report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%s%c' expects signed or unsigned %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, signed_type_string.size, signed_type_string.data, type_string.size, type_string.data);
-                                }
-                            }
-                        }else{
-                            report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
-                        }
-                    }break;
-                    
-                    case 'c':{
-                        if(length_modifier == 0){
-                            if(unpromoted_type != &globals.typedef_u8 && unpromoted_type != &globals.typedef_s8){
-                                struct string type_string = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%c' expects signed or unsigned character, but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
-                            }
-                        }else if(length_modifier == 'l'){
-                            if(unpromoted_type != &globals.typedef_u16 && unpromoted_type != &globals.typedef_s16){
-                                struct string type_string = push_type_string(context->arena, &context->scratch, unpromoted_type);
-                                report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%%c' expects signed or unsigned wide character (wchar_t), but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
-                            }
-                        }else{
-                            report_warning(context, WARNING_incorrect_format_specifier, argument->token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
-                        }
-                    }break;
-                    
-                    case 'p':{
-                        if(length_modifier != 0){
-                            report_warning(context, WARNING_incorrect_format_specifier, argument->token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
-                        }
-                        
-                        if(promoted_type->kind != AST_pointer_type){
-                            struct string type_string = push_type_string(context->arena, &context->scratch, promoted_type);
-                            report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%p' requires a pointer, but the argument is of type '%.*s'.", type_string.size, type_string.data);
-                        }
-                    }break;
-                    
-                    case 'e': case 'E':
-                    case 'a': case 'A':
-                    case 'g': case 'G':
-                    case 'f': case 'F':{
-                        
-                        if(length_modifier != 0 && length_modifier != 'l' && length_modifier != 'L'){
-                            report_warning(context, WARNING_incorrect_format_specifier, argument->token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
-                        }
-                        
-                        if(promoted_type->kind != AST_float_type){
-                            struct string type_string = push_type_string(context->arena, &context->scratch, promoted_type);
-                            report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%f' requires a float, but the argument is of type '%.*s'.", type_string.size, type_string.data);
-                        }
-                    }break;
-                    
-                    case 's':{
-                        struct ast_type *element_type = null;
-                        if(promoted_type->kind == AST_pointer_type){
-                            struct ast_pointer_type *pointer = (struct ast_pointer_type *)promoted_type;
-                            element_type = pointer->pointer_to;
-                        }else if(promoted_type->kind == AST_array_type){
-                            struct ast_array_type *array = (struct ast_array_type *)promoted_type;
-                            element_type = array->element_type;
-                        }
-                        
-                        b32 should_warn = true;
-                        if(length_modifier == 'l'){
-                            if(element_type == &globals.typedef_s16 || element_type == &globals.typedef_u16) should_warn = false;
-                        }else if(length_modifier == 0){
-                            if(element_type == &globals.typedef_s8 || element_type == &globals.typedef_u8) should_warn = false;
-                        }else{
-                            report_warning(context, WARNING_incorrect_format_specifier, argument->token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
-                        }
-                        
-                        if(should_warn){
-                            struct string type_string = push_type_string(context->arena, &context->scratch, promoted_type);
-                            report_warning(context, WARNING_incorrect_format_specifier, argument->token, "Format specifier '%%s' requires 'char *', but the argument is of type '%.*s'.", type_string.size, type_string.data);
-                        }
-                    }break;
-                    
-                    default:{
-                        report_warning(context, WARNING_unknown_format_specifier, call->base.token, "Unknown format specifier '%%%c'.", conversion_specifier);
-                    }break;
-                }
-            }
-        }else{
-            // Make sure we have an argument.
-            assert(format_string.data[0] == '{');
-            string_eat_front(&format_string, 1); // Eat the '{'.
-            
-            //
-            // Rust style format specifier Syntax:
-            //
-            // {[integer|identifier[=]][:[flags][field-width][.precision][type]]} 
-            //
-            // special cases are {identifier} which evaluates to _"{}", identifier_,
-            // {identifier=}, which evaluates to _"identifier = {}", identifier_
-            // If the type of the argument is a compound, all format specifiers are 
-            // applied to all the fields.
-            //
-            // We want to allow random '{' in the string without complaining: 
-            // Things like:
-            //    print("{");
-            //    print("{ hello = %u }", 10);
-            // etc, should not be treated as rust format strings.
-            // Hence, we have to be able to "fail" here at many points.
-            // 
-            
-            struct string identifier = eat_identifier(&format_string);
-            
-            int have_equals = 0;
-            if(identifier.size && format_string.size && format_string.data[0] == '='){
-                have_equals = 1;
-                string_eat_front(&format_string, 1);
-            }
-            
-            struct string flags           = zero_struct;
-            struct string field_width     = zero_struct;
-            struct string precision       = zero_struct;
-            struct string type_specifiers = zero_struct;
-            
-            int this_is_probably_supposed_to_be_a_rust_format_string = 0;
-            
-            // 
-            // Allow for '{.*s}', '{*s}', '{#}'
-            // 
-            if(format_string.size && (format_string.data[0] == ':' || format_string.data[0] == '.' || format_string.data[0] == '#' || format_string.data[0] == '*')){
-                if(format_string.data[0] == ':') string_eat_front(&format_string, 1);
-                
-                flags = string_eat_characters_front(&format_string, "+- #0");
-                
-                this_is_probably_supposed_to_be_a_rust_format_string |= (string_strip_whitespace(flags).size != 0);
-                
-                //
-                // parse field width
-                //
-                if(format_string.size && format_string.data[0] == '*'){
-                    field_width = string_eat_front(&format_string, 1);
-                    this_is_probably_supposed_to_be_a_rust_format_string |= 1;
-                    
-                    //
-                    // @cleanup: these arguments have to be preserved
-                    //
-                    
-                    if(!argument_node) goto too_few_args_for_print;
-                    
-                    if(argument_node->value->resolved_type->kind != AST_integer_type){
-                        struct string type_string = push_type_string(context->arena, &context->scratch, argument_node->value->resolved_type);
-                        report_error(context,  argument_node->value->token, "Field width specifier '*' requires an integer argument. Given argument is of type '%.*s'.", type_string.size, type_string.data);
-                        return operand;
-                    }
-                    
-                    struct ast_list_node *next = argument_node->next;
-                    sll_push_back(pretty_print_argument_list, argument_node);
-                    pretty_print_argument_list.count++;
-                    argument_node = next;
-                }else{
-                    field_width = string_eat_characters_front(&format_string, "0123456789");
-                }
-                
-                //
-                // parse precision
-                //
-                if(format_string.size && format_string.data[0] == '.'){
-                    string_eat_front(&format_string, 1); // eat the '.'
-                    
-                    if(format_string.size && format_string.data[0] == '*'){
-                        this_is_probably_supposed_to_be_a_rust_format_string |= 1;
-                        precision = string_eat_front(&format_string, 1);
-                        
-                        //
-                        // @cleanup: these arguments have to be preserved
-                        //
-                        
-                        if(!argument_node) goto too_few_args_for_print;
-                        
-                        if(argument_node->value->resolved_type->kind != AST_integer_type){
-                            struct string type_string = push_type_string(context->arena, &context->scratch, argument_node->value->resolved_type);
-                            report_error(context,  argument_node->value->token, "Precision specifier '*' requires an integer argument. Given argument is of type '%.*s'.", type_string.size, type_string.data);
-                            return operand;
-                        }
-                        
-                        struct ast_list_node *next = argument_node->next;
-                        sll_push_back(pretty_print_argument_list, argument_node);
-                        pretty_print_argument_list.count++;
-                        argument_node = next;
-                    }else{
-                        precision = string_eat_characters_front(&format_string, "0123456789");
-                    }    
-                }
-                
-                type_specifiers = eat_identifier(&format_string);
-            }
-            
-            if((format_string.size == 0) || format_string.data[0] != '}'){
-                
-                if(this_is_probably_supposed_to_be_a_rust_format_string){
-                    // 
-                    // We think the intent of this string was to be a {}-format string, but it was malformed.
-                    // 
-                    
-                    struct string format_specifier = {
-                        .data = start.data + start.size,
-                        .size = (format_string.data + format_string.size) - start.data + start.size,
-                    };
-                    
-                    // Scan up to the end of the specifier.
-                    format_specifier = eat_until_char(&format_specifier, '}', /*eat delimiter*/true);
-                    
-                    char *dotdotdot = "";
-                    
-                    if(format_specifier.data[format_specifier.size-1] != '}'){
-                        dotdotdot = "...";
-                        format_specifier.size = min_of(format_specifier.size, 10);
-                    }
-                    
-                    assert(format_string_literal);
-                    report_error(context, format_string_literal->base.token, "Incorrectly formatted format string '%.*s%s' for __declspec(printlike) procedure.", format_specifier.size, format_specifier.data, dotdotdot);
-                    return operand;
-                }
-                
-                // 
-                // It ended up not being a rust string I guess.
-                // Eat everything we have parsed in 'it', 
-                // as it does not contain either '{' or '%' by the way we parsed the string.
-                // 
-                start.size += (format_string.data - (start.data + start.size));
-                string_list_postfix(&pretty_print_list, &context->scratch, start);
+                struct string type_specifiers = zero_struct;
+                printlike__infer_format_string_and_arguments_for_argument(context, &argument, &pretty_print_list, flags, field_width, precision, type_specifiers, call_arguments_count);
                 continue;
             }
             
-            string_eat_front(&format_string, 1); // eat the '}'.
-            
             //
-            // We got a Rust style format specifier!
-            // Copy every thing that happened before the argument to the _pretty print format string_.
+            // Classic C format specifiers. Append the format specifier to the pretty print list as the user put it there.
+            // Append the argument to the argument list. Check the format string for possible errors.
             //
             
-            string_list_postfix(&pretty_print_list, &context->scratch, start);
+            string_list_postfix(&pretty_print_list, &context->scratch, format_specifier);
             
-            struct string format_specifier = {
-                .data = start.data + start.size,
-                .size = (format_string.data + format_string.size) - start.data + start.size,
-            };
+            //
+            // d,   i,   o,   u,   x,   X   (signed or unsigned int)
+            // hhd, hhi, hho, hhu, hhx, hhX (signed or unsigned char)
+            // hd,  hi,  ho,  hu,  hx,  hX  (signed or unsigned short)
+            // ld,  li,  lo,  lu,  lx,  lX  (signed or unsigned long int)
+            // lld, lli, llo, llu, llx, llX (signed or unsigned long long int)
+            // jd,  ji,  jo,  ju,  jx,  jX  (intmax_t or uintmax_t)
+            // zd,  zi,  zo,  zu,  zx,  zX  (signed size_t or size_t)
+            // td,  ti,  to,  tu,  tx,  tX  (ptrdiff_t or unsigned ptrdiff_t)
+            // 
+            // n same as the above, but pointer to that type.
+            // 
+            // lc wint_t
+            // ls wchar_t 
+            // l has no effect on aA eE fF gG
+            // L coverts to long double for aA eE fF gG.
+            // 
             
-            struct ast *argument = null;
-            if(identifier.size){
-                //
-                // We found the identifier.
-                //
-                struct ast_declaration *declaration = lookup_declaration(context->current_scope, context->current_compilation_unit, atom_for_string(identifier));
-                
-                if(!declaration && (string_match(identifier, string("s")) || string_match(identifier, string("x")))){
-                    // Allow '{s}', '{x}'.
-                    type_specifiers = identifier;
+            struct ast *defined_type = argument.defined_type;
+            struct ast_type *promoted_type = argument.resolved_type;
+            struct ast_type *unpromoted_type = promoted_type;
+            if(conversion_specifier == 'n'){
+                if(promoted_type->kind != AST_pointer_type){
+                    report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%%s%c' expects a pointer.", (char *)&length_modifier, conversion_specifier);
                 }else{
-                    if(!declaration){
-                        report_error(context, format_string_literal->base.token, "Identifier in format specifier '%.*s', is undeclared.", format_specifier.size, format_specifier.data);
-                        return operand;
-                    }
+                    struct ast_pointer_type *pointer = (struct ast_pointer_type *)promoted_type;
+                    defined_type    = pointer->pointer_to_defined_type;
+                    unpromoted_type = pointer->pointer_to;
                     
-                    assert(format_string_literal);
-                    struct ast_identifier *ident = push_expression(context, format_string_literal->base.token, identifier);
-                    ident->decl = declaration;
-                    
-                    if(have_equals){
-                        struct string identifier_equals = push_format_string(&context->scratch, "%.*s = ", identifier.size, identifier.data);
-                        string_list_postfix(&pretty_print_list, &context->scratch, identifier_equals);
-                    }
-                    
-                    set_resolved_type(&ident->base, declaration->type, null);
-                    
-                    argument = &ident->base;
+                    conversion_specifier = 'd';
                 }
             }
             
-            if(!argument){
-                if(!argument_node){
-                    too_few_args_for_print:
-                    report_error(context, call->base.token, "Less arguments for __declspec(printlike)-function, than indicated by the format string.");
-                    return operand;
+            // :retain_type_information_through_promotion
+            if(defined_type){
+                struct ast_type *original = unpromoted_type;
+                
+                if(defined_type->kind == AST_typedef){
+                    unpromoted_type = ((struct ast_declaration *)defined_type)->type;
+                }else{
+                    unpromoted_type = (struct ast_type *)defined_type;
                 }
                 
-                argument = argument_node->value;
-                argument_node = argument_node->next;
+                if(unpromoted_type->kind != AST_integer_type && unpromoted_type->kind != AST_float_type){
+                    // might have been like an enum or something just go back to the defined type.
+                    unpromoted_type = original;
+                }
             }
             
-            //
-            // @cleanup: validate 'type_specifiers' there should be at most one for floats, one for integers and one 's'.
-            //
+            switch(conversion_specifier){
+                case 'd': case 'i': case 'u': case 'o': case 'x': case 'X':{
+                    
+                    // @cleanup: For now we don't report warnings for things that have precision.
+                    if(precision.size) break;
+                    
+                    if(length_modifier == 'j' || length_modifier == 'z' || length_modifier == 't'){
+                        
+                        char *should_warn = null;
+                        
+                        struct string type_string = string("");
+                        
+                        if(defined_type && defined_type->kind == AST_typedef){
+                            struct ast_declaration *ast_typedef = (struct ast_declaration *)defined_type;
+                            type_string = ast_typedef->identifier->string;
+                        }
+                        
+                        if(length_modifier == 'j'){
+                            if((conversion_specifier == 'd' || conversion_specifier == 'i')){
+                                if(!string_match(type_string, string("intmax_t"))) should_warn = "intmax_t";
+                            }else if(conversion_specifier == 'u'){
+                                if(!string_match(type_string, string("uintmax_t"))) should_warn = "uintmax_t";
+                            }else{
+                                // for the rest (o, x, X) allow either
+                                if(!string_match(type_string, string("intmax_t")) && !string_match(type_string, string("uintmax_t")))  should_warn = "intmax_t or uintmax_t";
+                            }
+                        }else if(length_modifier == 'z'){
+                            if(!string_match(type_string, string("size_t"))) should_warn = "size_t";
+                        }else if(length_modifier == 't'){
+                            if(!string_match(type_string, string("ptrdiff_t"))) should_warn = "ptrdiff_t";
+                        }
+                        
+                        if(should_warn){
+                            report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%%s%c' expects %s.", (char *)&length_modifier, conversion_specifier, should_warn);
+                        }
+                    }else if(length_modifier == 0 || length_modifier == 'hh' || length_modifier == 'h' || length_modifier == 'l' || length_modifier == 'll'){
+                        //
+                        // Integral conversion specifier, go by the list of expected types.
+                        //
+                        
+                        if(conversion_specifier == 'd' || conversion_specifier == 'i'){
+                            struct ast_type *expected_type = &globals.typedef_s32;
+                            if(length_modifier == 'hh') expected_type = &globals.typedef_s8;
+                            if(length_modifier == 'h')  expected_type = &globals.typedef_s16;
+                            if(length_modifier == 'l')  expected_type = &globals.typedef_s32;
+                            if(length_modifier == 'll') expected_type = &globals.typedef_s64;
+                            
+                            if(expected_type != unpromoted_type && expected_type != promoted_type){
+                                struct string expected_type_string = push_type_string(context->arena, &context->scratch, expected_type);
+                                struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
+                                report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
+                            }
+                        }else if(conversion_specifier == 'u'){
+                            struct ast_type *expected_type = &globals.typedef_u32;
+                            if(length_modifier == 'hh') expected_type = &globals.typedef_u8;
+                            if(length_modifier == 'h')  expected_type = &globals.typedef_u16;
+                            if(length_modifier == 'l')  expected_type = &globals.typedef_u32;
+                            if(length_modifier == 'll') expected_type = &globals.typedef_u64;
+                            
+                            if(expected_type != unpromoted_type && expected_type != promoted_type){
+                                struct string expected_type_string = push_type_string(context->arena, &context->scratch, expected_type);
+                                struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
+                                report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%%s%c' expects %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, expected_type_string.size, expected_type_string.data, type_string.size, type_string.data);
+                            }
+                        }else{
+                            //
+                            // Allow either signed an unsigned for 'o' 'x' 'X'.
+                            //
+                            struct ast_type *expected_signed_type = &globals.typedef_s32;
+                            if(length_modifier == 'hh') expected_signed_type = &globals.typedef_s8;
+                            if(length_modifier == 'h')  expected_signed_type = &globals.typedef_s16;
+                            if(length_modifier == 'l')  expected_signed_type = &globals.typedef_s32;
+                            if(length_modifier == 'll') expected_signed_type = &globals.typedef_s64;
+                            
+                            struct ast_type *expected_unsigned_type = &globals.typedef_u32;
+                            if(length_modifier == 'hh') expected_unsigned_type = &globals.typedef_u8;
+                            if(length_modifier == 'h')  expected_unsigned_type = &globals.typedef_u16;
+                            if(length_modifier == 'l')  expected_unsigned_type = &globals.typedef_u32;
+                            if(length_modifier == 'll') expected_unsigned_type = &globals.typedef_u64;
+                            
+                            if(expected_signed_type != unpromoted_type && expected_unsigned_type != unpromoted_type && expected_signed_type != promoted_type && expected_unsigned_type != promoted_type){
+                                struct string signed_type_string   = push_type_string(context->arena, &context->scratch, expected_signed_type);
+                                struct string type_string          = push_type_string(context->arena, &context->scratch, unpromoted_type);
+                                report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%%s%c' expects signed or unsigned %.*s, but the argument is of type '%.*s'.", (char *)&length_modifier, conversion_specifier, signed_type_string.size, signed_type_string.data, type_string.size, type_string.data);
+                            }
+                        }
+                    }else{
+                        report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
+                    }
+                }break;
+                
+                case 'c':{
+                    if(length_modifier == 0){
+                        if(unpromoted_type != &globals.typedef_u8 && unpromoted_type != &globals.typedef_s8){
+                            struct string type_string = push_type_string(context->arena, &context->scratch, unpromoted_type);
+                            report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%%c' expects signed or unsigned character, but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
+                        }
+                    }else if(length_modifier == 'l'){
+                        if(unpromoted_type != &globals.typedef_u16 && unpromoted_type != &globals.typedef_s16){
+                            struct string type_string = push_type_string(context->arena, &context->scratch, unpromoted_type);
+                            report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%%c' expects signed or unsigned wide character (wchar_t), but the argument is of type '%.*s'.", conversion_specifier, type_string.size, type_string.data);
+                        }
+                    }else{
+                        report_warning(context, WARNING_incorrect_format_specifier, argument.token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
+                    }
+                }break;
+                
+                case 'p':{
+                    if(length_modifier != 0){
+                        report_warning(context, WARNING_incorrect_format_specifier, argument.token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
+                    }
+                    
+                    if(promoted_type->kind != AST_pointer_type){
+                        struct string type_string = push_type_string(context->arena, &context->scratch, promoted_type);
+                        report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%p' requires a pointer, but the argument is of type '%.*s'.", type_string.size, type_string.data);
+                    }
+                }break;
+                
+                case 'e': case 'E':
+                case 'a': case 'A':
+                case 'g': case 'G':
+                case 'f': case 'F':{
+                    
+                    if(length_modifier != 0 && length_modifier != 'l' && length_modifier != 'L'){
+                        report_warning(context, WARNING_incorrect_format_specifier, argument.token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
+                    }
+                    
+                    if(promoted_type->kind != AST_float_type){
+                        struct string type_string = push_type_string(context->arena, &context->scratch, promoted_type);
+                        report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%f' requires a float, but the argument is of type '%.*s'.", type_string.size, type_string.data);
+                    }
+                }break;
+                
+                case 's':{
+                    struct ast_type *element_type = null;
+                    if(promoted_type->kind == AST_pointer_type){
+                        struct ast_pointer_type *pointer = (struct ast_pointer_type *)promoted_type;
+                        element_type = pointer->pointer_to;
+                    }else if(promoted_type->kind == AST_array_type){
+                        struct ast_array_type *array = (struct ast_array_type *)promoted_type;
+                        element_type = array->element_type;
+                    }
+                    
+                    b32 should_warn = true;
+                    if(length_modifier == 'l'){
+                        if(element_type == &globals.typedef_s16 || element_type == &globals.typedef_u16) should_warn = false;
+                    }else if(length_modifier == 0){
+                        if(element_type == &globals.typedef_s8 || element_type == &globals.typedef_u8) should_warn = false;
+                    }else{
+                        report_warning(context, WARNING_incorrect_format_specifier, argument.token ,"Format length specifier '%s' does not apply to conversion specifier %c (%s%c is not a correct format string syntax).", (char *)&length_modifier, conversion_specifier, (char *)&length_modifier, conversion_specifier);
+                    }
+                    
+                    if(should_warn){
+                        struct string type_string = push_type_string(context->arena, &context->scratch, promoted_type);
+                        report_warning(context, WARNING_incorrect_format_specifier, argument.token, "Format specifier '%%s' requires 'char *', but the argument is of type '%.*s'.", type_string.size, type_string.data);
+                    }
+                }break;
+                
+                default:{
+                    report_warning(context, WARNING_unknown_format_specifier, format_string_argument->token, "Unknown format specifier '%%%c'.", conversion_specifier);
+                }break;
+            }
             
-            printlike__infer_format_string_and_arguments_for_argument(context, argument, &pretty_print_list, &pretty_print_argument_list, flags, field_width, precision, type_specifiers);
+            continue;
         }
+        
+        // Make sure we have an argument.
+        assert(format_string.data[0] == '{');
+        string_eat_front(&format_string, 1); // Eat the '{'.
+        
+        //
+        // Rust style format specifier Syntax:
+        //
+        // {[integer|identifier[=]][:[flags][field-width][.precision][type]]} 
+        //
+        // special cases are {identifier} which evaluates to _"{}", identifier_,
+        // {identifier=}, which evaluates to _"identifier = {}", identifier_
+        // If the type of the argument is a compound, all format specifiers are 
+        // applied to all the fields.
+        //
+        // We want to allow random '{' in the string without complaining: 
+        // Things like:
+        //    print("{");
+        //    print("{ hello = %u }", 10);
+        // etc, should not be treated as rust format strings.
+        // Hence, we have to be able to "fail" here at many points.
+        // 
+        
+        struct string identifier = eat_identifier(&format_string);
+        
+        int have_equals = 0;
+        if(identifier.size && format_string.size && format_string.data[0] == '='){
+            have_equals = 1;
+            string_eat_front(&format_string, 1);
+        }
+        
+        struct string flags           = zero_struct;
+        struct string field_width     = zero_struct;
+        struct string precision       = zero_struct;
+        struct string type_specifiers = zero_struct;
+        
+        int this_is_probably_supposed_to_be_a_rust_format_string = 0;
+        
+        
+        // 
+        // Allow for '{.*s}', '{*s}', '{#}'
+        // 
+        if(format_string.size && (format_string.data[0] == ':' || format_string.data[0] == '.' || format_string.data[0] == '#' || format_string.data[0] == '*')){
+            if(format_string.data[0] == ':') string_eat_front(&format_string, 1);
+            
+            flags = string_eat_characters_front(&format_string, "+- #0");
+            
+            this_is_probably_supposed_to_be_a_rust_format_string |= (string_strip_whitespace(flags).size != 0);
+            
+            // 
+            // Parse field width.
+            // 
+            if(format_string.size && format_string.data[0] == '*'){
+                field_width = string_eat_front(&format_string, 1);
+                
+                if(peek_token(context, TOKEN_closed_paren)) goto too_few_args_for_print;
+                
+                struct expr argument = parse_expression(context, /*should_skip_comma_expression*/true);
+                *call_arguments_count += 1;
+                
+                if(!peek_token_eat(context, TOKEN_comma) && !peek_token(context, TOKEN_closed_paren)) break;
+                
+                maybe_insert_implicit_nodes_for_varargs_argument(context, &argument, argument.token);
+                
+                if(argument.resolved_type->kind != AST_integer_type){
+                    struct string type_string = push_type_string(context->arena, &context->scratch, argument.resolved_type);
+                    report_error(context,  argument.token, "Field width specifier '*' requires an integer argument. Given argument is of type '%.*s'.", type_string.size, type_string.data);
+                    return;
+                }
+            }else{
+                field_width = string_eat_characters_front(&format_string, "0123456789");
+            }
+            
+            // 
+            // Parse precision.
+            // 
+            if(format_string.size && format_string.data[0] == '.'){
+                string_eat_front(&format_string, 1); // eat the '.'
+                
+                if(format_string.size && format_string.data[0] == '*'){
+                    precision = string_eat_front(&format_string, 1);
+                    
+                    if(peek_token(context, TOKEN_closed_paren)) goto too_few_args_for_print;
+                    
+                    struct expr argument = parse_expression(context, /*should_skip_comma_expression*/true);
+                    *call_arguments_count += 1;
+                    
+                    if(!peek_token_eat(context, TOKEN_comma) && !peek_token(context, TOKEN_closed_paren)) break;
+                    
+                    maybe_insert_implicit_nodes_for_varargs_argument(context, &argument, argument.token);
+                    
+                    if(argument.resolved_type->kind != AST_integer_type){
+                        struct string type_string = push_type_string(context->arena, &context->scratch, argument.resolved_type);
+                        report_error(context,  argument.token, "Precision specifier '*' requires an integer argument. Given argument is of type '%.*s'.", type_string.size, type_string.data);
+                        return;
+                    }
+                }else{
+                    precision = string_eat_characters_front(&format_string, "0123456789");
+                }
+            }
+            
+            type_specifiers = eat_identifier(&format_string);
+        }
+        
+        if((format_string.size == 0) || format_string.data[0] != '}'){
+            
+            if(this_is_probably_supposed_to_be_a_rust_format_string){
+                // 
+                // We think the intent of this string was to be a {}-format string, but it was malformed.
+                // 
+                
+                struct string format_specifier = {
+                    .data = start.data + start.size,
+                    .size = (format_string.data + format_string.size) - start.data + start.size,
+                };
+                
+                // Scan up to the end of the specifier.
+                format_specifier = eat_until_char(&format_specifier, '}', /*eat delimiter*/true);
+                
+                char *dotdotdot = "";
+                
+                if(format_specifier.data[format_specifier.size-1] != '}'){
+                    dotdotdot = "...";
+                    format_specifier.size = min_of(format_specifier.size, 10);
+                }
+                
+                report_error(context, format_string_argument->token, "Incorrectly formatted format string '%.*s%s' for __declspec(printlike) procedure.", format_specifier.size, format_specifier.data, dotdotdot);
+                return;
+            }
+            
+            // 
+            // It ended up not being a rust string I guess.
+            // Eat everything we have parsed in 'it', 
+            // as it does not contain either '{' or '%' by the way we parsed the string.
+            // 
+            start.size += (format_string.data - (start.data + start.size));
+            string_list_postfix(&pretty_print_list, &context->scratch, start);
+            continue;
+        }
+        
+        //
+        // We got a Rust style format specifier!
+        // Copy every thing that happened before the argument to the _pretty print format string_.
+        //
+        string_eat_front(&format_string, 1); // eat the '}'.
+        string_list_postfix(&pretty_print_list, &context->scratch, start);
+        
+        struct string format_specifier = {
+            .data = start.data + start.size,
+            .size = (format_string.data + format_string.size) - start.data + start.size,
+        };
+        
+        if(identifier.size){
+            //
+            // This was a format specifier like `print("{arst}")`
+            // It should "translate" to `print("{}", arst)`
+            // and from there further depending on what 'arst' is.
+            //
+            struct ast_declaration *declaration = lookup_declaration(context->current_scope, context->current_compilation_unit, atom_for_string(identifier));
+            
+            if(!declaration && (string_match(identifier, string("s")) || string_match(identifier, string("x")))){
+                // Allow '{s}', '{x}'.
+                type_specifiers = identifier;
+            }else{
+                if(!declaration){
+                    report_error(context, format_string_argument->token, "Identifier in format specifier '%.*s', is undeclared.", format_specifier.size, format_specifier.data);
+                    return;
+                }
+                
+                struct ast_identifier *ident = push_expression(context, identifier);
+                ident->decl = declaration;
+                set_resolved_type(&ident->base, declaration->type, declaration->defined_type);
+                
+                *call_arguments_count += 1;
+                
+                if(have_equals){
+                    struct string identifier_equals = push_format_string(&context->scratch, "%.*s = ", identifier.size, identifier.data);
+                    string_list_postfix(&pretty_print_list, &context->scratch, identifier_equals);
+                }
+                
+                struct expr argument = {&ident->base, format_string_argument->token, declaration->type, declaration->defined_type};
+                
+                printlike__infer_format_string_and_arguments_for_argument(context, &argument, &pretty_print_list, flags, field_width, precision, type_specifiers, call_arguments_count);
+                continue;
+            }
+        }
+        
+        if(peek_token(context, TOKEN_closed_paren)){
+            too_few_args_for_print:;
+            
+            report_error(context, identifier_expression->token, "Less arguments for __declspec(printlike)-function, than indicated by the format string.");
+            return;
+        }
+        
+        struct expr argument = parse_expression(context, /*should_skip_comma_expression*/true);
+        printlike__infer_format_string_and_arguments_for_argument(context, &argument, &pretty_print_list, flags, field_width, precision, type_specifiers, call_arguments_count);
+        
+        if(!peek_token_eat(context, TOKEN_comma) && !peek_token(context, TOKEN_closed_paren)) break;
     }
     
-    //
-    // Error if we have more arguments than the format string specified.
-    //
-    if(argument_node){
-        report_error(context, argument_node->value->token, "__declspec(printlike) function specifies more arguments than expected based on the format string.");
-        return operand;
-    }
-    
-    //
-    // Build the new call argument list, it should be 
-    //    1) Fixed arguments
-    //    2) Format string literal
-    //    3) Pretty print argument list
-    //
-    struct ast_list new_call_arguments = fixed_arguments;
-    
-    struct string new_format_string = string_list_flatten(pretty_print_list, context->arena);
-    if(format_string_literal){
-        format_string_node->value = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &format_string_literal->base);
-        sll_push_back(new_call_arguments, format_string_node);
-        new_call_arguments.count++;
-    }else{
-        format_string_literal = push_expression(context, call->base.token, string_literal);
-        
-        struct ast_array_type *type = parser_type_push(context, call->base.token, array_type);
-        type->amount_of_elements = (new_format_string.size + 1); // plus one for the zero_terminator
-        type->element_type = &globals.typedef_s8;
-        type->base.size = type->amount_of_elements * sizeof(s8);
-        type->base.alignment = 1;
-        
-        set_resolved_type(&format_string_literal->base, &type->base, null);
-        
-        struct ast *implicit_address_conversion = maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &format_string_literal->base);
-        ast_list_append(&new_call_arguments, context->arena, implicit_address_conversion);
-    }
-    
-    // 
-    // @cleanup: How should this work with other kind of string literals.
-    // 
-    format_string_literal->value = new_format_string;
-    format_string_literal->string_kind = STRING_KIND_utf8;
-    
-    //
-    // Promote the 'pretty_print_argument_list' as you would _normal_ varargs.
-    //
-    for(struct ast_list_node *new_argument = pretty_print_argument_list.first; new_argument; new_argument = new_argument->next){
-        new_argument->value = maybe_insert_implicit_nodes_for_varargs_argument(context, new_argument->value);
-    }
-    
-    sll_push_back_list(new_call_arguments, pretty_print_argument_list);
-    new_call_arguments.count += pretty_print_argument_list.count;
-    
-#if 0
-    smm actual_argument_count = 0;
-    for(struct ast_list_node *node = new_call_arguments.first; node; node = node->next){
-        actual_argument_count++;
-        
-        struct ast *expr = node->value;
-        struct ast_type *type = expr->resolved_type;
-        
-        struct string type_string = push_type_string(&context->scratch, &context->scratch, type);
-        print("    [%d] %.*s\n", actual_argument_count, type_string.size, type_string.data);
-    }
-    assert(actual_argument_count == new_call_arguments.count);
-#endif
-    
-    call->call_arguments = new_call_arguments;
-    #endif
-    return null;
+    format_string_literal->value = string_list_flatten(pretty_print_list, context->arena);
 }
 
 // :compound_assignments
@@ -5034,32 +4895,6 @@ case NUMBER_KIND_##type:{ \
                     pop_from_ast_arena(context, unary);
                 }
                 
-                if(function_type->flags & FUNCTION_TYPE_FLAGS_is_printlike){
-                    //
-                    // For a printlike function we do the parameter parsing ourselves.
-                    // This is because 
-                    //      1) we want to be able to see through promotions and stuff.
-                    //         This could also be accomplished by searching the syntax tree, 
-                    //         but that is sometimes annoying.
-                    //      2) we want to be able to not have a 'format' argument.
-                    //         In this case we will _infer_ a 'format' argument.
-                    //
-                    
-                    // @incomplete: This has the wrong order for the new system. :ir_refactor
-                    struct ast_function_call *call = push_expression(context, function_call);
-                    
-                    set_resolved_type(&call->base, function_type->return_type, function_type->return_type_defined_type);
-                    operand.ast = &call->base;
-                    operand.resolved_type = function_type->return_type;
-                    operand.defined_type = function_type->return_type_defined_type;
-                    context->in_lhs_expression = false;
-                    
-                    struct ast *error = check_call_to_printlike_function(context, call, operand.ast);
-                    if(error) return (struct expr){error, test};
-                    
-                    break;
-                }
-                
                 // @note: For var_args functions the 'call_arguments_count' can differ from the 'function_type->argument_list.count'.
                 smm call_arguments_count = 0;
                 
@@ -5071,11 +4906,21 @@ case NUMBER_KIND_##type:{ \
                         
                         if(function_argument_iterator){
                             
-                            
                             assert(function_argument_iterator->value->kind == AST_declaration);
                             struct ast_declaration *decl = cast(struct ast_declaration *)function_argument_iterator->value;
                             
                             if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return expr;
+                            
+                            if((function_type->flags & FUNCTION_TYPE_FLAGS_is_printlike) && function_argument_iterator->next == null){
+                                //
+                                // For a printlike function we do the parameter parsing ourselves.
+                                // This is because we want to be able to not have a 'format' argument. 
+                                // In this case we will _infer_ a 'format' argument.
+                                //
+                                parse_call_to_printlike_function_arguments(context, function_type, &operand, &expr, &call_arguments_count);
+                                call_arguments_count += 1;
+                                break;
+                            }
                             
                             // "the arguments are implicitly converted, as if by assignment"
                             maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &expr, expr.token);
@@ -5088,7 +4933,6 @@ case NUMBER_KIND_##type:{ \
                                 report_error(context, call_token, "Too many arguments to function.");
                                 return expr;
                             }else{
-                                
                                 if(expr.ast->resolved_type == &globals.typedef_void){
                                     report_error(context, expr.token, "Expression of type void cannot be used as function argument.");
                                 }
@@ -5102,6 +4946,7 @@ case NUMBER_KIND_##type:{ \
                         if(!peek_token_eat(context, TOKEN_comma)) break;
                         if(peek_token(context, TOKEN_closed_paren)) break; // Allow trailling ',' in function calls.
                     }
+                    
                     expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of parameter list.");
                 }
                 

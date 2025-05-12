@@ -3300,7 +3300,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
                 assert(loc->state == EMIT_LOCATION_register_relative);
                 
-                loc->size    = dot->base.resolved_type->size;
+                loc->size    = dot->member->type->size;
                 loc->offset += dot->member->offset_in_type;
             }break;
             
@@ -4138,6 +4138,19 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack[emit_location_stack_at-1] = rhs;
                 emit_location_stack[emit_location_stack_at-2] = copy;
             }break;
+            
+            case AST_duplicate:{
+                ast_arena_at += sizeof(struct ast_duplicate_lhs);
+                
+                struct emit_location *top = emit_location_stack[emit_location_stack_at-1];
+                
+                struct emit_location *copy = push_struct(&context->scratch, struct emit_location);
+                *copy = *top;
+                
+                emit_location_stack_at += 1;
+                emit_location_stack[emit_location_stack_at-1] = copy;
+            }break;
+            
             
             case AST_swap_lhs_rhs:{
                 ast_arena_at += sizeof(struct ast_swap_lhs_rhs);

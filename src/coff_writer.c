@@ -2009,11 +2009,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     
                     // :string_kind_is_element_size
                     smm element_size = (smm)lit->string_kind;
-                    
-#if defined(_Debug)
-                    struct ast_array_type *array = (struct ast_array_type *)lit->base.resolved_type;
-                    assert(array->element_type->size == element_size);
-#endif
+
                     struct string string_literal = lit->value;
                     
                     u64 hash = string_djb2_hash(string_literal);
