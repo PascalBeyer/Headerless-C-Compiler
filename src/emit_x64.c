@@ -1549,7 +1549,8 @@ func void emit_memset(struct context *context, struct emit_location *dest, u8 _v
 
 func u64 integer_literal_to_bytes(struct ast *ast){
     assert(ast->kind == AST_integer_literal);
-    return integer_literal_as_u64(ast);
+    struct ast_integer_literal *lit = (struct ast_integer_literal *)ast;
+    return lit->_u64;
 }
 
 func void emit_store(struct context *context, struct emit_location *dest, struct emit_location *source){
@@ -2731,13 +2732,13 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ast_arena_at += sizeof(*cast);
                 
                 // @cleanup: This should not need to be here.
-                struct ast *cast_what = cast->operand;
+                struct ast_type *cast_what = cast->cast_what;
                 
                 smm stack_index = emit_location_stack_at-1;
                 if(ast->kind == AST_cast_lhs) stack_index = emit_location_stack_at-2;
                 
                 struct emit_location *loc = emit_location_stack[stack_index];
-                struct ast_type *cast_to = cast->base.resolved_type;
+                struct ast_type *cast_to = cast->cast_to;
                 
                 if(cast_to->kind == AST_bitfield_type){
                     // 'int a : 3 = 123;' we can only get here, if we inserted an implicit assignment cast.
@@ -2746,7 +2747,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     cast_to = bitfield->base_type;
                 }
                 
-                if(cast_what->resolved_type == cast_to){
+                if(cast_what == cast_to){
                     emit_location_stack[stack_index] = loc;
                     break;
                 }
@@ -2758,13 +2759,13 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     break;
                 }
                 
-                if(cast_what->resolved_type->kind == AST_bitfield_type){
+                if(cast_what->kind == AST_bitfield_type){
                     // this is where we load bitfields
-                    emit_location_stack[stack_index] = emit_load_bitfield(context, loc, (struct ast_bitfield_type *)cast_what->resolved_type);
+                    emit_location_stack[stack_index] = emit_load_bitfield(context, loc, (struct ast_bitfield_type *)cast_what);
                     break;
                 }
                 
-                if(cast_what->resolved_type->kind == AST_atomic_integer_type){
+                if(cast_what->kind == AST_atomic_integer_type){
                     // @note: It seems to me, that on x64 atomic-loads can simply be implemented as a mov.
                     emit_location_stack[stack_index] = emit_load_gpr(context, loc);
                     break;
@@ -2779,17 +2780,17 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 }
                 
                 assert(type_is_arithmetic(cast_to) || cast_to->kind == AST_pointer_type);
-                assert(type_is_arithmetic(cast_what->resolved_type) || cast_what->resolved_type->kind == AST_pointer_type);
+                assert(type_is_arithmetic(cast_what) || cast_what->kind == AST_pointer_type);
                 
                 if(loc->state != EMIT_LOCATION_register_relative){
-                    if(cast_what->resolved_type->kind == AST_float_type){
+                    if(cast_what->kind == AST_float_type){
                         loc = emit_load_float(context, loc);
                     }else{
                         loc = emit_load_gpr(context, loc);
                     }
                 }
                 
-                if(cast_what->resolved_type->kind == AST_float_type && cast_to->kind == AST_float_type){
+                if(cast_what->kind == AST_float_type && cast_to->kind == AST_float_type){
                     
                     //
                     // Cast f32 -> f64 or f64 -> f32
@@ -2815,7 +2816,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     break;
                 }
                 
-                if(cast_what->resolved_type->kind == AST_float_type){
+                if(cast_what->kind == AST_float_type){
                     assert(loc->size == 4 || loc->size == 8);
                     
                     // 
@@ -2869,7 +2870,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     break;
                 }
                 
-                b32 source_is_signed = type_is_signed(cast_what->resolved_type);
+                b32 source_is_signed = type_is_signed(cast_what);
                 
                 if(cast_to->kind != AST_float_type && loc->size >= cast_to->size){
                     // If it is an integer to integer cast and the cast_to->size fits just truncate and return
@@ -2902,7 +2903,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 if(cast_to->kind == AST_float_type){
                     assert(loc->size == 4 || loc->size == 8);
-                    assert(cast_what->resolved_type->kind == AST_integer_type); // pointers are disallowed!
+                    assert(cast_what->kind == AST_integer_type); // pointers are disallowed!
                     
                     // Casting from int to float:
                     //
@@ -2916,7 +2917,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     
                     enum legacy_prefixes prefix = (cast_to == &globals.typedef_f32) ? ASM_PREFIX_SSE_float : ASM_PREFIX_SSE_double;
                     
-                    if(cast_what->resolved_type == &globals.typedef_u64){
+                    if(cast_what == &globals.typedef_u64){
                         assert(!source_is_signed && loc->size == 8);
                         // 
                         // This is the hard case. 
@@ -2990,7 +2991,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         break;
                     }
                     
-                    if(cast_what->resolved_type == &globals.typedef_u32){
+                    if(cast_what == &globals.typedef_u32){
                         assert(!source_is_signed && loc->size == 4);
                         // if the source type is 
                         // we have to extend 'loc' into a full register, just in case it was casted from 64 bit.

@@ -83,7 +83,7 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
             //        'spilled' or 'immediate'.
             
             struct emit_location *ret = null;
-            struct ast *expression = operand->expr;
+            struct ast *expression = operand->expr.ast;
             
             if(context->in_inline_asm_function && expression->kind == AST_identifier){
                 struct ast_identifier *ident = (struct ast_identifier *)expression;

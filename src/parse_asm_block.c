@@ -110,7 +110,7 @@ struct asm_operand{
             smm offset;
         };
         struct{ // ASM_ARG_declaration_reference
-            struct ast *expr;
+            struct expr expr;
             b32 is_inline_asm_function_argument;
             b32 is_inline_asm_function_argument_that_needs_to_be_an_integer;
             b32 is_inline_asm_function_argument_that_can_be_integer;
@@ -1294,18 +1294,18 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     if(expr.ast->kind == AST_integer_literal){
         // Integer literals are fine!
         operand.kind      = ASM_ARG_immediate;
-        operand.immediate = integer_literal_as_u64(expr.ast);
-        operand.size      = expr.ast->resolved_type->size;
+        operand.immediate = integer_literal_as_u64(&expr);
+        operand.size      = expr.resolved_type->size;
         
         pop_from_ast_arena(context, (struct ast_integer_literal *)expr.ast);
         return operand;
     }
     
     operand.kind = ASM_ARG_declaration_reference;
-    operand.expr = expr.ast;
-    operand.size = expr.ast->resolved_type->size;
+    operand.expr = expr;
+    operand.size = expr.resolved_type->size;
     
-    if(context->in_inline_asm_function && operand.expr->kind == AST_identifier){
+    if(context->in_inline_asm_function && operand.expr.ast->kind == AST_identifier){
         struct ast_identifier *ident = (struct ast_identifier *)expr.ast;
         
         //
@@ -1349,7 +1349,7 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
         break;
     }
     
-    struct ast_type *type = operand.expr->resolved_type;
+    struct ast_type *type = expr.resolved_type;
     if(type->kind != AST_integer_type && type->kind != AST_float_type && type->kind != AST_pointer_type && !(type->flags & TYPE_FLAG_is_intrin_type)){
         char *remark = "";
         if(type->kind == AST_union || type->kind == AST_struct){
@@ -1472,11 +1472,11 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
         }else if(operand.kind == ASM_ARG_declaration_reference){
             
             smm pointer_to_size = 0;
-            if(operand.expr->resolved_type->kind != AST_pointer_type){
+            if(operand.expr.resolved_type->kind != AST_pointer_type){
                 // @note: The token is sort of a hack.
                 report_error(context, start_token, "Expression inside memory operand must be a pointer.");
             }else{
-                pointer_to_size = ((struct ast_pointer_type *)operand.expr->resolved_type)->pointer_to->size;
+                pointer_to_size = ((struct ast_pointer_type *)operand.expr.resolved_type)->pointer_to->size;
             }
             
             operand.kind = ASM_ARG_declaration_dereference;
@@ -1737,7 +1737,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             case ASM_ARG_declaration_reference:{
                 b32 should_error = false;
                 
-                struct ast_type *type = operand.expr->resolved_type;
+                struct ast_type *type = operand.expr.resolved_type;
                 if(operand.is_inline_asm_function_argument && type->kind == AST_integer_type){
                     
                     if((desired_operand_flags & ASM_OP_KIND_any_imm) == (desired_operand_flags & (ASM_OP_KIND_any_regm | ASM_OP_KIND_any_imm))){

@@ -516,12 +516,15 @@ enum ast_kind{
     AST_count,
 };
 
+#define REMOVE_AST 0
 
 struct ast{
     enum ast_kind kind;
     s32 s;
+#if !REMOVE_AST
     struct ast_type *resolved_type;
     struct ast *defined_type; 
+#endif
     // :defined_types
     // if the ast has a 'AST_typedef' or 'AST_enum' type, we store it here for error reporting. 
     // Also if it is just promoted, we retain that information, so we can warn on 'u8 = u8 + u8' usw.
@@ -773,14 +776,14 @@ struct ast_binary_op{
 
 struct ast_cast{ // @ir_refactor: In the future there should be more than just `AST_cast` such that we can get rid of the `operand` member.
     struct ast base;
-    struct ast *operand;
+    struct ast_type *cast_to;
+    struct ast_type *cast_what;
 };
 
 // :ir_refactor - This is how all "ast" should look.
 struct ast_duplicate_lhs{
     struct ast base;
 };
-
 
 struct ast_skip{
     struct ast base;

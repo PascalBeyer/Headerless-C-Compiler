@@ -73,8 +73,12 @@ func void _parser_sleep(struct context *context, struct token *sleep_on, u32 lin
 
 func void set_resolved_type(struct ast *ast, struct ast_type *type, struct ast *named_type){
     assert(type);
+    (void)ast;
+    (void)named_type;
+#if !REMOVE_AST
     ast->resolved_type = type;
     ast->defined_type = named_type;
+#endif
 }
 
 func void *_parser_ast_push(struct context *context, struct memory_arena *arena, smm size, u32 align, enum ast_kind kind){
@@ -193,9 +197,9 @@ func struct ast *ast_push_s32_literal(struct context *context, s64 value){
     return &lit->base;
 }
 
-func s32 integer_literal_as_s32(struct ast *lit){
-    struct ast_integer_literal *literal = cast(struct ast_integer_literal *)lit;
-    struct ast_type *type = literal->base.resolved_type;
+func s32 integer_literal_as_s32(struct expr *lit){
+    struct ast_integer_literal *literal = cast(struct ast_integer_literal *)lit->ast;
+    struct ast_type *type = lit->resolved_type;
     assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type);
     s32 value;
     if(type_is_signed(type)){
@@ -216,9 +220,9 @@ func s32 integer_literal_as_s32(struct ast *lit){
     return value;
 }
 
-func u32 integer_literal_as_u32(struct ast *lit){
-    struct ast_integer_literal *literal = cast(struct ast_integer_literal *)lit;
-    struct ast_type *type = literal->base.resolved_type;
+func u32 integer_literal_as_u32(struct expr *lit){
+    struct ast_integer_literal *literal = (struct ast_integer_literal *)lit->ast;
+    struct ast_type *type = lit->resolved_type;
     assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type);
     u32 value;
     if(type_is_signed(type)){
@@ -239,12 +243,11 @@ func u32 integer_literal_as_u32(struct ast *lit){
     return value;
 }
 
-func s64 integer_literal_as_s64(struct ast *lit){
-    assert(lit->kind == AST_integer_literal);
-    
-    struct ast_integer_literal *literal = cast(struct ast_integer_literal *)lit;
-    struct ast_type *type = literal->base.resolved_type;
+func s64 integer_literal_as_s64(struct expr *lit){
+    struct ast_integer_literal *literal = cast(struct ast_integer_literal *)lit->ast;
+    struct ast_type *type = lit->resolved_type;
     assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type);
+    
     s64 value;
     if(type_is_signed(type)){
         switch(type->size){
@@ -266,9 +269,9 @@ func s64 integer_literal_as_s64(struct ast *lit){
     return value;
 }
 
-func u64 integer_literal_as_u64(struct ast *lit){
-    struct ast_integer_literal *literal = cast(struct ast_integer_literal *)lit;
-    struct ast_type *type = literal->base.resolved_type;
+func u64 integer_literal_as_u64(struct expr *lit){
+    struct ast_integer_literal *literal = (struct ast_integer_literal *)lit->ast;
+    struct ast_type *type = lit->resolved_type;
     assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type);
     u64 value;
     if(type_is_signed(type)){
@@ -335,18 +338,18 @@ func struct ast *defined_type_for_promotion(struct expr *ast){
 
 //_____________________________________________________________________________________________________________________
 
-func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct ast_type *cast_to, struct ast *cast_to_defined_type, struct ast *cast_what, struct token *cast_what_token){
+func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct ast_type *cast_to, struct ast *cast_to_defined_type, struct expr *cast_what, struct token *cast_what_token){
     
-    struct ast *cast = null;
+    int should_skip_cast = 0;
     
     if(cast_what->resolved_type == cast_to){
         // set the 'defined_type' we might have casted (float) to (f32)
-        set_resolved_type(cast_what, cast_to, cast_to_defined_type);
-        cast = cast_what;
-    }else if(cast_what->kind == AST_float_literal){
+        set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+        should_skip_cast = 1;
+    }else if(cast_what->ast->kind == AST_float_literal){
         if(cast_to->kind == AST_integer_type){
-            struct ast_float_literal   *f = cast(struct ast_float_literal   *)cast_what;
-            struct ast_integer_literal *i = cast(struct ast_integer_literal *)cast_what;
+            struct ast_float_literal   *f = (struct ast_float_literal   *)cast_what->ast;
+            struct ast_integer_literal *i = (struct ast_integer_literal *)cast_what->ast;
             static_assert(sizeof(struct ast_float_literal) == sizeof(struct ast_integer_literal));
             
             // @cleanup: warn?
@@ -355,7 +358,7 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
             double f_value = f->value;
             
             set_resolved_type(&i->base, cast_to, cast_to_defined_type);
-            cast = &i->base;
+            should_skip_cast = 1;
             
             if(type_is_signed(cast_to)){
                 switch(cast_to->size){
@@ -384,21 +387,21 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
             }
         }else if(cast_to->kind == AST_float_type){
             if(cast_to == &globals.typedef_f32){
-                struct ast_float_literal *lit = cast(struct ast_float_literal *)cast_what;
+                struct ast_float_literal *lit = (struct ast_float_literal *)cast_what->ast;
                 // :we_always_keep_double
                 lit->value = (f32)lit->value; // cast it to f32 and then back up
             }
             
-            set_resolved_type(cast_what, cast_to, cast_to_defined_type);
-            cast = cast_what;
+            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            should_skip_cast = 1;
         }
-    }else if(cast_what->kind == AST_integer_literal){
-        struct ast_integer_literal *lit = cast(struct ast_integer_literal *)cast_what;
+    }else if(cast_what->ast->kind == AST_integer_literal){
+        struct ast_integer_literal *lit = (struct ast_integer_literal *)cast_what->ast;
         if(cast_to == &globals.typedef_Bool){
             lit->_u8 = (_Bool)integer_literal_as_u64(cast_what);
             
-            cast = &lit->base;
-            set_resolved_type(cast, cast_to, cast_to_defined_type);
+            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            should_skip_cast = 1;
         }else if(cast_to->kind == AST_integer_type){
             // @hmm: I trust my self, that I thought about this...
             if(type_is_signed(cast_to)){
@@ -409,10 +412,10 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
                 lit->_u64 = value;
             }
             
-            cast = &lit->base;
-            set_resolved_type(cast, cast_to, cast_to_defined_type);
+            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            should_skip_cast = 1;
         }else if(cast_to->kind == AST_float_type){
-            struct ast_float_literal *f = (struct ast_float_literal *)cast_what;
+            struct ast_float_literal *f = (struct ast_float_literal *)cast_what->ast;
             
             // :we_always_keep_double
             // @cleanup: this does not really work: I don't think casting to f64 and then to f32 is the same
@@ -425,13 +428,13 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
             
             f->base.kind = AST_float_literal;
             set_resolved_type(&f->base, cast_to, cast_to_defined_type);
-            cast = &f->base;
+            should_skip_cast = 1;
         }else if(cast_to->kind == AST_pointer_type){
             // Extend the integer literal to be 64-bits.
             lit->_s64 = integer_literal_as_s64(cast_what);
             
             // Convert it to a pointer literal simply by setting its type.
-            cast_what->kind = AST_pointer_literal;
+            cast_what->ast->kind = AST_pointer_literal;
             static_assert(sizeof(struct ast_pointer_literal) == sizeof(struct ast_integer_literal));
             
 #if !defined(__HLC__) && !defined(__clang__)
@@ -439,8 +442,8 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
             static_assert(offset_in_type(struct ast_pointer_literal, pointer) == offset_in_type(struct ast_integer_literal, _s64));
 #endif
             
-            cast = cast_what;
-            set_resolved_type(cast, cast_to, cast_to_defined_type);
+            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            should_skip_cast = 1;
         }else if(cast_to->kind == AST_bitfield_type){
             // 
             // If the value is signed, we have to care about negatives in the range
@@ -480,48 +483,50 @@ func struct ast *push_cast(struct context *context, enum ast_kind lhs_or_rhs, st
                 }
             }
             
-            cast = cast_what;
-            set_resolved_type(cast, cast_to, cast_to_defined_type);
+            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            should_skip_cast = 1;
         }else{
             assert(cast_to->kind == AST_void_type);
         }
-    }else if(cast_what->kind == AST_pointer_literal){
+    }else if(cast_what->ast->kind == AST_pointer_literal){
         if(cast_to == &globals.typedef_Bool){
-            struct ast_integer_literal *lit = (struct ast_integer_literal *)cast_what;
+            struct ast_integer_literal *lit = (struct ast_integer_literal *)cast_what->ast;
             
-            cast_what->kind = AST_integer_literal;
+            cast_what->ast->kind = AST_integer_literal;
             lit->_u64 = (((struct ast_pointer_literal *)lit)->pointer != 0);
             
-            cast = cast_what;
-            set_resolved_type(cast, cast_to, cast_to_defined_type);
+            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            should_skip_cast = 1;
         }else if(cast_to->kind == AST_integer_type){
             // the value in 'cast_what->pointer' gets truncated implicitly.
-            cast_what->kind = AST_integer_literal;
-            cast = cast_what;
-            set_resolved_type(cast, cast_to, cast_to_defined_type);
+            cast_what->ast->kind = AST_integer_literal;
+            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            should_skip_cast = 1;
         }else if(cast_to->kind == AST_pointer_type){
             // just properage the type.
-            cast = cast_what;
-            set_resolved_type(cast, cast_to, cast_to_defined_type);
+            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            should_skip_cast = 1;
         }
     }else if(cast_to->kind == AST_float_type && cast_what->resolved_type == &globals.typedef_u64){
         report_warning(context, WARNING_casting_u64_to_float, cast_what_token, "Casting an unsigned 64bit number to a floating point type is slow on x64, as x64 only has builtin signed to float support.");
     }
     
-    if(!cast){
+    if(!should_skip_cast){
         // no constant propagation
         struct token *token = get_current_token_for_error_report(context);
         if(cast_what) token = cast_what_token;
         struct ast_cast *ast_cast = push_expression(context, cast);
         ast_cast->base.kind = lhs_or_rhs;
-        ast_cast->operand = cast_what;
+        ast_cast->cast_what = cast_what->resolved_type;
+        ast_cast->cast_to   = cast_to;
         
-        cast = &ast_cast->base;
-        set_resolved_type(cast, cast_to, cast_to_defined_type);
+        cast_what->ast = &ast_cast->base;
+        set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
     }
     
-    assert(cast->resolved_type == cast_to && cast->defined_type == cast_to_defined_type);
-    return cast;
+    cast_what->resolved_type = cast_to;
+    cast_what->defined_type = cast_to_defined_type;
+    cast_what->token = cast_what->token;
 }
 
 //_____________________________________________________________________________________________________________________
@@ -552,43 +557,33 @@ func void maybe_insert_cast_from_special_int_to_int(struct context *context, enu
         // @cleanup: do we want to make bitfield the defined type?
         
         if(bitfield->width < 32){
-            operand->ast = push_cast(context, lhs_or_rhs, &globals.typedef_s32, null, operand->ast, site);
-            operand->resolved_type = &globals.typedef_s32;
-            operand->defined_type  = null;
+            push_cast(context, lhs_or_rhs, &globals.typedef_s32, null, operand, site);
         }else if(bitfield->width == 32){
             if(type_is_signed(bitfield->base_type)){
-                operand->ast = push_cast(context, lhs_or_rhs, &globals.typedef_s32, null, operand->ast, site);
-                operand->resolved_type = &globals.typedef_s32;
-                operand->defined_type  = null;
+                push_cast(context, lhs_or_rhs, &globals.typedef_s32, null, operand, site);
             }else{
-                operand->ast = push_cast(context, lhs_or_rhs, &globals.typedef_u32, null, operand->ast, site);
-                operand->resolved_type = &globals.typedef_s32;
-                operand->defined_type  = null;
+                push_cast(context, lhs_or_rhs, &globals.typedef_u32, null, operand, site);
             }
         }else{
-            operand->ast = push_cast(context, lhs_or_rhs, bitfield->base_type, null, operand->ast, site);
-            operand->resolved_type = bitfield->base_type;
-            operand->defined_type  = null;
+            push_cast(context, lhs_or_rhs, bitfield->base_type, null, operand, site);
         }
     }else if(operand->resolved_type->kind == AST_atomic_integer_type){
         // :translate_atomic_to_non_atomic_and_back
         struct ast_type *non_atomic_type = operand->resolved_type - (&globals.typedef_atomic_bool - &globals.typedef_Bool);
-        operand->ast = push_cast(context, lhs_or_rhs, non_atomic_type, null, operand->ast, site);
-        operand->resolved_type = non_atomic_type;
-        operand->defined_type  = null;
+        push_cast(context, lhs_or_rhs, non_atomic_type, null, operand, site);
     }
 }
 
 func void perform_integer_promotion_on_literal(struct expr *expr){
     struct ast_integer_literal *lit = (struct ast_integer_literal *)expr->ast;
-    if(lit->base.resolved_type->size >= 4) return;
+    if(expr->resolved_type->size >= 4) return;
     
     // sign/zero extend the value to the whole 64-bits.
-    lit->_s64 = integer_literal_as_s64(&lit->base);
+    lit->_s64 = integer_literal_as_s64(expr);
     
     // :retain_type_information_through_promotion
-    struct ast *defined_type = lit->base.defined_type;
-    if(!defined_type) defined_type = (struct ast *)lit->base.resolved_type;
+    struct ast *defined_type = expr->defined_type;
+    if(!defined_type) defined_type = (struct ast *)expr->resolved_type;
     
     set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
     expr->resolved_type = &globals.typedef_s32;
@@ -605,9 +600,7 @@ func void maybe_insert_integer_promotion_cast(struct context *context, enum ast_
         struct ast *defined_type = operand->defined_type;
         if(!defined_type) defined_type = (struct ast *)operand->resolved_type;
         
-        operand->ast = push_cast(context, lhs_or_rhs, promoted_type, defined_type, operand->ast, site);
-        operand->defined_type = defined_type;
-        operand->resolved_type = promoted_type;
+        push_cast(context, lhs_or_rhs, promoted_type, defined_type, operand, site);
     }
 }
 
@@ -669,17 +662,13 @@ func void maybe_insert_arithmetic_conversion_casts(struct context *context, stru
         // if it was promoted, we retain the information about the actual size in the defined_type
         struct ast *defined_type = op_lhs->defined_type;
         if(!defined_type) defined_type = (struct ast *)op_lhs->resolved_type;
-        op_lhs->ast = push_cast(context, AST_cast_lhs, promoted_type, defined_type, op_lhs->ast, site);
-        op_lhs->resolved_type = promoted_type;
-        op_lhs->defined_type = defined_type;
+        push_cast(context, AST_cast_lhs, promoted_type, defined_type, op_lhs, site);
     }
     
     if(op_rhs->resolved_type != promoted_type){
         struct ast *defined_type = op_rhs->defined_type;
         if(!defined_type) defined_type = (struct ast *)op_rhs->resolved_type;
-        op_rhs->ast = push_cast(context, AST_cast, promoted_type, defined_type, op_rhs->ast, site);
-        op_rhs->resolved_type = promoted_type;
-        op_rhs->defined_type = defined_type;
+        push_cast(context, AST_cast, promoted_type, defined_type, op_rhs, site);
     }
 }
 
@@ -688,47 +677,37 @@ func void maybe_cast_literal_0_to_void_pointer(struct context *context, struct e
     struct ast *lhs = _lhs->ast;
     struct ast *rhs = _rhs->ast;
     
-    if(lhs->resolved_type->kind == AST_pointer_type && rhs->kind == AST_integer_literal){
-        if(integer_literal_as_u64(rhs) == 0){
-            _rhs->ast = push_cast(context, AST_cast_lhs, lhs->resolved_type, lhs->defined_type, rhs, site);
-            _rhs->resolved_type = lhs->resolved_type;
-            _rhs->defined_type  = lhs->defined_type;
+    if(_lhs->resolved_type->kind == AST_pointer_type && rhs->kind == AST_integer_literal){
+        if(integer_literal_as_u64(_rhs) == 0){
+            push_cast(context, AST_cast_lhs, _lhs->resolved_type, _lhs->defined_type, _rhs, site);
         }
         return;
     }
     
-    if(rhs->resolved_type->kind == AST_pointer_type && lhs->kind == AST_integer_literal){
-        if(integer_literal_as_u64(lhs) == 0){
-            _lhs->ast = push_cast(context, AST_cast, rhs->resolved_type, rhs->defined_type, lhs, site);
-            _lhs->resolved_type = rhs->resolved_type;
-            _lhs->defined_type  = rhs->defined_type;
+    if(_rhs->resolved_type->kind == AST_pointer_type && lhs->kind == AST_integer_literal){
+        if(integer_literal_as_u64(_lhs) == 0){
+            push_cast(context, AST_cast, _rhs->resolved_type, _rhs->defined_type, _lhs, site);
         }
     }
 }
 
-func void maybe_insert_cast_from_void_pointer(struct context *context, struct expr *_lhs, struct expr *_rhs, struct token *site){
-    struct ast *lhs = _lhs->ast;
-    struct ast *rhs = _rhs->ast;
+func void maybe_insert_cast_from_void_pointer(struct context *context, struct expr *lhs, struct expr *rhs, struct token *site){
     
-    if(_lhs->resolved_type->kind != AST_pointer_type) return;
-    if(_rhs->resolved_type->kind != AST_pointer_type) return;
+    if(lhs->resolved_type->kind != AST_pointer_type) return;
+    if(rhs->resolved_type->kind != AST_pointer_type) return;
     
-    struct ast_pointer_type *lhs_pointer = (struct ast_pointer_type *)_lhs->resolved_type;
-    struct ast_pointer_type *rhs_pointer = (struct ast_pointer_type *)_rhs->resolved_type;
+    struct ast_pointer_type *lhs_pointer = (struct ast_pointer_type *)lhs->resolved_type;
+    struct ast_pointer_type *rhs_pointer = (struct ast_pointer_type *)rhs->resolved_type;
     
     if(lhs_pointer->pointer_to == rhs_pointer->pointer_to) return;
     
     if(lhs_pointer->pointer_to == &globals.typedef_void){
-        _lhs->ast = push_cast(context, AST_cast_lhs, rhs->resolved_type, rhs->defined_type, lhs, site);
-        _lhs->resolved_type = _rhs->resolved_type;
-        _lhs->defined_type = _rhs->defined_type;
+        push_cast(context, AST_cast_lhs, rhs->resolved_type, rhs->defined_type, lhs, site);
         return;
     }
     
     if(rhs_pointer->pointer_to == &globals.typedef_void){
-        _rhs->ast = push_cast(context, AST_cast, lhs->resolved_type, lhs->defined_type, rhs, site);
-        _rhs->resolved_type = _lhs->resolved_type;
-        _rhs->defined_type = _lhs->defined_type;
+        push_cast(context, AST_cast, lhs->resolved_type, lhs->defined_type, rhs, site);
         return;
     }
 }
@@ -1497,7 +1476,7 @@ func void maybe_load_address_for_array_or_function(struct context *context, enum
     
     if(operand->resolved_type->kind == AST_array_type){
         
-        struct ast_array_type *array = cast(struct ast_array_type *)ast->resolved_type;
+        struct ast_array_type *array = (struct ast_array_type *)operand->resolved_type;
         
         if(ast->kind == AST_pointer_literal_deref){
             // @hack: constant propergate an edge case needed for 'FIELD_OFFSET(struct s, array[1])';
@@ -1516,11 +1495,14 @@ func void maybe_load_address_for_array_or_function(struct context *context, enum
         operand->resolved_type = pointer_type;
         operand->defined_type = null;
     }else if(operand->resolved_type->kind == AST_function_type){
+        
+        struct ast_type *pointer = parser_push_pointer_type(context, operand->resolved_type, null, site);
+        
         struct ast *address = ast_push_unary_expression(context, rhs_or_lhs, ast);
-        set_resolved_type(address, parser_push_pointer_type(context, ast->resolved_type, null, site), null);
+        set_resolved_type(address, pointer, null);
         
         operand->ast = address;
-        operand->resolved_type = address->resolved_type;
+        operand->resolved_type = pointer;
         operand->defined_type  = null;
     }
 }
@@ -1531,11 +1513,12 @@ func void handle_pointer_arithmetic(struct context *context, enum ast_kind ast_k
     
     // op should probably be either '+', '-', '+=' or '-=' but whatever
     
-    struct ast *pointer = op_lhs->ast;
-    struct ast *integer = op_rhs->ast;
+    struct expr *pointer = op_lhs;
+    struct expr *integer = op_rhs;
     
-    assert(integer->resolved_type->kind == AST_integer_type);
     assert(pointer->resolved_type->kind == AST_pointer_type);
+    assert(integer->resolved_type->kind == AST_integer_type);
+    
     struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)pointer->resolved_type;
     
     if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer_type->pointer_to)) return;
@@ -1554,46 +1537,43 @@ func void handle_pointer_arithmetic(struct context *context, enum ast_kind ast_k
     
     assert(deref_type->size >= 0);
     
-    struct ast *ret;
-    if(integer->kind == AST_integer_literal && pointer->kind == AST_pointer_literal){
-        struct ast_integer_literal *lit = cast(struct ast_integer_literal *)integer;
+    if(integer->ast->kind == AST_integer_literal && pointer->ast->kind == AST_pointer_literal){
+        struct ast_integer_literal *lit = (struct ast_integer_literal *)integer->ast;
         
-        struct ast_pointer_literal *pointer_lit = cast(struct ast_pointer_literal *)pointer;
+        struct ast_pointer_literal *pointer_lit = (struct ast_pointer_literal *)pointer->ast;
         if(ast_kind == AST_binary_plus){
             pointer_lit->pointer += integer_literal_as_s64(integer);
         }else{
             pointer_lit->pointer -= integer_literal_as_s64(integer);
         }
-        ret = pointer;
         
         pop_from_ast_arena(context, lit); // @cleanup: for now assume 'pointer + integer'
-    }else if(integer->kind == AST_integer_literal){
-        struct ast_integer_literal *lit = cast(struct ast_integer_literal *)integer;
+    }else if(integer->ast->kind == AST_integer_literal){
+        struct ast_integer_literal *lit = (struct ast_integer_literal *)integer->ast;
         
         // Upconvert to s64.
         lit->_s64 = integer_literal_as_s64(integer);
         
         if(lit->_s64 == 0){
-            ret = pointer;
             pop_from_ast_arena(context, lit); // @cleanup: for now assume 'pointer + integer'
+            operand->ast = pointer->ast;
         }else{
             
             // @cleanup: Check for compile time overflow?
-            if(type_is_signed(lit->base.resolved_type)){
+            if(type_is_signed(integer->resolved_type)){
                 lit->_s64 *= deref_type->size;
             }else{
                 lit->_u64 *= deref_type->size;
             }
-            
             set_resolved_type(&lit->base, &globals.typedef_u64, null);
             
-            ret = ast_push_binary_expression(context, ast_kind, pointer, integer);
-            set_resolved_type(ret, &pointer_type->base, pointer->defined_type);
+            operand->ast = ast_push_binary_expression(context, ast_kind, pointer, integer);
+            set_resolved_type(operand->ast, &pointer_type->base, pointer->defined_type);
         }
     }else{
         
         if(integer->resolved_type != &globals.typedef_s64){
-            integer = push_cast(context, AST_cast, &globals.typedef_s64, null, integer, token);
+            push_cast(context, AST_cast, &globals.typedef_s64, null, /*integer-expr*/op_rhs, token);
         }
         
         if(deref_type->size != 1){
@@ -1601,17 +1581,15 @@ func void handle_pointer_arithmetic(struct context *context, enum ast_kind ast_k
             struct ast *new_index = ast_push_binary_expression(context, AST_binary_times, integer, size_lit);
             // @cleanup: s64?
             set_resolved_type(new_index, &globals.typedef_u64, null);
-            integer = new_index;
         }
         
-        ret = ast_push_binary_expression(context, ast_kind, pointer, integer);
-        set_resolved_type(ret, &pointer_type->base, pointer->defined_type);
+        operand->ast = ast_push_binary_expression(context, ast_kind, pointer, integer);
+        set_resolved_type(operand->ast, &pointer_type->base, pointer->defined_type);
     }
     
-    assert(ret->resolved_type == pointer->resolved_type);
-    operand->ast = ret;
-    operand->resolved_type = ret->resolved_type;
-    operand->defined_type  = ret->defined_type;
+    operand->resolved_type = pointer->resolved_type;
+    operand->defined_type = pointer->defined_type;
+    operand->token = token;
 }
 
 func void push_nodes_for_subscript(struct context *context, struct expr *lhs, struct expr *index, struct token *token){
@@ -1641,7 +1619,7 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
             //    *((int *) 12)
             
             struct ast_pointer_literal *pointer_literal_deref = (struct ast_pointer_literal *)lhs->ast;
-            pointer_literal_deref->pointer += array->element_type->size * integer_literal_as_u64(index->ast); // @cleanup: overflow?
+            pointer_literal_deref->pointer += array->element_type->size * integer_literal_as_u64(index); // @cleanup: overflow?
             
             struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, token);
             set_resolved_type(lhs->ast, pointer_type, null);
@@ -1659,9 +1637,7 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
     }
     
     maybe_insert_cast_from_special_int_to_int(context, AST_cast, index, token);
-    index->ast = push_cast(context, AST_cast, &globals.typedef_s64, null, index->ast, token);
-    index->resolved_type = &globals.typedef_s64;
-    index->defined_type = null;
+    push_cast(context, AST_cast, &globals.typedef_s64, null, index, token);
     
     struct ast_subscript *subscript = _parser_ast_push(context, &context->ast_arena, sizeof(struct ast_subscript), alignof(struct ast_subscript), subscript_kind);
     
@@ -1706,9 +1682,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
         
         struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)lhs_type;
         if(rhs_type != bitfield->base_type){
-            rhs->ast = push_cast(context, AST_cast, bitfield->base_type, null, rhs->ast, assignment);
-            rhs->resolved_type = bitfield->base_type;
-            rhs->defined_type = null; // @cleanup: bitfield->defined_type
+            push_cast(context, AST_cast, bitfield->base_type, null, rhs, assignment);
         }
         should_push_cast = true;
     }else if(lhs_type->kind == AST_pointer_type && rhs_type->kind == AST_integer_type){
@@ -1716,7 +1690,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
         
         // 'pointer' = 'integer'
         if(rhs->ast->kind == AST_integer_literal){
-            if(integer_literal_as_u64(rhs->ast) != 0){
+            if(integer_literal_as_u64(rhs) != 0){
                 should_report_warning  = true;
             }
         }else{
@@ -1775,7 +1749,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
         if(rhs->ast->kind == AST_integer_literal && assignment->type != TOKEN_and_equals){
             b32 fits;
             if(type_is_signed(lhs_type)){
-                s64 value = integer_literal_as_s64(rhs->ast);
+                s64 value = integer_literal_as_s64(rhs);
                 switch(lhs_type->size){
                     case 1: fits = (min_s8  <= value && value <= max_s8); break;
                     case 2: fits = (min_s16 <= value && value <= max_s16); break;
@@ -1784,7 +1758,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
                     invalid_default_case(fits = false);
                 }
             }else{
-                u64 value = integer_literal_as_u64(rhs->ast);
+                u64 value = integer_literal_as_u64(rhs);
                 switch(lhs_type->size){
                     case 1: fits = (value <= max_u8); break;
                     case 2: fits = (value <= max_u16); break;
@@ -1829,9 +1803,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
     }
     
     if(should_push_cast){
-        rhs->ast = push_cast(context, AST_cast, lhs_type, lhs_defined_type, rhs->ast, assignment);
-        rhs->resolved_type = lhs_type;
-        rhs->defined_type = lhs_defined_type;
+        push_cast(context, AST_cast, lhs_type, lhs_defined_type, rhs, assignment);
     }else{
         if(!types_are_equal(lhs_type, rhs->resolved_type)){
             report_type_mismatch_error(context, lhs_type, lhs_defined_type, rhs->resolved_type, rhs->defined_type, assignment);
@@ -2066,8 +2038,8 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     struct expr index = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant integer expression in array subscript.");
                     
                     u64 value;
-                    if(type_is_signed(index.ast->resolved_type)){
-                        s64 signed_value = integer_literal_as_s64(index.ast);
+                    if(type_is_signed(index.resolved_type)){
+                        s64 signed_value = integer_literal_as_s64(&index);
                         if(signed_value < 0){
                             report_error(context, index.token, "Array subscript cannot be negative.");
                             goto error;
@@ -2075,7 +2047,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         
                         value = (u64)signed_value;
                     }else{
-                        value = integer_literal_as_u64(index.ast);
+                        value = integer_literal_as_u64(&index);
                     }
                     
                     if(value >= 0x7fffffffffffffff){
@@ -2083,7 +2055,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         goto error;
                     }
                     
-                    #if 0
+#if 0
                     // :ir_refactor 
                     if(peek_token(context, TOKEN_dotdotdot)){
                         struct token *dotdotdot = next_token(context);
@@ -2149,7 +2121,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         sll_push_front(designator_stack, new_node);
                         
                     }else
-                    #endif
+#endif
                     
                     {
                         
@@ -2294,7 +2266,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                 // 
                 
                 struct ast_array_type *wanted_array = (struct ast_array_type *)designator_stack.first->lhs_type;
-                struct ast_array_type *given_array  = (struct ast_array_type *)expression.ast->resolved_type;
+                struct ast_array_type *given_array  = (struct ast_array_type *)expression.resolved_type;
                 
                 if(wanted_array->element_type->size == given_array->element_type->size){
                     
@@ -2326,7 +2298,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     //      struct { u8 array[8]; } asd = {"asd"};
                     // 
                     struct ast_array_type *wanted_array = (struct ast_array_type *)current_object_type;
-                    struct ast_array_type *given_array = (struct ast_array_type *)expression.ast->resolved_type;
+                    struct ast_array_type *given_array = (struct ast_array_type *)expression.resolved_type;
                     
                     if(wanted_array->element_type->size == given_array->element_type->size){
                         
@@ -2344,7 +2316,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     }
                 }
                 
-                if(types_are_equal(expression.ast->resolved_type, current_object_type)){
+                if(types_are_equal(expression.resolved_type, current_object_type)){
                     //
                     // This checks for struct {v2 a;} a = { return_v2() };
                     //
@@ -2582,7 +2554,7 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
             // If type is an array of unknown size, patch in the size
             // we get in this for example for 'char asd[] = "asd";' or struct literals.
             struct ast_array_type *lhs_type = (struct ast_array_type *)type;
-            struct ast_array_type *rhs_type = (struct ast_array_type *)expr.ast->resolved_type;
+            struct ast_array_type *rhs_type = (struct ast_array_type *)expr.resolved_type;
             
             if(lhs_type->element_type->kind != AST_integer_type){
                 report_error(context, equals, "Array initialized by string literal has to be of integer type.");
@@ -2614,12 +2586,12 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
             
         }else{
             maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &expr, expr.token);
-            maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type, lhs->base.defined_type, &expr, equals);
+            maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type, decl->defined_type, &expr, equals);
         }
         
         struct ast_initializer *ast_initializer = push_expression(context, initializer);
         ast_initializer->offset = 0;
-        set_resolved_type(&ast_initializer->base, lhs->base.resolved_type, lhs->base.defined_type);
+        set_resolved_type(&ast_initializer->base, decl->type, decl->defined_type);
         
         // The 'assign_expr' is only used for 'evaluate_static_initializer'.
         // In this case we have to re-iterate the whole expression.
@@ -2699,8 +2671,8 @@ func void perform_integer_operation(struct context *context, struct token *opera
     struct ast_type *promoted_type = perform_usual_arithmetic_conversions(lhs_expr->resolved_type, rhs_expr->resolved_type);
     
 #define __perform_integer_operation(basic_type)                           \
-basic_type lhs_val = integer_literal_as_##basic_type(&lhs->base);         \
-basic_type rhs_val = integer_literal_as_##basic_type(&rhs->base);         \
+basic_type lhs_val = integer_literal_as_##basic_type(lhs_expr);         \
+basic_type rhs_val = integer_literal_as_##basic_type(rhs_expr);         \
 switch(operation->type){                                                  \
     case TOKEN_times:   lhs->_##basic_type = lhs_val * rhs_val; break;    \
     case TOKEN_slash:{                                                    \
@@ -2719,7 +2691,7 @@ switch(operation->type){                                                  \
     }break;                                                               \
     case TOKEN_plus:    lhs->_##basic_type = lhs_val + rhs_val; break;    \
     case TOKEN_minus:   lhs->_##basic_type = lhs_val - rhs_val; break;    \
-                                                                          \
+    \
     case TOKEN_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break; \
     case TOKEN_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break; \
     case TOKEN_bigger_equals:    lhs->_u64 = (lhs_val >= rhs_val); break; \
@@ -2844,9 +2816,7 @@ void maybe_insert_implicit_nodes_for_varargs_argument(struct context *context, s
     if(expr->resolved_type == &globals.typedef_f32){
         // "Arguments that have type float are promoted to double."
         // :retain_type_information_through_promotion
-        expr->ast = push_cast(context, AST_cast, &globals.typedef_f64, (struct ast *)expr->resolved_type, expr->ast, token);
-        expr->defined_type = (struct ast *)expr->resolved_type;
-        expr->resolved_type = &globals.typedef_f64;
+        push_cast(context, AST_cast, &globals.typedef_f64, (struct ast *)expr->resolved_type, expr, token);
     }
 }
 
@@ -3809,7 +3779,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
 }
 
 // :compound_assignments
-func void punt_compound_assignment(struct context *context, struct ast *lhs, struct expr *rhs, struct token *site, enum ast_kind AST_binary_op){
+func void punt_compound_assignment(struct context *context, struct expr *lhs, struct expr *rhs, struct token *site, enum ast_kind AST_binary_op){
     // 
     // AST_duplicate_lhs:
     //     {lhs, rhs} -> {lhs, lhs, rhs}
@@ -3976,8 +3946,8 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     
                     operand.ast = &compound_literal->base;
                     operand.token = open_curly;
-                    operand.resolved_type = compound_literal->base.resolved_type;
-                    operand.defined_type = compound_literal->base.defined_type;
+                    operand.resolved_type = compound_literal_declaration->type;
+                    operand.defined_type = compound_literal_declaration->defined_type;
                     
                     // struct literals should be assignable? msvc does that.
                     context->in_lhs_expression = true;
@@ -4179,6 +4149,7 @@ case NUMBER_KIND_##type:{ \
     } \
     lit->_##type = (type)val; \
     set_resolved_type(&lit->base, &globals.typedef_##type, null);\
+    operand.resolved_type = &globals.typedef_##type;\
 }break
         
         
@@ -4202,6 +4173,10 @@ case NUMBER_KIND_##type:{ \
             
             // "The type of an integer constant is the first of the corresponding list
             //  in which its value can be represented."
+            
+            
+            operand.ast = &lit->base;
+            operand.token = lit_token;
             
             switch(parsed_integer.number_kind){
                 case NUMBER_KIND_invalid:{
@@ -4229,6 +4204,9 @@ case NUMBER_KIND_##type:{ \
                         
                         lit->_s32 = (s32)val;
                         set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
+                        
+                        operand.resolved_type = &globals.typedef_s32;
+                        operand.defined_type  = defined_type;
                         break;
                     }
                 } // fallthrough
@@ -4236,10 +4214,15 @@ case NUMBER_KIND_##type:{ \
                     if(val <= max_s64){
                         lit->_s64 = (s64)val;
                         set_resolved_type(&lit->base, &globals.typedef_s64, null);
+                        
+                        operand.resolved_type = &globals.typedef_s64;
+                        operand.defined_type  = null;
                         break;
                     }
                     lit->_u64 = (u64)val;
                     set_resolved_type(&lit->base, &globals.typedef_u64, null);
+                    operand.resolved_type = &globals.typedef_u64;
+                    operand.defined_type  = null;
                     report_warning(context, WARNING_integer_literal_too_large_to_be_signed, lit_token, "Integer literal exceeds the maximum value representable as a signed integer and is interpreted as unsigned.");
                 }break;
                 case NUMBER_KIND_unsigned_long: // @cleanup: long vs int
@@ -4247,22 +4230,23 @@ case NUMBER_KIND_##type:{ \
                     if(val <= max_u32){
                         lit->_u32 = (u32)val;
                         set_resolved_type(&lit->base, &globals.typedef_u32, null);
+                        operand.resolved_type = &globals.typedef_u32;
+                        operand.defined_type  = null;
                     }else{
                         lit->_u64 = (u64)val;
                         set_resolved_type(&lit->base, &globals.typedef_u64, null);
+                        operand.resolved_type = &globals.typedef_u64;
+                        operand.defined_type  = null;
                     }
                 } break;
                 case NUMBER_KIND_unsigned_long_long:{
                     lit->_u64 = val;
                     set_resolved_type(&lit->base, &globals.typedef_u64, null);
+                    operand.resolved_type = &globals.typedef_u64;
+                    operand.defined_type  = null;
                 }break;
                 invalid_default_case();
             }
-            
-            operand.ast = &lit->base;
-            operand.token = lit_token;
-            operand.resolved_type = lit->base.resolved_type;
-            operand.defined_type = lit->base.defined_type;
             
             context->in_lhs_expression = false;
         }break;
@@ -4278,7 +4262,11 @@ case NUMBER_KIND_##type:{ \
             }else{
                 parsed_integer = parse_binary_literal(context, lit_token);
             }
+            
             u64 val = parsed_integer.value;
+            
+            operand.ast = &lit->base;
+            operand.token = lit_token;
             
             switch(parsed_integer.number_kind){
                 case NUMBER_KIND_invalid:{
@@ -4314,24 +4302,36 @@ case NUMBER_KIND_##type:{ \
                         
                         lit->_s32 = (s32)val;
                         set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
+                        operand.resolved_type = &globals.typedef_s32;
+                        operand.defined_type  = defined_type;
                     }else if(val <= max_u32){
                         lit->_u32 = (u32)val;
                         set_resolved_type(&lit->base, &globals.typedef_u32, null);
+                        operand.resolved_type = &globals.typedef_u32;
+                        operand.defined_type  = null;
                     }else if(val <= max_s64){
                         lit->_s64 = (s64)val;
                         set_resolved_type(&lit->base, &globals.typedef_s64, null);
+                        operand.resolved_type = &globals.typedef_s64;
+                        operand.defined_type  = null;
                     }else{
                         lit->_u64 = (u64)val;
                         set_resolved_type(&lit->base, &globals.typedef_u64, null);
+                        operand.resolved_type = &globals.typedef_u64;
+                        operand.defined_type  = null;
                     }
                 }break;
                 case NUMBER_KIND_long_long:{
                     if(val <= max_s64){
                         lit->_s64 = (s64)val;
                         set_resolved_type(&lit->base, &globals.typedef_s64, null);
+                        operand.resolved_type = &globals.typedef_s64;
+                        operand.defined_type  = null;
                     }else{
                         lit->_u64 = (u64)val;
                         set_resolved_type(&lit->base, &globals.typedef_u64, null);
+                        operand.resolved_type = &globals.typedef_u64;
+                        operand.defined_type  = null;
                     }
                 }break;
                 case NUMBER_KIND_unsigned_long:
@@ -4339,22 +4339,23 @@ case NUMBER_KIND_##type:{ \
                     if(val <= max_u32){
                         lit->_u32 = (u32)val;
                         set_resolved_type(&lit->base, &globals.typedef_u32, null);
+                        operand.resolved_type = &globals.typedef_u32;
+                        operand.defined_type  = null;
                     }else{
                         lit->_u64 = val;
                         set_resolved_type(&lit->base, &globals.typedef_u64, null);
+                        operand.resolved_type = &globals.typedef_u64;
+                        operand.defined_type  = null;
                     }
                 }break;
                 case NUMBER_KIND_unsigned_long_long:{
                     lit->_u64 = val;
                     set_resolved_type(&lit->base, &globals.typedef_u64, null);
+                    operand.resolved_type = &globals.typedef_u64;
+                    operand.defined_type  = null;
                 }break;
                 invalid_default_case();
             }
-            
-            operand.ast = &lit->base;
-            operand.token = lit_token;
-            operand.resolved_type = lit->base.resolved_type;
-            operand.defined_type = lit->base.defined_type;
             
             context->in_lhs_expression = false;
         }break;
@@ -4496,12 +4497,14 @@ case NUMBER_KIND_##type:{ \
                 report_error(context, float_token, "Invalid suffix '%.*s' on float literal.", suffix.size, suffix.data);
             }
             
-            set_resolved_type(&f->base, is_32_bit ? &globals.typedef_f32 : &globals.typedef_f64, null);
+            struct ast_type *type = is_32_bit ? &globals.typedef_f32 : &globals.typedef_f64;
+            
+            set_resolved_type(&f->base, type, null);
             f->value = val;
             
             operand.ast = &f->base;
             operand.token = float_token;
-            operand.resolved_type = f->base.resolved_type;
+            operand.resolved_type = type;
             operand.defined_type = null;
             
             context->in_lhs_expression = false;
@@ -4610,10 +4613,10 @@ case NUMBER_KIND_##type:{ \
                 
                 operand.ast = &lit->base;
                 operand.token = token;
-                operand.resolved_type = source->base.resolved_type;
-                operand.defined_type = source->base.defined_type;
+                operand.resolved_type = &globals.typedef_s32;
+                operand.defined_type = (struct ast *)lookup->type;
                 
-                set_resolved_type(operand.ast, source->base.resolved_type, source->base.defined_type);
+                set_resolved_type(operand.ast, operand.resolved_type, operand.defined_type);
                 context->in_lhs_expression = false;
             }else{
                 struct ast_identifier *ident = push_expression(context, identifier);
@@ -4644,7 +4647,7 @@ case NUMBER_KIND_##type:{ \
             maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &choice_expression, choice_expression.token);
             maybe_insert_cast_from_special_int_to_int(context, AST_cast, &choice_expression, choice_expression.token);
             
-            struct ast_type *choice = choice_expression.ast->resolved_type;
+            struct ast_type *choice = choice_expression.resolved_type;
             memset(ast_arena_start, 0, context->ast_arena.current - ast_arena_start);
             context->ast_arena.current = ast_arena_start;
             
@@ -4703,7 +4706,9 @@ case NUMBER_KIND_##type:{ \
     skip_primary_expression_because_we_got_a_sizeof_or_align_of_with_a_type:;
     skip_primary_expression_because_we_got_a_struct_literal:;
     
+#if !REMOVE_AST
     assert(operand.resolved_type == operand.ast->resolved_type && operand.defined_type == operand.ast->defined_type);
+#endif
     
     // :postfix_expression parse_postfix_expression
     // 
@@ -4933,7 +4938,7 @@ case NUMBER_KIND_##type:{ \
                                 report_error(context, call_token, "Too many arguments to function.");
                                 return expr;
                             }else{
-                                if(expr.ast->resolved_type == &globals.typedef_void){
+                                if(expr.resolved_type == &globals.typedef_void){
                                     report_error(context, expr.token, "Expression of type void cannot be used as function argument.");
                                 }
                                 
@@ -4989,7 +4994,9 @@ case NUMBER_KIND_##type:{ \
         }
         
         operand.token = test;
+#if !REMOVE_AST
         assert(operand.resolved_type == operand.ast->resolved_type && operand.defined_type == operand.ast->defined_type);
+#endif
     }
     
     static enum precedence{
@@ -5266,7 +5273,7 @@ case NUMBER_KIND_##type:{ \
                 
                 if(operand.ast->kind == AST_integer_literal){
                     struct ast_integer_literal *lit = cast(struct ast_integer_literal *)operand.ast;
-                    lit->_u64 = !integer_literal_as_u64(&lit->base);
+                    lit->_u64 = !integer_literal_as_u64(&operand);
                     
                     // "The result has type int."
                     set_resolved_type(&lit->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
@@ -5482,9 +5489,7 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                operand.ast = push_cast(context, AST_cast, type_to_cast_to, defined_type_to_cast_to, operand.ast, operand.token);
-                operand.resolved_type = type_to_cast_to;
-                operand.defined_type = defined_type_to_cast_to;
+                push_cast(context, AST_cast, type_to_cast_to, defined_type_to_cast_to, &operand, operand.token);
                 context->in_lhs_expression = false;
             }break;
             
@@ -5633,9 +5638,9 @@ case NUMBER_KIND_##type:{ \
                 if(op_rhs->ast->kind == AST_integer_literal){
                     struct ast_integer_literal *literal =(struct ast_integer_literal *)op_rhs->ast;
                     
-                    if(type_is_signed(literal->base.resolved_type)){
+                    if(type_is_signed(op_rhs->resolved_type)){
                         b32 should_error = false;
-                        switch(literal->base.resolved_type->size){
+                        switch(op_rhs->resolved_type->size){
                             case 1: should_error = (literal->_s8  < 0); break;
                             case 2: should_error = (literal->_s16 < 0); break;
                             case 4: should_error = (literal->_s32 < 0); break;
@@ -5648,7 +5653,7 @@ case NUMBER_KIND_##type:{ \
                         }
                     }
                     
-                    u64 value = integer_literal_as_u64(&literal->base);
+                    u64 value = integer_literal_as_u64(op_rhs);
                     
                     // @cleanup: overflow on the right hand side?
                     // we only have to check the u8 part as that is the only thing that gets used.
@@ -5663,7 +5668,7 @@ case NUMBER_KIND_##type:{ \
                         
                         // @note: I think these shifts are implicitly arithmetic when they have to be.
                         
-                        struct ast_type *lhs_type = lhs_lit->base.resolved_type;
+                        struct ast_type *lhs_type = op_lhs->resolved_type;
                         
                         if(ast_kind == AST_binary_left_shift){
                             if(lhs_type == &globals.typedef_s32){
@@ -5687,12 +5692,15 @@ case NUMBER_KIND_##type:{ \
                             }
                         }
                         
+#if !REMOVE_AST
                         // "The type of the result is that of the promoted left operand."
                         lhs_lit->base.resolved_type = lhs_type;
+                        lhs_lit->base.defined_type = null;
+#endif
                         
                         operand.ast = &lhs_lit->base;
                         operand.resolved_type = lhs_type;
-                        operand.defined_type = lhs_lit->base.defined_type; // ?
+                        operand.defined_type = null; // ?
                         
                         pop_from_ast_arena(context, literal);
                         break;
@@ -5702,7 +5710,7 @@ case NUMBER_KIND_##type:{ \
                 if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer)) return operand;
                 
                 // @hmm: we require op->rhs->size == 1...
-                op_rhs->ast = push_cast(context, AST_cast, &globals.typedef_u8, null, op_rhs->ast, operand.token);
+                push_cast(context, AST_cast, &globals.typedef_u8, null, op_rhs, operand.token);
                 
                 struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
                 
@@ -5727,7 +5735,7 @@ case NUMBER_KIND_##type:{ \
             case AST_binary_smaller_equals:
             case AST_binary_bigger:
             case AST_binary_smaller:{
-
+                
                 struct expr *op_lhs = &stack_entry->operand;
                 struct expr *op_rhs = &operand;
                 
@@ -5848,8 +5856,8 @@ case NUMBER_KIND_##type:{ \
                 struct expr *op_rhs = &operand;
                 
                 if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
-                    u64 lhs = integer_literal_as_u64(op_lhs->ast);
-                    u64 rhs = integer_literal_as_u64(op_rhs->ast);
+                    u64 lhs = integer_literal_as_u64(op_lhs);
+                    u64 rhs = integer_literal_as_u64(op_rhs);
                     
                     lhs &= rhs;
                     
@@ -5900,8 +5908,8 @@ case NUMBER_KIND_##type:{ \
                 
                 if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
                     
-                    u64 lhs = integer_literal_as_u64(op_lhs->ast);
-                    u64 rhs = integer_literal_as_u64(op_rhs->ast);
+                    u64 lhs = integer_literal_as_u64(op_lhs);
+                    u64 rhs = integer_literal_as_u64(op_rhs);
                     
                     lhs ^= rhs;
                     
@@ -5949,8 +5957,8 @@ case NUMBER_KIND_##type:{ \
                 
                 if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
                     
-                    u64 lhs = integer_literal_as_u64(op_lhs->ast);
-                    u64 rhs = integer_literal_as_u64(op_rhs->ast);
+                    u64 lhs = integer_literal_as_u64(op_lhs);
+                    u64 rhs = integer_literal_as_u64(op_rhs);
                     
                     lhs |= rhs;
                     
@@ -6024,7 +6032,7 @@ case NUMBER_KIND_##type:{ \
                 
                 if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
                     struct ast_integer_literal *lit = cast(struct ast_integer_literal *)op_lhs->ast;
-                    if(integer_literal_as_u64(op_lhs->ast) && integer_literal_as_u64(op_rhs->ast)){
+                    if(integer_literal_as_u64(op_lhs) && integer_literal_as_u64(op_rhs)){
                         lit->_u64 = 1;
                     }else{
                         lit->_u64 = 0;
@@ -6111,13 +6119,16 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
+                struct expr *op_lhs_expr = &stack_entry->operand;
                 struct ast *op_lhs = stack_entry->operand.ast;
+                
+                struct expr *op_rhs_expr = &operand;
                 struct ast *op_rhs = operand.ast;
                 struct ast_jump_if_true *conditional_jump = stack_entry->other;
                 
                 if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
                     struct ast_integer_literal *lit = cast(struct ast_integer_literal *)op_lhs;
-                    if(integer_literal_as_u64(op_lhs) || integer_literal_as_u64(op_rhs)){
+                    if(integer_literal_as_u64(op_lhs_expr) || integer_literal_as_u64(op_rhs_expr)){
                         lit->_u64 = 1;
                     }else{
                         lit->_u64 = 0;
@@ -6220,14 +6231,10 @@ case NUMBER_KIND_##type:{ \
                     struct ast_type *arithmetic_type = perform_usual_arithmetic_conversions(if_true->resolved_type, if_false->resolved_type);
                     
                     if(if_true->resolved_type != arithmetic_type){
-                        if_true->ast = push_cast(context, AST_cast_lhs, arithmetic_type, defined_type_for_promotion(if_true), if_true->ast, stack_entry->token);
-                        if_true->defined_type = if_true->ast->defined_type;
-                        if_true->resolved_type = arithmetic_type;
+                        push_cast(context, AST_cast_lhs, arithmetic_type, defined_type_for_promotion(if_true), if_true, stack_entry->token);
                     }
                     if(if_false->resolved_type != arithmetic_type){
-                        if_false->ast = push_cast(context, AST_cast, arithmetic_type, defined_type_for_promotion(if_false), if_false->ast, stack_entry->token);
-                        if_false->defined_type = if_false->ast->defined_type;
-                        if_false->resolved_type = arithmetic_type;
+                        push_cast(context, AST_cast, arithmetic_type, defined_type_for_promotion(if_false), if_false, stack_entry->token);
                     }
                     
                 }else{
@@ -6272,8 +6279,8 @@ case NUMBER_KIND_##type:{ \
                         context->ast_arena.current = past_const;
                         
                         operand.ast = condition;
-                        operand.resolved_type = condition->resolved_type;
-                        operand.defined_type  = condition->defined_type;
+                        operand.resolved_type = expr->resolved_type;
+                        operand.defined_type  = expr->defined_type;
                     }
                 }
                 
@@ -6396,7 +6403,7 @@ case NUMBER_KIND_##type:{ \
                 
                 if(punt){
                     enum ast_kind kind = ast_kind == AST_plus_assignment ? AST_binary_plus : AST_binary_minus;
-                    punt_compound_assignment(context, lhs->ast, rhs, stack_entry->token, kind);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, kind);
                 }else{
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
@@ -6426,7 +6433,7 @@ case NUMBER_KIND_##type:{ \
                 b32 punt = (lhs->resolved_type->size < rhs->resolved_type->size);
                 
                 if(rhs->ast->kind == AST_integer_literal){
-                    u64 value = integer_literal_as_u64(rhs->ast);
+                    u64 value = integer_literal_as_u64(rhs);
                     if(value == 0){
                         report_error(context, stack_entry->token, "Compile time '%%=' by 0.");
                         return operand;
@@ -6442,7 +6449,7 @@ case NUMBER_KIND_##type:{ \
                 if(lhs->resolved_type == &globals.typedef_Bool || (lhs->resolved_type->kind == AST_bitfield_type)) punt = 1;
                 
                 if(punt){
-                    punt_compound_assignment(context, lhs->ast, rhs, stack_entry->token, AST_binary_mod);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, AST_binary_mod);
                 }else{
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
@@ -6472,7 +6479,7 @@ case NUMBER_KIND_##type:{ \
                     if(ast_kind == AST_or_assignment)  punt_kind = AST_binary_or;
                     if(ast_kind == AST_xor_assignment) punt_kind = AST_binary_xor;
                     
-                    punt_compound_assignment(context, lhs->ast, rhs, stack_entry->token, punt_kind);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, punt_kind);
                 }else{
                     // These are always fine, we never have to punt.
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
@@ -6516,7 +6523,7 @@ case NUMBER_KIND_##type:{ \
                     // @copy and paste from above.
                     // 
                     
-                    u64 value = integer_literal_as_u64(rhs->ast);
+                    u64 value = integer_literal_as_u64(rhs);
                     if(value == 0){
                         if(ast_kind == AST_divide_assignment){
                             report_error(context, stack_entry->token, "Compile time '/=' by 0.");
@@ -6537,7 +6544,7 @@ case NUMBER_KIND_##type:{ \
                 
                 if(punt){
                     enum ast_kind kind = (ast_kind == AST_divide_assignment) ? AST_binary_divide : AST_binary_times;
-                    punt_compound_assignment(context, lhs->ast, rhs, stack_entry->token, kind);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, kind);
                 }else{
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
@@ -6563,9 +6570,9 @@ case NUMBER_KIND_##type:{ \
                 
                 if(lhs->resolved_type == &globals.typedef_Bool || lhs->resolved_type->kind == AST_bitfield_type){
                     enum ast_kind kind = (ast_kind == AST_left_shift_assignment) ? AST_binary_left_shift : AST_binary_right_shift;
-                    punt_compound_assignment(context, lhs->ast, rhs, stack_entry->token, kind);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, kind);
                 }else{
-                    rhs->ast = push_cast(context, AST_cast, &globals.typedef_u8, null, rhs->ast, operand.token);
+                    push_cast(context, AST_cast, &globals.typedef_u8, null, rhs, operand.token);
                     
                     struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, lhs, rhs);
                     set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
@@ -6589,7 +6596,9 @@ case NUMBER_KIND_##type:{ \
         
         // After we have handled the expression, the current token is the one from the stack_entry.
         operand.token = stack_entry->token;
+#if !REMOVE_AST
         assert(operand.resolved_type == operand.ast->resolved_type && operand.defined_type == operand.ast->defined_type);
+#endif
     }
     
     switch(binary_expression->type){
@@ -6698,7 +6707,7 @@ case NUMBER_KIND_##type:{ \
                 
                 int is_true;
                 switch(operand.ast->kind){
-                    case AST_integer_literal: is_true = integer_literal_as_u64(operand.ast) ? 1 : 0;                  break;
+                    case AST_integer_literal: is_true = integer_literal_as_u64(&operand) ? 1 : 0;                  break;
                     case AST_pointer_literal: is_true = ((struct ast_pointer_literal *)operand.ast)->pointer ? 1 : 0; break;
                     case AST_float_literal:   is_true = ((struct ast_float_literal *)operand.ast)->value ? 1 : 0;     break;
                     invalid_default_case(is_true = false);
@@ -6708,8 +6717,8 @@ case NUMBER_KIND_##type:{ \
             }
             
             struct ast *assign = ast_push_binary_expression(context, AST_assignment, &temp->base, if_true.ast);
-            set_resolved_type(assign, if_true.ast->resolved_type, if_true.ast->defined_type);
-            set_resolved_type(&temp->base, if_true.ast->resolved_type, if_true.ast->defined_type);
+            set_resolved_type(assign, if_true.resolved_type, if_true.defined_type);
+            set_resolved_type(&temp->base, if_true.resolved_type, if_true.defined_type);
             
             struct ast_jump *end_jump = push_expression(context, jump);
             end_jump->label_number = context->jump_label_index++;
@@ -6968,7 +6977,7 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                     value = type_name.type->alignment;
                 }else{
                     struct expr const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Argument of '_Alignas' must be a type name or a constant expression.");
-                    value = integer_literal_as_u64(const_expr.ast);
+                    value = integer_literal_as_u64(&const_expr);
                 }
                 
                 // "An alignment specification of zero has no effect."
@@ -7014,7 +7023,7 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                     
                     struct expr const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
                     
-                    u64 value = integer_literal_as_u64(const_expr.ast);
+                    u64 value = integer_literal_as_u64(&const_expr);
                     
                     //
                     // struct __declspec(align(0x100)) asd;
@@ -7118,7 +7127,7 @@ case TOKEN_##type_name:{                                                 \
                         
                         struct expr const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
                         
-                        u64 value = integer_literal_as_u64(const_expr.ast);
+                        u64 value = integer_literal_as_u64(&const_expr);
                         
                         has_declspec_alignment = true;
                         
@@ -7330,7 +7339,7 @@ case TOKEN_##type_name:{                                                 \
                                 }
                                 
                                 struct expr constant = parse_constant_integer_expression(context, true, "Bitfield width must be constant.");
-                                s64 width = integer_literal_as_s64(constant.ast);
+                                s64 width = integer_literal_as_s64(&constant);
                                 
                                 if(width < 0){
                                     report_error(context, constant.token, "Bitfield width must be non-negative.");
@@ -7564,7 +7573,7 @@ case TOKEN_##type_name:{                                                 \
                         if(peek_token_eat(context, TOKEN_equals)){
                             struct expr const_expr = parse_constant_integer_expression(context, true, "Enum expression needs to be a constant integer.");
                             
-                            current_value = integer_literal_as_s64(const_expr.ast);
+                            current_value = integer_literal_as_s64(&const_expr);
                         }
                         
                         // @note: allow to u32_max, as enums are often used as flag-constants and it just does not matter
@@ -8243,7 +8252,7 @@ void parse_static_assert(struct context *context, struct token *static_assert_to
     expect_token(context, TOKEN_open_paren, "Expected a '(' after _Static_assert.");
     struct expr constant_expression = parse_constant_integer_expression(context, /*should_skip_comma_expression*/true, "First argument to '_Static_assert' is not constant.");
     
-    s64 value = integer_literal_as_s64(constant_expression.ast);
+    s64 value = integer_literal_as_s64(&constant_expression);
     
     struct string string_literal = {0};
     
@@ -8359,7 +8368,7 @@ func void parse_statement(struct context *context){
             
             struct ast_scope *scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_can_continue | SCOPE_FLAG_can_break);
             
-            struct ast *condition;
+            struct expr condition;
             {
                 if(!peek_token_eat(context, TOKEN_semicolon)){
                     // @hack: @cleanup: this should be either a declaration or an expression, for now any statement is valid....
@@ -8394,18 +8403,19 @@ func void parse_statement(struct context *context){
                 for_label->label_number = for_label_index;
                 
                 if(peek_token(context, TOKEN_semicolon)){
-                    condition = ast_push_s32_literal(context, 1); // desugars to true
-                    next_token(context);
+                    condition.ast = ast_push_s32_literal(context, 1); // desugars to true
+                    condition.token = next_token(context);
+                    condition.resolved_type = &globals.typedef_s32;
+                    condition.defined_type = null;
                 }else{
-                    struct expr cond = parse_expression(context, false);
-                    condition = cond.ast;
-                    maybe_report_warning_for_assignment_in_condition(context, condition, cond.token);
+                    condition = parse_expression(context, false);
+                    maybe_report_warning_for_assignment_in_condition(context, condition.ast, condition.token);
                     
-                    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &cond, cond.token);
-                    maybe_insert_cast_from_special_int_to_int(context, AST_cast, &cond, cond.token);
-                    if(!casts_implicitly_to_bool(cond.resolved_type)){
+                    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &condition, condition.token);
+                    maybe_insert_cast_from_special_int_to_int(context, AST_cast, &condition, condition.token);
+                    if(!casts_implicitly_to_bool(condition.resolved_type)){
                         // :Error
-                        report_error(context, cond.token, "'for' condition has to cast to bool.");
+                        report_error(context, condition.token, "'for' condition has to cast to bool.");
                         parser_scope_pop(context, scope);
                         return;
                     }
@@ -8454,7 +8464,7 @@ func void parse_statement(struct context *context){
             parser_scope_pop(context, scope);
             
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
-            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition->kind == AST_integer_literal && integer_literal_as_u64(condition) != 0;
+            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ast->kind == AST_integer_literal && integer_literal_as_u64(&condition) != 0;
             
             // @note: For a loop line `for(int i = 0; i < n; i++){ return i; }` The "returns a value" would be true, 
             // but we don't know if 'i < n', so we disregard the loops "returns a value".
@@ -8509,7 +8519,7 @@ func void parse_statement(struct context *context){
             break_label->label_number = break_label_index;
             
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
-            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ast->kind == AST_integer_literal && integer_literal_as_u64(condition.ast) != 0;
+            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ast->kind == AST_integer_literal && integer_literal_as_u64(&condition) != 0;
             context->current_statement_returns_a_value = statement_returns_a_value | is_infinite_loop; // See 'for' case for comment.
             
             needs_semicolon = false;
@@ -8567,7 +8577,7 @@ func void parse_statement(struct context *context){
             break_label->label_number = break_label_index;
             
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
-            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ast->kind == AST_integer_literal && integer_literal_as_u64(condition.ast) != 0;
+            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ast->kind == AST_integer_literal && integer_literal_as_u64(&condition) != 0;
             
             // do <> while(); loops are a little bit different to the other loops, as their body is guaranteed to be executed one time.
             // Hence, we can say they return a value, if their body (or condition) returns a value, or its an infinite loop.
@@ -8643,10 +8653,10 @@ func void parse_statement(struct context *context){
             struct ast_switch *ast_switch = push_expression(context, switch);
             
             struct ast_switch *previous_switch = context->current_switch;
-            struct ast        *previous_switch_on = context->current_switch_on;
+            struct expr        previous_switch_on = context->current_switch_on;
             struct token      *previous_switch_default_label_token = context->current_switch_default_label_token;
             context->current_switch = ast_switch;
-            context->current_switch_on = switch_on.ast;
+            context->current_switch_on = switch_on;
             context->current_switch_default_label_token = 0;
             
             // Get the initial "returns a value state".
@@ -8687,13 +8697,13 @@ func void parse_statement(struct context *context){
             
             struct expr const_expr = parse_constant_integer_expression(context, false, "Operand of 'case' has to be constant.");
             
-            struct ast *switch_on = context->current_switch_on;
+            struct expr *switch_on = &context->current_switch_on;
             maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, switch_on->resolved_type, switch_on->defined_type, &const_expr, const_expr.token);
             struct ast *promoted_const_expr = const_expr.ast;
             assert(promoted_const_expr->kind == AST_integer_literal);
-            assert(promoted_const_expr->resolved_type == context->current_switch_on->resolved_type);
+            assert(promoted_const_expr->resolved_type == context->current_switch_on.resolved_type);
             
-            u64 value = integer_literal_as_u64(promoted_const_expr);
+            u64 value = integer_literal_as_u64(&const_expr);
             
             for(struct ast_list_node *node = context->current_switch->case_list.first; node; node = node->next){
                 struct ast_case *ast_case = (struct ast_case *)node->value;
@@ -9338,7 +9348,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 
                 expect_token(context, TOKEN_closed_index, "Expected ']' ending array declarator.");
                 
-                s64 value = integer_literal_as_s64(index_expression.ast);
+                s64 value = integer_literal_as_s64(&index_expression);
                 
                 if(value == 0){
                     goto array_size_zero_also_means_array_of_unknown_size;

@@ -2059,7 +2059,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         u32 enum_type_index = decl->type->pdb_type_index;
                         assert(enum_type_index);
                         
-                        s32 value = integer_literal_as_s32(decl->assign_expr);
+                        s32 value = (s32)integer_literal_to_bytes(decl->assign_expr);
                         
                         u16 *length = push_struct(arena, u16);
                         *push_struct(arena, u16) = /*S_CONSTANT*/0x1107;

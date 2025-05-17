@@ -583,6 +583,9 @@ static struct{
     struct ast_type typedef_s32;
     struct ast_type typedef_s64;
     
+    struct ast_type typedef_f32;
+    struct ast_type typedef_f64;
+    
     struct ast_type typedef_atomic_bool;
     
     struct ast_type typedef_atomic_u8;
@@ -594,9 +597,6 @@ static struct{
     struct ast_type typedef_atomic_s16;
     struct ast_type typedef_atomic_s32;
     struct ast_type typedef_atomic_s64;
-    
-    struct ast_type typedef_f32;
-    struct ast_type typedef_f64;
     
     struct ast_type typedef_poison;
     
@@ -797,7 +797,7 @@ struct context{
     struct compilation_unit *current_compilation_unit;
     
     struct ast_switch *current_switch;
-    struct ast *current_switch_on;
+    struct expr current_switch_on;
     struct token *current_switch_default_label_token;
     
     struct token *in_inline_asm_function;
@@ -2288,7 +2288,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 struct ast *index = ast_stack[ast_stack_at].ast;
                 
                 if(index->kind == AST_integer_literal){
-                    ast_stack[ast_stack_at-1].offset += integer_literal_as_u64(index) * subscript->base.resolved_type->size;
+                    ast_stack[ast_stack_at-1].offset += integer_literal_to_bytes(index) * subscript->base.resolved_type->size;
                 }else{
                     report_error(context, /*ast->token*/error_token, "Expected a constant in array subscript, when evaluating initializer at compile time.");
                     return;
@@ -2311,7 +2311,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                     if(binary_lhs->kind == AST_pointer_literal){
                         offset_lhs += (smm)((struct ast_pointer_literal *)binary_lhs)->pointer;
                     }else if(binary_lhs->kind == AST_integer_literal){
-                        offset_lhs += integer_literal_as_s64(binary_lhs);
+                        offset_lhs += integer_literal_to_bytes(binary_lhs);
                     }else{
                         goto initializer_not_constant;
                     }
@@ -2327,7 +2327,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                     if(binary_rhs->kind == AST_pointer_literal){
                         offset_rhs += (smm)((struct ast_pointer_literal *)binary_rhs)->pointer;
                     }else if(binary_rhs->kind == AST_integer_literal){
-                        offset_rhs += integer_literal_as_s64(binary_rhs);
+                        offset_rhs += integer_literal_to_bytes(binary_rhs);
                     }else{
                         goto initializer_not_constant;
                     }
@@ -2382,7 +2382,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                     
                     switch(rhs->kind){
                         case AST_integer_literal:{
-                            u64 value = integer_literal_as_u64(rhs);
+                            u64 value = integer_literal_to_bytes(rhs);
                             // @note: The rhs does not have to fit: if we have 'u8 a = 0xffff;' this only gives a warning.
                             
                             if(lhs_type->kind == AST_bitfield_type){
@@ -2559,7 +2559,6 @@ func void reset_context(struct context *context){
     context->current_emit_offset_of_rsp = 0;
     context->current_scope              = null;
     context->current_switch             = null;
-    context->current_switch_on          = null;
     context->current_switch_default_label_token = null;
     context->sleep_on                   = null;
     context->sleeping_ident             = null;
