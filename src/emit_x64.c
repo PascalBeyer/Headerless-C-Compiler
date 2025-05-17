@@ -2206,7 +2206,7 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
         // @cleanup: can we even get in here? I thought we resolved them while parsing
         assert(decl->assign_expr);
         assert(decl->assign_expr->kind == AST_integer_literal);
-        return emit_location_immediate(context, integer_literal_to_bytes(decl->assign_expr), decl->assign_expr->resolved_type->size);
+        return emit_location_immediate(context, integer_literal_to_bytes(decl->assign_expr), decl->type->size);
     }
     
     smm decl_size = decl->type->size;
@@ -2599,7 +2599,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct ast_temp *temp = (struct ast_temp *)ast;
                 ast_arena_at += sizeof(*temp);
                 
-                struct ast_type *type = temp->base.resolved_type;
+                struct ast_type *type = temp->type;
                 
                 emit_location_stack[emit_location_stack_at++] = emit_allocate_temporary_stack_location(context, type->size, type->alignment);
             }break;
@@ -2619,7 +2619,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 assert(!decl_location->ast); // This declaration should not be rip-relative. Rip-relative declarations should not be initialized at run-time.
                 
                 u64 offset = initializer->offset;
-                struct ast_type *lhs_type = initializer->base.resolved_type;
+                struct ast_type *lhs_type = initializer->lhs_type;
                 
                 struct emit_location *dest = emit_location_stack_relative(context, 0, lhs_type->size);
                 dest->offset = decl_location->offset + offset; // @cleanup: my system is way to confusing about stack offsets

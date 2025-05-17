@@ -800,6 +800,7 @@ struct ast_panic{
 
 struct ast_temp{
     struct ast base;
+    struct ast_type *type;
 };
 
 struct ast_pop_expression{
@@ -849,6 +850,7 @@ struct ast_array_range{ // array[1 ... 5] - only allowed in initializers.
 struct ast_initializer{
     struct ast base;
     u64 offset;
+    struct ast_type *lhs_type;
 };
 
 struct ast_return{
@@ -1068,7 +1070,7 @@ struct ast_conditional_expression{
 
 struct conditional_expression_information{
     struct ast *condition;
-    struct ast *temp;
+    struct ast_temp *temp;
     struct ast_jump *end_jump;
 };
 

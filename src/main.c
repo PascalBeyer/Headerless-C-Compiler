@@ -2358,8 +2358,8 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 ast_stack_at -= 1;
                 
                 smm offset = root_offset + initializer_for_offset->offset;
-                struct ast_type *lhs_type = initializer_for_offset->base.resolved_type;
-                smm lhs_size = initializer_for_offset->base.resolved_type->size;
+                struct ast_type *lhs_type = initializer_for_offset->lhs_type;
+                smm lhs_size = initializer_for_offset->lhs_type->size;
                 assert(offset + lhs_size <= data_size);
                 
                 if(ast_stack[ast_stack_at].is_address){

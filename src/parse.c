@@ -1886,6 +1886,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         
         struct ast_initializer *ast_initializer = push_expression(context, initializer);
         ast_initializer->offset = base_offset;
+        ast_initializer->lhs_type = type_to_initialize;
         
         set_resolved_type(&ast_initializer->base, type_to_initialize, null); // @cleanup: defined type?
         return;
@@ -2242,6 +2243,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
             
             struct ast_initializer *initializer = push_expression(context, initializer);
             initializer->offset = designator_node->offset_at;
+            initializer->lhs_type = current_object_type;
             set_resolved_type(&initializer->base, current_object_type, null);
             
             // @note: We need to add -1 here, because the code below assumes it was not incremented.
@@ -2283,6 +2285,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     
                     struct ast_initializer *initializer = push_expression(context, initializer);
                     initializer->offset = designator_stack.first ? designator_stack.first->offset_at : base_offset;
+                    initializer->lhs_type = current_object_type;
                     set_resolved_type(&initializer->base, current_object_type, null);
                     
                     continue;
@@ -2311,6 +2314,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         
                         struct ast_initializer *initializer = push_expression(context, initializer);
                         initializer->offset = designator_stack.first->offset_at;
+                        initializer->lhs_type = current_object_type;
                         set_resolved_type(&initializer->base, current_object_type, null);
                         break;
                     }
@@ -2323,6 +2327,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     
                     struct ast_initializer *initializer = push_expression(context, initializer);
                     initializer->offset = designator_stack.first->offset_at;
+                    initializer->lhs_type = current_object_type;
                     set_resolved_type(&initializer->base, current_object_type, null);
                     break;
                 }
@@ -2355,6 +2360,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     
                     struct ast_initializer *initializer = push_expression(context, initializer);
                     initializer->offset = designator_stack.first->offset_at;
+                    initializer->lhs_type = current_object_type;
                     set_resolved_type(&initializer->base, current_object_type, null);
                     break;
                 }
@@ -2591,6 +2597,7 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
         
         struct ast_initializer *ast_initializer = push_expression(context, initializer);
         ast_initializer->offset = 0;
+        ast_initializer->lhs_type = decl->type;
         set_resolved_type(&ast_initializer->base, decl->type, decl->defined_type);
         
         // The 'assign_expr' is only used for 'evaluate_static_initializer'.
@@ -6055,6 +6062,7 @@ case NUMBER_KIND_##type:{ \
                     rhs_jump->label_number = conditional_jump->label_number;
                     
                     struct ast_temp *temp = push_expression(context, temp);
+                    temp->type = &globals.typedef_s32;
                     set_resolved_type(&temp->base, &globals.typedef_s32, null);
                     
                     {
@@ -6152,6 +6160,7 @@ case NUMBER_KIND_##type:{ \
                     rhs_jump->label_number = conditional_jump->label_number;
                     
                     struct ast_temp *temp = push_expression(context, temp);
+                    temp->type = &globals.typedef_s32;
                     set_resolved_type(&temp->base, &globals.typedef_s32, null);
                     
                     {
@@ -6218,7 +6227,7 @@ case NUMBER_KIND_##type:{ \
                 struct conditional_expression_information *information = stack_entry->other;
                 
                 struct ast *condition = information->condition;
-                struct ast *temp = information->temp;
+                struct ast_temp *temp = information->temp;
                 struct ast_jump *end_jump = information->end_jump;
                 
                 maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, if_false, operand.token);
@@ -6291,7 +6300,12 @@ case NUMBER_KIND_##type:{ \
                     struct ast *assign = ast_push_binary_expression(context, AST_assignment, temp, if_false);
                     set_resolved_type(assign, if_false->resolved_type, if_false->defined_type);
                     
-                    set_resolved_type(temp, if_true->resolved_type, defined_type);
+                    // 
+                    // @cleanup: This is probably wrong.
+                    // 
+                    struct ast_type *bigger_type = if_true->resolved_type->size > if_false->resolved_type->size ? if_true->resolved_type : if_false->resolved_type;
+                    temp->type = bigger_type;
+                    set_resolved_type(&temp->base, bigger_type, defined_type);
                     
                     struct ast_jump_label *end_label = push_expression(context, jump_label);
                     end_label->label_number = end_jump->label_number;
@@ -6718,7 +6732,9 @@ case NUMBER_KIND_##type:{ \
             
             struct ast *assign = ast_push_binary_expression(context, AST_assignment, &temp->base, if_true.ast);
             set_resolved_type(assign, if_true.resolved_type, if_true.defined_type);
+            
             set_resolved_type(&temp->base, if_true.resolved_type, if_true.defined_type);
+            temp->type = if_true.resolved_type;
             
             struct ast_jump *end_jump = push_expression(context, jump);
             end_jump->label_number = context->jump_label_index++;
@@ -6728,7 +6744,7 @@ case NUMBER_KIND_##type:{ \
             
             struct conditional_expression_information *conditional_expression_information = push_struct(&context->scratch, struct conditional_expression_information);
             conditional_expression_information->condition = operand.ast;
-            conditional_expression_information->temp = &temp->base;
+            conditional_expression_information->temp = temp;
             conditional_expression_information->end_jump = end_jump;
             
             struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, &if_true);
@@ -8699,9 +8715,9 @@ func void parse_statement(struct context *context){
             
             struct expr *switch_on = &context->current_switch_on;
             maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, switch_on->resolved_type, switch_on->defined_type, &const_expr, const_expr.token);
-            struct ast *promoted_const_expr = const_expr.ast;
-            assert(promoted_const_expr->kind == AST_integer_literal);
-            assert(promoted_const_expr->resolved_type == context->current_switch_on.resolved_type);
+            
+            assert(const_expr.ast->kind == AST_integer_literal);
+            assert(const_expr.resolved_type == context->current_switch_on.resolved_type);
             
             u64 value = integer_literal_as_u64(&const_expr);
             
