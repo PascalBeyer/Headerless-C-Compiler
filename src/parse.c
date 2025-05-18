@@ -108,6 +108,27 @@ func struct ast_type *_parser_type_push(struct context *context, struct token *t
     return type;
 }
 
+//_____________________________________________________________________________________________________________________
+// IR building stuff
+
+static struct ir *push_ir(struct context *context, enum ir_kind ir_kind){
+    struct ir *ir = push_struct_(&context->ast_arena, sizeof(struct ir), 8); // @note: No need to zero, 'arena' never has any non-zero bytes.
+    ir->kind  = ir_kind;
+    ir->s = get_unique_ast_serial(context);
+    return ir;
+}
+
+static enum ir_basic_type ir_type_from_type(struct ast_type *type){
+    u64 index = type - &globals.typedef_void;
+    if(index <= (u64)(&globals.typedef_f64 - &globals.typedef_void)){
+        return (enum ir_basic_type)index;
+    }
+    
+    if(type->kind == AST_pointer_type) return IR_TYPE_pointer;
+    
+    invalid_code_path;
+}
+
 // Sometimes when we are constant propagating, we have to un-emit a literal.
 #define pop_from_ast_arena(context, ast) pop_from_ast_arena_(context, (u8 *)(ast), sizeof(*ast))
 func void pop_from_ast_arena_(struct context *context, u8 *ast_memory, smm size){
@@ -4713,10 +4734,6 @@ case NUMBER_KIND_##type:{ \
     skip_primary_expression_because_we_got_a_sizeof_or_align_of_with_a_type:;
     skip_primary_expression_because_we_got_a_struct_literal:;
     
-#if !REMOVE_AST
-    assert(operand.resolved_type == operand.ast->resolved_type && operand.defined_type == operand.ast->defined_type);
-#endif
-    
     // :postfix_expression parse_postfix_expression
     // 
     // Precedence 1: postfix expressions, Left-to-Right Associative
@@ -5001,9 +5018,6 @@ case NUMBER_KIND_##type:{ \
         }
         
         operand.token = test;
-#if !REMOVE_AST
-        assert(operand.resolved_type == operand.ast->resolved_type && operand.defined_type == operand.ast->defined_type);
-#endif
     }
     
     static enum precedence{
@@ -5778,14 +5792,27 @@ case NUMBER_KIND_##type:{ \
                         report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, stack_entry->token);
                         return operand;
                     }
-                }else{
-                    if(type_is_signed(match)) ast_kind += AST_binary_bigger_equals_signed - AST_binary_bigger_equals;
-                    if(match->kind == AST_float_type) ast_kind += AST_binary_bigger_equals_float - AST_binary_bigger_equals;
                 }
                 
-                struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
-                set_resolved_type(&op->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
-                operand.ast = &op->base;
+                // :smaller_bigger_ir_encoding
+                // 
+                // 20 = 5 bit:
+                //         1 bit - bigger / smaller
+                //         1 bit - equals / proper
+                //         3 bit - type (s32, u32, s64, u64, f32, f64)
+                //         
+                
+                enum ir_type match_type = match ? ir_type_from_type(match) : IR_TYPE_u64;
+                if(match_type == IR_TYPE_pointer) match_type = IR_TYPE_u64;
+                
+                // 0 - bigger equals, 1 - smaller equals, 2 - bigger, 3 - smaller
+                u32 condition_information = ast_kind - AST_binary_bigger_equals; 
+                
+                u32 information = ((match_type - IR_TYPE_s32) << 2) | condition_information;
+                
+                enum ir_kind ir_kind = IR_bigger_equals_s32 + information;
+                
+                operand.ir = push_ir(context, ir_kind);
                 operand.resolved_type = &globals.typedef_s32;
                 operand.defined_type  = (struct ast *)&globals.typedef_u8;
                 
@@ -6610,9 +6637,6 @@ case NUMBER_KIND_##type:{ \
         
         // After we have handled the expression, the current token is the one from the stack_entry.
         operand.token = stack_entry->token;
-#if !REMOVE_AST
-        assert(operand.resolved_type == operand.ast->resolved_type && operand.defined_type == operand.ast->defined_type);
-#endif
     }
     
     switch(binary_expression->type){

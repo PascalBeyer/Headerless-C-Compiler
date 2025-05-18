@@ -573,30 +573,34 @@ static struct{
     struct ast_type typedef_void;
     struct ast_type typedef_Bool;
     
-    struct ast_type typedef_u8;
-    struct ast_type typedef_u16;
-    struct ast_type typedef_u32;
-    struct ast_type typedef_u64;
-    
     struct ast_type typedef_s8;
+    struct ast_type typedef_u8;
+    
     struct ast_type typedef_s16;
+    struct ast_type typedef_u16;
+    
     struct ast_type typedef_s32;
+    struct ast_type typedef_u32;
+    
     struct ast_type typedef_s64;
+    struct ast_type typedef_u64;
     
     struct ast_type typedef_f32;
     struct ast_type typedef_f64;
     
     struct ast_type typedef_atomic_bool;
     
-    struct ast_type typedef_atomic_u8;
-    struct ast_type typedef_atomic_u16;
-    struct ast_type typedef_atomic_u32;
-    struct ast_type typedef_atomic_u64;
-    
     struct ast_type typedef_atomic_s8;
+    struct ast_type typedef_atomic_u8;
+    
     struct ast_type typedef_atomic_s16;
+    struct ast_type typedef_atomic_u16;
+    
     struct ast_type typedef_atomic_s32;
+    struct ast_type typedef_atomic_u32;
+    
     struct ast_type typedef_atomic_s64;
+    struct ast_type typedef_atomic_u64;
     
     struct ast_type typedef_poison;
     

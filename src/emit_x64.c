@@ -725,14 +725,17 @@ enum comp_condition{
     COMP_equals,                   // je, jz
     COMP_unequals,                 // jne, jnz
     COMP_not_zero = COMP_unequals, // jne, jnz
-    COMP_smaller,                  // jb, jnae, jc
+    
+    COMP_bigger_equals,            // jbe, jae, jnc
     COMP_smaller_equals,           // jbe, jna
     COMP_bigger,                   // jnbe, ja
-    COMP_bigger_equals,            // jbe, jae, jnc
-    COMP_smaller_signed,           // jl, jnge
+    COMP_smaller,                  // jb, jnae, jc
+    
+    COMP_bigger_equals_signed,     // jnl, jge
     COMP_smaller_equals_signed,    // jle, jng
     COMP_bigger_signed,            // jnle, jg
-    COMP_bigger_equals_signed,     // jnl, jge
+    COMP_smaller_signed,           // jl, jnge
+    
     COMP_positive,                 // jns
     COMP_negative,                 // js
 };
@@ -2527,7 +2530,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             line_information[line_information_at++].offset = to_s32(get_bytes_emitted(context));
         }
         
-        switch(ast->kind){
+        enum ast_kind ast_kind = ast->kind;
+        
+        switch((int)ast_kind){
             
             // 
             // For now, for primary expressions, fall back to `emit_code_for_ast`.
@@ -4277,6 +4282,67 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ast_arena_at += sizeof(*ast_case);
                 emit_end_jumps(context, *ast_case->jump);
             }break;
+            
+            // 
+            // New IR stuff:
+            // 
+            
+            case IR_bigger_equals_s32: case IR_smaller_equals_s32: case IR_bigger_s32: case IR_smaller_s32:
+            case IR_bigger_equals_u32: case IR_smaller_equals_u32: case IR_bigger_u32: case IR_smaller_u32:
+            case IR_bigger_equals_s64: case IR_smaller_equals_s64: case IR_bigger_s64: case IR_smaller_s64:
+            case IR_bigger_equals_u64: case IR_smaller_equals_u64: case IR_bigger_u64: case IR_smaller_u64:
+            case IR_bigger_equals_f32: case IR_smaller_equals_f32: case IR_bigger_f32: case IR_smaller_f32:
+            case IR_bigger_equals_f64: case IR_smaller_equals_f64: case IR_bigger_f64: case IR_smaller_f64:{
+                ast_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                u32 information = ast_kind - IR_bigger_equals_s32;
+                enum ir_type ir_type = IR_TYPE_s32 + (information >> 2);
+                
+                // 0 - bigger equals, 1 - smaller equals, 2 - bigger, 3 - smaller
+                u32 condition_information = information & 3;
+                enum comp_condition comp = COMP_bigger_equals + condition_information + (ir_type_signed(ir_type) << 2);
+                int size = ir_type_size[ir_type];
+                
+                struct emit_location *result;
+                if(ir_type == IR_TYPE_f32 || ir_type == IR_TYPE_f64){
+                    lhs = emit_load_float(context, lhs);
+                    
+                    struct prefixes prefix = create_prefixes((ir_type == IR_TYPE_f32) ? ASM_PREFIX_NON_PACKED_OP_float : ASM_PREFIX_NON_PACKED_OP_double);
+                    
+                    if(rhs->state == EMIT_LOCATION_loaded){
+                        emit_register_register(context, prefix, two_byte_opcode(COMPARE_XMM), lhs, rhs);
+                    }else{
+                        assert(rhs->state == EMIT_LOCATION_register_relative);
+                        emit_register_relative_register(context, prefix, two_byte_opcode(COMPARE_XMM), lhs->loaded_register, rhs);
+                    }
+                    free_emit_location(context, rhs);
+                    
+                    result = lhs;
+                }else{
+                    result = emit_binary_op__internal(context, no_prefix(), lhs, rhs, size, 0, REG_OPCODE_CMP, CMP_REG8_REGM8, CMP_REG_REGM);
+                }
+                free_emit_location(context, result); // we only care about the flags
+                
+                struct emit_location *conditional = emit_location_conditional(context, comp);
+                
+                if(ast_arena_at < current_function->end_in_ast_arena){ // @paranoid
+                    struct ast *next_ast = (struct ast *)ast_arena_at;
+                    
+                    if(next_ast->kind != AST_jump_if_true && next_ast->kind != AST_jump_if_false && next_ast->kind != AST_unary_logical_not){
+                        // 
+                        // If we have a condition, load it unless it leads directly into a conditional jump.
+                        // 
+                        conditional = emit_load_gpr(context, conditional);
+                    }
+                }
+                
+                emit_location_stack[emit_location_stack_at-1] = conditional;
+            }break;
+            
             
             default:{
                 report_internal_compiler_error(null, __FUNCTION__ ": Unhandled ast");

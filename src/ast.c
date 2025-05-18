@@ -430,6 +430,7 @@ enum ast_kind{
     AST_binary_logical_equals,
     AST_binary_logical_unequals,
     
+    // We use the order of these nodes.
     AST_binary_bigger_equals,
     AST_binary_smaller_equals,
     AST_binary_bigger,
@@ -516,6 +517,8 @@ enum ast_kind{
     AST_count,
 };
 
+#include "ir.h"
+
 #define REMOVE_AST 0
 
 struct ast{
@@ -532,7 +535,10 @@ struct ast{
 };
 
 struct expr{
-    struct ast *ast;
+    union{
+        struct ast *ast;
+        struct ir *ir;
+    };
     struct token *token;
     
     struct ast_type *resolved_type;
