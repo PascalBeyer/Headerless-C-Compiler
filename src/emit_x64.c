@@ -4292,20 +4292,34 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             case IR_bigger_equals_s64: case IR_smaller_equals_s64: case IR_bigger_s64: case IR_smaller_s64:
             case IR_bigger_equals_u64: case IR_smaller_equals_u64: case IR_bigger_u64: case IR_smaller_u64:
             case IR_bigger_equals_f32: case IR_smaller_equals_f32: case IR_bigger_f32: case IR_smaller_f32:
-            case IR_bigger_equals_f64: case IR_smaller_equals_f64: case IR_bigger_f64: case IR_smaller_f64:{
+            case IR_bigger_equals_f64: case IR_smaller_equals_f64: case IR_bigger_f64: case IR_smaller_f64:
+            
+            case IR_equals_u32: case IR_unequals_u32: case IR_equals_u64: case IR_unequals_u64:
+            case IR_equals_f32: case IR_unequals_f32: case IR_equals_f64: case IR_unequals_f64:{
                 ast_arena_at += sizeof(struct ir);
                 
                 struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
                 struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
                 emit_location_stack_at -= 1;
                 
-                u32 information = ast_kind - IR_bigger_equals_s32;
-                enum ir_type ir_type = IR_TYPE_s32 + (information >> 2);
+                enum ir_type ir_type;
+                enum comp_condition comp;
                 
-                // 0 - bigger equals, 1 - smaller equals, 2 - bigger, 3 - smaller
-                u32 condition_information = information & 3;
-                enum comp_condition comp = COMP_bigger_equals + condition_information + (ir_type_signed(ir_type) << 2);
-                int size = ir_type_size[ir_type];
+                if(ast_kind >= IR_equals_u32){
+                    u32 information = ast_kind - IR_equals_u32;
+                    u32 condition_information = information & 1;
+                    u32 size_bit = (information >> 1) & 1;
+                    u32 float_vs_integer = (information >> 2) & 1;
+                    
+                    ir_type = (float_vs_integer ? IR_TYPE_f32 : IR_TYPE_u32) + size_bit; // f64 or s64
+                    comp = COMP_equals + condition_information;
+                }else{
+                    u32 information = ast_kind - IR_bigger_equals_s32;
+                    u32 condition_information = information & 3; // 0 - bigger equals, 1 - smaller equals, 2 - bigger, 3 - smaller
+                    
+                    ir_type = IR_TYPE_s32 + (information >> 2);
+                    comp = COMP_bigger_equals + condition_information + (ir_type_signed(ir_type) << 2);
+                }
                 
                 struct emit_location *result;
                 if(ir_type == IR_TYPE_f32 || ir_type == IR_TYPE_f64){
@@ -4323,6 +4337,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     
                     result = lhs;
                 }else{
+                    int size = ir_type_size[ir_type];
                     result = emit_binary_op__internal(context, no_prefix(), lhs, rhs, size, 0, REG_OPCODE_CMP, CMP_REG8_REGM8, CMP_REG_REGM);
                 }
                 free_emit_location(context, result); // we only care about the flags
@@ -4341,6 +4356,173 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 }
                 
                 emit_location_stack[emit_location_stack_at-1] = conditional;
+            }break;
+            
+            case IR_postinc_bool:     case IR_postdec_bool:
+            case IR_postinc_u8:       case IR_postdec_u8:
+            case IR_postinc_u16:      case IR_postdec_u16:
+            case IR_postinc_u32:      case IR_postdec_u32:
+            case IR_postinc_u64:      case IR_postdec_u64:
+            case IR_postinc_f32:      case IR_postdec_f32:
+            case IR_postinc_f64:      case IR_postdec_f64:
+            case IR_postinc_pointer:  case IR_postdec_pointer:
+            case IR_postinc_bitfield: case IR_postdec_bitfield:{
+                ast_arena_at += sizeof(struct ir);
+                
+                struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
+                assert(loc->state == EMIT_LOCATION_register_relative);
+                
+                emit_location_prevent_spilling(context, loc);
+                
+                struct emit_location *loaded = emit_location_invalid(context);
+                if(ast_arena_at < current_function->end_in_ast_arena){ // @paranoid
+                    struct ast *next_ast = (struct ast *)ast_arena_at;
+                    if(next_ast->kind != AST_pop_expression) loaded = emit_load_gpr(context, loc);
+                }
+                
+                switch((int)ast_kind){
+                    
+                    // FF_DECREMENT_REGM
+                    
+                    case IR_postinc_u8:{
+                        emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FE), FF_INCREMENT_REGM, loc);
+                    }break;
+                    
+                    case IR_postinc_u16: case IR_postinc_u32: case IR_postinc_u64:{
+                        emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_INCREMENT_REGM, loc);
+                    }break;
+                    
+                    case IR_postdec_u8:{
+                        emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FE), FF_DECREMENT_REGM, loc);
+                    }break;
+                    
+                    case IR_postdec_u16: case IR_postdec_u32: case IR_postdec_u64:{
+                        emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_DECREMENT_REGM, loc);
+                    }break;
+                    
+                    case IR_postinc_bool:{
+                        // For _Bool we want the following:
+                        //  arst++: mov [arst], 1
+                        struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
+                        emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(MOVE_REGM8_IMMEDIATE8), 0, loc, immediate);
+                    }break;
+                    
+                    case IR_postdec_bool:{
+                        // For _Bool we want the following:
+                        //  arst--: xor [arst], 1
+                        struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
+                        emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM8_IMMIDIATE8), REG_OPCODE_XOR, loc, immediate);
+                    }break;
+                    
+                    case IR_postdec_f32:
+                    case IR_postinc_f32:{
+                        if(!loaded) loaded = emit_load_float(context, loc);
+                        
+                        struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
+                        emitted->value = 1.0;
+                        set_resolved_type(&emitted->base, &globals.typedef_f32, null);
+                        
+                        sll_push_back(context->emitted_float_literals, emitted);
+                        context->emitted_float_literals.amount_of_float_literals += 1;
+                        
+                        struct emit_location *float_literal = emit_location_rip_relative(context, &emitted->base, 4);
+                        
+                        enum register_encoding temp_register = allocate_register(context, REGISTER_KIND_xmm);
+                        struct emit_location *lhs = emit_load_float_into_specific_register(context, loaded, temp_register);
+                        
+                        // emit 'op lhs, [float_literal]'
+                        emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode((ast_kind == IR_postinc_f32) ? ADD_XMM : SUB_XMM), lhs->loaded_register, float_literal);
+                        
+                        emit_store(context, loc, lhs);
+                    }break;
+                    
+                    case IR_postdec_f64:
+                    case IR_postinc_f64:{
+                        if(!loaded) loaded = emit_load_float(context, loc);
+                        
+                        struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
+                        emitted->value = 1.0;
+                        set_resolved_type(&emitted->base, &globals.typedef_f64, null);
+                        
+                        sll_push_back(context->emitted_float_literals, emitted);
+                        context->emitted_float_literals.amount_of_float_literals += 1;
+                        
+                        struct emit_location *float_literal = emit_location_rip_relative(context, &emitted->base, 8);
+                        
+                        enum register_encoding temp_register = allocate_register(context, REGISTER_KIND_xmm);
+                        struct emit_location *lhs = emit_load_float_into_specific_register(context, loaded, temp_register);
+                        
+                        // emit 'op lhs, [float_literal]'
+                        emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode((ast_kind == IR_postinc_f32) ? ADD_XMM : SUB_XMM), lhs->loaded_register, float_literal);
+                        
+                        emit_store(context, loc, lhs);
+                    }break;
+                    
+                    case IR_postdec_pointer:
+                    case IR_postinc_pointer:{
+                        ast_arena_at -= sizeof(struct ir);
+                        struct ir_pointer_increment *increment = (struct ir_pointer_increment *)ast_arena_at;
+                        ast_arena_at += sizeof(*increment);
+                        
+                        struct ast_pointer_type *pointer = increment->pointer_type;
+                        
+                        u8 reg_inst = (ast_kind == IR_postinc_pointer) ? REG_OPCODE_ADD : REG_OPCODE_SUB;
+                        smm size = pointer->pointer_to->size;
+                        b32 is_big = size > max_s8;
+                        
+                        // @cleanup: How is this guaranteed?
+                        assert(size >= 0); // @note: allow empty structs to be incremented.
+                        assert(size <= 0xffffffff);
+                        u8 inst = is_big ? REG_EXTENDED_OPCODE_REGM_IMMIDIATE : REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8;
+                        
+                        assert(loc->size == 8);
+                        struct emit_location *immediate = emit_location_immediate(context, size, is_big ? 4 : 1);
+                        emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(inst), reg_inst, loc, immediate);
+                    }break;
+                    
+                    case IR_postdec_bitfield:
+                    case IR_postinc_bitfield:{
+                        ast_arena_at -= sizeof(struct ir);
+                        struct ir_bitfield_increment *increment = (struct ir_bitfield_increment *)ast_arena_at;
+                        ast_arena_at += sizeof(*increment);
+                        
+                        if(!loaded) loaded = emit_load_float(context, loc);
+                        
+                        struct ast_bitfield_type *bitfield = increment->bitfield_type;
+                        
+                        // @note: We return 'loaded' in the end, which is still a bitfield.
+                        emit_location_prevent_spilling(context, loaded);
+                        
+                        // Copy 'loaded' so we retain the original value.
+                        enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
+                        struct emit_location *copied = emit_load_into_specific_gpr(context, loaded, reg);
+                        
+                        // Load the bitfield.
+                        copied = emit_load_bitfield(context, copied, bitfield);
+                        
+                        // Increment/Decrement 'copied'.
+                        u8 inst = (ast_kind == IR_postinc_bitfield) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
+                        u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
+                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(opcode), inst, copied);
+                        
+                        // Truncate the value of loaded again to the size of 'loc', 
+                        // as that is what 'emit_store_bitfield' expects.
+                        copied->size = loc->size;
+                        
+                        // Store copied.
+                        emit_store_bitfield(context, bitfield, loc, copied);
+                        
+                        // "Return" the original "loaded" value.
+                        emit_location_allow_spilling(context, loaded);
+                    }break;
+                    
+                    invalid_default_case();
+                }
+                    
+                emit_location_allow_spilling(context, loc);
+                free_emit_location(context, loc);
+                
+                emit_location_stack[emit_location_stack_at-1] = loaded;
             }break;
             
             

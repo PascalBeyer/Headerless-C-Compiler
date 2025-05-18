@@ -13,7 +13,10 @@ enum ir_kind{
     IR_pointer_literal_deref,
     
     IR_pop_expression,
+    
+    IR_duplicate,
     IR_duplicate_lhs,
+    
     IR_swap_lhs_rhs,
     IR_skip,
     
@@ -85,20 +88,29 @@ enum ir_kind{
     IR_zero_extend_u16_to_u64,
     IR_zero_extend_u32_to_u64,
     
-    IR_inc_u8,
-    IR_inc_u16,
-    IR_inc_u32,
-    IR_inc_u64,
+    IR_postinc_u8,
+    IR_postinc_u16,
+    IR_postinc_u32,
+    IR_postinc_u64,
     
-    IR_inc_bool,
-    IR_inc_bitfield,
-    IR_inc_f32,
-    IR_inc_f64,
+    IR_postinc_bool,
+    IR_postinc_f32,
+    IR_postinc_f64,
     
-    IR_dec_bool,
-    IR_dec_bitfield,
-    IR_dec_f32,
-    IR_dec_f64,
+    IR_postinc_pointer,
+    IR_postinc_bitfield,
+    
+    IR_postdec_u8,
+    IR_postdec_u16,
+    IR_postdec_u32,
+    IR_postdec_u64,
+    
+    IR_postdec_bool,
+    IR_postdec_f32,
+    IR_postdec_f64,
+    
+    IR_postdec_pointer,
+    IR_postdec_bitfield,
     
     IR_deref,
     IR_member,
@@ -202,14 +214,17 @@ enum ir_kind{
     IR_bigger_f64,
     IR_smaller_f64,
     
+    // 
+    // We use the order of these as well.
+    // 
     IR_equals_u32,
     IR_unequals_u32,
     
     IR_equals_u64,
     IR_unequals_u64,
+    
     IR_equals_f32,
     IR_unequals_f32,
-    
     
     IR_equals_f64,
     IR_unequals_f64,
@@ -353,3 +368,13 @@ static int ir_type_signed(enum ir_type ir_type){
     u32 integer_type_index = (u32)(ir_type - IR_TYPE_s8);
     return integer_type_index <= (IR_TYPE_u64 - IR_TYPE_s8) && !(integer_type_index & 1);
 }
+
+struct ir_pointer_increment{
+    struct ir base;
+    struct ast_pointer_type *pointer_type;
+};
+
+struct ir_bitfield_increment{
+    struct ir base;
+    struct ast_bitfield_type *bitfield_type;
+};

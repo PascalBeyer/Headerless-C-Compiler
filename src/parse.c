@@ -4746,22 +4746,92 @@ case NUMBER_KIND_##type:{ \
         struct token *test = next_token(context);
         switch(test->type){
             case TOKEN_increment:{
-                struct ast *inc = ast_push_unary_expression(context, AST_unary_postinc, operand);
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, test)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand.resolved_type, test, "++")) return operand;
                 
-                set_resolved_type(inc, operand.resolved_type, operand.defined_type);
-                operand.ast = inc; // Types are already set correctly.
+                // 
+                // @cleanup: Atomic integer types.
+                // 
+                
+                if(operand.resolved_type->kind == AST_pointer_type){
+                    struct ir_pointer_increment *increment = push_struct(&context->ast_arena, struct ir_pointer_increment);
+                    increment->base.kind = IR_postinc_pointer;
+                    increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
+                    
+                    operand.ir = &increment->base;
+                }else if(operand.resolved_type->kind == AST_bitfield_type){
+                    struct ir_bitfield_increment *increment = push_struct(&context->ast_arena, struct ir_bitfield_increment);
+                    increment->base.kind = IR_postinc_bitfield;
+                    increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
+                    
+                    operand.ir = &increment->base;
+                }else{
+                    enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
+                    
+                    static u8 ir_type_to_inc_kind[] = {
+                        [IR_bool] = IR_postinc_bool,
+                        
+                        [IR_TYPE_s8] = IR_postinc_u8,
+                        [IR_TYPE_u8] = IR_postinc_u8,
+                        
+                        [IR_TYPE_s16] = IR_postinc_u16,
+                        [IR_TYPE_u16] = IR_postinc_u16,
+                        
+                        [IR_TYPE_s32] = IR_postinc_u32,
+                        [IR_TYPE_u32] = IR_postinc_u32,
+                        
+                        [IR_TYPE_s64] = IR_postinc_u64,
+                        [IR_TYPE_u64] = IR_postinc_u64,
+                        
+                        [IR_TYPE_f32] = IR_postinc_f32,
+                        [IR_TYPE_f64] = IR_postinc_f32,
+                    };
+                    
+                    operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
+                }
                 
                 context->in_lhs_expression = false;
             }break;
             case TOKEN_decrement:{
-                struct ast *dec = ast_push_unary_expression(context, AST_unary_postdec, operand);
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, test)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand.resolved_type, test, "--")) return operand;
                 
-                set_resolved_type(dec, operand.resolved_type, operand.defined_type);
-                operand.ast = dec; // Types are already set correctly.
+                if(operand.resolved_type->kind == AST_pointer_type){
+                    struct ir_pointer_increment *increment = push_struct(&context->ast_arena, struct ir_pointer_increment);
+                    increment->base.kind = IR_postdec_pointer;
+                    increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
+                    
+                    operand.ir = &increment->base;
+                }else if(operand.resolved_type->kind == AST_bitfield_type){
+                    struct ir_bitfield_increment *increment = push_struct(&context->ast_arena, struct ir_bitfield_increment);
+                    increment->base.kind = IR_postdec_bitfield;
+                    increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
+                    
+                    operand.ir = &increment->base;
+                }else{
+                    enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
+                    
+                    static u8 ir_type_to_inc_kind[] = {
+                        [IR_bool] = IR_postdec_bool,
+                        
+                        [IR_TYPE_s8] = IR_postdec_u8,
+                        [IR_TYPE_u8] = IR_postdec_u8,
+                        
+                        [IR_TYPE_s16] = IR_postdec_u16,
+                        [IR_TYPE_u16] = IR_postdec_u16,
+                        
+                        [IR_TYPE_s32] = IR_postdec_u32,
+                        [IR_TYPE_u32] = IR_postdec_u32,
+                        
+                        [IR_TYPE_s64] = IR_postdec_u64,
+                        [IR_TYPE_u64] = IR_postdec_u64,
+                        
+                        [IR_TYPE_f32] = IR_postdec_f32,
+                        [IR_TYPE_f64] = IR_postdec_f32,
+                    };
+                    
+                    operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
+                }
                 
                 context->in_lhs_expression = false;
             }break;
@@ -5866,13 +5936,22 @@ case NUMBER_KIND_##type:{ \
                         report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, op_token);
                         return operand;
                     }
-                }else{
-                    if(match->kind == AST_float_type) ast_kind += AST_binary_logical_equals_float - AST_binary_logical_equals;
                 }
                 
-                struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
-                set_resolved_type(&op->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
-                operand.ast = &op->base;
+                // 1 bit equals vs unequals
+                // 1 bit float vs integer
+                // 1 bit 32 vs 64
+                // 
+                // IR_equals_u32, IR_unequals_u32, IR_equals_u64, IR_unequals_u64,
+                // IR_equals_f32, IR_unequals_f32, IR_equals_f64, IR_unequals_f64,
+                
+                u32 equals_or_unequals = ast_kind - AST_binary_logical_equals;
+                u32 size_bit = (match == null) || (match->size == 8);
+                u32 float_vs_integer = match && match->kind == AST_float_type;
+                u32 information = (float_vs_integer << 2) | (size_bit << 1) | equals_or_unequals;
+                
+                enum ir_kind ir_kind = IR_equals_u32 + information;
+                operand.ir = push_ir(context, ir_kind);
                 operand.resolved_type = &globals.typedef_s32;
                 operand.defined_type  = (struct ast *)&globals.typedef_u8;
                 
