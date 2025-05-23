@@ -784,7 +784,7 @@ struct emit_location{
             
             smm log_index_scale;
             smm offset;
-            struct ast *ast; // rip_relative iff (ast != null)
+            enum ast_kind *ast; // rip_relative iff (ast != null)
         }; // register_relative & rip_relative
     };
 };
@@ -821,7 +821,7 @@ func struct emit_location *emit_location_conditional(struct context *context, en
     return ret;
 }
 
-func struct emit_location *emit_location_register_relative__internal(struct context *context, struct emit_location *base, struct emit_location *index_register, smm offset, smm size, struct ast *ast){
+func struct emit_location *emit_location_register_relative__internal(struct context *context, struct emit_location *base, struct emit_location *index_register, smm offset, smm size, enum ast_kind *ast){
     struct emit_location *ret = push_struct(&context->scratch, struct emit_location);
     ret->state = EMIT_LOCATION_register_relative;
     ret->base = base;
@@ -838,7 +838,7 @@ func struct emit_location *emit_location_register_relative(struct context *conte
     return emit_location_register_relative__internal(context, base, index_register, offset, size, null);
 }
 
-func struct emit_location *emit_location_rip_relative(struct context *context, struct ast *ast, smm size){
+func struct emit_location *emit_location_rip_relative(struct context *context, enum ast_kind *ast, smm size){
     return emit_location_register_relative__internal(context, context->register_bp, null, 0, size, ast);
 }
 
@@ -1550,10 +1550,10 @@ func void emit_memset(struct context *context, struct emit_location *dest, u8 _v
     free_emit_location(context, count_register);
 }
 
-func u64 integer_literal_to_bytes(struct ast *ast){
-    assert(ast->kind == AST_integer_literal);
-    struct ast_integer_literal *lit = (struct ast_integer_literal *)ast;
-    return lit->_u64;
+func u64 integer_literal_to_bytes(struct ir *ast){
+    assert(ast->kind == IR_integer_literal);
+    struct ir_integer_literal *lit = (struct ir_integer_literal *)ast;
+    return integer_literal_as_u64(&(struct expr){.ir = &lit->base, null, lit->type, null});
 }
 
 func void emit_store(struct context *context, struct emit_location *dest, struct emit_location *source){
@@ -1689,10 +1689,18 @@ func struct emit_location *emit_binary_op__internal(struct context *context, str
     return dest;
 }
 
+enum emit_dmm_flags{
+    EMIT_DMM_is_signed = 1, // @note: We use that this is 1.
+    EMIT_DMM_is_assignment = 2,
+    EMIT_DMM_is_mod = 4,
+};
 
-func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct context *context, struct emit_location *lhs, struct emit_location *rhs, smm size, int is_signed, u8 REG_OPCODE_signed, u8 REG_OPCODE_unsigned, enum ast_kind ast_kind){
+func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct context *context, struct emit_location *lhs, struct emit_location *rhs, smm size, u8 REG_OPCODE_signed, u8 REG_OPCODE_unsigned, enum emit_dmm_flags flags){
     
-    int is_assignment = ast_kind == AST_modulo_assignment || ast_kind == AST_divide_assignment || ast_kind == AST_times_assignment;
+    int is_signed = (flags & EMIT_DMM_is_signed) != 0;
+    int is_assignment = (flags & EMIT_DMM_is_assignment) != 0;
+    int is_mod = (flags & EMIT_DMM_is_mod) != 0;
+    
     //
     // thses instructions perform an operation like MUL rdx:rax (rax * REGM)
     // i.e multiply rax with REGM then store the 'upper part' in rdx and the 'lower part' in rax.
@@ -1763,7 +1771,7 @@ func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct conte
     lower_part->size = size;
     
     if(is_assignment){
-        if(ast_kind == AST_modulo_assignment){
+        if(is_mod){
             if(size == 1){
                 free_emit_location(context, upper_part);
                 // the result is in AX
@@ -1784,7 +1792,7 @@ func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct conte
         return lhs;
     }
     
-    if(ast_kind == AST_binary_mod){
+    if(is_mod){
         // if size == 1 then the upper_part is 'AH' and not 'DL'...
         if(size == 1){
             free_emit_location(context, upper_part);
@@ -2194,8 +2202,8 @@ func void emit_inline_asm_binary_op(struct context *context, struct prefixes pre
     }
 }
 
-struct emit_location *get_emit_location_for_identifier(struct context *context, struct ast *ast){
-    struct ast_identifier *ident = cast(struct ast_identifier *)ast;
+struct emit_location *get_emit_location_for_identifier(struct context *context, struct ir *ir){
+    struct ir_identifier *ident = cast(struct ir_identifier *)ir;
     struct ast_declaration *decl = ident->decl;
     
     // There are some cases:
@@ -2208,8 +2216,8 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
     if(decl->flags & DECLARATION_FLAGS_is_enum_member){
         // @cleanup: can we even get in here? I thought we resolved them while parsing
         assert(decl->assign_expr);
-        assert(decl->assign_expr->kind == AST_integer_literal);
-        return emit_location_immediate(context, integer_literal_to_bytes(decl->assign_expr), decl->type->size);
+        assert(decl->assign_expr->kind == IR_integer_literal);
+        return emit_location_immediate(context, integer_literal_to_bytes((struct ir *)decl->assign_expr), decl->type->size);
     }
     
     smm decl_size = decl->type->size;
@@ -2232,9 +2240,9 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
         emit(MOVE_REG_IMMEDIATE + (offset_reg->loaded_register & 7));
         smm byte_offset = emit_u32(0);
         smm rip_at = get_bytes_emitted(context);
-        emit_patch(context, PATCH_section_offset, &decl->base, 0, &context->current_function->as_decl, byte_offset, rip_at);
+        emit_patch(context, PATCH_section_offset, &decl->kind, 0, &context->current_function->as_decl, byte_offset, rip_at);
         
-        struct emit_location *tls_index = emit_location_rip_relative(context, &globals.tls_index_declaration->base, 4);
+        struct emit_location *tls_index = emit_location_rip_relative(context, &globals.tls_index_declaration->kind, 4);
         
         // mov <tls_slots>, gs:[58h]
         struct emit_location *tls_slots = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), 8);
@@ -2264,10 +2272,10 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
             // up in here, because if we call an identifier we never recurse into emit_code_for_ast.
             //                                                                              -08.08.2021
             
-            struct emit_location *address = emit_location_rip_relative(context, &decl->base, 8);
+            struct emit_location *address = emit_location_rip_relative(context, &decl->kind, 8);
             ret = emit_location_register_relative(context, address, 0, 0, decl_size);
         }else{
-            ret = emit_location_rip_relative(context, &decl->base, decl_size);
+            ret = emit_location_rip_relative(context, &decl->kind, decl_size);
         }
     }else{
         
@@ -2299,7 +2307,7 @@ struct alloca_patch_node{
     u8 *patch_location;
 };
 
-func struct emit_location *emit_intrinsic(struct context *context, struct ast_function *function, struct ast_function_call *call, struct emit_location **argument_locations){
+func struct emit_location *emit_intrinsic(struct context *context, struct ast_function *function, struct ir_function_call *call, struct emit_location **argument_locations){
     (void)call; // @cleanup: How is this not used?
     struct string identifier = function->identifier->string;
     
@@ -2368,7 +2376,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
     }
 }
 
-func struct emit_location *emit_call_to_inline_asm_function(struct context *context, struct ast_function *function, struct ast_function_call *call, struct emit_location **emit_locations){
+func struct emit_location *emit_call_to_inline_asm_function(struct context *context, struct ast_function *function, struct ir_function_call *call, struct emit_location **emit_locations){
     (void)call;
     //
     // Here we have emit all emit locations into 'emit_locations' and did all the promotions.
@@ -2417,11 +2425,10 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
     // Carefully get the asm_block
     //
     // @note: we use the 'patch_call_source_declaration' here, as the other one might not be defined.
-    assert(function->scope->kind == AST_scope);
-    struct ast_scope *scope = (struct ast_scope *)function->scope;
+    struct ast_scope *scope = function->scope;
     assert(scope->asm_block);
 
-    struct ast_asm_block *asm_block = scope->asm_block;
+    struct ir_asm_block *asm_block = scope->asm_block;
     context->in_inline_asm_function = asm_block->token;
     
     emit_inline_asm_block(context, asm_block);
@@ -2503,6 +2510,37 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
     return emit_location_register_relative(context, pointer, index, 0, deref_type->size);
 }
 
+struct emit_location *emit_integer_cast(struct context *context, struct emit_location *loc, int source_size, struct opcode opcode){
+    
+    loc->size = source_size;
+    
+    if(loc->state == EMIT_LOCATION_register_relative){
+        enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
+        emit_register_relative_register(context, no_prefix(), opcode, reg, loc);
+        free_emit_location(context, loc);
+        loc = emit_location_loaded(context, REGISTER_KIND_gpr, reg, source_size);
+    }else{
+        emit_register_register(context, no_prefix(), opcode, loc, loc);
+    }
+    
+    return loc;
+}
+
+struct emit_location *emit_float_cast(struct context *context, struct emit_location *loc, enum legacy_prefixes prefix, int size, int big_size, u8 opcode){
+    struct emit_location *loaded = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), size);
+    
+    if(loc->state == EMIT_LOCATION_register_relative){
+        loc->size = big_size;
+        emit_register_relative_register(context, create_prefixes(prefix), two_byte_opcode(opcode), loaded->loaded_register, loc);
+    }else{
+        emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(opcode), loaded->loaded_register, loc->loaded_register, big_size);
+    }
+    free_emit_location(context, loc);
+    
+    return loaded;
+}
+
+
 //_____________________________________________________________________________________________________________________
 // :emit_code_for_function__internal
 
@@ -2520,74 +2558,76 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
     smm line_information_size = current_function->line_information.size;
     smm line_information_at = 0;
     
-    for(u8 *ast_arena_at = current_function->start_in_ast_arena; ast_arena_at < current_function->end_in_ast_arena; ){
-        struct ast *ast = (struct ast *)ast_arena_at;
+    for(u8 *ir_arena_at = current_function->start_in_ir_arena; ir_arena_at < current_function->end_in_ir_arena; ){
+        struct ir *ir = (struct ir *)ir_arena_at;
         
-        if((line_information_at < line_information_size) && (line_information[line_information_at].offset == (u32)(ast_arena_at - current_function->start_in_ast_arena))){
+        if((line_information_at < line_information_size) && (line_information[line_information_at].offset == (u32)(ir_arena_at - current_function->start_in_ir_arena))){
             // :function_line_information
             // 
-            // Here we remap the offset from pointing into the ast_arena to pointing into the emit_pool.
+            // Here we remap the offset from pointing into the ir_arena to pointing into the emit_pool.
             line_information[line_information_at++].offset = to_s32(get_bytes_emitted(context));
         }
         
-        enum ast_kind ast_kind = ast->kind;
+        enum ir_kind ir_kind = ir->kind;
         
-        switch((int)ast_kind){
+        switch(ir_kind){
             
             // 
             // For now, for primary expressions, fall back to `emit_code_for_ast`.
             // 
             
-            case AST_identifier:{
-                ast_arena_at += sizeof(struct ast_identifier);
-                emit_location_stack[emit_location_stack_at++] = get_emit_location_for_identifier(context, ast);
+            case IR_identifier:{
+                ir_arena_at += sizeof(struct ir_identifier);
+                emit_location_stack[emit_location_stack_at++] = get_emit_location_for_identifier(context, ir);
             }break;
             
-            case AST_string_literal:{
-                ast_arena_at += sizeof(struct ast_string_literal);
-                struct ast_string_literal *string_literal = (struct ast_string_literal *)ast;
+            case IR_string_literal:{
+                ir_arena_at += sizeof(struct ir_string_literal);
+                struct ir_string_literal *string_literal = (struct ir_string_literal *)ir;
                 sll_push_back(context->string_literals, string_literal);
                 context->string_literals.amount_of_strings += 1;
-                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &string_literal->base, 8);
+                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &string_literal->base.kind, 8);
             }break;
             
-            case AST_integer_literal:{
-                ast_arena_at += sizeof(struct ast_integer_literal);
-                emit_location_stack[emit_location_stack_at++] = emit_location_immediate(context, integer_literal_to_bytes(ast), ast->resolved_type->size);
+            case IR_integer_literal:{
+                ir_arena_at += sizeof(struct ir_integer_literal);
+                struct ir_integer_literal *lit = (struct ir_integer_literal *)ir;
+                emit_location_stack[emit_location_stack_at++] = emit_location_immediate(context, integer_literal_to_bytes(&lit->base), lit->type->size);
             }break;
             
-            case AST_float_literal:{
-                ast_arena_at += sizeof(struct ast_float_literal);
-                struct ast_float_literal *f = cast(struct ast_float_literal *)ast;
+            case IR_float_literal:{
+                struct ir_float_literal *f = (struct ir_float_literal *)ir;
+                ir_arena_at += sizeof(*f);
                 
                 // @note: This sucks!
-                struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
+                struct ir_emitted_float_literal *emitted = push_struct(context->arena, struct ir_emitted_float_literal);
+                emitted->base.kind = AST_emitted_float_literal;
                 emitted->value = f->value;
+                emitted->type = f->type;
                 
                 sll_push_back(context->emitted_float_literals, emitted);
                 context->emitted_float_literals.amount_of_float_literals += 1;
-                set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
                 
-                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &emitted->base, f->base.resolved_type->size);
+                emit_location_stack[emit_location_stack_at++] = emit_location_rip_relative(context, &emitted->base.kind, f->type->size);
             }break;
             
-            case AST_pointer_literal:{
-                ast_arena_at += sizeof(struct ast_pointer_literal);
-                struct ast_pointer_literal *pointer = cast(struct ast_pointer_literal *)ast;
-                emit_location_stack[emit_location_stack_at++] = emit_location_immediate(context, (u64)pointer->pointer, ast->resolved_type->size);
+            case IR_pointer_literal:{
+                ir_arena_at += sizeof(struct ir_pointer_literal);
+                struct ir_pointer_literal *pointer = cast(struct ir_pointer_literal *)ir;
+                emit_location_stack[emit_location_stack_at++] = emit_location_immediate(context, (u64)pointer->pointer, 8);
             }break;
             
-            case AST_pointer_literal_deref:{
-                struct ast_pointer_literal *pointer_literal_deref = (struct ast_pointer_literal *)ast;
-                ast_arena_at += sizeof(*pointer_literal_deref);
+            case IR_pointer_literal_deref:{
+                struct ir_pointer_literal *pointer_literal_deref = (struct ir_pointer_literal *)ir;
+                ir_arena_at += sizeof(*pointer_literal_deref);
                 
                 struct emit_location *loc = emit_location_immediate(context, (u64)pointer_literal_deref->pointer, 8);
-                emit_location_stack[emit_location_stack_at++] = emit_location_register_relative(context, loc, null, 0, ast->resolved_type->size);
+                emit_location_stack[emit_location_stack_at++] = emit_location_register_relative(context, loc, null, 0, pointer_literal_deref->type->size);
             }break;
             
-            case AST_compound_literal:{
-                struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)ast;
-                ast_arena_at += sizeof(*compound_literal);
+            case IR_compound_literal:{
+                struct ir_compound_literal *compound_literal = (struct ir_compound_literal *)ir;
+                ir_arena_at += sizeof(*compound_literal);
                 
                 struct ast_declaration *decl = compound_literal->decl;
                 struct ast_type *type = decl->type;
@@ -2600,9 +2640,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack[emit_location_stack_at++] = decl_location;
             }break;
             
-            case AST_temp:{
-                struct ast_temp *temp = (struct ast_temp *)ast;
-                ast_arena_at += sizeof(*temp);
+            case IR_temp:{
+                struct ir_temp *temp = (struct ir_temp *)ir;
+                ir_arena_at += sizeof(*temp);
                 
                 struct ast_type *type = temp->type;
                 
@@ -2613,9 +2653,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             // Initializer:
             // 
             
-            case AST_initializer:{
-                struct ast_initializer *initializer = (struct ast_initializer *)ast;
-                ast_arena_at += sizeof(*initializer);
+            case IR_initializer:{
+                struct ir_initializer *initializer = (struct ir_initializer *)ir;
+                ir_arena_at += sizeof(*initializer);
                 
                 struct emit_location *initializer_location = emit_location_stack[emit_location_stack_at-1];
                 struct emit_location *decl_location = emit_location_stack[emit_location_stack_at-2];
@@ -2630,9 +2670,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 dest->offset = decl_location->offset + offset; // @cleanup: my system is way to confusing about stack offsets
                 
                 if(lhs_type->kind == AST_array_type){
-                    assert(initializer_location->ast && initializer_location->ast->kind == AST_string_literal);
+                    assert(initializer_location->ast && *initializer_location->ast == IR_string_literal);
                     struct ast_array_type   *array = (struct ast_array_type *)lhs_type;
-                    struct ast_string_literal *lit = (struct ast_string_literal *)initializer_location->ast;
+                    struct ir_string_literal *lit = (struct ir_string_literal *)initializer_location->ast;
                     
                     // Mark the string literal as being used.
                     sll_push_back(context->string_literals, lit);
@@ -2660,7 +2700,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     }
                     
                     // @cleanup: this seems stupid, this should just be how string literals work, no?
-                    struct emit_location *rhs = emit_location_rip_relative(context, &lit->base, lit->value.size + extra);
+                    struct emit_location *rhs = emit_location_rip_relative(context, &lit->base.kind, lit->value.size + extra);
                     emit_memcpy(context, dest, rhs);
                     
                 }else if(lhs_type->kind == AST_bitfield_type){
@@ -2677,631 +2717,483 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             // Unary expressions:
             // 
             
-            case AST_implicit_address_conversion:
-            case AST_unary_address:{
-                struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *loc = emit_location_stack[emit_location_stack_at - 1];
-                
-                struct emit_location *loaded = emit_load_address(context, loc, allocate_register(context, REGISTER_KIND_gpr));
-                free_emit_location(context, loc);
-                
-                emit_location_stack[emit_location_stack_at - 1] = loaded;
-            }break;
-            
-            case AST_implicit_address_conversion_lhs:{
-                struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *loc = emit_location_stack[emit_location_stack_at - 2];
-                
-                struct emit_location *loaded = emit_load_address(context, loc, allocate_register(context, REGISTER_KIND_gpr));
-                free_emit_location(context, loc);
-                
-                emit_location_stack[emit_location_stack_at - 2] = loaded;
-            }break;
-            
-            case AST_unary_logical_not:{
-                struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *loc = emit_location_stack[emit_location_stack_at - 1];
-                if(loc->state != EMIT_LOCATION_conditional){
-                    if(loc->state != EMIT_LOCATION_loaded) loc = emit_load_gpr(context, loc);
-                    loc = emit_compare_to_zero(context, loc);
-                }
-                
-                switch(loc->condition){
-                    case COMP_equals:                loc->condition = COMP_unequals;              break;
-                    case COMP_unequals:              loc->condition = COMP_equals;                break;
-                    case COMP_smaller:               loc->condition = COMP_bigger_equals;         break;
-                    case COMP_bigger:                loc->condition = COMP_smaller_equals;        break;
-                    case COMP_smaller_equals:        loc->condition = COMP_bigger;                break;
-                    case COMP_bigger_equals:         loc->condition = COMP_smaller;               break;
-                    case COMP_bigger_equals_signed:  loc->condition = COMP_smaller_signed;        break;
-                    case COMP_smaller_equals_signed: loc->condition = COMP_bigger_signed;         break;
-                    case COMP_bigger_signed:         loc->condition = COMP_smaller_equals_signed; break;
-                    case COMP_smaller_signed:        loc->condition = COMP_bigger_equals_signed;  break;
-                    invalid_default_case();
-                }
-                emit_location_stack[emit_location_stack_at - 1] = loc;
-                
-                // @cleanup: Does this not have to check if the next thing is a jump?
-                
-            }break;
-            
-            case AST_cast:
-            case AST_cast_lhs:{
-                struct ast_cast *cast = (struct ast_cast *)ast;
-                ast_arena_at += sizeof(*cast);
-                
-                // @cleanup: This should not need to be here.
-                struct ast_type *cast_what = cast->cast_what;
+            case IR_cast_to_void:{
+                ir_arena_at += sizeof(struct ir);
                 
                 smm stack_index = emit_location_stack_at-1;
-                if(ast->kind == AST_cast_lhs) stack_index = emit_location_stack_at-2;
-                
                 struct emit_location *loc = emit_location_stack[stack_index];
-                struct ast_type *cast_to = cast->cast_to;
+                if(loc) free_emit_location(context, loc);
+                emit_location_stack[stack_index] = emit_location_invalid(context);
+            }break;
+            
+            case IR_cast_to_bool: case IR_cast_to_bool_lhs:{
+                ir_arena_at += sizeof(struct ir);
                 
-                if(cast_to->kind == AST_bitfield_type){
-                    // 'int a : 3 = 123;' we can only get here, if we inserted an implicit assignment cast.
-                    // just cast to the base type and let the 'AST_assignment'-case take care of the rest.
-                    struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)cast_to;
-                    cast_to = bitfield->base_type;
-                }
+                smm stack_index = emit_location_stack_at-1-(ir_kind == IR_cast_to_bool_lhs);
+                struct emit_location *loc = emit_location_stack[stack_index];
                 
-                if(cast_what == cast_to){
-                    emit_location_stack[stack_index] = loc;
-                    break;
-                }
+                if(loc->state != EMIT_LOCATION_loaded) loc = emit_load_gpr(context, loc);
+                loc = emit_compare_to_zero(context, loc);
+                loc->size = 1; // load the thing as size 1
+                emit_location_stack[stack_index] = emit_load_gpr(context, loc);
+            }break;
+            
+            case IR_cast_f32_to_f64: case IR_cast_f32_to_f64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc->size = 8;
                 
-                if(cast_to == &globals.typedef_void){
-                    // dont free if (void)(void) a // @cleanup: is this still necessary after the equality check above?
-                    if(loc) free_emit_location(context, loc);
-                    emit_location_stack[stack_index] = emit_location_invalid(context);
-                    break;
-                }
-                
-                if(cast_what->kind == AST_bitfield_type){
-                    // this is where we load bitfields
-                    emit_location_stack[stack_index] = emit_load_bitfield(context, loc, (struct ast_bitfield_type *)cast_what);
-                    break;
-                }
-                
-                if(cast_what->kind == AST_atomic_integer_type){
-                    // @note: It seems to me, that on x64 atomic-loads can simply be implemented as a mov.
-                    emit_location_stack[stack_index] = emit_load_gpr(context, loc);
-                    break;
-                }
-                
-                if(cast_to == &globals.typedef_Bool){
-                    if(loc->state != EMIT_LOCATION_loaded) loc = emit_load_gpr(context, loc);
-                    loc = emit_compare_to_zero(context, loc);
-                    loc->size = 1; // load the thing as size 1
-                    emit_location_stack[stack_index] = emit_load_gpr(context, loc);
-                    break;
-                }
-                
-                assert(type_is_arithmetic(cast_to) || cast_to->kind == AST_pointer_type);
-                assert(type_is_arithmetic(cast_what) || cast_what->kind == AST_pointer_type);
-                
-                if(loc->state != EMIT_LOCATION_register_relative){
-                    if(cast_what->kind == AST_float_type){
-                        loc = emit_load_float(context, loc);
-                    }else{
-                        loc = emit_load_gpr(context, loc);
-                    }
-                }
-                
-                if(cast_what->kind == AST_float_type && cast_to->kind == AST_float_type){
-                    
-                    //
-                    // Cast f32 -> f64 or f64 -> f32
-                    //
-                    
-                    // @cleanup: is this the wrong way around, which argument is this prefix for?
-                    struct prefixes sse_prefix = get_sse_prefix_for_scalar(loc->size);
-                    
-                    // cvtsd2ss - convert_scalar_double_to_scalar_single
-                    // cvtss2sd - convert_scalar_single_to_scalar_double
-                    if(loc->state == EMIT_LOCATION_register_relative){
-                        struct emit_location *loaded = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), cast_to->size);
-                        emit_register_relative_register(context, sse_prefix, two_byte_opcode(0x5A), loaded->loaded_register, loc);
-                        free_emit_location(context, loc);
-                        loc = loaded;
-                    }else{
-                        // The last argument of this (4) only decides whether or not we emit a REXW prefix. This instruction does not need REXW.
-                        // So we pass 4, which does not emit any prefixes!
-                        emit_register_op__internal(context, sse_prefix, two_byte_opcode(0x5A), loc->loaded_register, loc->loaded_register, 4);
-                    }
-                    loc->size = cast_to->size;
-                    emit_location_stack[stack_index] = loc;
-                    break;
-                }
-                
-                if(cast_what->kind == AST_float_type){
-                    assert(loc->size == 4 || loc->size == 8);
-                    
-                    // 
-                    // We want to cast some float-type to some integer-type.
-                    // 
-                    // We use the instructions 'cvttsd2si' or 'cvttss2si' based on the 
-                    // the floating point type. These instructions convert to *signed* integer type.
-                    // Hence, we have to do something special here for unsigned types.
-                    // 
-                    // If the destination is a 'u8' or 'u16',  we can simply use the 32-bit version and then truncate.
-                    // If the destination is a 'u32', we can simply use the 64-bit version and then truncate.
-                    // If the destination is a 'u64', we have to check first if the value in the source is large.
-                    // 
-                    // gcc and msvc compare emit something like this:
-                    //     movsd  xmm0, doubled              ; Load the initial value into xmm0.
-                    //     comisd xmm0, qword ptr[rip + big] ; Compare against a big number 9.22337e+19 (0x8000000000000000).
-                    //     jb simple_conversion              ; We are less then the first value which overflows a s64.
-                    //     
-                    //     sub xmm0, qword ptr[rip + big]    ; We exceed the big value, subtract it.
-                    //     cvttsd2si rax, xmm0               ; Then convert, now the result should be (unless overflow in the correct range).
-                    //     mov rcx, 0x8000000000000000       ; Then finally, add the 0x8000000000000000 back into rax.
-                    //     add rax, rcx
-                    //     jmp end
-                    //     
-                    // simple_conversion:
-                    //     cvttsd2si rax, xmm0               ; We know it is in range, simply convert.
-                    //     
-                    // end:
-                    //     
-                    
-                    smm size = (cast_to->size < 4) ? 4 : cast_to->size;
-                    if(cast_to == &globals.typedef_u32) size = 8;
-                    
-                    if(cast_to == &globals.typedef_u64){
-                        //
-                        // This is the hard case. @incomplete:
-                        //
-                    }
-                    
-                    struct emit_location *loaded = emit_location_loaded(context, REGISTER_KIND_gpr, allocate_register(context, REGISTER_KIND_gpr), cast_to->size);
-                    
-                    struct prefixes sse_prefix = get_sse_prefix_for_scalar(loc->size);
-                    if(loc->state == EMIT_LOCATION_register_relative){
-                        loc->size = size; // make sure we emit rexw if we should
-                        emit_register_relative_register(context, sse_prefix, two_byte_opcode(0x2c), loaded->loaded_register, loc);
-                    }else{
-                        emit_register_op__internal(context, sse_prefix, two_byte_opcode(0x2c), loaded->loaded_register, loc->loaded_register, size);
-                    }
+                // cvtss2sd - convert_scalar_single_to_scalar_double
+                if(loc->state == EMIT_LOCATION_register_relative){
+                    struct emit_location *loaded = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 8);
+                    emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(0x5A), loaded->loaded_register, loc);
                     free_emit_location(context, loc);
-                    emit_location_stack[stack_index] = loaded;
-                    break;
+                    loc = loaded;
+                }else{
+                    // The last argument of this (4) only decides whether or not we emit a REXW prefix. This instruction does not need REXW.
+                    // So we pass 4, which does not emit any prefixes!
+                    emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(0x5A), loc->loaded_register, loc->loaded_register, 4);
                 }
                 
-                b32 source_is_signed = type_is_signed(cast_what);
-                
-                if(cast_to->kind != AST_float_type && loc->size >= cast_to->size){
-                    // If it is an integer to integer cast and the cast_to->size fits just truncate and return
-                    // this works because of :little_endian
-                    loc->size = cast_to->size;
-                    emit_location_stack[stack_index] = loc;
-                    break;
-                }
-                
-                if(cast_to->kind != AST_float_type || loc->size < 4){
-                    // If its an integer to integer cast ints a zero / sign extension.
-                    // Thus load the thing into a bigger registers.
-                    // If its a float to integer conversion and the integer is small also load value into a bigger register,
-                    // because the float to int instructions only take s32 or s64.
-                    
-                    smm size_to_load_into = cast_to->size;
-                    
-                    struct opcode opcode = get_opcode_for_move_instruction_and_adjust_size(loc, size_to_load_into, source_is_signed);
-                    
-                    if(loc->state == EMIT_LOCATION_register_relative){
-                        enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                        emit_register_relative_register(context, no_prefix(), opcode, reg, loc);
-                        free_emit_location(context, loc);
-                        loc = emit_location_loaded(context, REGISTER_KIND_gpr, reg, size_to_load_into);
-                    }else{
-                        emit_register_register(context, no_prefix(), opcode, loc, loc);
-                        loc->size = size_to_load_into;
-                    }
-                }
-                
-                if(cast_to->kind == AST_float_type){
-                    assert(loc->size == 4 || loc->size == 8);
-                    assert(cast_what->kind == AST_integer_type); // pointers are disallowed!
-                    
-                    // Casting from int to float:
-                    //
-                    // The conversion instructions 'cvtsi2ss' and 'cvtsi2sd' treat the source operand as signed.
-                    // This means signed -> float/double is easy, the unsigned int case is more complicated.
-                    // For 'u32' we can _extend_ the value into a 64-bit register and then use the 64 bit variant.
-                    // For 'u64' it gets complicated (see the code below).
-                    
-                    enum register_encoding reg = allocate_register(context, REGISTER_KIND_xmm);
-                    struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, reg, cast_to->size);
-                    
-                    enum legacy_prefixes prefix = (cast_to == &globals.typedef_f32) ? ASM_PREFIX_SSE_float : ASM_PREFIX_SSE_double;
-                    
-                    if(cast_what == &globals.typedef_u64){
-                        assert(!source_is_signed && loc->size == 8);
-                        // 
-                        // This is the hard case. 
-                        // We have to shift the u64 down by one and then add it to itself, while keeping rounding correct.
-                        // 
-                        
-                        // The code msvc and gcc emit looks something like this:
-                        //    mov      rax,  u64  ; load the initial value into rax
-                        //    test     rax,  rax  ; check if the top bit is set and set SF <- MSB(rax)
-                        //    js       msb_set    ; jump if 'SF', i.e MSB(rax) is set, to the slow part
-                        //    
-                        //    cvtsi2sd xmm1, rax  ; Convert the value if MSB(rax) is not set
-                        //    jmp      end        ; jump to end as we are done
-                        // 
-                        // msb_set:
-                        //    mov      rcx,  rax  ; save the u64 so we can fix up rounding
-                        //    shr      rax,  1    ; shift the u64, such that the sign bit is not set
-                        //    and      rcx,  1    ; get the parity from the original u64
-                        //    or       rax,  rcx  ; fix up the last bit to be set if either of the last two bits of the original value are set
-                        //    cvtsi2sd xmm1, rax  ; Convert the resulting value
-                        //    addsd    xmm1, xmm1 ; Double it to get back to the desired value
-                        //    
-                        // end:
-                        
-                        // load the value and lock it, so we can copy it
-                        loc = emit_load_gpr(context, loc);
-                        emit_location_prevent_spilling(context, loc);
-                        
-                        // test the value
-                        emit_register_register(context, no_prefix(), one_byte_opcode(TEST_REGM_REG), loc, loc);
-                        
-                        struct jump_context msb_set_jump = zero_struct;
-                        jump_context_emit(context, &msb_set_jump, JUMP_CONTEXT_jump_on_true, COMP_negative);
-                        
-                        // we are good, we have passed the test, MSB is not set. just convert the value!
-                        emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, 8);
-                        
-                        struct jump_context jump_to_end = zero_struct;
-                        jump_context_emit(context, &jump_to_end, JUMP_CONTEXT_jump_on_true, COMP_none);
-                        
-                        // msb_set:
-                        emit_end_jumps(context, msb_set_jump);
-                        
-                        // copy the value
-                        enum register_encoding saved_gpr = allocate_register(context, REGISTER_KIND_gpr);
-                        struct emit_location *saved = emit_load_into_specific_gpr(context, loc, saved_gpr);
-                        
-                        // shift the value to the right by 1.
-                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_1), REG_OPCODE_SHIFT_RIGHT, loc);
-                        
-                        // extract the last bit of the saved value by and'ing it with 1.
-                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8), REG_OPCODE_AND, saved);
-                        emit(1);
-                        
-                        // or the the last bit into the shifted value
-                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), loc, saved);
-                        
-                        // convert the value
-                        emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, 8);
-                        
-                        // double the value
-                        emit_register_register(context, create_prefixes(prefix), two_byte_opcode(ADD_XMM), ret, ret);
-                        
-                        // end:
-                        emit_end_jumps(context, jump_to_end);
-                        
-                        free_emit_location(context, saved);
-                        emit_location_allow_spilling(context, loc);
-                        free_emit_location(context, loc);
-                        emit_location_stack[stack_index] = ret;
-                        break;
-                    }
-                    
-                    if(cast_what == &globals.typedef_u32){
-                        assert(!source_is_signed && loc->size == 4);
-                        // if the source type is 
-                        // we have to extend 'loc' into a full register, just in case it was casted from 64 bit.
-                        enum register_encoding loaded_gpr = allocate_register(context, REGISTER_KIND_gpr);
-                        struct emit_location *loaded = emit_load_into_specific_gpr(context, loc, loaded_gpr);
-                        loaded->size = 8;
-                        loc = loaded;
-                    }
-                    
-                    if(loc->state == EMIT_LOCATION_loaded){
-                        emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
-                    }else{
-                        assert(loc->state == EMIT_LOCATION_register_relative);
-                        emit_register_relative_register(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc);
-                    }
-                    
-                    free_emit_location(context, loc);
-                    emit_location_stack[stack_index] = ret;
-                    break;
-                }
-                
-                // else 'cast_to' and 'operand' are of integer type, so we are just done as we extended it above
-                assert(loc->size  == cast_to->size);
-                assert(loc->state == EMIT_LOCATION_loaded);
                 emit_location_stack[stack_index] = loc;
             }break;
             
-            case AST_unary_postinc:
-            case AST_unary_postdec:{
-                struct ast_unary_op *op = (struct ast_unary_op *)ast;
-                ast_arena_at += sizeof(*op);
+            case IR_cast_f64_to_f32: case IR_cast_f64_to_f32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc->size = 4;
                 
-                struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
-                assert(loc->state == EMIT_LOCATION_register_relative);
-                
-                emit_location_prevent_spilling(context, loc);
-                struct emit_location *loaded = op->base.resolved_type->kind == AST_float_type ? emit_load_float(context, loc) : emit_load_gpr(context, loc);
-                
-                if(op->base.resolved_type->kind == AST_pointer_type){
-                    struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op->base.resolved_type;
-                    u8 reg_inst = (ast->kind == AST_unary_postinc) ? REG_OPCODE_ADD : REG_OPCODE_SUB;
-                    smm size = pointer->pointer_to->size;
-                    b32 is_big = size > max_s8;
-                    
-                    assert(size >= 0); // @note: allow empty structs to be incremented.
-                    assert(size <= 0xffffffff);
-                    u8 inst = is_big ? REG_EXTENDED_OPCODE_REGM_IMMIDIATE : REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8;
-                    
-                    assert(loc->size == 8);
-                    struct emit_location *immediate = emit_location_immediate(context, size, is_big ? 4 : 1);
-                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(inst), reg_inst, loc, immediate);
-                }else if(op->base.resolved_type == &globals.typedef_Bool){
-                    
-                    // 
-                    // For _Bool we want the following:
-                    //  ++arst: mov [arst], 1
-                    //  --arst: xor [arst], 1
-                    
-                    struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
-                    
-                    if(ast->kind == AST_unary_postdec){
-                        emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM8_IMMIDIATE8), REG_OPCODE_XOR, loc, immediate);
-                    }else{
-                        emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(MOVE_REGM8_IMMEDIATE8), 0, loc, immediate);
-                    }
-                }else if(op->base.resolved_type->kind == AST_integer_type){
-                    u8 inst = (ast->kind == AST_unary_postinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
-                    u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
-                    emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
-                }else if(op->base.resolved_type->kind == AST_float_type){
-                    struct ast_float_literal *one = push_ast(context, float_literal); // :ir_refactor_not_sure_initializer
-                    one->value = 1.0;
-                    set_resolved_type(&one->base, op->base.resolved_type, null);
-                    
-                    struct emit_location *rhs;
-                    {   // @cleanup: copy and paste
-                        struct ast_float_literal *f = cast(struct ast_float_literal *)one;
-                        
-                        // @note: This sucks!
-                        struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
-                        emitted->value = f->value;
-                        
-                        sll_push_back(context->emitted_float_literals, emitted);
-                        context->emitted_float_literals.amount_of_float_literals += 1;
-                        set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
-                        
-                        rhs = emit_location_rip_relative(context, &emitted->base, f->base.resolved_type->size);
-                    }
-                    
-                    assert(rhs->state == EMIT_LOCATION_register_relative);
-                    
-                    struct emit_location *lhs = emit_load_float(context, loc); // @cleanup: This should be a register-to-register move instead.
-                    
-                    // emit 'op lhs, [float_literal]'
-                    emit_register_relative_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode((ast->kind == AST_unary_postinc) ? ADD_XMM : SUB_XMM), lhs->loaded_register, rhs);
-                    emit_store(context, loc, lhs);
+                // cvtss2sd - convert_scalar_single_to_scalar_double
+                if(loc->state == EMIT_LOCATION_register_relative){
+                    enum register_kind reg = allocate_register(context, REGISTER_KIND_xmm); 
+                    emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(0x5A), reg, loc);
+                    free_emit_location(context, loc);
+                    loc = emit_location_loaded(context, REGISTER_KIND_xmm, reg, 4);
                 }else{
-                    assert(op->base.resolved_type->kind == AST_bitfield_type);
-                    struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)op->base.resolved_type;
-                    
-                    // @note: We return 'loaded' in the end, which is still a bitfield.
-                    emit_location_prevent_spilling(context, loaded);
-                    
-                    // Copy 'loaded' so we retain the original value.
-                    enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                    struct emit_location *copied = emit_load_into_specific_gpr(context, loaded, reg);
-                    
-                    // Load the bitfield.
-                    copied = emit_load_bitfield(context, copied, bitfield);
-                    
-                    // Increment/Decrement 'copied'.
-                    u8 inst = (ast->kind == AST_unary_postinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
-                    u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
-                    emit_reg_extended_op(context, no_prefix(), one_byte_opcode(opcode), inst, copied);
-                    
-                    // Truncate the value of loaded again to the size of 'loc', 
-                    // as that is what 'emit_store_bitfield' expects.
-                    copied->size = loc->size;
-                    
-                    // Store copied.
-                    emit_store_bitfield(context, bitfield, loc, copied);
-                    
-                    // "Return" the original "loaded" value.
-                    emit_location_allow_spilling(context, loaded);
+                    // The last argument of this (4) only decides whether or not we emit a REXW prefix. This instruction does not need REXW.
+                    // So we pass 4, which does not emit any prefixes!
+                    emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(0x5A), loc->loaded_register, loc->loaded_register, 4);
                 }
                 
+                emit_location_stack[stack_index] = loc;
+            }break;
+            
+            case IR_sign_extend_s8_to_s16: case IR_sign_extend_s8_to_s16_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 2, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM8));
+            }break;
+            
+            case IR_sign_extend_s8_to_s32: case IR_sign_extend_s8_to_s32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 4, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM8));
+            }break;
+            
+            case IR_sign_extend_s8_to_s64: case IR_sign_extend_s8_to_s64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 8, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM8));
+            }break;
+            
+            case IR_sign_extend_s16_to_s32: case IR_sign_extend_s16_to_s32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 4, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM16));
+            }break;
+            
+            case IR_sign_extend_s16_to_s64: case IR_sign_extend_s16_to_s64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 8, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM16));
+            }break;
+            
+            case IR_sign_extend_s32_to_s64: case IR_sign_extend_s32_to_s64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 8, one_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM));
+            }break;
+            
+            case IR_zero_extend_u8_to_u16: case IR_zero_extend_u8_to_u16_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 2, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM8));
+            }break;
+            case IR_zero_extend_u8_to_u32: case IR_zero_extend_u8_to_u32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 4, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM8));
+            }break;
+            case IR_zero_extend_u8_to_u64: case IR_zero_extend_u8_to_u64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 8, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM8));
+            }break;
+            
+            case IR_zero_extend_u16_to_u32: case IR_zero_extend_u16_to_u32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 4, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM16));
+            }break;
+            
+            case IR_zero_extend_u16_to_u64: case IR_zero_extend_u16_to_u64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 8, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM16));
+            }break;
+            
+            case IR_zero_extend_u32_to_u64: case IR_zero_extend_u32_to_u64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_integer_cast(context, emit_location_stack[stack_index], 4, one_byte_opcode(MOVE_REG_REGM));
+                emit_location_stack[stack_index]->size = 8;
+            }break;
+            
+            case IR_cast_f32_to_s8: case IR_cast_f32_to_s8_lhs:
+            case IR_cast_f32_to_u8: case IR_cast_f32_to_u8_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_float_cast(context, emit_location_stack[stack_index], ASM_PREFIX_SSE_float, 1, 4, 0x2c);
+            }break;
+            case IR_cast_f32_to_s16: case IR_cast_f32_to_s16_lhs:
+            case IR_cast_f32_to_u16: case IR_cast_f32_to_u16_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_float_cast(context, emit_location_stack[stack_index], ASM_PREFIX_SSE_float, 2, 4, 0x2c);
+            }break;
+            case IR_cast_f32_to_s32: case IR_cast_f32_to_s32_lhs:
+            case IR_cast_f32_to_u32: case IR_cast_f32_to_u32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_float_cast(context, emit_location_stack[stack_index], ASM_PREFIX_SSE_float, 4, 4, 0x2c);
+            }break;
+            case IR_cast_f32_to_s64: case IR_cast_f32_to_s64_lhs:
+            case IR_cast_f32_to_u64: case IR_cast_f32_to_u64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_float_cast(context, emit_location_stack[stack_index], ASM_PREFIX_SSE_float, 8, 8, 0x2c);
+            }break;
+            
+            case IR_cast_f64_to_s8: case IR_cast_f64_to_s8_lhs:
+            case IR_cast_f64_to_u8: case IR_cast_f64_to_u8_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_float_cast(context, emit_location_stack[stack_index], ASM_PREFIX_SSE_double, 1, 4, 0x2c);
+            }break;
+            case IR_cast_f64_to_s16: case IR_cast_f64_to_s16_lhs:
+            case IR_cast_f64_to_u16: case IR_cast_f64_to_u16_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_float_cast(context, emit_location_stack[stack_index], ASM_PREFIX_SSE_double, 2, 4, 0x2c);
+            }break;
+            case IR_cast_f64_to_s32: case IR_cast_f64_to_s32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_float_cast(context, emit_location_stack[stack_index], ASM_PREFIX_SSE_double, 4, 4, 0x2c);
+            }break;
+            case IR_cast_f64_to_u32: case IR_cast_f64_to_u32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index] = emit_float_cast(context, emit_location_stack[stack_index], ASM_PREFIX_SSE_double, 4, 8, 0x2c);
+            }break;
+            case IR_cast_f64_to_s64: case IR_cast_f64_to_s64_lhs:
+            case IR_cast_f64_to_u64: case IR_cast_f64_to_u64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                
+                // @cleanup:
+                // 
+                // We want to cast some float-type to some integer-type.
+                // 
+                // We use the instructions 'cvttsd2si' or 'cvttss2si' based on the 
+                // the floating point type. These instructions convert to *signed* integer type.
+                // Hence, we have to do something special here for unsigned types.
+                // 
+                // If the destination is a 'u8' or 'u16',  we can simply use the 32-bit version and then truncate.
+                // If the destination is a 'u32', we can simply use the 64-bit version and then truncate.
+                // If the destination is a 'u64', we have to check first if the value in the source is large.
+                // 
+                // gcc and msvc compare emit something like this:
+                //     movsd  xmm0, doubled              ; Load the initial value into xmm0.
+                //     comisd xmm0, qword ptr[rip + big] ; Compare against a big number 9.22337e+19 (0x8000000000000000).
+                //     jb simple_conversion              ; We are less then the first value which overflows a s64.
+                //     
+                //     sub xmm0, qword ptr[rip + big]    ; We exceed the big value, subtract it.
+                //     cvttsd2si rax, xmm0               ; Then convert, now the result should be (unless overflow in the correct range).
+                //     mov rcx, 0x8000000000000000       ; Then finally, add the 0x8000000000000000 back into rax.
+                //     add rax, rcx
+                //     jmp end
+                //     
+                // simple_conversion:
+                //     cvttsd2si rax, xmm0               ; We know it is in range, simply convert.
+                //     
+                // end:
+                //     
+                
+                emit_location_stack[stack_index] = emit_float_cast(context, emit_location_stack[stack_index], ASM_PREFIX_SSE_double, 8, 8, 0x2c);
+            }break;
+            
+            case IR_cast_s8_to_f32: case IR_cast_s8_to_f32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM8));
+                
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 4);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            case IR_cast_s16_to_f32: case IR_cast_s16_to_f32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM16));
+                
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 4);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            
+            case IR_cast_s64_to_f32: case IR_cast_s64_to_f32_lhs:
+            case IR_cast_s32_to_f32: case IR_cast_s32_to_f32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 4);
+                
+                if(loc->state == EMIT_LOCATION_loaded){
+                    emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                }else{
+                    assert(loc->state == EMIT_LOCATION_register_relative);
+                    emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(0x2A), ret->loaded_register, loc);
+                }
+                
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            
+            case IR_cast_s8_to_f64: case IR_cast_s8_to_f64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM8));
+                
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 8);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            case IR_cast_s16_to_f64: case IR_cast_s16_to_f64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM16));
+                
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 8);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            
+            case IR_cast_s64_to_f64: case IR_cast_s64_to_f64_lhs:
+            case IR_cast_s32_to_f64: case IR_cast_s32_to_f64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 8);
+                
+                if(loc->state == EMIT_LOCATION_loaded){
+                    emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                }else{
+                    assert(loc->state == EMIT_LOCATION_register_relative);
+                    emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(0x2A), ret->loaded_register, loc);
+                }
+                
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            
+            case IR_cast_u8_to_f32: case IR_cast_u8_to_f32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM8));
+                
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 4);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            case IR_cast_u16_to_f32: case IR_cast_u16_to_f32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM16));
+                
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 4);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            case IR_cast_u32_to_f32: case IR_cast_u32_to_f32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, one_byte_opcode(MOVE_REG_REGM));
+                
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 4);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, 8);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            
+            case IR_cast_u64_to_f64: case IR_cast_u64_to_f64_lhs:
+            case IR_cast_u64_to_f32: case IR_cast_u64_to_f32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                
+                int dest_is_float = (ir_kind == IR_cast_u64_to_f32 || ir_kind == IR_cast_u64_to_f32_lhs);
+                
+                enum register_encoding reg = allocate_register(context, REGISTER_KIND_xmm);
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, reg, dest_is_float ? 4 : 8);
+                
+                enum legacy_prefixes prefix = dest_is_float ? ASM_PREFIX_SSE_float : ASM_PREFIX_SSE_double;
+                
+                // 
+                // This is the hard case. 
+                // We have to shift the u64 down by one and then add it to itself, while keeping rounding correct.
+                // 
+                
+                // The code msvc and gcc emit looks something like this:
+                //    mov      rax,  u64  ; load the initial value into rax
+                //    test     rax,  rax  ; check if the top bit is set and set SF <- MSB(rax)
+                //    js       msb_set    ; jump if 'SF', i.e MSB(rax) is set, to the slow part
+                //    
+                //    cvtsi2sd xmm1, rax  ; Convert the value if MSB(rax) is not set
+                //    jmp      end        ; jump to end as we are done
+                // 
+                // msb_set:
+                //    mov      rcx,  rax  ; save the u64 so we can fix up rounding
+                //    shr      rax,  1    ; shift the u64, such that the sign bit is not set
+                //    and      rcx,  1    ; get the parity from the original u64
+                //    or       rax,  rcx  ; fix up the last bit to be set if either of the last two bits of the original value are set
+                //    cvtsi2sd xmm1, rax  ; Convert the resulting value
+                //    addsd    xmm1, xmm1 ; Double it to get back to the desired value
+                //    
+                // end:
+                
+                // load the value and lock it, so we can copy it
+                loc = emit_load_gpr(context, loc);
+                emit_location_prevent_spilling(context, loc);
+                
+                // test the value
+                emit_register_register(context, no_prefix(), one_byte_opcode(TEST_REGM_REG), loc, loc);
+                
+                struct jump_context msb_set_jump = zero_struct;
+                jump_context_emit(context, &msb_set_jump, JUMP_CONTEXT_jump_on_true, COMP_negative);
+                
+                // we are good, we have passed the test, MSB is not set. just convert the value!
+                emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, 8);
+                
+                struct jump_context jump_to_end = zero_struct;
+                jump_context_emit(context, &jump_to_end, JUMP_CONTEXT_jump_on_true, COMP_none);
+                
+                // msb_set:
+                emit_end_jumps(context, msb_set_jump);
+                
+                // copy the value
+                enum register_encoding saved_gpr = allocate_register(context, REGISTER_KIND_gpr);
+                struct emit_location *saved = emit_load_into_specific_gpr(context, loc, saved_gpr);
+                
+                // shift the value to the right by 1.
+                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_1), REG_OPCODE_SHIFT_RIGHT, loc);
+                
+                // extract the last bit of the saved value by and'ing it with 1.
+                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8), REG_OPCODE_AND, saved);
+                emit(1);
+                
+                // or the the last bit into the shifted value
+                emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), loc, saved);
+                
+                // convert the value
+                emit_register_op__internal(context, create_prefixes(prefix), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, 8);
+                
+                // double the value
+                emit_register_register(context, create_prefixes(prefix), two_byte_opcode(ADD_XMM), ret, ret);
+                
+                // end:
+                emit_end_jumps(context, jump_to_end);
+                
+                free_emit_location(context, saved);
                 emit_location_allow_spilling(context, loc);
                 free_emit_location(context, loc);
-                
-                emit_location_stack[emit_location_stack_at-1] = loaded;
+                emit_location_stack[stack_index] = ret;
             }break;
             
-            case AST_unary_predec:
-            case AST_unary_preinc:{
-                struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-                ast_arena_at += sizeof(*op);
+            case IR_cast_u8_to_f64: case IR_cast_u8_to_f64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM8));
                 
-                struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
-                assert(loc->state == EMIT_LOCATION_register_relative);
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 8);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            case IR_cast_u16_to_f64: case IR_cast_u16_to_f64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM16));
                 
-                if(op->base.resolved_type->kind == AST_pointer_type){
-                    struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op->base.resolved_type;
-                    u8 reg_inst = (ast->kind == AST_unary_preinc) ? REG_OPCODE_ADD : REG_OPCODE_SUB;
-                    smm size = pointer->pointer_to->size;
-                    b32 is_big = size > max_s8;
-                    
-                    assert(size >= 0); // @note: Allow empty structs.
-                    assert(size <= 0xffffffff);
-                    u8 inst = is_big ? REG_EXTENDED_OPCODE_REGM_IMMIDIATE : REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8;
-                    
-                    assert(loc->size == 8);
-                    struct emit_location *immediate = emit_location_immediate(context, size, is_big ? 4 : 1);
-                    emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(inst), reg_inst, loc, immediate);
-                }else if(op->base.resolved_type == &globals.typedef_Bool){
-                    
-                    // 
-                    // For _Bool we want the following:
-                    //  ++arst: mov [arst], 1
-                    //  --arst: xor [arst], 1
-                    
-                    struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
-                    
-                    if(ast->kind == AST_unary_predec){
-                        emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM8_IMMIDIATE8), REG_OPCODE_XOR, loc, immediate);
-                    }else{
-                        emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(MOVE_REGM8_IMMEDIATE8), 0, loc, immediate);
-                    }
-                }else if(op->base.resolved_type->kind == AST_integer_type){
-                    u8 inst = (ast->kind == AST_unary_preinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
-                    u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
-                    emit_register_relative_extended(context, no_prefix(), one_byte_opcode(opcode), inst, loc);
-                }else if(op->base.resolved_type->kind == AST_float_type){
-                    struct ast_float_literal *one = push_ast(context, float_literal); // :ir_refactor_not_sure_initializer
-                    one->value = 1.0;
-                    set_resolved_type(&one->base, op->base.resolved_type, null);
-                    
-                    struct emit_location *rhs;
-                    {
-                        struct ast_float_literal *f = (struct ast_float_literal *)one;
-                        
-                        // @note: This sucks!
-                        struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
-                        emitted->value = f->value;
-                        
-                        sll_push_back(context->emitted_float_literals, emitted);
-                        context->emitted_float_literals.amount_of_float_literals += 1;
-                        set_resolved_type(&emitted->base, f->base.resolved_type, f->base.defined_type);
-                        
-                        rhs = emit_location_rip_relative(context, &emitted->base, f->base.resolved_type->size);
-                    }
-                    assert(rhs->state == EMIT_LOCATION_register_relative);
-                    
-                    emit_location_prevent_spilling(context, loc);
-                    struct emit_location *lhs = emit_load_float(context, loc);
-                    
-                    // emit 'op lhs, [float_literal]'
-                    emit_register_relative_register(context, get_sse_prefix_for_scalar(lhs->size), two_byte_opcode((ast->kind == AST_unary_preinc) ? ADD_XMM : SUB_XMM), lhs->loaded_register, rhs);
-                    
-                    emit_store(context, loc, lhs);
-                    
-                    emit_location_allow_spilling(context, loc);
-                }else{
-                    assert(op->base.resolved_type->kind == AST_bitfield_type);
-                    struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)op->base.resolved_type;
-                    
-                    emit_location_prevent_spilling(context, loc);
-                    
-                    // 
-                    // Load the bitfield value.
-                    // Because usually we also up-convert the value to an int,
-                    // 'loaded' is at least of size 4.
-                    // 
-                    struct emit_location *loaded = emit_load_bitfield(context, loc, bitfield);
-                    
-                    // Increment/Decrement 'loaded'.
-                    u8 inst = (ast->kind == AST_unary_preinc) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
-                    emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), inst, loaded);
-                    
-                    // Truncate the value of loaded again to the size of 'loc', 
-                    // as that is what 'emit_store_bitfield' expects.
-                    loaded->size = loc->size;
-                    emit_store_bitfield(context, bitfield, loc, loaded);
-                    
-                    emit_location_allow_spilling(context, loc);
-                }
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 8);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, loc->size);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
+            }break;
+            case IR_cast_u32_to_f64: case IR_cast_u32_to_f64_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                loc = emit_integer_cast(context, loc, 4, one_byte_opcode(MOVE_REG_REGM));
                 
-                struct emit_location *loaded = op->base.resolved_type->kind == AST_float_type ? emit_load_float(context, loc) : emit_load_gpr(context, loc);
-                emit_location_stack[emit_location_stack_at-1] = loaded;
+                struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), 8);
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(0x2A), ret->loaded_register, loc->loaded_register, 8);
+                free_emit_location(context, loc);
+                emit_location_stack[stack_index] = ret;
             }break;
             
-            case AST_unary_deref:{
-                struct ast_unary_op *op = (struct ast_unary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
-                
-                emit_location_stack[emit_location_stack_at-1] = emit_location_register_relative(context, loc, null, 0, op->base.resolved_type->size);
+            case IR_truncate_to_u8: case IR_truncate_to_u8_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index]->size = 1;
             }break;
-            
-            case AST_unary_plus:{
-                struct ast_unary_op *op = (struct ast_unary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                // Do nothing.
+            case IR_truncate_to_u16: case IR_truncate_to_u16_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index]->size = 2;
             }break;
-            
-            case AST_unary_bitwise_not:
-            case AST_unary_minus:{
-                struct ast_unary_op *op = cast(struct ast_unary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
-                
-                struct emit_location *loaded = op->base.resolved_type->kind == AST_float_type ? emit_load_float(context, loc) : emit_load_gpr(context, loc);;
-                
-                if(loaded->register_kind == REGISTER_KIND_xmm){
-                    emit_location_prevent_spilling(context, loaded);
-                    
-                    // 
-                    // @note: To allow for -(0) == -0, instead of 0, we have to use an xor.
-                    // 
-                    
-                    enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                    struct emit_location *as_gpr = emit_location_loaded(context, REGISTER_KIND_gpr, reg, loaded->size);
-                    emit_location_prevent_spilling(context, as_gpr);
-                    
-                    // movd / movq as_gpr, loaded
-                    emit_register_op__internal(context, create_prefixes(ASM_PREFIX_66), two_byte_opcode(0x7E), loaded->loaded_register, as_gpr->loaded_register, loaded->size); // @sigh: internall because of register_kind mismatch
-                    
-                    if(loaded->size == 4){
-                        // xor as_gpr, 0x80000000
-                        emit_register_op__internal(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_IMMIDIATE), REG_OPCODE_XOR, as_gpr->loaded_register, 4);
-                        emit_u32(0x80000000);
-                    }else{
-                        assert(loaded->size == 8);
-                        struct emit_location *loaded_immediate = emit_load_gpr(context, emit_location_immediate(context, 0x8000000000000000, 8));
-                        
-                        emit_register_register(context, no_prefix(), one_byte_opcode(XOR_REG_REGM), as_gpr, loaded_immediate);
-                        free_emit_location(context, loaded_immediate);
-                    }
-                    
-                    // movd / movq loaded, as_gpr
-                    emit_register_op__internal(context, create_prefixes(ASM_PREFIX_66), two_byte_opcode(0x6E), loaded->loaded_register, as_gpr->loaded_register, loaded->size); // @sigh: internall because of register_kind mismatch
-                    
-                    emit_location_allow_spilling(context, as_gpr);
-                    free_emit_location(context, as_gpr);
-                    
-                    emit_location_allow_spilling(context, loaded);
-                }else{
-                    // @cleanup: this needs a one byte case right?
-                    
-                    u8 extension = (ast->kind == AST_unary_minus) ?  REG_OPCODE_NEGATE_REGM : REG_OPCODE_NOT_REGM;
-                    emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_UNARY_REGM), extension, loaded);
-                }
-                
-                emit_location_stack[emit_location_stack_at-1] = loaded;
+            case IR_truncate_to_u32: case IR_truncate_to_u32_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                emit_location_stack[stack_index]->size = 4;
             }break;
-            
             
             // 
             // Member expressions
             // 
             
-            case AST_member:{
-                struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)ast;
-                ast_arena_at += sizeof(*dot);
+            case IR_member:{
+                struct ir_dot_or_arrow *dot = (struct ir_dot_or_arrow *)ir;
+                ir_arena_at += sizeof(*dot);
                 
                 struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
                 assert(loc->state == EMIT_LOCATION_register_relative);
@@ -3310,397 +3202,12 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 loc->offset += dot->member->offset_in_type;
             }break;
             
-            case AST_member_deref:{
-                struct ast_dot_or_arrow *arrow = cast(struct ast_dot_or_arrow *)ast;
-                ast_arena_at += sizeof(*arrow);
+            case IR_member_deref:{
+                struct ir_dot_or_arrow *arrow = (struct ir_dot_or_arrow *)ir;
+                ir_arena_at += sizeof(*arrow);
                 
                 struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
-                emit_location_stack[emit_location_stack_at-1] = emit_location_register_relative(context, loc, null, arrow->member->offset_in_type, arrow->base.resolved_type->size);
-            }break;
-            
-            // 
-            // Binary expressions
-            // 
-            
-            case AST_binary_or:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_OR, OR_REG8_REGM8, OR_REG_REGM);
-            }break;
-            case AST_binary_xor:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_XOR, XOR_REG8_REGM8, XOR_REG_REGM);
-            }break;
-            case AST_binary_and:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_AND, AND_REG8_REGM8, AND_REG_REGM);
-            }break;
-            
-            case AST_binary_left_shift:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                smm is_signed = type_is_signed(ast->resolved_type);
-                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_LEFT : REG_OPCODE_SHIFT_LEFT;
-                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, false);
-            }break;
-            
-            case AST_binary_right_shift:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                smm is_signed = type_is_signed(ast->resolved_type);
-                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_RIGHT : REG_OPCODE_SHIFT_RIGHT;
-                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, false);
-            }break;
-            
-            case AST_binary_plus:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                    emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, ADD_XMM);
-                }else{
-                    emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_ADD, ADD_REG8_REGM8, ADD_REG_REGM); // :ir_refactor_is_signed
-                }
-            }break;
-            
-            case AST_binary_minus:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                    emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, SUB_XMM);
-                }else{
-                    emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_SUB, SUB_REG8_REGM8, SUB_REG_REGM); // :ir_refactor_is_signed
-                }
-            }break;
-            
-            case AST_binary_times:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                    emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, MUL_XMM);
-                }else{
-                    emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, type_is_signed(ast->resolved_type), REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, ast->kind); // :ir_refactor_is_signed
-                }
-            }break;
-            
-            case AST_binary_divide:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                if(ast->resolved_type == &globals.typedef_f32 || ast->resolved_type == &globals.typedef_f64){
-                    emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, DIV_XMM);
-                }else{
-                    emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, type_is_signed(ast->resolved_type), REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, ast->kind); // :ir_refactor_is_signed
-                }
-            }break;
-            
-            case AST_binary_mod:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, type_is_signed(ast->resolved_type), REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, ast->kind); // :ir_refactor_is_signed
-            }break;
-            
-            case AST_assignment:{
-                ast_arena_at += sizeof(struct ast_binary_op);
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                struct ast_type *lhs_type = op->base.resolved_type;
-                
-                if(lhs_type->kind == AST_bitfield_type){
-                    struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)lhs_type;
-                    emit_store_bitfield(context, bitfield, lhs, rhs);
-                }else if(lhs_type->flags & TYPE_FLAG_is_atomic){
-                    emit_store_atomic_integer(context, lhs, rhs);
-                }else{
-                    if(lhs->size != 0){
-                        assert(lhs->state == EMIT_LOCATION_register_relative);
-                        emit_store(context, lhs, rhs);
-                    }
-                }
-            }break;
-            
-            case AST_binary_bigger:
-            case AST_binary_bigger_equals:
-            case AST_binary_smaller:
-            case AST_binary_smaller_equals:
-            
-            case AST_binary_bigger_equals_signed:
-            case AST_binary_smaller_equals_signed:
-            case AST_binary_bigger_signed:
-            case AST_binary_smaller_signed:
-            
-            case AST_binary_logical_equals:
-            case AST_binary_logical_unequals:
-            
-            case AST_binary_logical_equals_float:
-            case AST_binary_logical_unequals_float:
-            
-            case AST_binary_bigger_equals_float:
-            case AST_binary_smaller_equals_float:
-            case AST_binary_bigger_float:
-            case AST_binary_smaller_float:{
-                // @quality: in the case of "cmp [rax], 1" we do not have to load [rax] as cmp does not write
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                struct emit_location *result;
-                if(AST_binary_logical_equals_float <= ast->kind && ast->kind <= AST_binary_smaller_float){
-                    
-                    lhs = emit_load_float(context, lhs);
-                    
-                    struct prefixes prefix;
-                    if(lhs->size == 8){
-                        prefix = create_prefixes(ASM_PREFIX_NON_PACKED_OP_double);
-                    }else{
-                        assert(lhs->size == 4);
-                        prefix = create_prefixes(ASM_PREFIX_NON_PACKED_OP_float);
-                    }
-                    
-                    if(rhs->state == EMIT_LOCATION_loaded){
-                        emit_register_register(context, prefix, two_byte_opcode(COMPARE_XMM), lhs, rhs);
-                    }else{
-                        assert(rhs->state == EMIT_LOCATION_register_relative);
-                        emit_register_relative_register(context, prefix, two_byte_opcode(COMPARE_XMM), lhs->loaded_register, rhs);
-                    }
-                    free_emit_location(context, rhs);
-                    result = lhs;
-                }else{
-                    result = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_CMP, CMP_REG8_REGM8, CMP_REG_REGM); // :ir_refactor_is_signed
-                }
-                
-                free_emit_location(context, result); // we only care about the flags
-                
-                enum comp_condition cond;
-                switch(ast->kind){
-                    case AST_binary_logical_equals_float:
-                    case AST_binary_logical_equals:{
-                        cond = COMP_equals;
-                    }break;
-                    case AST_binary_logical_unequals_float:
-                    case AST_binary_logical_unequals:{
-                        cond = COMP_unequals;
-                    }break;
-                    
-                    case AST_binary_smaller_float:
-                    case AST_binary_smaller:{
-                        cond = COMP_smaller;
-                    }break;
-                    case AST_binary_smaller_signed:{
-                        cond = COMP_smaller_signed;
-                    }break;
-                    
-                    case AST_binary_smaller_equals_float:
-                    case AST_binary_smaller_equals:{
-                        cond = COMP_smaller_equals;
-                    }break;
-                    case AST_binary_smaller_equals_signed:{
-                        cond = COMP_smaller_equals_signed;
-                    }break;
-                    
-                    case AST_binary_bigger_float:
-                    case AST_binary_bigger:{
-                        cond = COMP_bigger;
-                    }break;
-                    case AST_binary_bigger_signed:{
-                        cond = COMP_bigger_signed;
-                    }break;
-                    
-                    case AST_binary_bigger_equals_float:
-                    case AST_binary_bigger_equals:{
-                        cond = COMP_bigger_equals;
-                    }break;
-                    case AST_binary_bigger_equals_signed:{
-                        cond = COMP_bigger_equals_signed;
-                    }break;
-                    
-                    invalid_default_case(cond = COMP_equals);
-                }
-                
-                struct emit_location *conditional = emit_location_conditional(context, cond);
-                
-                if(ast_arena_at < current_function->end_in_ast_arena){ // @paranoid
-                    struct ast *next_ast = (struct ast *)ast_arena_at;
-                    
-                    if(next_ast->kind != AST_jump_if_true && next_ast->kind != AST_jump_if_false && next_ast->kind != AST_unary_logical_not){
-                        // 
-                        // If we have a condition, load it unless it leads directly into a conditional jump.
-                        // 
-                        conditional = emit_load_gpr(context, conditional);
-                    }
-                }
-                
-                emit_location_stack[emit_location_stack_at-1] = conditional;
-            }break;
-            
-            // 
-            // Compound assignment expressions
-            // 
-            
-            case AST_and_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, no_prefix(), lhs, rhs, /*is_signed*/0, REG_OPCODE_AND, AND_REGM8_REG8, AND_REGM_REG); // :ir_refactor_atomic_operations.
-            }break;
-            
-            case AST_or_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, no_prefix(), lhs, rhs, /*is_signed*/0, REG_OPCODE_OR, OR_REGM8_REG8, OR_REGM_REG); // :ir_refactor_atomic_operations.
-            }break;
-            
-            case AST_xor_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, no_prefix(), lhs, rhs, /*is_signed*/0, REG_OPCODE_XOR, XOR_REGM8_REG8, XOR_REGM_REG); // :ir_refactor_atomic_operations.
-            }break;
-            
-            case AST_plus_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                if(ast->resolved_type->kind == AST_float_type){
-                    emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment_xmm(context, lhs, rhs, ADD_XMM);
-                }else{
-                    emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, no_prefix(), lhs, rhs, /*is_signed*/0, REG_OPCODE_ADD, ADD_REGM8_REG8, ADD_REGM_REG); // :ir_refactor_atomic_operations.
-                }
-            }break;
-            
-            case AST_minus_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                if(ast->resolved_type->kind == AST_float_type){
-                    emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment_xmm(context, lhs, rhs, SUB_XMM);
-                }else{
-                    emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, no_prefix(), lhs, rhs, /*is_signed*/0, REG_OPCODE_SUB, SUB_REGM8_REG8, SUB_REGM_REG); // :ir_refactor_atomic_operations.
-                }
-            }break;
-            
-            case AST_times_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                if(ast->resolved_type->kind == AST_float_type){
-                    emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment_xmm(context, lhs, rhs, MUL_XMM);
-                }else{
-                    emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, type_is_signed(op->base.resolved_type), REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, ast->kind); // :ir_refactor_is_signed
-                }
-            }break;
-            
-            case AST_divide_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                if(ast->resolved_type->kind == AST_float_type){
-                    emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment_xmm(context, lhs, rhs, DIV_XMM);
-                }else{
-                    emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, type_is_signed(op->base.resolved_type), REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, ast->kind); // :ir_refactor_is_signed
-                }
-            }break;
-            
-            case AST_modulo_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, type_is_signed(op->base.resolved_type), REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, ast->kind); // :ir_refactor_is_signed
-            }break;
-            
-            case AST_left_shift_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                smm is_signed = type_is_signed(ast->resolved_type);
-                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_LEFT : REG_OPCODE_SHIFT_LEFT;
-                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, true);
-            }break;
-            
-            case AST_right_shift_assignment:{
-                struct ast_binary_op *op = (struct ast_binary_op *)ast;
-                ast_arena_at += sizeof(*op);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
-                emit_location_stack_at -= 1;
-                
-                smm is_signed = type_is_signed(ast->resolved_type);
-                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_RIGHT : REG_OPCODE_SHIFT_RIGHT;
-                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, true);
+                emit_location_stack[emit_location_stack_at-1] = emit_location_register_relative(context, loc, null, arrow->member->offset_in_type, arrow->member->type->size);
             }break;
             
             
@@ -3708,20 +3215,20 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             // Subscript expressions
             // 
             
-            case AST_pointer_subscript:{
-                struct ast_subscript *subscript = (struct ast_subscript *)ast;
-                ast_arena_at += sizeof(*subscript);
+            case IR_pointer_subscript:{
+                struct ir_subscript *subscript = (struct ir_subscript *)ir;
+                ir_arena_at += sizeof(*subscript);
                 
                 emit_location_stack_at -= 1;
                 struct emit_location *pointer = emit_location_stack[emit_location_stack_at - 1];
                 struct emit_location *index   = emit_location_stack[emit_location_stack_at - 0];
                 
-                emit_location_stack[emit_location_stack_at - 1] = emit_code_for_pointer_subscript(context, subscript->base.resolved_type, pointer, index);
+                emit_location_stack[emit_location_stack_at - 1] = emit_code_for_pointer_subscript(context, subscript->type, pointer, index);
             }break;
             
-            case AST_array_subscript:{
-                struct ast_subscript *subscript = (struct ast_subscript *)ast;
-                ast_arena_at += sizeof(*subscript);
+            case IR_array_subscript:{
+                struct ir_subscript *subscript = (struct ir_subscript *)ir;
+                ir_arena_at += sizeof(*subscript);
                 
                 emit_location_stack_at -= 1;
                 struct emit_location *array = emit_location_stack[emit_location_stack_at - 1];
@@ -3729,7 +3236,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 assert(array->state == EMIT_LOCATION_register_relative);
                 
-                u64 size = subscript->base.resolved_type->size;
+                u64 size = subscript->type->size;
                 
                 array->size = size;
                 
@@ -3782,18 +3289,18 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     struct emit_location *pointer = emit_load_address(context, array, allocate_register(context, REGISTER_KIND_gpr));
                     free_emit_location(context, array);
                     
-                    emit_location_stack[emit_location_stack_at - 1] = emit_code_for_pointer_subscript(context, subscript->base.resolved_type, pointer, index_loc);
+                    emit_location_stack[emit_location_stack_at - 1] = emit_code_for_pointer_subscript(context, subscript->type, pointer, index_loc);
                 }
             }break;
             
-            case AST_function_call:{ 
+            case IR_function_call:{ 
                 
                 // 
                 // This case handles both a call to a functions as well as a call to a function-pointer.
                 // 
                 
-                struct ast_function_call *call = (struct ast_function_call *)ast;
-                ast_arena_at += sizeof(*call); 
+                struct ir_function_call *call = (struct ir_function_call *)ir;
+                ir_arena_at += sizeof(*call); 
                 
                 struct ast_function_type *function_type = call->function_type;
                 struct ast_type *return_type = function_type->return_type;
@@ -3815,7 +3322,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 // if it has an ast or the base has an ast.
                 if(function_location->size == 0 && function_location->ast != null){
                     function_to_call = (struct ast_function *)function_location->ast;
-                    assert(function_to_call->base.kind == AST_function);
+                    assert(function_to_call->kind == AST_function);
                     
                     if(function_to_call->as_decl.flags & DECLARATION_FLAGS_is_intrinsic){
                         emit_location_stack[emit_location_stack_at++] = emit_intrinsic(context, function_to_call, call, argument_locations);
@@ -4005,7 +3512,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 if(function_to_call){
                     emit(CALL_RELATIVE);
                     smm patch_offset = emit_bytes(context, sizeof(s32), 0);
-                    emit_patch(context, PATCH_rip_relative, &function_to_call->base, 0, &context->current_function->as_decl, patch_offset, patch_offset + 4);
+                    emit_patch(context, PATCH_rip_relative, &function_to_call->kind, 0, &context->current_function->as_decl, patch_offset, patch_offset + 4);
                 }else{
                     
                     if(function_location->size == 0){
@@ -4077,8 +3584,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
             }break;
             
-            case AST_return:{
-                ast_arena_at += sizeof(struct ast_return);
+            case IR_return:{
+                ir_arena_at += sizeof(struct ir);
                 
                 struct ast_type *return_type = context->current_function->type->return_type;
                 
@@ -4125,41 +3632,15 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             // Stack manipulation:
             // 
             
-            case AST_pop_expression:{
-                ast_arena_at += sizeof(struct ast_pop_expression);
+            case IR_pop_expression:{
+                ir_arena_at += sizeof(struct ir);
                 emit_location_stack_at -= 1;
                 if(emit_location_stack[emit_location_stack_at]) free_emit_location(context, emit_location_stack[emit_location_stack_at]);
             }break;
             
-            case AST_duplicate_lhs:{
-                ast_arena_at += sizeof(struct ast_duplicate_lhs);
-                
-                struct emit_location *lhs = emit_location_stack[emit_location_stack_at-2];
-                struct emit_location *rhs = emit_location_stack[emit_location_stack_at-1];
-                
-                struct emit_location *copy = push_struct(&context->scratch, struct emit_location);
-                *copy = *lhs;
-                
-                emit_location_stack_at += 1;
-                emit_location_stack[emit_location_stack_at-1] = rhs;
-                emit_location_stack[emit_location_stack_at-2] = copy;
-            }break;
             
-            case AST_duplicate:{
-                ast_arena_at += sizeof(struct ast_duplicate_lhs);
-                
-                struct emit_location *top = emit_location_stack[emit_location_stack_at-1];
-                
-                struct emit_location *copy = push_struct(&context->scratch, struct emit_location);
-                *copy = *top;
-                
-                emit_location_stack_at += 1;
-                emit_location_stack[emit_location_stack_at-1] = copy;
-            }break;
-            
-            
-            case AST_swap_lhs_rhs:{
-                ast_arena_at += sizeof(struct ast_swap_lhs_rhs);
+            case IR_swap_lhs_rhs:{
+                ir_arena_at += sizeof(struct ir);
                 
                 struct emit_location *lhs = emit_location_stack[emit_location_stack_at-2];
                 struct emit_location *rhs = emit_location_stack[emit_location_stack_at-1];
@@ -4168,9 +3649,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack[emit_location_stack_at-2] = rhs;
             }break;
             
-            case AST_skip:{
-                struct ast_skip *skip = (struct ast_skip *)ast;
-                ast_arena_at += skip->size_to_skip;
+            case IR_skip:{
+                struct ir_skip *skip = (struct ir_skip *)ir;
+                ir_arena_at += skip->size_to_skip;
             }break;
             
             
@@ -4178,24 +3659,24 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             // jumps
             // 
             
-            case AST_jump_label:{
-                ast_arena_at += sizeof(struct ast_jump_label);
+            case IR_jump_label:{
+                struct ir_jump_node *jump_label = (struct ir_jump_node *)ir;
+                ir_arena_at += sizeof(*jump_label);
                 
-                struct ast_jump_label *jump_label = (struct ast_jump_label *)ast;
                 context->jump_labels[jump_label->label_number].jump_location = get_bytes_emitted(context);
             }break;
             
-            case AST_jump:{
-                ast_arena_at += sizeof(struct ast_jump);
+            case IR_jump:{
+                struct ir_jump_node *jump = (struct ir_jump_node *)ir;
+                ir_arena_at += sizeof(*jump);
                 
-                struct ast_jump *jump = (struct ast_jump *)ast;
                 jump_context_emit(context, &context->jump_labels[jump->label_number].context, JUMP_CONTEXT_jump_always, COMP_none);
             }break;
             
-            case AST_jump_if_true:
-            case AST_jump_if_false:{
-                struct ast_jump *jump = (struct ast_jump *)ast;
-                ast_arena_at += sizeof(*jump);
+            case IR_jump_if_true:
+            case IR_jump_if_false:{
+                struct ir_jump_node *jump = (struct ir_jump_node *)ir;
+                ir_arena_at += sizeof(*jump);
                 
                 emit_location_stack_at -= 1;
                 
@@ -4205,16 +3686,16 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     condition = emit_compare_to_zero(context, condition);
                 }
                 
-                enum jump_context_condition jump_context_condition = (ast->kind == AST_jump_if_true) ? JUMP_CONTEXT_jump_on_true : JUMP_CONTEXT_jump_on_false;
+                enum jump_context_condition jump_context_condition = (ir->kind == IR_jump_if_true) ? JUMP_CONTEXT_jump_on_true : JUMP_CONTEXT_jump_on_false;
                 
                 jump_context_emit(context, &context->jump_labels[jump->label_number].context, jump_context_condition, condition->condition);
                 
                 free_emit_location(context, condition);
             }break;
             
-            case AST_switch:{
-                struct ast_switch *ast_switch = (struct ast_switch *)ast;
-                ast_arena_at += sizeof(*ast_switch);
+            case IR_switch:{
+                struct ir_switch *ast_switch = (struct ir_switch *)ir;
+                ir_arena_at += sizeof(*ast_switch);
                 
                 emit_location_stack_at -= 1;
                 struct emit_location *switch_on = emit_load_gpr(context, emit_location_stack[emit_location_stack_at]);
@@ -4227,9 +3708,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 // ...
                 // {switch->statement}
                 
-                for_ast_list(ast_switch->case_list){
+                for(struct ir_case *ast_case = ast_switch->case_list.first; ast_case; ast_case = ast_case->next){
                     
-                    struct ast_case *ast_case = (struct ast_case *)it->value;
                     // @speed could do this manually, we know its an immediate, also we know the size should be
                     //        switch_on->size
                     struct emit_location *imm = emit_location_immediate(context, ast_case->value, switch_on->size);
@@ -4277,10 +3757,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 free_emit_location(context, switch_on);
             }break;
             
-            case AST_case:{
-                struct ast_case *ast_case = (struct ast_case *)ast;
-                ast_arena_at += sizeof(*ast_case);
-                emit_end_jumps(context, *ast_case->jump);
+            case IR_case:{
+                struct ir_case *ir_case = (struct ir_case *)ir;
+                ir_arena_at += sizeof(*ir_case);
+                emit_end_jumps(context, *ir_case->jump);
             }break;
             
             // 
@@ -4296,7 +3776,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             
             case IR_equals_u32: case IR_unequals_u32: case IR_equals_u64: case IR_unequals_u64:
             case IR_equals_f32: case IR_unequals_f32: case IR_equals_f64: case IR_unequals_f64:{
-                ast_arena_at += sizeof(struct ir);
+                ir_arena_at += sizeof(struct ir);
                 
                 struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
                 struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
@@ -4305,8 +3785,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 enum ir_type ir_type;
                 enum comp_condition comp;
                 
-                if(ast_kind >= IR_equals_u32){
-                    u32 information = ast_kind - IR_equals_u32;
+                if(ir_kind >= IR_equals_u32){
+                    u32 information = ir_kind - IR_equals_u32;
                     u32 condition_information = information & 1;
                     u32 size_bit = (information >> 1) & 1;
                     u32 float_vs_integer = (information >> 2) & 1;
@@ -4314,7 +3794,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     ir_type = (float_vs_integer ? IR_TYPE_f32 : IR_TYPE_u32) + size_bit; // f64 or s64
                     comp = COMP_equals + condition_information;
                 }else{
-                    u32 information = ast_kind - IR_bigger_equals_s32;
+                    u32 information = ir_kind - IR_bigger_equals_s32;
                     u32 condition_information = information & 3; // 0 - bigger equals, 1 - smaller equals, 2 - bigger, 3 - smaller
                     
                     ir_type = IR_TYPE_s32 + (information >> 2);
@@ -4344,10 +3824,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 struct emit_location *conditional = emit_location_conditional(context, comp);
                 
-                if(ast_arena_at < current_function->end_in_ast_arena){ // @paranoid
-                    struct ast *next_ast = (struct ast *)ast_arena_at;
+                if(ir_arena_at < current_function->end_in_ir_arena){ // @paranoid
+                    struct ir *next_ir = (struct ir *)ir_arena_at;
                     
-                    if(next_ast->kind != AST_jump_if_true && next_ast->kind != AST_jump_if_false && next_ast->kind != AST_unary_logical_not){
+                    if(next_ir->kind != IR_jump_if_true && next_ir->kind != IR_jump_if_false && !(IR_logical_not_u32 <= next_ir->kind && next_ir->kind <= IR_logical_not_f64)){
                         // 
                         // If we have a condition, load it unless it leads directly into a conditional jump.
                         // 
@@ -4366,8 +3846,18 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             case IR_postinc_f32:      case IR_postdec_f32:
             case IR_postinc_f64:      case IR_postdec_f64:
             case IR_postinc_pointer:  case IR_postdec_pointer:
-            case IR_postinc_bitfield: case IR_postdec_bitfield:{
-                ast_arena_at += sizeof(struct ir);
+            case IR_postinc_bitfield: case IR_postdec_bitfield:
+            
+            case IR_preinc_bool:     case IR_predec_bool:
+            case IR_preinc_u8:       case IR_predec_u8:
+            case IR_preinc_u16:      case IR_predec_u16:
+            case IR_preinc_u32:      case IR_predec_u32:
+            case IR_preinc_u64:      case IR_predec_u64:
+            case IR_preinc_f32:      case IR_predec_f32:
+            case IR_preinc_f64:      case IR_predec_f64:
+            case IR_preinc_pointer:  case IR_predec_pointer:
+            case IR_preinc_bitfield: case IR_predec_bitfield:{
+                ir_arena_at += sizeof(struct ir);
                 
                 struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
                 assert(loc->state == EMIT_LOCATION_register_relative);
@@ -4375,98 +3865,108 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_prevent_spilling(context, loc);
                 
                 struct emit_location *loaded = emit_location_invalid(context);
-                if(ast_arena_at < current_function->end_in_ast_arena){ // @paranoid
-                    struct ast *next_ast = (struct ast *)ast_arena_at;
-                    if(next_ast->kind != AST_pop_expression) loaded = emit_load_gpr(context, loc);
+                
+                if(ir_kind <= IR_preinc_u8){
+                    if(ir_arena_at < current_function->end_in_ir_arena){ // @paranoid
+                        struct ir *next_ir = (struct ir *)ir_arena_at;
+                        if(next_ir->kind != IR_pop_expression) loaded = emit_load_gpr(context, loc);
+                    }
                 }
                 
-                switch((int)ast_kind){
+                switch((int)ir_kind){
                     
-                    // FF_DECREMENT_REGM
-                    
-                    case IR_postinc_u8:{
+                    case IR_postinc_u8: case IR_preinc_u8:{
                         emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FE), FF_INCREMENT_REGM, loc);
                     }break;
                     
-                    case IR_postinc_u16: case IR_postinc_u32: case IR_postinc_u64:{
+                    case IR_postinc_u16: case IR_postinc_u32: case IR_postinc_u64:
+                    case IR_preinc_u16:  case IR_preinc_u32:  case IR_preinc_u64:{
                         emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_INCREMENT_REGM, loc);
                     }break;
                     
-                    case IR_postdec_u8:{
+                    case IR_postdec_u8: case IR_predec_u8:{
                         emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FE), FF_DECREMENT_REGM, loc);
                     }break;
                     
-                    case IR_postdec_u16: case IR_postdec_u32: case IR_postdec_u64:{
+                    case IR_postdec_u16: case IR_postdec_u32: case IR_postdec_u64:
+                    case IR_predec_u16:  case IR_predec_u32:  case IR_predec_u64:{
                         emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_DECREMENT_REGM, loc);
                     }break;
                     
-                    case IR_postinc_bool:{
+                    case IR_postinc_bool: case IR_preinc_bool:{
                         // For _Bool we want the following:
                         //  arst++: mov [arst], 1
                         struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
                         emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(MOVE_REGM8_IMMEDIATE8), 0, loc, immediate);
                     }break;
                     
-                    case IR_postdec_bool:{
+                    case IR_postdec_bool: case IR_predec_bool:{
                         // For _Bool we want the following:
                         //  arst--: xor [arst], 1
                         struct emit_location *immediate = emit_location_immediate(context, /*value*/1, /*size*/1);
                         emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM8_IMMIDIATE8), REG_OPCODE_XOR, loc, immediate);
                     }break;
                     
-                    case IR_postdec_f32:
-                    case IR_postinc_f32:{
+                    case IR_postdec_f32: case IR_postinc_f32:
+                    case IR_predec_f32:  case IR_preinc_f32:{
                         if(!loaded) loaded = emit_load_float(context, loc);
                         
-                        struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
+                        struct ir_emitted_float_literal *emitted = push_struct(context->arena, struct ir_emitted_float_literal);
+                        emitted->base.kind = AST_emitted_float_literal;
                         emitted->value = 1.0;
-                        set_resolved_type(&emitted->base, &globals.typedef_f32, null);
+                        emitted->type = &globals.typedef_f32;
                         
                         sll_push_back(context->emitted_float_literals, emitted);
                         context->emitted_float_literals.amount_of_float_literals += 1;
                         
-                        struct emit_location *float_literal = emit_location_rip_relative(context, &emitted->base, 4);
+                        struct emit_location *float_literal = emit_location_rip_relative(context, &emitted->base.kind, 4);
                         
                         enum register_encoding temp_register = allocate_register(context, REGISTER_KIND_xmm);
                         struct emit_location *lhs = emit_load_float_into_specific_register(context, loaded, temp_register);
                         
                         // emit 'op lhs, [float_literal]'
-                        emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode((ast_kind == IR_postinc_f32) ? ADD_XMM : SUB_XMM), lhs->loaded_register, float_literal);
+                        int is_inc = (ir_kind == IR_postinc_f32) || (ir_kind == IR_preinc_f32);
+                        u8 opcode = is_inc ? ADD_XMM : SUB_XMM;
+                        emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_float), two_byte_opcode(opcode), lhs->loaded_register, float_literal);
                         
                         emit_store(context, loc, lhs);
                     }break;
                     
-                    case IR_postdec_f64:
-                    case IR_postinc_f64:{
+                    case IR_postdec_f64: case IR_postinc_f64:
+                    case IR_predec_f64:  case IR_preinc_f64:{
                         if(!loaded) loaded = emit_load_float(context, loc);
                         
-                        struct ast_emitted_float_literal *emitted = push_ast(context, emitted_float_literal);
+                        struct ir_emitted_float_literal *emitted = push_struct(context->arena, struct ir_emitted_float_literal);
+                        emitted->base.kind = AST_emitted_float_literal;
                         emitted->value = 1.0;
-                        set_resolved_type(&emitted->base, &globals.typedef_f64, null);
+                        emitted->type = &globals.typedef_f64;
                         
                         sll_push_back(context->emitted_float_literals, emitted);
                         context->emitted_float_literals.amount_of_float_literals += 1;
                         
-                        struct emit_location *float_literal = emit_location_rip_relative(context, &emitted->base, 8);
+                        struct emit_location *float_literal = emit_location_rip_relative(context, &emitted->base.kind, 8);
                         
                         enum register_encoding temp_register = allocate_register(context, REGISTER_KIND_xmm);
                         struct emit_location *lhs = emit_load_float_into_specific_register(context, loaded, temp_register);
                         
                         // emit 'op lhs, [float_literal]'
-                        emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode((ast_kind == IR_postinc_f32) ? ADD_XMM : SUB_XMM), lhs->loaded_register, float_literal);
+                        int is_inc = (ir_kind == IR_postinc_f64) || (ir_kind == IR_preinc_f64);
+                        u8 opcode = is_inc ? ADD_XMM : SUB_XMM;
+                        emit_register_relative_register(context, create_prefixes(ASM_PREFIX_SSE_double), two_byte_opcode(opcode), lhs->loaded_register, float_literal);
                         
                         emit_store(context, loc, lhs);
                     }break;
                     
-                    case IR_postdec_pointer:
-                    case IR_postinc_pointer:{
-                        ast_arena_at -= sizeof(struct ir);
-                        struct ir_pointer_increment *increment = (struct ir_pointer_increment *)ast_arena_at;
-                        ast_arena_at += sizeof(*increment);
+                    case IR_postdec_pointer: case IR_postinc_pointer:
+                    case IR_predec_pointer:  case IR_preinc_pointer:{
+                        ir_arena_at -= sizeof(struct ir);
+                        struct ir_pointer_increment *increment = (struct ir_pointer_increment *)ir_arena_at;
+                        ir_arena_at += sizeof(*increment);
                         
                         struct ast_pointer_type *pointer = increment->pointer_type;
                         
-                        u8 reg_inst = (ast_kind == IR_postinc_pointer) ? REG_OPCODE_ADD : REG_OPCODE_SUB;
+                        int is_inc = (ir_kind == IR_postinc_pointer) || (ir_kind == IR_preinc_pointer);
+                        u8 reg_inst = is_inc ? REG_OPCODE_ADD : REG_OPCODE_SUB;
                         smm size = pointer->pointer_to->size;
                         b32 is_big = size > max_s8;
                         
@@ -4480,13 +3980,13 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         emit_register_relative_immediate(context, no_prefix(), one_byte_opcode(inst), reg_inst, loc, immediate);
                     }break;
                     
-                    case IR_postdec_bitfield:
-                    case IR_postinc_bitfield:{
-                        ast_arena_at -= sizeof(struct ir);
-                        struct ir_bitfield_increment *increment = (struct ir_bitfield_increment *)ast_arena_at;
-                        ast_arena_at += sizeof(*increment);
+                    case IR_postdec_bitfield: case IR_postinc_bitfield:
+                    case IR_predec_bitfield:  case IR_preinc_bitfield:{
+                        ir_arena_at -= sizeof(struct ir);
+                        struct ir_bitfield_increment *increment = (struct ir_bitfield_increment *)ir_arena_at;
+                        ir_arena_at += sizeof(*increment);
                         
-                        if(!loaded) loaded = emit_load_float(context, loc);
+                        if(!loaded) loaded = emit_load_gpr(context, loc);
                         
                         struct ast_bitfield_type *bitfield = increment->bitfield_type;
                         
@@ -4501,7 +4001,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         copied = emit_load_bitfield(context, copied, bitfield);
                         
                         // Increment/Decrement 'copied'.
-                        u8 inst = (ast_kind == IR_postinc_bitfield) ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
+                        
+                        int is_inc = (ir_kind == IR_postinc_bitfield) || (ir_kind == IR_preinc_bitfield);
+                        u8 inst = is_inc ? FF_INCREMENT_REGM : FF_DECREMENT_REGM;
                         u8 opcode = loc->size == 1 ? REG_EXTENDED_OPCODE_FE : REG_EXTENDED_OPCODE_FF;
                         emit_reg_extended_op(context, no_prefix(), one_byte_opcode(opcode), inst, copied);
                         
@@ -4518,20 +4020,525 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     
                     invalid_default_case();
                 }
-                    
+                
                 emit_location_allow_spilling(context, loc);
+                
+                if(ir_kind <= IR_preinc_u8){
+                    free_emit_location(context, loc);
+                    
+                    emit_location_stack[emit_location_stack_at-1] = loaded;
+                }else{
+                    if(loaded) free_emit_location(context, loaded);
+                    emit_location_stack[emit_location_stack_at-1] = loc; // @note: We used to load here, why?
+                }
+            }break;
+            
+            case IR_load_address:
+            case IR_load_address_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                
+                smm location = emit_location_stack_at - 1 - (ir_kind == IR_load_address_lhs);
+                
+                struct emit_location *loc = emit_location_stack[location];
+                
+                struct emit_location *loaded = emit_load_address(context, loc, allocate_register(context, REGISTER_KIND_gpr));
                 free_emit_location(context, loc);
+                
+                emit_location_stack[location] = loaded;
+            }break;
+            
+            case IR_deref:{
+                struct ir_deref *op = (struct ir_deref *)ir;
+                ir_arena_at += sizeof(*op);
+                
+                struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
+                emit_location_stack[emit_location_stack_at-1] = emit_location_register_relative(context, loc, null, 0, op->type->size);
+            }break;
+            
+            case IR_bitwise_not_u32: case IR_bitwise_not_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *loaded = emit_load_gpr(context, emit_location_stack[emit_location_stack_at-1]);
+                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_UNARY_REGM), REG_OPCODE_NOT_REGM, loaded);
+                emit_location_stack[emit_location_stack_at-1] = loaded;
+            }break;
+            
+            case IR_logical_not_u32: case IR_logical_not_u64:
+            case IR_logical_not_f32: case IR_logical_not_f64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *loc = emit_location_stack[emit_location_stack_at - 1];
+                if(loc->state != EMIT_LOCATION_conditional){
+                    if(loc->state != EMIT_LOCATION_loaded) loc = emit_load_gpr(context, loc); // @cleanup: float?
+                    loc = emit_compare_to_zero(context, loc);
+                }
+                
+                switch(loc->condition){
+                    case COMP_equals:                loc->condition = COMP_unequals;              break;
+                    case COMP_unequals:              loc->condition = COMP_equals;                break;
+                    case COMP_smaller:               loc->condition = COMP_bigger_equals;         break;
+                    case COMP_bigger:                loc->condition = COMP_smaller_equals;        break;
+                    case COMP_smaller_equals:        loc->condition = COMP_bigger;                break;
+                    case COMP_bigger_equals:         loc->condition = COMP_smaller;               break;
+                    case COMP_bigger_equals_signed:  loc->condition = COMP_smaller_signed;        break;
+                    case COMP_smaller_equals_signed: loc->condition = COMP_bigger_signed;         break;
+                    case COMP_bigger_signed:         loc->condition = COMP_smaller_equals_signed; break;
+                    case COMP_smaller_signed:        loc->condition = COMP_bigger_equals_signed;  break;
+                    invalid_default_case();
+                }
+                
+                
+                if(ir_arena_at < current_function->end_in_ir_arena){ // @paranoid
+                    struct ir *next_ir = (struct ir *)ir_arena_at;
+                    
+                    if(next_ir->kind != IR_jump_if_true && next_ir->kind != IR_jump_if_false && !(IR_logical_not_u32 <= next_ir->kind && next_ir->kind <= IR_logical_not_f64)){
+                        // 
+                        // If we have a condition, load it unless it leads directly into a conditional jump.
+                        // 
+                        loc = emit_load_gpr(context, loc);
+                    }
+                }
+                
+                emit_location_stack[emit_location_stack_at - 1] = loc;
+            }break;
+            
+            case IR_negate_u32: case IR_negate_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *loaded = emit_load_gpr(context, emit_location_stack[emit_location_stack_at-1]);
+                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_UNARY_REGM), REG_OPCODE_NEGATE_REGM, loaded);
+                emit_location_stack[emit_location_stack_at-1] = loaded;
+            }break;
+            
+            case IR_negate_f32: case IR_negate_f64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *loaded = emit_load_float(context, emit_location_stack[emit_location_stack_at-1]);
+                emit_location_prevent_spilling(context, loaded);
+                
+                // 
+                // @note: To allow for -(0) == -0, instead of 0, we have to use an xor.
+                // 
+                
+                enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
+                struct emit_location *as_gpr = emit_location_loaded(context, REGISTER_KIND_gpr, reg, loaded->size);
+                emit_location_prevent_spilling(context, as_gpr);
+                
+                // movd / movq as_gpr, loaded
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_66), two_byte_opcode(0x7E), loaded->loaded_register, as_gpr->loaded_register, loaded->size); // @sigh: internall because of register_kind mismatch
+                
+                if(loaded->size == 4){
+                    // xor as_gpr, 0x80000000
+                    emit_register_op__internal(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_IMMIDIATE), REG_OPCODE_XOR, as_gpr->loaded_register, 4);
+                    emit_u32(0x80000000);
+                }else{
+                    assert(loaded->size == 8);
+                    struct emit_location *loaded_immediate = emit_load_gpr(context, emit_location_immediate(context, 0x8000000000000000, 8));
+                    
+                    emit_register_register(context, no_prefix(), one_byte_opcode(XOR_REG_REGM), as_gpr, loaded_immediate);
+                    free_emit_location(context, loaded_immediate);
+                }
+                
+                // movd / movq loaded, as_gpr
+                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_66), two_byte_opcode(0x6E), loaded->loaded_register, as_gpr->loaded_register, loaded->size); // @sigh: internall because of register_kind mismatch
+                
+                emit_location_allow_spilling(context, as_gpr);
+                free_emit_location(context, as_gpr);
+                
+                emit_location_allow_spilling(context, loaded);
                 
                 emit_location_stack[emit_location_stack_at-1] = loaded;
             }break;
             
+            
+            case IR_multiply_s32: case IR_multiply_u32:
+            case IR_multiply_s64: case IR_multiply_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = (ir_kind == IR_multiply_s32) || (ir_kind == IR_multiply_s64);
+                emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, is_signed);
+            }break;
+            case IR_multiply_f32: case IR_multiply_f64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, MUL_XMM);
+            }break;
+            
+            
+            case IR_divide_s32: case IR_divide_s64:
+            case IR_divide_u32: case IR_divide_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = (ir_kind == IR_divide_s32) || (ir_kind == IR_divide_s64);
+                emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, is_signed);
+            }break;
+            case IR_divide_f32: case IR_divide_f64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, DIV_XMM);
+            }break;
+            
+            case IR_mod_s32: case IR_mod_u32:
+            case IR_mod_s64: case IR_mod_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = (ir_kind == IR_mod_s32) || (ir_kind == IR_mod_s64);
+                emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, is_signed | EMIT_DMM_is_mod);
+            }break;
+            
+            case IR_add_u32: case IR_add_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, /*is_signed*/0, REG_OPCODE_ADD, ADD_REG8_REGM8, ADD_REG_REGM);
+            }break;
+            
+            case IR_add_f32: case IR_add_f64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, ADD_XMM);
+            }break;
+            
+            case IR_subtract_u32: case IR_subtract_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, /*is_signed*/0, REG_OPCODE_SUB, SUB_REG8_REGM8, SUB_REG_REGM);
+            }break;
+            
+            case IR_subtract_f32: case IR_subtract_f64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at-1] = emit_binary_op_xmm(context, lhs, rhs, SUB_XMM);
+            }break;
+            
+            case IR_left_shift_s32: case IR_left_shift_s64:
+            case IR_left_shift_u32: case IR_left_shift_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = (ir_kind == IR_left_shift_s32) || (ir_kind == IR_left_shift_s64);
+                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_LEFT : REG_OPCODE_SHIFT_LEFT;
+                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, false);
+            }break;
+            
+            case IR_right_shift_s32: case IR_right_shift_s64:
+            case IR_right_shift_u32: case IR_right_shift_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = (ir_kind == IR_right_shift_s32) || (ir_kind == IR_right_shift_s64);
+                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_RIGHT : REG_OPCODE_SHIFT_RIGHT;
+                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, false);
+            }break;
+            
+            
+            case IR_or_u32: case IR_or_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_OR, OR_REG8_REGM8, OR_REG_REGM);
+            }break;
+            case IR_xor_u32: case IR_xor_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_XOR, XOR_REG8_REGM8, XOR_REG_REGM);
+            }break;
+            case IR_and_u32: case IR_and_u64:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at-1] = emit_binary_op__internal(context, no_prefix(), lhs, rhs, lhs->size, 0, REG_OPCODE_AND, AND_REG8_REGM8, AND_REG_REGM);
+            }break;
+            
+            case IR_store:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                if(lhs->size != 0){
+                    assert(lhs->state == EMIT_LOCATION_register_relative);
+                    emit_store(context, lhs, rhs);
+                }
+            }break;
+            
+            case IR_store_atomic:{
+                ir_arena_at += sizeof(struct ir);
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_store_atomic_integer(context, lhs, rhs);
+            }break;
+            
+            case IR_store_bitfield:{
+                struct ir_store_bitfield *op = (struct ir_store_bitfield *)ir;
+                ir_arena_at += sizeof(*op);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_store_bitfield(context, op->bitfield_type, lhs, rhs);
+            }break;
+            
+            case IR_load_bitfield:
+            case IR_load_bitfield_lhs:{
+                struct ir_load_bitfield *op = (struct ir_load_bitfield *)ir;
+                ir_arena_at += sizeof(*op);
+                
+                smm stack_index = emit_location_stack_at-1;
+                if(ir_kind == IR_load_bitfield_lhs) stack_index = emit_location_stack_at-2;
+                
+                struct emit_location *operand = emit_location_stack[stack_index];
+                
+                emit_location_stack[stack_index] = emit_load_bitfield(context, operand, op->bitfield_type);
+            }break;
+            
+            case IR_and_assignment_u8: case IR_and_assignment_u16: case IR_and_assignment_u32: case IR_and_assignment_u64:
+            case IR_and_atomic_assignment_u8: case IR_and_atomic_assignment_u16: case IR_and_atomic_assignment_u32: case IR_and_atomic_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                struct prefixes prefix = (ir_kind >= IR_and_atomic_assignment_u8) ? create_prefixes(ASM_PREFIX_lock) : no_prefix();
+                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, prefix, lhs, rhs, /*is_signed*/0, REG_OPCODE_AND, AND_REGM8_REG8, AND_REGM_REG);
+            }break;
+            
+            case IR_or_assignment_u8: case IR_or_assignment_u16: case IR_or_assignment_u32: case IR_or_assignment_u64:
+            case IR_or_atomic_assignment_u8: case IR_or_atomic_assignment_u16: case IR_or_atomic_assignment_u32: case IR_or_atomic_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                struct prefixes prefix = (ir_kind >= IR_or_atomic_assignment_u8) ? create_prefixes(ASM_PREFIX_lock) : no_prefix();
+                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, prefix, lhs, rhs, /*is_signed*/0, REG_OPCODE_OR, OR_REGM8_REG8, OR_REGM_REG);
+            }break;
+            
+            case IR_xor_assignment_u8: case IR_xor_assignment_u16: case IR_xor_assignment_u32: case IR_xor_assignment_u64:
+            case IR_xor_atomic_assignment_u8: case IR_xor_atomic_assignment_u16: case IR_xor_atomic_assignment_u32: case IR_xor_atomic_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                struct prefixes prefix = (ir_kind >= IR_xor_atomic_assignment_u8) ? create_prefixes(ASM_PREFIX_lock) : no_prefix();
+                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, prefix, lhs, rhs, /*is_signed*/0, REG_OPCODE_XOR, XOR_REGM8_REG8, XOR_REGM_REG);
+            }break;
+            
+            
+            case IR_add_assignment_u8: case IR_add_assignment_u16: case IR_add_assignment_u32: case IR_add_assignment_u64:
+            case IR_add_atomic_assignment_u8: case IR_add_atomic_assignment_u16: case IR_add_atomic_assignment_u32: case IR_add_atomic_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                struct prefixes prefix = (ir_kind >= IR_add_atomic_assignment_u8) ? create_prefixes(ASM_PREFIX_lock) : no_prefix();
+                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, prefix, lhs, rhs, /*is_signed*/0, REG_OPCODE_ADD, ADD_REGM8_REG8, ADD_REGM_REG); // :ir_refactor_atomic_operations.
+            }break;
+            
+            case IR_add_assignment_f32: case IR_add_assignment_f64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment_xmm(context, lhs, rhs, ADD_XMM);
+            }break;
+            
+            case IR_subtract_assignment_u8: case IR_subtract_assignment_u16: case IR_subtract_assignment_u32: case IR_subtract_assignment_u64:
+            case IR_subtract_atomic_assignment_u8: case IR_subtract_atomic_assignment_u16: case IR_subtract_atomic_assignment_u32: case IR_subtract_atomic_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                struct prefixes prefix = (ir_kind >= IR_subtract_atomic_assignment_u8) ? create_prefixes(ASM_PREFIX_lock) : no_prefix();
+                
+                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment__internal(context, prefix, lhs, rhs, /*is_signed*/0, REG_OPCODE_SUB, SUB_REGM8_REG8, SUB_REGM_REG); // :ir_refactor_atomic_operations.
+            }break;
+            
+            case IR_subtract_assignment_f32: case IR_subtract_assignment_f64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment_xmm(context, lhs, rhs, SUB_XMM);
+            }break;
+            
+            case IR_add_atomic_assignment_bool:
+            case IR_subtract_atomic_assignment_bool:{
+                report_internal_compiler_error(null, __FUNCTION__ ": Unhandled compound assignment of variable of type _Atomic _Bool.");
+            }break;
+            
+            case IR_modulo_assignment_s8: case IR_modulo_assignment_s16: case IR_modulo_assignment_s32: case IR_modulo_assignment_s64:
+            case IR_modulo_assignment_u8: case IR_modulo_assignment_u16: case IR_modulo_assignment_u32: case IR_modulo_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = ((ir_kind - IR_modulo_assignment_s8) & 1) == 0;
+                enum emit_dmm_flags flags = is_signed | EMIT_DMM_is_assignment | EMIT_DMM_is_mod;
+                emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, flags);
+            }break;
+            
+            case IR_multiply_assignment_s8: case IR_multiply_assignment_s16: case IR_multiply_assignment_s32: case IR_multiply_assignment_s64:
+            case IR_multiply_assignment_u8: case IR_multiply_assignment_u16: case IR_multiply_assignment_u32: case IR_multiply_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = ((ir_kind - IR_multiply_assignment_s8) & 1) == 0;
+                enum emit_dmm_flags flags = is_signed | EMIT_DMM_is_assignment;
+                emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, REG_OPCODE_IMUL_REGM_RAX, REG_OPCODE_MUL_REGM_RAX, flags);
+            }break;
+            
+            case IR_multiply_assignment_f32: case IR_multiply_assignment_f64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment_xmm(context, lhs, rhs, MUL_XMM);
+            }break;
+            
+            
+            case IR_divide_assignment_s8: case IR_divide_assignment_s16: case IR_divide_assignment_s32: case IR_divide_assignment_s64:
+            case IR_divide_assignment_u8: case IR_divide_assignment_u16: case IR_divide_assignment_u32: case IR_divide_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = ((ir_kind - IR_divide_assignment_s8) & 1) == 0;
+                enum emit_dmm_flags flags = is_signed | EMIT_DMM_is_assignment;
+                emit_location_stack[emit_location_stack_at-1] = emit_divide_or_mod_or_multiply__internal(context, lhs, rhs, lhs->size, REG_OPCODE_IDIV_REGM_RAX, REG_OPCODE_DIV_REGM_RAX, flags);
+            }break;
+            
+            case IR_divide_assignment_f32: case IR_divide_assignment_f64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                emit_location_stack[emit_location_stack_at - 1] = emit_compound_assignment_xmm(context, lhs, rhs, DIV_XMM);
+            }break;
+            
+            case IR_left_shift_assignment_s8: case IR_left_shift_assignment_s16: case IR_left_shift_assignment_s32: case IR_left_shift_assignment_s64: 
+            case IR_left_shift_assignment_u8: case IR_left_shift_assignment_u16: case IR_left_shift_assignment_u32: case IR_left_shift_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = ((ir_kind - IR_left_shift_assignment_s8) & 1) == 0;
+                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_LEFT : REG_OPCODE_SHIFT_LEFT;
+                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, true);
+            }break;
+            
+            case IR_right_shift_assignment_s8: case IR_right_shift_assignment_s16: case IR_right_shift_assignment_s32: case IR_right_shift_assignment_s64: 
+            case IR_right_shift_assignment_u8: case IR_right_shift_assignment_u16: case IR_right_shift_assignment_u32: case IR_right_shift_assignment_u64:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at - 2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at - 1];
+                emit_location_stack_at -= 1;
+                
+                int is_signed = ((ir_kind - IR_right_shift_assignment_s8) & 1) == 0;
+                u8 inst = is_signed ? REG_OPCODE_SHIFT_ARITHMETIC_RIGHT : REG_OPCODE_SHIFT_RIGHT;
+                emit_location_stack[emit_location_stack_at - 1] = emit_shift_or_rotate__internal(context, no_prefix(), lhs, rhs, inst, true);
+            }break;
+            
+            case IR_duplicate:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *top = emit_location_stack[emit_location_stack_at-1];
+                
+                struct emit_location *copy = push_struct(&context->scratch, struct emit_location);
+                *copy = *top;
+                
+                emit_location_stack_at += 1;
+                emit_location_stack[emit_location_stack_at-1] = copy;
+            }break;
+            
+            case IR_duplicate_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at-2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at-1];
+                
+                struct emit_location *copy = push_struct(&context->scratch, struct emit_location);
+                *copy = *lhs;
+                
+                emit_location_stack_at += 1;
+                emit_location_stack[emit_location_stack_at-1] = rhs;
+                emit_location_stack[emit_location_stack_at-2] = copy;
+            }break;
+            
+            case IR_nop:{
+                ir_arena_at += sizeof(struct ir);
+            }break;
             
             default:{
                 report_internal_compiler_error(null, __FUNCTION__ ": Unhandled ast");
             }break;
         }
         
-        assert(ast_arena_at != (u8 *)ast); // We should increment ast_arena_at.
+        assert(ir_arena_at != (u8 *)ir); // We should increment ir_arena_at.
     }
     
     for(u32 jump_label_index = 0; jump_label_index < current_function->amount_of_jump_labels; jump_label_index++){
@@ -4648,7 +4655,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
             }else if((function->type->flags & FUNCTION_TYPE_FLAGS_is_varargs) && !it){
                 // this is fine, do nothing
             }else{
-                assert(it->value->kind == AST_declaration);
+                assert(*it->value == AST_declaration);
                 struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
                 decl->offset_on_stack = stack_at;
                 it = it->next;

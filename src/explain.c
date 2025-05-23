@@ -298,7 +298,7 @@ int try_to_extract_simple_declaration_from_object_file(struct coff_file_header *
             if((section->number_of_relocations == 0) && (section->size_of_raw_data == declaration->type->size)){
                 // @cleanup: check that the section characteristics match what we expect (data or function).
                 declaration->memory_location = (u8 *)coff_file_header + section->pointer_to_raw_data;
-                declaration->assign_expr = &globals.empty_statement;// @HACK: Is this how we want to solve this?
+                declaration->assign_expr = (struct ir *)&globals.empty_statement;// @HACK: Is this how we want to solve this?
                 return 1;
             }
         }
@@ -308,8 +308,8 @@ int try_to_extract_simple_declaration_from_object_file(struct coff_file_header *
 
 void lookup_declaration_in_libraries(struct context *context, struct ast_declaration *declaration, struct token *token_that_referenced_this_declaration){
     
-    char *function_or_declaration = (declaration->base.kind == AST_function) ? "function" : "declaration";
-    char *Function_or_Declaration = (declaration->base.kind == AST_function) ? "Function" : "Declaration";
+    char *function_or_declaration = (declaration->kind == AST_function) ? "function" : "declaration";
+    char *Function_or_Declaration = (declaration->kind == AST_function) ? "Function" : "Declaration";
     int is_dll_import = (declaration->flags & DECLARATION_FLAGS_is_dllimport) != 0;
     
     // 
@@ -402,7 +402,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         report_warning(context, WARNING_imported_function_is_also_defined, declaration->identifier, "%s is imported from '%.*s', but also defined in library '%.*s'.", Function_or_Declaration, import_library_name.size, import_library_name.data, object_file_library_name.size, object_file_library_name.data);
     }
     
-    if(declaration->base.kind == AST_declaration){
+    if(declaration->kind == AST_declaration){
         report_error(context, declaration->identifier, "@incomplete: Currently no __declspec(dllimport) for data declarations?");
         return;
     }

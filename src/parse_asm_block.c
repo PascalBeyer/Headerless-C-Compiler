@@ -1291,13 +1291,13 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     struct expr expr = parse_expression(context, /*skip_comma = */true);
     if(context->should_exit_statement) return operand;
     
-    if(expr.ast->kind == AST_integer_literal){
+    if(expr.ir->kind == IR_integer_literal){
         // Integer literals are fine!
         operand.kind      = ASM_ARG_immediate;
         operand.immediate = integer_literal_as_u64(&expr);
         operand.size      = expr.resolved_type->size;
         
-        pop_from_ast_arena(context, (struct ast_integer_literal *)expr.ast);
+        pop_from_ir_arena(context, (struct ir_integer_literal *)expr.ir);
         return operand;
     }
     
@@ -1305,8 +1305,8 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     operand.expr = expr;
     operand.size = expr.resolved_type->size;
     
-    if(context->in_inline_asm_function && operand.expr.ast->kind == AST_identifier){
-        struct ast_identifier *ident = (struct ast_identifier *)expr.ast;
+    if(context->in_inline_asm_function && operand.expr.ir->kind == IR_identifier){
+        struct ir_identifier *ident = (struct ir_identifier *)expr.ir;
         
         //
         // @cleanup: is there not just a flag somewhere we can check?
@@ -1327,16 +1327,16 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     while(true){
         
         // We should end with an identifier, if everything goes well!
-        if(expr.ast->kind == AST_identifier) break;
+        if(expr.ir->kind == IR_identifier) break;
         
-        if(expr.ast->kind == AST_member){
+        if(expr.ir->kind == AST_member){
             not_implemented;
             // struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)expr;
             // expr = dot->lhs;
             continue;
         }
         
-        if(expr.ast->kind == AST_array_subscript){
+        if(expr.ir->kind == IR_array_subscript){
             not_implemented;
             // struct ast_subscript *subscript = (struct ast_subscript *)expr;
             // if(subscript->index->kind == AST_integer_literal){
@@ -2230,7 +2230,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
 }
 
 
-func void parse_asm_block(struct context *context, struct ast_asm_block *asm_block){
+func void parse_asm_block(struct context *context, struct ir_asm_block *asm_block){
     // note they should always 'ballance', thus this scope _should_ end but lets be careful
     while(!peek_token_eat(context, TOKEN_closed_curly) && !peek_token(context, TOKEN_invalid)){
         

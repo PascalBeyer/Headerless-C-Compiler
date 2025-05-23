@@ -83,10 +83,10 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
             //        'spilled' or 'immediate'.
             
             struct emit_location *ret = null;
-            struct ast *expression = operand->expr.ast;
+            struct ir *expression = operand->expr.ir;
             
-            if(context->in_inline_asm_function && expression->kind == AST_identifier){
-                struct ast_identifier *ident = (struct ast_identifier *)expression;
+            if(context->in_inline_asm_function && expression->kind == IR_identifier){
+                struct ir_identifier *ident = (struct ir_identifier *)expression;
                 
                 for(struct inline_asm_function_argument *argument = context->inline_asm_function_arguments.first;
                         argument; argument = argument->next){
@@ -181,7 +181,7 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
 // store this tempoary register back into 'a', If a is not loaded to begin with.
 //                                                                 06.04.2022
 
-func void emit_inline_asm_block(struct context *context, struct ast_asm_block *asm_block){
+func void emit_inline_asm_block(struct context *context, struct ir_asm_block *asm_block){
 #define allocate_specific_register "This is a syntax error to remind you that you are not allowed to use this function here!"
     
     for(struct asm_instruction *inst = asm_block->instructions.first; inst; inst = inst->next){

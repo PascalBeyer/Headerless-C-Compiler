@@ -91,7 +91,7 @@ struct ast_node{
     union{
         struct{
             struct token *token;
-            struct ast *ast;
+            enum ast_kind *ast;
         };
         m128 mem;
     };
@@ -162,7 +162,7 @@ func void maybe_grow_ast_table__internal(struct ast_table *table){
     
 }
 
-func struct ast *ast_table_add_or_return_previous_entry(struct ast_table *table, struct ast *ast_to_insert, struct token *token){
+func enum ast_kind *ast_table_add_or_return_previous_entry(struct ast_table *table, enum ast_kind *ast_to_insert, struct token *token){
     while(true){
         if(atomic_load(s64, table->is_locked_for_growing)) continue;
         
@@ -201,7 +201,7 @@ func struct ast *ast_table_add_or_return_previous_entry(struct ast_table *table,
     
     for(u64 i = 0; i < table->capacity; i++){
         struct ast_node *node = table->nodes + index;
-        struct ast *ast = node->ast;
+        enum ast_kind *ast = node->ast;
         
         if(ast){
             if(node->token == token || atoms_match(node->token->atom, token->atom)){
@@ -227,7 +227,7 @@ func struct ast *ast_table_add_or_return_previous_entry(struct ast_table *table,
     invalid_code_path;
 }
 
-func struct ast *ast_table_get(struct ast_table *table, struct atom atom){
+func enum ast_kind *ast_table_get(struct ast_table *table, struct atom atom){
     while(atomic_load(s64, table->is_locked_for_growing));
     
     atomic_preincrement(&table->threads_in_flight);
@@ -237,7 +237,7 @@ func struct ast *ast_table_get(struct ast_table *table, struct atom atom){
     
     for(u64 i = 0; i < table->capacity; i++){
         struct ast_node *node = table->nodes + index;
-        struct ast *ast = node->ast;
+        enum ast_kind *ast = node->ast;
         
         if(!ast) {
             atomic_predecrement(&table->threads_in_flight);
@@ -588,6 +588,7 @@ static struct{
     struct ast_type typedef_f32;
     struct ast_type typedef_f64;
     
+    struct ast_type padding[3]; // @note: This padding is here so we can calculate the unsigned types using 'type_index/2 + == f64'.
     struct ast_type typedef_atomic_bool;
     
     struct ast_type typedef_atomic_s8;
@@ -612,8 +613,8 @@ static struct{
     // Invalid/Default values
     //
     struct ast_declaration zero_decl;
-    struct ast empty_statement;
-    struct ast guard_ast;
+    struct ir empty_statement;
+    struct ir guard_ast;
     struct token *invalid_identifier_token;
     struct token invalid_token;
     struct ast_declaration *poison_declaration;
@@ -722,7 +723,7 @@ struct context{
     //
     struct memory_arena scratch; // Cleared after every thread_do_work.
     struct memory_arena *arena; // Right now never cleared. Think later about how we can minimize memory usage.
-    struct memory_arena ast_arena;
+    struct memory_arena ir_arena;
     
     struct thread_info *thread_info;
     
@@ -800,7 +801,7 @@ struct context{
     struct ast_declaration *current_declaration; // This is set by `worker_parse_global_scope_entry`.
     struct compilation_unit *current_compilation_unit;
     
-    struct ast_switch *current_switch;
+    struct ir_switch *current_switch;
     struct expr current_switch_on;
     struct token *current_switch_default_label_token;
     
@@ -904,14 +905,14 @@ struct context{
     } inline_asm_function_arguments;
     
     struct{
-        struct ast_emitted_float_literal *first;
-        struct ast_emitted_float_literal *last;
+        struct ir_emitted_float_literal *first;
+        struct ir_emitted_float_literal *last;
         smm amount_of_float_literals;
     } emitted_float_literals;
     
     struct{
-        struct ast_string_literal *first;
-        struct ast_string_literal *last;
+        struct ir_string_literal *first;
+        struct ir_string_literal *last;
         smm amount_of_strings;
     } string_literals;
     
@@ -950,14 +951,14 @@ struct patch_node{
     struct patch_node *next;
     
     enum patch_kind kind;
-    struct ast *source;
+    enum ast_kind *source;
     struct ast_declaration *dest_declaration;
     smm location_offset_in_dest_declaration;
     smm location_offset_in_source_declaration;
     smm rip_at;
 };
 
-func void emit_patch(struct context *context, enum patch_kind kind, struct ast *source_decl, smm source_offset, struct ast_declaration *dest_declaration, smm dest_offset, smm rip_at){
+func void emit_patch(struct context *context, enum patch_kind kind, enum ast_kind *source_decl, smm source_offset, struct ast_declaration *dest_declaration, smm dest_offset, smm rip_at){
     struct patch_node *patch_node = push_struct(context->arena, struct patch_node);
     patch_node->source = source_decl;
     patch_node->dest_declaration = dest_declaration;
@@ -1126,7 +1127,7 @@ func struct string push_type_string(struct memory_arena *arena, struct memory_ar
 
 //_____________________________________________________________________________________________________________________
 
-func void ast_list_append(struct ast_list *list, struct memory_arena *arena, struct ast *ast){
+func void ast_list_append(struct ast_list *list, struct memory_arena *arena, enum ast_kind *ast){
     struct ast_list_node *new = push_uninitialized_struct(arena, struct ast_list_node);
     if(list->last){
         list->last->next = new;
@@ -1585,7 +1586,7 @@ func struct ast_declaration *lookup_typedef(struct context *context, struct comp
     struct ast_declaration *decl = lookup_declaration(context->current_scope, compilation_unit, type_name->atom);
     if(!decl) return null;
     
-    if(decl->base.kind != AST_typedef){
+    if(decl->kind != AST_typedef){
         if(!silent){
             // 
             // @note: We need to report an error here in some cases, to prevent infinite loops for something like:
@@ -1623,7 +1624,7 @@ func struct ast_declaration *lookup_typedef(struct context *context, struct comp
         if(resolved){
             if(resolved->kind == AST_enum){
                 decl->type = &globals.typedef_s32;
-                decl->defined_type = (struct ast *)resolved;
+                decl->defined_type = &resolved->kind;
             }else{
                 decl->type = resolved;
             }
@@ -1777,7 +1778,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
         
         int declaration_is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(compilation_unit, decl->identifier->atom) == IDENTIFIER_is_static;
         struct ast_table *table = declaration_is_static ? &compilation_unit->static_declaration_table : &globals.global_declarations;
-        struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(table, &decl->base, decl->identifier);
+        struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(table, &decl->kind, decl->identifier);
         
         // @note: if there is a redeclaration this should always return this redeclaraton (the global one, that we can find in the table)
         //        or error in which case whatever.
@@ -1852,16 +1853,16 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 }
             }
             
-            if(redecl->base.kind == AST_declaration && decl->base.kind == AST_declaration){
+            if(redecl->kind == AST_declaration && decl->kind == AST_declaration){
                 
                 if((redecl->flags & DECLARATION_FLAGS_is_enum_member) && (decl->flags & DECLARATION_FLAGS_is_enum_member)){
                     // if they are both enums with the same value they are fine.
                     assert(redecl->assign_expr);
                     assert(decl->assign_expr);
-                    assert(redecl->assign_expr->kind == AST_integer_literal);
-                    assert(decl->assign_expr->kind == AST_integer_literal);
-                    struct ast_integer_literal *decl_lit   = (struct ast_integer_literal *)decl->assign_expr;
-                    struct ast_integer_literal *redecl_lit = (struct ast_integer_literal *)redecl->assign_expr;
+                    assert(redecl->assign_expr->kind == IR_integer_literal);
+                    assert(decl->assign_expr->kind == IR_integer_literal);
+                    struct ir_integer_literal *decl_lit   = (struct ir_integer_literal *)decl->assign_expr;
+                    struct ir_integer_literal *redecl_lit = (struct ir_integer_literal *)redecl->assign_expr;
                     
                     if(decl_lit->_s32 == redecl_lit->_s32){
                         return redecl; // This is fine, we redefine the literal as it self.
@@ -1898,7 +1899,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     end_error_report(context);
                     return decl;
                 }
-            }else if(redecl->base.kind == AST_typedef && decl->base.kind == AST_typedef){
+            }else if(redecl->kind == AST_typedef && decl->kind == AST_typedef){
                 if(types_are_equal(redecl->type, decl->type)){
                     return redecl;
                 }else{
@@ -1911,7 +1912,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     end_error_report(context);
                     return decl;
                 }
-            }else if(redecl->base.kind == AST_function && decl->base.kind == AST_function){
+            }else if(redecl->kind == AST_function && decl->kind == AST_function){
                 struct ast_function *redecl_function = cast(struct ast_function *)redecl;
                 struct ast_function *function = cast(struct ast_function *)decl;
                 
@@ -1943,13 +1944,13 @@ func struct ast_declaration *register_declaration(struct context *context, struc
             }
             
             char *redecl_kind = "declaration";
-            if(redecl->base.kind == AST_typedef) redecl_kind = "typedef";
-            if(redecl->base.kind == AST_function) redecl_kind = "function";
+            if(redecl->kind == AST_typedef) redecl_kind = "typedef";
+            if(redecl->kind == AST_function) redecl_kind = "function";
             
             
             char *decl_kind = "declaration";
-            if(decl->base.kind == AST_typedef) decl_kind = "typedef";
-            if(decl->base.kind == AST_function) decl_kind = "function";
+            if(decl->kind == AST_typedef) decl_kind = "typedef";
+            if(decl->kind == AST_function) decl_kind = "function";
             
             begin_error_report(context);
             report_error(context, decl->identifier, "[%lld] Redeclaration of different kind. It is a %s.", decl->compilation_unit->index, decl_kind);
@@ -1965,7 +1966,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
     return decl;
 }
 
-func int parser_register_definition(struct context *context, struct ast_declaration *decl, struct ast *initializer, struct token *initializer_token, struct ast_type *type){
+func int parser_register_definition(struct context *context, struct ast_declaration *decl, struct ir *initializer, struct token *initializer_token, struct ast_type *type){
     assert(!context->should_sleep);
     assert(!(decl->flags & DECLARATION_FLAGS_is_enum_member));
     
@@ -2046,9 +2047,7 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         return;
     }
     
-    struct ast *redecl;
-    
-    redecl = ast_table_add_or_return_previous_entry(&globals.compound_types, cast(struct ast*)type, ident);
+    enum ast_kind *redecl = ast_table_add_or_return_previous_entry(&globals.compound_types, &type->kind, ident);
     
     if(redecl){
         struct ast_compound_type *old = (struct ast_compound_type *)redecl;
@@ -2104,24 +2103,24 @@ func void parser_emit_memory_location(struct context *context, struct ast_declar
 //_____________________________________________________________________________________________________________________
 
 
-func void evaluate_static_initializer__internal(struct context *context, struct ast *initializer, struct ast_declaration *patch_declaration, u8 *data, smm data_size, smm root_offset){
+func void evaluate_static_initializer__internal(struct context *context, struct ir *initializer, struct ast_declaration *patch_declaration, u8 *data, smm data_size, smm root_offset){
     
     // @cleanup: There has to be a better solution.
     struct token *error_token = get_initializer_token(patch_declaration);
     
     smm initializer_end = 0x80000000;
     
-    if(initializer->kind == AST_identifier){
-        initializer = &((struct ast_identifier *)initializer + 1)->base;
+    if(initializer->kind == IR_identifier){
+        initializer = &((struct ir_identifier *)initializer + 1)->base;
     }else{
-        assert(initializer->kind == AST_compound_literal);
-        struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)initializer;
+        assert(initializer->kind == IR_compound_literal);
+        struct ir_compound_literal *compound_literal = (struct ir_compound_literal *)initializer;
         initializer = &(compound_literal + 1)->base;
         initializer_end = compound_literal->initializer_size;
     }
     
     struct{
-        struct ast *ast;
+        enum ast_kind *ast;
         smm offset;
         int is_address;
     } ast_stack[4]; // @paranoid: We should be able to put this to 2, because the only binary expression we handle are + and -, hence we cannot exceed depth 2.
@@ -2130,51 +2129,51 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
     u8 *base = (u8 *)initializer;
     smm ast_offset = 0;
     while(ast_offset < initializer_end){
-        struct ast *ast = (struct ast *)(base + ast_offset);
+        enum ast_kind *ast_kind = (enum ast_kind *)(base + ast_offset);
         smm start_ast_offset = ast_offset;
         
-        switch(ast->kind){
+        switch((int)*ast_kind){
             
             // 
             // Primary expressions:
             // 
             
-            case AST_integer_literal:{
-                ast_offset += sizeof(struct ast_integer_literal);
-                ast_stack[ast_stack_at].ast = ast;
+            case IR_integer_literal:{
+                ast_offset += sizeof(struct ir_integer_literal);
+                ast_stack[ast_stack_at].ast = ast_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
             }break;
-            case AST_float_literal:{
-                ast_offset += sizeof(struct ast_float_literal);
-                ast_stack[ast_stack_at].ast = ast;
+            case IR_float_literal:{
+                ast_offset += sizeof(struct ir_float_literal);
+                ast_stack[ast_stack_at].ast = ast_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
             }break;
-            case AST_string_literal:{ // @cleanup: mark it as being used?
-                ast_offset += sizeof(struct ast_string_literal);
-                ast_stack[ast_stack_at].ast = ast;
+            case IR_string_literal:{ // @cleanup: mark it as being used?
+                ast_offset += sizeof(struct ir_string_literal);
+                ast_stack[ast_stack_at].ast = ast_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
                 
                 // Mark this string literal as being used.
-                struct ast_string_literal *string_literal = (struct ast_string_literal *)ast;
+                struct ir_string_literal *string_literal = (struct ir_string_literal *)ast_kind;
                 sll_push_back(context->string_literals, string_literal);
                 context->string_literals.amount_of_strings += 1;
             }break;
-            case AST_pointer_literal:{
-                ast_offset += sizeof(struct ast_pointer_literal);
-                ast_stack[ast_stack_at].ast = ast;
+            case IR_pointer_literal:{
+                ast_offset += sizeof(struct ir_pointer_literal);
+                ast_stack[ast_stack_at].ast = ast_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
             }break;
             
-            case AST_identifier:{
-                struct ast_identifier *identifier = (struct ast_identifier *)ast;
+            case IR_identifier:{
+                struct ir_identifier *identifier = (struct ir_identifier *)ast_kind;
                 struct ast_declaration *decl = identifier->decl;
                 
                 // @cleanup: This is currently called from main inside of an error_report.
@@ -2198,10 +2197,10 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 
                 if(decl->flags & DECLARATION_FLAGS_is_dllimport){
                     // begin_error_report(context);
-                    if(decl->base.kind == AST_declaration){
+                    if(decl->kind == AST_declaration){
                         report_error(context, /*ast->token*/error_token, "Cannot reference __declspec(dllimport) declaration in constant initializer.");
                         report_error(context, decl->identifier, "... Here is the referenced declaration.");
-                    }else if(decl->base.kind == AST_function){
+                    }else if(decl->kind == AST_function){
                         report_warning(context, WARNING_reference_to_dllimport_inserts_stub, /*ast->token*/error_token, "Constant reference of __declspec(dllimport)-function '%.*s' causes a stub to be generated. This causes `==` to potentially produce undesired results.", decl->identifier->size, decl->identifier->data);
                         report_warning(context, WARNING_reference_to_dllimport_inserts_stub, decl->identifier, "... Here is the referenced declaration.");
                         if(!(decl->flags & DECLARATION_FLAGS_need_dllimport_stub_function)) decl->flags |= DECLARATION_FLAGS_need_dllimport_stub_function;
@@ -2209,32 +2208,32 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                     // end_error_report(context);
                 }
                 
-                ast_offset += sizeof(struct ast_identifier);
-                ast_stack[ast_stack_at].ast = &decl->base;
+                ast_offset += sizeof(struct ir_identifier);
+                ast_stack[ast_stack_at].ast = &decl->kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
             }break;
             
-            case AST_compound_literal:{
-                struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)ast;
+            case IR_compound_literal:{
+                struct ir_compound_literal *compound_literal = (struct ir_compound_literal *)ast_kind;
                 
                 // Add this compound literal to the list of unnamed global declarations.
                 // @cleanup: This might not be emitted I think.
-                ast_list_append(&context->global_struct_and_array_literals, context->arena, &compound_literal->decl->base);
+                ast_list_append(&context->global_struct_and_array_literals, context->arena, &compound_literal->decl->kind);
                 
-                ast_offset += sizeof(struct ast_compound_literal);
+                ast_offset += sizeof(struct ir_compound_literal);
                 ast_offset += compound_literal->initializer_size;
                 
-                ast_stack[ast_stack_at].ast = &compound_literal->decl->base;
+                ast_stack[ast_stack_at].ast = &compound_literal->decl->kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
             }break;
             
-            case AST_embed:{
-                ast_offset += sizeof(struct ast_embed);
-                ast_stack[ast_stack_at].ast = ast;
+            case IR_embed:{
+                ast_offset += sizeof(struct ir_embed);
+                ast_stack[ast_stack_at].ast = ast_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
@@ -2244,30 +2243,29 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             // Unary expressions:
             // 
             
-            case AST_member:{
-                ast_offset += sizeof(struct ast_dot_or_arrow);
+            case IR_member:{
+                ast_offset += sizeof(struct ir_dot_or_arrow);
                 
-                struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)ast;
+                struct ir_dot_or_arrow *dot = (struct ir_dot_or_arrow *)ast_kind;
                 ast_stack[ast_stack_at-1].offset += dot->member->offset_in_type;
             }break;
             
-            case AST_unary_address:
-            case AST_implicit_address_conversion:{
-                ast_offset += sizeof(struct ast_unary_op);
+            case IR_load_address:{
+                ast_offset += sizeof(struct ir);
                 
                 ast_stack[ast_stack_at-1].is_address = 1;
             }break;
-            case AST_implicit_address_conversion_lhs:{
-                ast_offset += sizeof(struct ast_unary_op);
+            case IR_load_address_lhs:{
+                ast_offset += sizeof(struct ir);
                 
                 ast_stack[ast_stack_at-2].is_address = 1;
             }break;
             
-            case AST_cast_lhs:
-            case AST_cast:{
+            #if 0
+            case AST_cast_lhs: case AST_cast:{
                 ast_offset += sizeof(struct ast_cast);
                 
-                int stack_offset = ast->kind == AST_cast ? 1 : 2;
+                int stack_offset = *ast_kind == AST_cast ? 1 : 2;
                 if(ast_stack[ast_stack_at - stack_offset].is_address){
                     if(ast->resolved_type->size == 8){
                         // We are good, casting pointer to integer.
@@ -2278,60 +2276,60 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                     goto initializer_not_constant;
                 }
             }break;
+            #endif
             
             // 
             // Binary expressions:
             // 
             
-            case AST_array_subscript:{
-                ast_offset += sizeof(struct ast_subscript);
+            case IR_array_subscript:{
+                struct ir_subscript *subscript = (struct ir_subscript *)ast_kind;
+                ast_offset += sizeof(struct ir_subscript);
                 ast_stack_at -= 1;
                 
-                struct ast_subscript *subscript = (struct ast_subscript *)ast;
+                enum ast_kind *index = ast_stack[ast_stack_at].ast;
                 
-                struct ast *index = ast_stack[ast_stack_at].ast;
-                
-                if(index->kind == AST_integer_literal){
-                    ast_stack[ast_stack_at-1].offset += integer_literal_to_bytes(index) * subscript->base.resolved_type->size;
+                if(*index == IR_integer_literal){
+                    ast_stack[ast_stack_at-1].offset += integer_literal_to_bytes((struct ir *)index) * subscript->type->size;
                 }else{
                     report_error(context, /*ast->token*/error_token, "Expected a constant in array subscript, when evaluating initializer at compile time.");
                     return;
                 }
             }break;
             
-            case AST_binary_plus: case AST_binary_minus:{
-                ast_offset += sizeof(struct ast_binary_op);
+            case IR_add_u64: case IR_subtract_u64:{
+                ast_offset += sizeof(struct ir);
                 
-                struct ast *binary_rhs = ast_stack[ast_stack_at-1].ast;
-                struct ast *binary_lhs = ast_stack[ast_stack_at-2].ast;
+                enum ast_kind *binary_rhs = ast_stack[ast_stack_at-1].ast;
+                enum ast_kind *binary_lhs = ast_stack[ast_stack_at-2].ast;
                 
-                struct ast *patch_lhs = 0;
+                enum ast_kind *patch_lhs = 0;
                 smm offset_lhs = 0;
                 
                 if(ast_stack[ast_stack_at-2].is_address){
                     patch_lhs  = binary_lhs;
                     offset_lhs = ast_stack[ast_stack_at-2].offset;
                 }else{
-                    if(binary_lhs->kind == AST_pointer_literal){
-                        offset_lhs += (smm)((struct ast_pointer_literal *)binary_lhs)->pointer;
-                    }else if(binary_lhs->kind == AST_integer_literal){
-                        offset_lhs += integer_literal_to_bytes(binary_lhs);
+                    if(*binary_lhs == IR_pointer_literal){
+                        offset_lhs += (smm)((struct ir_pointer_literal *)binary_lhs)->pointer;
+                    }else if(*binary_lhs == IR_integer_literal){
+                        offset_lhs += integer_literal_to_bytes((struct ir *)binary_lhs);
                     }else{
                         goto initializer_not_constant;
                     }
                 }
                 
-                struct ast *patch_rhs = 0;
+                enum ast_kind *patch_rhs = 0;
                 smm offset_rhs = 0;
                 
                 if(ast_stack[ast_stack_at-1].is_address){
                     patch_rhs  = binary_rhs;
                     offset_rhs = ast_stack[ast_stack_at-1].offset;
                 }else{
-                    if(binary_rhs->kind == AST_pointer_literal){
-                        offset_rhs += (smm)((struct ast_pointer_literal *)binary_rhs)->pointer;
-                    }else if(binary_rhs->kind == AST_integer_literal){
-                        offset_rhs += integer_literal_to_bytes(binary_rhs);
+                    if(*binary_rhs == IR_pointer_literal){
+                        offset_rhs += (smm)((struct ir_pointer_literal *)binary_rhs)->pointer;
+                    }else if(*binary_rhs == IR_integer_literal){
+                        offset_rhs += integer_literal_to_bytes((struct ir *)binary_rhs);
                     }else{
                         goto initializer_not_constant;
                     }
@@ -2339,7 +2337,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 
                 ast_stack_at -= 1;
                 
-                smm offset_in_ast = ast->kind == AST_binary_plus ? offset_lhs + offset_rhs : offset_lhs - offset_rhs;
+                smm offset_in_ast = *ast_kind == AST_binary_plus ? offset_lhs + offset_rhs : offset_lhs - offset_rhs;
                 
                 if(patch_lhs == patch_rhs){
                     // @note: This includes the case where 'patch_lhs == patch_rhs == null'.
@@ -2355,9 +2353,9 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 }
             }break;
             
-            case AST_initializer:{
-                ast_offset += sizeof(struct ast_initializer);
-                struct ast_initializer *initializer_for_offset = (struct ast_initializer *)ast;
+            case IR_initializer:{
+                struct ir_initializer *initializer_for_offset = (struct ir_initializer *)ast_kind;
+                ast_offset += sizeof(*initializer_for_offset);
                 
                 ast_stack_at -= 1;
                 
@@ -2372,7 +2370,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                     // 
                     
                     smm offset_in_rhs = ast_stack[ast_stack_at].offset;
-                    struct ast *rhs = ast_stack[ast_stack_at].ast;
+                    enum ast_kind *rhs = ast_stack[ast_stack_at].ast;
                     
                     if(rhs == null){
                         // This happens for a subtraction with the same patch node.
@@ -2381,12 +2379,12 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                         emit_patch(context, PATCH_absolute, rhs, offset_in_rhs, patch_declaration, offset, -1);
                     }
                 }else{
-                    struct ast *rhs = ast_stack[ast_stack_at].ast;
+                    enum ast_kind *rhs = ast_stack[ast_stack_at].ast;
                     assert(rhs);
                     
-                    switch(rhs->kind){
-                        case AST_integer_literal:{
-                            u64 value = integer_literal_to_bytes(rhs);
+                    switch((int)*rhs){
+                        case IR_integer_literal:{
+                            u64 value = integer_literal_to_bytes((struct ir *)rhs);
                             // @note: The rhs does not have to fit: if we have 'u8 a = 0xffff;' this only gives a warning.
                             
                             if(lhs_type->kind == AST_bitfield_type){
@@ -2404,8 +2402,8 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                                 memcpy(data + offset, &value, lhs_type->size);
                             }
                         }break;
-                        case AST_pointer_literal:{
-                            struct ast_pointer_literal *lit = cast(struct ast_pointer_literal *)rhs;
+                        case IR_pointer_literal:{
+                            struct ir_pointer_literal *lit = (struct ir_pointer_literal *)rhs;
                             u8 *value = lit->pointer;
                             memcpy(data + offset, &value, lhs_type->size);
                         }break;
@@ -2417,22 +2415,22 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                             // @incomplete:
                         // }break;
                         
-                        case AST_float_literal:{
-                            struct ast_float_literal *f = cast(struct ast_float_literal *)rhs;
+                        case IR_float_literal:{
+                            struct ir_float_literal *f = (struct ir_float_literal *)rhs;
                             f64 big_value = f->value;
                             f32 small_value = (f32)f->value;
                             void *copy_from;
-                            if(f->base.resolved_type == &globals.typedef_f32){
+                            if(f->type == &globals.typedef_f32){
                                 copy_from = &small_value;
                             }else{
-                                assert(f->base.resolved_type == &globals.typedef_f64);
+                                assert(f->type == &globals.typedef_f64);
                                 copy_from = &big_value;
                             }
                             memcpy(data + offset, copy_from, lhs_type->size);
                         }break;
                         
-                        case AST_string_literal:{
-                            struct ast_string_literal *str = cast(struct ast_string_literal *)rhs;
+                        case IR_string_literal:{
+                            struct ir_string_literal *str = (struct ir_string_literal *)rhs;
                             
                             // If the left hand side is not an array, we should be in the 'AST_implicit_address_conversion' case.
                             assert(lhs_type->kind == AST_array_type);
@@ -2447,7 +2445,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                                 // } arst = {"hello :)"};
                                 // 
                                 // We have made sure to allocate enough space to hold the initializer.
-                                array_size = str->base.resolved_type->size;
+                                array_size = str->type->size;
                             }else{
                                 array_size = lhs_array->amount_of_elements * lhs_array->element_type->size;
                             }
@@ -2468,7 +2466,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                             }
                         }break;
                         
-                        case AST_embed:{
+                        case IR_embed:{
                             // We should only be able to initialize 'char []' and 'unsigned char []' with #embed.
                             // But we sadly cannot really check this here, because we made this an initializer 
                             // for the character, which determines the offset.
@@ -2477,7 +2475,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                             //           We want to rework intialization pretty soon anyway.
                             //           
                             //                                                        23.11.2023
-                            struct ast_embed *embed = (struct ast_embed *)rhs;
+                            struct ir_embed *embed = (struct ir_embed *)rhs;
                             
                             struct string file_data = embed->token->string;
                             assert(offset + file_data.size <= data_size); // Make sure it fits.
@@ -2491,7 +2489,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 }
             }break;
             
-            case AST_pop_expression:{
+            case IR_pop_expression:{
                 return;
             }break;
             
@@ -2544,7 +2542,7 @@ func void init_context(struct context *context, struct thread_info *info, struct
     
     context->thread_info = info;
     context->arena = arena;
-    context->ast_arena = create_memory_arena(giga_bytes(8), 1.0f, mega_bytes(1));
+    context->ir_arena = create_memory_arena(giga_bytes(8), 1.0f, mega_bytes(1));
     context->ast_serializer = (s32)(thread_index << 24);
     
     smm emit_pool_capacity = mega_bytes(100);
@@ -3092,7 +3090,7 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
                 //     asd;
                 report_warning(context, WARNING_does_not_declare_anything, compound->base.token, "Anonymous %s declaration does not declare anything.", compound->base.kind == AST_union ? "union" : "struct");
             }
-        }else if(declaration_list.defined_type_specifier && declaration_list.defined_type_specifier->kind == AST_enum){
+        }else if(declaration_list.defined_type_specifier && *declaration_list.defined_type_specifier == AST_enum){
             // these are fine. we could exectly check for enum{} I guess
         }else if(declaration_list.type_specifier->kind == AST_unresolved_type){
             // these are fine, we got 'struct unresolved;'
@@ -3106,7 +3104,7 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
         return;
     }
     
-    if(declaration_list.last->decl->base.kind == AST_function && peek_token_eat(context, TOKEN_open_curly)){
+    if(declaration_list.last->decl->kind == AST_function && peek_token_eat(context, TOKEN_open_curly)){
         struct ast_function *function = cast(struct ast_function *)declaration_list.last->decl;
         parse_work->tokens.data += context->token_at;
         parse_work->tokens.size -= context->token_at;
@@ -3133,7 +3131,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     //           Its token is the '{' that begins the body of the function.      16.05.2021
     
     struct ast_function *function = parse_work->function;
-    assert(function->base.kind == AST_function);
+    assert(function->kind == AST_function);
     context->current_function = function;
     
     log_print("parsing: %.*s", function->identifier->amount, function->identifier->data);
@@ -3161,8 +3159,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         context->function_file_index = first_token->file_index;
     }
     
-    assert(function->scope->kind == AST_scope);
-    struct ast_scope *scope = (struct ast_scope *)function->scope;
+    struct ast_scope *scope = function->scope;
     context->current_scope = scope;
     
     // :unresolved_types
@@ -3181,7 +3178,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     if(context->error) return;
     
     for_ast_list(function->type->argument_list){
-        assert(it->value->kind == AST_declaration);
+        assert(*it->value == AST_declaration);
         struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
         if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return;
         
@@ -3190,16 +3187,16 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     }
     
     
-    function->start_in_ast_arena = arena_current(&context->ast_arena);
+    function->start_in_ir_arena = arena_current(&context->ir_arena);
     
     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm){
         //
-        // Special case for __declspec(inline_asm) in this case we only want a single 'ast_asm_block'
+        // Special case for __declspec(inline_asm) in this case we only want a single 'ir_asm_block'
         //
         
-        struct ast_asm_block *asm_block = push_ast(context, asm_block);
+        struct ir_asm_block *asm_block = push_struct(&context->ir_arena, struct ir_asm_block);
+        asm_block->base.kind = IR_asm_block;
         asm_block->token = scope->token;
-        set_resolved_type(&asm_block->base, &globals.typedef_void, null);
         
         context->in_inline_asm_function = function->identifier;
         parse_asm_block(context, asm_block);
@@ -3264,9 +3261,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             
             context->current_statement_returns_a_value = 1;
             
-            ast_push_s32_literal(context, 0);
-            struct ast_return *ast_return = push_expression(context, return); // @cleanup: is this the correct token?
-            set_resolved_type(&ast_return->base, &globals.typedef_void, null);
+            ast_push_s32_literal(context, 0, null);
+            push_ir(context, IR_return); // @cleanup: is this the correct token?
         }
     }
     
@@ -3284,14 +3280,14 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         }
     }
     
-    function->end_in_ast_arena = arena_current(&context->ast_arena);
+    function->end_in_ir_arena = arena_current(&context->ir_arena);
     
     context->current_function = null;
 }
 
 func void worker_emit_code(struct context *context, struct work_queue_entry *work){
     struct ast_function *function = (void *)work->data;
-    assert(function->base.kind == AST_function);
+    assert(function->kind == AST_function);
     assert(!function->memory_location);
     
     emit_code_for_function(context, function);
@@ -3389,15 +3385,15 @@ func struct token *push_dummy_token(struct memory_arena *arena, struct atom toke
 
 func void register_intrinsic_function_declaration(struct context *context, struct token *token, struct ast_function_type *type){
     
-    struct ast_function *declaration = push_ast(context, function);
+    struct ast_function *declaration = push_struct(context->arena, struct ast_function);
+    declaration->kind = AST_function;
     declaration->identifier = token;
     declaration->type = type;
     declaration->offset_in_text_section = -1;
     declaration->compilation_unit = &globals.hacky_global_compilation_unit;
     declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic | DECLARATION_FLAGS_is_global;
-    set_resolved_type(&declaration->base, &globals.typedef_void, null);
     
-    ast_table_add_or_return_previous_entry(&globals.global_declarations, &declaration->base, token);
+    ast_table_add_or_return_previous_entry(&globals.global_declarations, &declaration->kind, token);
 }
 
 
@@ -3415,7 +3411,7 @@ func struct ast_function *get_entry_point_or_error(struct context *context){
         return null;
     }
     
-    if(function->base.kind != AST_function){
+    if(function->kind != AST_function){
         report_error(context, function->identifier, "Specified entry point '%.*s' is not a function.", entry_point.length, entry_point.data);
         globals.an_error_has_occurred = true;
         return null;
@@ -4396,8 +4392,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             
             struct ast_declaration *parameter_declaration = push_declaration_for_declarator(context, parameter_declarator);
             parameter_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
-            ast_list_append(&alloca_type->argument_list, context->arena, &parameter_declaration->base);
-            set_resolved_type(&parameter_declaration->base, &globals.typedef_void, null);
+            ast_list_append(&alloca_type->argument_list, context->arena, &parameter_declaration->kind);
             
             register_intrinsic_function_declaration(context, alloca_token, alloca_type);
         }
@@ -4440,11 +4435,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         }
         
         
-        globals.empty_statement.kind = AST_empty_statement;
-        set_resolved_type(&globals.empty_statement, &globals.typedef_void, null);
-        
         globals.invalid_identifier_token = push_dummy_token(arena, globals.invalid_identifier, TOKEN_identifier);
-        globals.guard_ast.resolved_type = &globals.typedef_void;
         
         struct declarator_return poison_declarator = {.ident = globals.invalid_identifier_token, .type = &globals.typedef_poison };
         globals.poison_declaration = push_declaration_for_declarator(context, poison_declarator);
@@ -4460,7 +4451,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.tls_index_declaration = push_declaration_for_declarator(context, _tls_index_declarator);
         globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_intrinsic;
         globals.tls_index_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
-        ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->base, globals.tls_index_declaration->identifier);
+        ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->kind, globals.tls_index_declaration->identifier);
     }
     
 #if PRINT_ADDITIONAL_INCLUDE_DIRECTORIES
@@ -5131,10 +5122,10 @@ globals.typedef_##postfix = (struct ast_type){                                  
         // 
         
         for(u32 table_index = 0; table_index < globals.global_declarations.capacity; table_index++){
-            struct ast *ast = globals.global_declarations.nodes[table_index].ast;
+            enum ast_kind *ast = globals.global_declarations.nodes[table_index].ast;
             if(!ast) continue;
             
-            if(ast->kind == AST_function){    
+            if(*ast == AST_function){    
                 struct ast_function *function = (struct ast_function *)ast;
                 assert(!(function->as_decl.flags & DECLARATION_FLAGS_is_static)); // These are 'global_declarations' they should not be static.
                 
@@ -5153,7 +5144,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 function_node->next = globals.globally_referenced_declarations;
                 
                 globals.globally_referenced_declarations = function_node;
-            }else if(ast->kind == AST_declaration){
+            }else if(*ast == AST_declaration){
                 struct ast_declaration *decl = (struct ast_declaration *)ast;
                 assert(!(decl->flags & DECLARATION_FLAGS_is_static)); // These are 'global_declarations' they should not be static.
                 if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue; // Don't add enum members.
@@ -5188,12 +5179,12 @@ globals.typedef_##postfix = (struct ast_type){                                  
         if(initial_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry) continue;
         initial_declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
         
-        if((initial_declaration->base.kind == AST_function) && initial_declaration->assign_expr){
+        if((initial_declaration->kind == AST_function) && initial_declaration->assign_expr){
             // Queue the entry point, if it is a defined function.
             work_queue_push_work(context, &globals.work_queue_emit_code, initial_declaration);
         }
         
-        if((initial_declaration->base.kind == AST_declaration) && initial_declaration->assign_expr){
+        if((initial_declaration->kind == AST_declaration) && initial_declaration->assign_expr){
             // @cleanup: This should probably not happen on the main thread.
             //           Furthermore, we also want to report errors for initializers that are non-constant but not referenced.
             initial_declaration->memory_location = evaluate_static_initializer(context, initial_declaration);
@@ -5230,7 +5221,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 if(!(declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)){
                     declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
                     
-                    if(declaration->base.kind == AST_function){
+                    if(declaration->kind == AST_function){
                         // 
                         // If the declaration is a defined function, queue it up.
                         // It might not be defined, as it might be a dllimport with missing `__declspec(dllimport)`.

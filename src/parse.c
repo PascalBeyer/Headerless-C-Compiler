@@ -3,19 +3,6 @@
 //                               Parser                                 //
 //////////////////////////////////////////////////////////////////////////
 
-// A simple C-parser, the main entry points are 'parse_declaration_list'
-// and 'parse_imperative_scope'. Depending on whether you are parsing a
-// global declaration or a function body.
-// (Compilation stage one vs stage two).
-// The main complications come from the fact that C is an old and weird
-// language as well as the fact that everything has to be able to
-// 'parser_sleep', whenever we encounter an identifier we don't know yet
-// The parser is in some sense entirely "single pass", i.e. we build
-// the abstract tree, type check it and do constant propagation at the
-// same time.
-// Other then that, its just a 'simple' recursively decent parser.
-//                                                        -11.09.2020
-
 func b32 skip_until_tokens_are_balanced(struct context *context, struct token *initial_token, enum token_type open, enum token_type closed, char *error){
     if(!initial_token){
         initial_token = next_token(context);
@@ -71,29 +58,6 @@ func void _parser_sleep(struct context *context, struct token *sleep_on, u32 lin
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-func void set_resolved_type(struct ast *ast, struct ast_type *type, struct ast *named_type){
-    assert(type);
-    (void)ast;
-    (void)named_type;
-#if !REMOVE_AST
-    ast->resolved_type = type;
-    ast->defined_type = named_type;
-#endif
-}
-
-func void *_parser_ast_push(struct context *context, struct memory_arena *arena, smm size, u32 align, enum ast_kind kind){
-    
-    struct ast *ast = push_struct_(arena, size, align); // @note: No need to zero, 'arena' never has any non-zero bytes.
-    
-    ast->kind  = kind;
-    ast->s = get_unique_ast_serial(context);
-    
-    return ast;
-}
-
-#define push_expression(context, type) ((struct ast_##type *)_parser_ast_push(context, &context->ast_arena, sizeof(struct ast_##type), alignof(struct ast_##type), AST_##type))
-#define push_ast(context, type) ((struct ast_##type *)_parser_ast_push(context, context->arena, sizeof(struct ast_##type), alignof(struct ast_##type), AST_##type))
-
 #define parser_type_push(context, token, type) (struct ast_##type *)_parser_type_push(context, token, sizeof(struct ast_##type), alignof(struct ast_##type), AST_##type)
 
 func struct ast_type *_parser_type_push(struct context *context, struct token *token, smm size, u32 align, enum ast_kind kind){
@@ -112,16 +76,23 @@ func struct ast_type *_parser_type_push(struct context *context, struct token *t
 // IR building stuff
 
 static struct ir *push_ir(struct context *context, enum ir_kind ir_kind){
-    struct ir *ir = push_struct_(&context->ast_arena, sizeof(struct ir), 8); // @note: No need to zero, 'arena' never has any non-zero bytes.
+    struct ir *ir = push_struct_(&context->ir_arena, sizeof(struct ir), 8); // @note: No need to zero, 'arena' never has any non-zero bytes.
     ir->kind  = ir_kind;
     ir->s = get_unique_ast_serial(context);
     return ir;
 }
 
-static enum ir_basic_type ir_type_from_type(struct ast_type *type){
+static struct ir_jump_node *push_jump(struct context *context, enum ir_kind ir_kind){
+    struct ir_jump_node *ir = push_struct_(&context->ir_arena, sizeof(struct ir_jump_node), 8); // @note: No need to zero, 'arena' never has any non-zero bytes.
+    ir->base.kind  = ir_kind;
+    ir->base.s = get_unique_ast_serial(context);
+    return ir;
+}
+
+static enum ir_type ir_type_from_type(struct ast_type *type){
     u64 index = type - &globals.typedef_void;
-    if(index <= (u64)(&globals.typedef_f64 - &globals.typedef_void)){
-        return (enum ir_basic_type)index;
+    if(index <= (u64)(&globals.typedef_atomic_u64 - &globals.typedef_void)){
+        return (enum ir_type)index;
     }
     
     if(type->kind == AST_pointer_type) return IR_TYPE_pointer;
@@ -130,17 +101,16 @@ static enum ir_basic_type ir_type_from_type(struct ast_type *type){
 }
 
 // Sometimes when we are constant propagating, we have to un-emit a literal.
-#define pop_from_ast_arena(context, ast) pop_from_ast_arena_(context, (u8 *)(ast), sizeof(*ast))
-func void pop_from_ast_arena_(struct context *context, u8 *ast_memory, smm size){
-    assert(ast_memory + size == arena_current(&context->ast_arena));
-    context->ast_arena.current = ast_memory;
-    memset(ast_memory, 0, size);
+#define pop_from_ir_arena(context, ast) pop_from_ir_arena_(context, (u8 *)(ast), sizeof(*ast))
+func void pop_from_ir_arena_(struct context *context, u8 *ast_memory, smm size){
+    assert(ast_memory + size == arena_current(&context->ir_arena));
+    context->ir_arena.current = ast_memory;
 }
 
 
 #define parser_compound_type_push(context, token, type) (struct ast_compound_type *)_parser_type_push(context, token, sizeof(struct ast_compound_type), alignof(struct ast_compound_type), AST_##type);
 
-func struct ast_type *parser_push_pointer_type(struct context *context, struct ast_type *pointer_to, struct ast *defined_type, struct token *token){
+func struct ast_type *parser_push_pointer_type(struct context *context, struct ast_type *pointer_to, enum ast_kind *defined_type, struct token *token){
     // @cleanup: we could check here if its a basic type and then do some math to figure out the pointer
     // this is kinda complicated, as globals.basic_types is an array of pointers, not basic_types themself.
     // I think we had to iterate
@@ -153,22 +123,6 @@ func struct ast_type *parser_push_pointer_type(struct context *context, struct a
     return cast(struct ast_type *)ptr;
 }
 
-// @cleanup: why are these 'ast'_push_bla should they not be 'parser'_push for consistency?
-func struct ast *ast_push_binary_expression(struct context *context, enum ast_kind kind){
-    struct ast *ast = _parser_ast_push(context, &context->ast_arena, sizeof(struct ast_binary_op), alignof(struct ast_binary_op), kind);
-    struct ast_binary_op *op = cast(struct ast_binary_op *)ast;
-    
-    return cast(struct ast *)op;
-}
-#define ast_push_binary_expression(context, kind, lhs, rhs) ast_push_binary_expression(context, kind)
-
-func struct ast *ast_push_unary_expression(struct context *context, enum ast_kind kind){
-    assert(kind != AST_cast); // @note: This used to be a unary op.
-    struct ast_unary_op *op = cast(struct ast_unary_op *)_parser_ast_push(context, &context->ast_arena, sizeof(struct ast_unary_op), alignof(struct ast_unary_op), kind);
-    return cast(struct ast*)op;
-}
-#define ast_push_unary_expression(context, kind, operand) ast_push_unary_expression(context, kind)
-
 func b32 size_is_big_or_oddly_sized(smm size){
     return (size > 8) || (size == 3) || (size == 5) || (size == 6) || (size == 7);
 }
@@ -180,46 +134,48 @@ func b32 type_is_returned_by_address(struct ast_type *type){
     return false;
 }
 
-func struct ast *ast_push_s64_literal(struct context *context, s64 value){
-    
-    struct ast_integer_literal *lit = push_expression(context, integer_literal);
+func struct expr ast_push_s64_literal(struct context *context, s64 value, struct token *token){
+    struct ir_integer_literal *lit = push_struct(&context->ir_arena, struct ir_integer_literal);
+    lit->base.kind = IR_integer_literal;
     lit->_s64 = value;
-    set_resolved_type(&lit->base, &globals.typedef_s64, null);
-    return &lit->base;
+    lit->type = &globals.typedef_s64;
+    return (struct expr){.ir = &lit->base, token, &globals.typedef_s64, null};
 }
 
-func struct ast *ast_push_u64_literal(struct context *context, u64 value){
+func struct expr ast_push_u64_literal(struct context *context, u64 value, struct token *token){
     
-    struct ast_integer_literal *lit = push_expression(context, integer_literal);
+    struct ir_integer_literal *lit = push_struct(&context->ir_arena, struct ir_integer_literal);
+    lit->base.kind = IR_integer_literal;
     lit->_u64 = value;
     
-    struct ast *defined_type = null;
-    if(value <= max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
-    else if(value <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
-    else if(value <= max_u32) defined_type = (struct ast *)&globals.typedef_u32;
+    enum ast_kind *defined_type = null;
+    if(value <= max_u8)  defined_type = &globals.typedef_u8.kind;
+    else if(value <= max_u16) defined_type = &globals.typedef_u16.kind;
+    else if(value <= max_u32) defined_type = &globals.typedef_u32.kind;
     
-    set_resolved_type(&lit->base, &globals.typedef_u64, defined_type);
-    return &lit->base;
+    lit->type = &globals.typedef_u64;
+    return (struct expr){.ir = &lit->base, token, &globals.typedef_u64, defined_type};
 }
 
 
-func struct ast *ast_push_s32_literal(struct context *context, s64 value){
+func struct expr ast_push_s32_literal(struct context *context, s64 value, struct token *token){
     
     assert(value <= s32_max);
     assert(value >= s32_min);
-    struct ast_integer_literal *lit = push_expression(context, integer_literal);
+    struct ir_integer_literal *lit = push_struct(&context->ir_arena, struct ir_integer_literal);
+    lit->base.kind = IR_integer_literal;
     lit->_s32 = (s32)value;
     
-    struct ast *defined_type = null;
-    if(value <= max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
-    else if(value <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+    enum ast_kind *defined_type = null;
+    if(value <= max_u8) defined_type = &globals.typedef_u8.kind;
+    else if(value <= max_u16) defined_type = &globals.typedef_u16.kind;
     
-    set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
-    return &lit->base;
+    lit->type = &globals.typedef_s32;
+    return (struct expr){.ir = &lit->base, token, &globals.typedef_s32, defined_type};
 }
 
 func s32 integer_literal_as_s32(struct expr *lit){
-    struct ast_integer_literal *literal = cast(struct ast_integer_literal *)lit->ast;
+    struct ir_integer_literal *literal = (struct ir_integer_literal *)lit->ir;
     struct ast_type *type = lit->resolved_type;
     assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type);
     s32 value;
@@ -242,7 +198,7 @@ func s32 integer_literal_as_s32(struct expr *lit){
 }
 
 func u32 integer_literal_as_u32(struct expr *lit){
-    struct ast_integer_literal *literal = (struct ast_integer_literal *)lit->ast;
+    struct ir_integer_literal *literal = (struct ir_integer_literal *)lit->ir;
     struct ast_type *type = lit->resolved_type;
     assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type);
     u32 value;
@@ -265,7 +221,7 @@ func u32 integer_literal_as_u32(struct expr *lit){
 }
 
 func s64 integer_literal_as_s64(struct expr *lit){
-    struct ast_integer_literal *literal = cast(struct ast_integer_literal *)lit->ast;
+    struct ir_integer_literal *literal = (struct ir_integer_literal *)lit->ir;
     struct ast_type *type = lit->resolved_type;
     assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type);
     
@@ -291,7 +247,7 @@ func s64 integer_literal_as_s64(struct expr *lit){
 }
 
 func u64 integer_literal_as_u64(struct expr *lit){
-    struct ast_integer_literal *literal = (struct ast_integer_literal *)lit->ast;
+    struct ir_integer_literal *literal = (struct ir_integer_literal *)lit->ir;
     struct ast_type *type = lit->resolved_type;
     assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type);
     u64 value;
@@ -315,23 +271,23 @@ func u64 integer_literal_as_u64(struct expr *lit){
     return value;
 }
 
-static struct ast_type *defined_type_to_type(struct ast *defined_type){
-    if(defined_type->kind == AST_typedef){
+static struct ast_type *defined_type_to_type(enum ast_kind *defined_type){
+    if(*defined_type == AST_typedef){
         return ((struct ast_declaration *)defined_type)->type;
     }else{
         return (struct ast_type *)defined_type;
     }
 }
 
-func struct ast *defined_type_for_binary_op(struct expr *op_lhs, struct expr *op_rhs){
+func enum ast_kind *defined_type_for_binary_op(struct expr *op_lhs, struct expr *op_rhs){
     
     // 
     // The defined type for a binary op should be the smallest defined type,
     // which fits both of the arguments.
     // 
     
-    struct ast *lhs = op_lhs->defined_type;
-    struct ast *rhs = op_rhs->defined_type;
+    enum ast_kind *lhs = op_lhs->defined_type;
+    enum ast_kind *rhs = op_rhs->defined_type;
     
     if(lhs && rhs){
         struct ast_type *lhs_type = defined_type_to_type(lhs);
@@ -349,36 +305,37 @@ func struct ast *defined_type_for_binary_op(struct expr *op_lhs, struct expr *op
     return null;
 }
 
-func struct ast *defined_type_for_promotion(struct expr *ast){
+func enum ast_kind *defined_type_for_promotion(struct expr *ast){
     // :retain_type_information_through_promotion
     // if it was promoted, we retain the information about the actual size in the defined_type
-    struct ast *defined_type = ast->defined_type;
-    if(!defined_type) defined_type = (struct ast *)ast->resolved_type;
+    enum ast_kind *defined_type = ast->defined_type;
+    if(!defined_type) defined_type = &ast->resolved_type->kind;
     return defined_type;
 }
 
 //_____________________________________________________________________________________________________________________
 
-func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct ast_type *cast_to, struct ast *cast_to_defined_type, struct expr *cast_what, struct token *cast_what_token){
+func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct ast_type *cast_to, enum ast_kind *cast_to_defined_type, struct expr *cast_what, struct token *cast_what_token){
     
     int should_skip_cast = 0;
     
     if(cast_what->resolved_type == cast_to){
         // set the 'defined_type' we might have casted (float) to (f32)
-        set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
         should_skip_cast = 1;
-    }else if(cast_what->ast->kind == AST_float_literal){
+    }else if(cast_what->ir->kind == IR_float_literal){
+        struct ir_float_literal *f = (struct ir_float_literal *)cast_what->ir;
+        
         if(cast_to->kind == AST_integer_type){
-            struct ast_float_literal   *f = (struct ast_float_literal   *)cast_what->ast;
-            struct ast_integer_literal *i = (struct ast_integer_literal *)cast_what->ast;
-            static_assert(sizeof(struct ast_float_literal) == sizeof(struct ast_integer_literal));
+            
+            struct ir_integer_literal *i = (struct ir_integer_literal *)cast_what->ir;
+            static_assert(sizeof(struct ir_float_literal) == sizeof(struct ir_integer_literal));
             
             // @cleanup: warn?
             
-            i->base.kind = AST_integer_literal;
+            i->base.kind = IR_integer_literal;
             double f_value = f->value;
             
-            set_resolved_type(&i->base, cast_to, cast_to_defined_type);
+            i->type = cast_to;
             should_skip_cast = 1;
             
             if(type_is_signed(cast_to)){
@@ -408,20 +365,20 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
             }
         }else if(cast_to->kind == AST_float_type){
             if(cast_to == &globals.typedef_f32){
-                struct ast_float_literal *lit = (struct ast_float_literal *)cast_what->ast;
+                struct ir_float_literal *lit = (struct ir_float_literal *)cast_what->ir;
                 // :we_always_keep_double
                 lit->value = (f32)lit->value; // cast it to f32 and then back up
             }
             
-            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            f->type = cast_to;
             should_skip_cast = 1;
         }
-    }else if(cast_what->ast->kind == AST_integer_literal){
-        struct ast_integer_literal *lit = (struct ast_integer_literal *)cast_what->ast;
+    }else if(cast_what->ir->kind == IR_integer_literal){
+        struct ir_integer_literal *lit = (struct ir_integer_literal *)cast_what->ir;
         if(cast_to == &globals.typedef_Bool){
             lit->_u8 = (_Bool)integer_literal_as_u64(cast_what);
             
-            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            lit->type = cast_to;
             should_skip_cast = 1;
         }else if(cast_to->kind == AST_integer_type){
             // @hmm: I trust my self, that I thought about this...
@@ -433,10 +390,10 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
                 lit->_u64 = value;
             }
             
-            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            lit->type = cast_to;
             should_skip_cast = 1;
         }else if(cast_to->kind == AST_float_type){
-            struct ast_float_literal *f = (struct ast_float_literal *)cast_what->ast;
+            struct ir_float_literal *f = (struct ir_float_literal *)cast_what->ir;
             
             // :we_always_keep_double
             // @cleanup: this does not really work: I don't think casting to f64 and then to f32 is the same
@@ -447,23 +404,18 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
                 f->value = (f64)integer_literal_as_u64(cast_what);
             }
             
-            f->base.kind = AST_float_literal;
-            set_resolved_type(&f->base, cast_to, cast_to_defined_type);
+            f->base.kind = IR_float_literal;
+            f->type = cast_to;
             should_skip_cast = 1;
         }else if(cast_to->kind == AST_pointer_type){
             // Extend the integer literal to be 64-bits.
             lit->_s64 = integer_literal_as_s64(cast_what);
             
             // Convert it to a pointer literal simply by setting its type.
-            cast_what->ast->kind = AST_pointer_literal;
-            static_assert(sizeof(struct ast_pointer_literal) == sizeof(struct ast_integer_literal));
+            cast_what->ir->kind = IR_pointer_literal;
+            static_assert(sizeof(struct ir_pointer_literal) == sizeof(struct ir_integer_literal));
             
-#if !defined(__HLC__) && !defined(__clang__)
-            // @cleanup: Currently, there is a compiler bug, which makes this not compile.
-            static_assert(offset_in_type(struct ast_pointer_literal, pointer) == offset_in_type(struct ast_integer_literal, _s64));
-#endif
-            
-            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            lit->type = cast_to;
             should_skip_cast = 1;
         }else if(cast_to->kind == AST_bitfield_type){
             // 
@@ -504,28 +456,31 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
                 }
             }
             
-            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            lit->type = cast_to; // @cleanup: What?
             should_skip_cast = 1;
         }else{
             assert(cast_to->kind == AST_void_type);
         }
-    }else if(cast_what->ast->kind == AST_pointer_literal){
+    }else if(cast_what->ir->kind == IR_pointer_literal){
         if(cast_to == &globals.typedef_Bool){
-            struct ast_integer_literal *lit = (struct ast_integer_literal *)cast_what->ast;
+            struct ir_integer_literal *lit = (struct ir_integer_literal *)cast_what->ir;
             
-            cast_what->ast->kind = AST_integer_literal;
-            lit->_u64 = (((struct ast_pointer_literal *)lit)->pointer != 0);
+            cast_what->ir->kind = IR_integer_literal;
+            lit->_u64 = (((struct ir_pointer_literal *)lit)->pointer != 0);
             
-            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            lit->type = cast_to;
             should_skip_cast = 1;
         }else if(cast_to->kind == AST_integer_type){
             // the value in 'cast_what->pointer' gets truncated implicitly.
-            cast_what->ast->kind = AST_integer_literal;
-            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            struct ir_integer_literal *lit = (struct ir_integer_literal *)cast_what->ir;
+            lit->base.kind = IR_integer_literal;
+            lit->type = cast_to;
+            
             should_skip_cast = 1;
         }else if(cast_to->kind == AST_pointer_type){
             // just properage the type.
-            set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+            struct ir_pointer_literal *lit = (struct ir_pointer_literal *)cast_what->ir;
+            lit->type = cast_to;
             should_skip_cast = 1;
         }
     }else if(cast_to->kind == AST_float_type && cast_what->resolved_type == &globals.typedef_u64){
@@ -536,13 +491,141 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
         // no constant propagation
         struct token *token = get_current_token_for_error_report(context);
         if(cast_what) token = cast_what_token;
-        struct ast_cast *ast_cast = push_expression(context, cast);
-        ast_cast->base.kind = lhs_or_rhs;
-        ast_cast->cast_what = cast_what->resolved_type;
-        ast_cast->cast_to   = cast_to;
         
-        cast_what->ast = &ast_cast->base;
-        set_resolved_type(cast_what->ast, cast_to, cast_to_defined_type);
+        enum ir_type ir_cast_what = ir_type_from_type(cast_what->resolved_type);
+        if(ir_cast_what == IR_TYPE_pointer) ir_cast_what = IR_TYPE_u64;
+        if(ir_cast_what == IR_TYPE_bool) ir_cast_what = IR_TYPE_u8;
+        enum ir_type ir_cast_to   = ir_type_from_type(cast_to);
+        if(ir_cast_to == IR_TYPE_pointer) ir_cast_to = IR_TYPE_u64;
+        
+        if(ir_cast_to == IR_TYPE_bool){
+            enum ir_kind ir_cast = IR_cast_to_bool;
+            
+            if(lhs_or_rhs == AST_cast_lhs) ir_cast += 1;
+            cast_what->ir = push_ir(context, ir_cast);
+        }else{
+            static enum ir_kind ir_kind_for_cast[IR_TYPE_padding1][IR_TYPE_padding1] = {
+                // 
+                // Sign extending integers
+                // 
+                [IR_TYPE_s8] [IR_TYPE_s16] = IR_sign_extend_s8_to_s16,
+                [IR_TYPE_s8] [IR_TYPE_s32] = IR_sign_extend_s8_to_s32,
+                [IR_TYPE_s16][IR_TYPE_s32] = IR_sign_extend_s16_to_s32,
+                [IR_TYPE_s8] [IR_TYPE_s64] = IR_sign_extend_s8_to_s64,
+                [IR_TYPE_s16][IR_TYPE_s32] = IR_sign_extend_s16_to_s32,
+                [IR_TYPE_s16][IR_TYPE_s64] = IR_sign_extend_s16_to_s64,
+                [IR_TYPE_s32][IR_TYPE_s64] = IR_sign_extend_s32_to_s64,
+                [IR_TYPE_s8] [IR_TYPE_u16] = IR_sign_extend_s8_to_s16,
+                [IR_TYPE_s8] [IR_TYPE_u32] = IR_sign_extend_s8_to_s32,
+                [IR_TYPE_s16][IR_TYPE_u32] = IR_sign_extend_s16_to_s32,
+                [IR_TYPE_s8] [IR_TYPE_u64] = IR_sign_extend_s8_to_s64,
+                [IR_TYPE_s16][IR_TYPE_u32] = IR_sign_extend_s16_to_s32,
+                [IR_TYPE_s16][IR_TYPE_u64] = IR_sign_extend_s16_to_s64,
+                [IR_TYPE_s32][IR_TYPE_u64] = IR_sign_extend_s32_to_s64,
+                
+                // 
+                // Zero-extending integers
+                // 
+                [IR_TYPE_u8] [IR_TYPE_s16] = IR_zero_extend_u8_to_u16,
+                [IR_TYPE_u8] [IR_TYPE_s32] = IR_zero_extend_u8_to_u32,
+                [IR_TYPE_u16][IR_TYPE_s32] = IR_zero_extend_u16_to_u32,
+                [IR_TYPE_u8] [IR_TYPE_s64] = IR_zero_extend_u8_to_u64,
+                [IR_TYPE_u16][IR_TYPE_s32] = IR_zero_extend_u16_to_u32,
+                [IR_TYPE_u16][IR_TYPE_s64] = IR_zero_extend_u16_to_u64,
+                [IR_TYPE_u32][IR_TYPE_s64] = IR_zero_extend_u32_to_u64,
+                [IR_TYPE_u8] [IR_TYPE_u16] = IR_zero_extend_u8_to_u16,
+                [IR_TYPE_u8] [IR_TYPE_u32] = IR_zero_extend_u8_to_u32,
+                [IR_TYPE_u16][IR_TYPE_u32] = IR_zero_extend_u16_to_u32,
+                [IR_TYPE_u8] [IR_TYPE_u64] = IR_zero_extend_u8_to_u64,
+                [IR_TYPE_u16][IR_TYPE_u32] = IR_zero_extend_u16_to_u32,
+                [IR_TYPE_u16][IR_TYPE_u64] = IR_zero_extend_u16_to_u64,
+                [IR_TYPE_u32][IR_TYPE_u64] = IR_zero_extend_u32_to_u64,
+                
+                // 
+                // Converting doubles to float and back.
+                // 
+                [IR_TYPE_f32][IR_TYPE_f64] = IR_cast_f32_to_f64,
+                [IR_TYPE_f64][IR_TYPE_f32] = IR_cast_f64_to_f32,
+                
+                // 
+                // Converting floats to integers.
+                // 
+                [IR_TYPE_f32][IR_TYPE_u8] = IR_cast_f32_to_u8,
+                [IR_TYPE_f32][IR_TYPE_u16] = IR_cast_f32_to_u16,
+                [IR_TYPE_f32][IR_TYPE_u32] = IR_cast_f32_to_u32,
+                [IR_TYPE_f32][IR_TYPE_u64] = IR_cast_f32_to_u64,
+                [IR_TYPE_f32][IR_TYPE_s8] = IR_cast_f32_to_s8,
+                [IR_TYPE_f32][IR_TYPE_s16] = IR_cast_f32_to_s16,
+                [IR_TYPE_f32][IR_TYPE_s32] = IR_cast_f32_to_s32,
+                [IR_TYPE_f32][IR_TYPE_s64] = IR_cast_f32_to_s64,
+                
+                [IR_TYPE_f64][IR_TYPE_u8] = IR_cast_f64_to_u8,
+                [IR_TYPE_f64][IR_TYPE_u16] = IR_cast_f64_to_u16,
+                [IR_TYPE_f64][IR_TYPE_u32] = IR_cast_f64_to_u32,
+                [IR_TYPE_f64][IR_TYPE_u64] = IR_cast_f64_to_u64,
+                [IR_TYPE_f64][IR_TYPE_s8] = IR_cast_f64_to_s8,
+                [IR_TYPE_f64][IR_TYPE_s16] = IR_cast_f64_to_s16,
+                [IR_TYPE_f64][IR_TYPE_s32] = IR_cast_f64_to_s32,
+                [IR_TYPE_f64][IR_TYPE_s64] = IR_cast_f64_to_s64,
+                
+                [IR_TYPE_u8][IR_TYPE_f32] = IR_cast_u8_to_f32,
+                [IR_TYPE_u16][IR_TYPE_f32] = IR_cast_u16_to_f32,
+                [IR_TYPE_u32][IR_TYPE_f32] = IR_cast_u32_to_f32,
+                [IR_TYPE_u64][IR_TYPE_f32] = IR_cast_u64_to_f32,
+                [IR_TYPE_s8][IR_TYPE_f32] = IR_cast_s8_to_f32,
+                [IR_TYPE_s16][IR_TYPE_f32] = IR_cast_s16_to_f32,
+                [IR_TYPE_s32][IR_TYPE_f32] = IR_cast_s32_to_f32,
+                [IR_TYPE_s64][IR_TYPE_f32] = IR_cast_s64_to_f32,
+                
+                [IR_TYPE_u8][IR_TYPE_f64] = IR_cast_u8_to_f64,
+                [IR_TYPE_u16][IR_TYPE_f64] = IR_cast_u16_to_f64,
+                [IR_TYPE_u32][IR_TYPE_f64] = IR_cast_u32_to_f64,
+                [IR_TYPE_u64][IR_TYPE_f64] = IR_cast_u64_to_f64,
+                [IR_TYPE_s8][IR_TYPE_f64] = IR_cast_s8_to_f64,
+                [IR_TYPE_s16][IR_TYPE_f64] = IR_cast_s16_to_f64,
+                [IR_TYPE_s32][IR_TYPE_f64] = IR_cast_s32_to_f64,
+                [IR_TYPE_s64][IR_TYPE_f64] = IR_cast_s64_to_f64,
+                
+                // 
+                // @note: In the future these maybe do not have to exist.
+                // 
+                [IR_TYPE_u16][IR_TYPE_u8] = IR_truncate_to_u8,
+                [IR_TYPE_u16][IR_TYPE_s8] = IR_truncate_to_u8,
+                [IR_TYPE_s16][IR_TYPE_u8] = IR_truncate_to_u8,
+                [IR_TYPE_s16][IR_TYPE_s8] = IR_truncate_to_u8,
+                
+                [IR_TYPE_u32][IR_TYPE_u8] = IR_truncate_to_u8,
+                [IR_TYPE_u32][IR_TYPE_s8] = IR_truncate_to_u8,
+                [IR_TYPE_s32][IR_TYPE_u8] = IR_truncate_to_u8,
+                [IR_TYPE_s32][IR_TYPE_s8] = IR_truncate_to_u8,
+                
+                [IR_TYPE_u64][IR_TYPE_u8] = IR_truncate_to_u8,
+                [IR_TYPE_u64][IR_TYPE_s8] = IR_truncate_to_u8,
+                [IR_TYPE_s64][IR_TYPE_u8] = IR_truncate_to_u8,
+                [IR_TYPE_s64][IR_TYPE_s8] = IR_truncate_to_u8,
+                
+                [IR_TYPE_u32][IR_TYPE_u16] = IR_truncate_to_u16,
+                [IR_TYPE_u32][IR_TYPE_s16] = IR_truncate_to_u16,
+                [IR_TYPE_s32][IR_TYPE_u16] = IR_truncate_to_u16,
+                [IR_TYPE_s32][IR_TYPE_s16] = IR_truncate_to_u16,
+                
+                [IR_TYPE_u64][IR_TYPE_u16] = IR_truncate_to_u16,
+                [IR_TYPE_u64][IR_TYPE_s16] = IR_truncate_to_u16,
+                [IR_TYPE_s64][IR_TYPE_u16] = IR_truncate_to_u16,
+                [IR_TYPE_s64][IR_TYPE_s16] = IR_truncate_to_u16,
+                
+                [IR_TYPE_u64][IR_TYPE_u32] = IR_truncate_to_u32,
+                [IR_TYPE_u64][IR_TYPE_s32] = IR_truncate_to_u32,
+                [IR_TYPE_s64][IR_TYPE_u32] = IR_truncate_to_u32,
+                [IR_TYPE_s64][IR_TYPE_s32] = IR_truncate_to_u32,
+            };
+            
+            enum ir_kind ir_cast = ir_kind_for_cast[ir_cast_what][ir_cast_to];
+            if(ir_cast){
+                if(lhs_or_rhs == AST_cast_lhs) ir_cast += 1;
+                cast_what->ir = push_ir(context, ir_cast);
+            }
+        }
     }
     
     cast_what->resolved_type = cast_to;
@@ -565,7 +648,7 @@ func struct ast_type *perform_integer_promotions(struct ast_type *type){
 }
 
 
-func void maybe_insert_cast_from_special_int_to_int(struct context *context, enum ast_kind lhs_or_rhs, struct expr *operand, struct token *site){
+func void maybe_insert_cast_from_special_int_to_int(struct context *context, struct expr *operand, int is_lhs){
     if(operand->resolved_type->kind == AST_bitfield_type){
         struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)operand->resolved_type;
         
@@ -576,50 +659,56 @@ func void maybe_insert_cast_from_special_int_to_int(struct context *context, enu
         // 
         
         // @cleanup: do we want to make bitfield the defined type?
+        operand->defined_type = null;
+        
+        struct ir_load_bitfield *ir_load_bitfield = push_struct(&context->ir_arena, struct ir_load_bitfield);
+        ir_load_bitfield->base.kind = IR_load_bitfield + is_lhs;
+        ir_load_bitfield->bitfield_type = bitfield;
+        operand->ir = &ir_load_bitfield->base;
         
         if(bitfield->width < 32){
-            push_cast(context, lhs_or_rhs, &globals.typedef_s32, null, operand, site);
+            operand->resolved_type = &globals.typedef_s32;
         }else if(bitfield->width == 32){
             if(type_is_signed(bitfield->base_type)){
-                push_cast(context, lhs_or_rhs, &globals.typedef_s32, null, operand, site);
+                operand->resolved_type = &globals.typedef_s32;
             }else{
-                push_cast(context, lhs_or_rhs, &globals.typedef_u32, null, operand, site);
+                operand->resolved_type = &globals.typedef_u32;
             }
         }else{
-            push_cast(context, lhs_or_rhs, bitfield->base_type, null, operand, site);
+            operand->resolved_type = bitfield->base_type;
         }
     }else if(operand->resolved_type->kind == AST_atomic_integer_type){
         // :translate_atomic_to_non_atomic_and_back
-        struct ast_type *non_atomic_type = operand->resolved_type - (&globals.typedef_atomic_bool - &globals.typedef_Bool);
-        push_cast(context, lhs_or_rhs, non_atomic_type, null, operand, site);
+        // @note: I don't think there is a reason to actually implement atomic loads for now.
+        operand->resolved_type -= (&globals.typedef_atomic_bool - &globals.typedef_Bool);
     }
 }
 
 func void perform_integer_promotion_on_literal(struct expr *expr){
-    struct ast_integer_literal *lit = (struct ast_integer_literal *)expr->ast;
+    struct ir_integer_literal *lit = (struct ir_integer_literal *)expr->ir;
     if(expr->resolved_type->size >= 4) return;
     
     // sign/zero extend the value to the whole 64-bits.
     lit->_s64 = integer_literal_as_s64(expr);
     
     // :retain_type_information_through_promotion
-    struct ast *defined_type = expr->defined_type;
-    if(!defined_type) defined_type = (struct ast *)expr->resolved_type;
+    enum ast_kind *defined_type = expr->defined_type;
+    if(!defined_type) defined_type = &expr->resolved_type->kind;
     
-    set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
+    lit->type = &globals.typedef_s32;
     expr->resolved_type = &globals.typedef_s32;
     expr->defined_type = defined_type;
 }
 
 func void maybe_insert_integer_promotion_cast(struct context *context, enum ast_kind lhs_or_rhs, struct expr *operand, struct token *site){
-    maybe_insert_cast_from_special_int_to_int(context, lhs_or_rhs, operand, site);
+    maybe_insert_cast_from_special_int_to_int(context, operand, (lhs_or_rhs == AST_cast_lhs));
     
     struct ast_type *promoted_type = perform_integer_promotions(operand->resolved_type);
     if(operand->resolved_type != promoted_type){
         // :retain_type_information_through_promotion
         // if it was promoted, we retain the information about the actual size in the defined_type
-        struct ast *defined_type = operand->defined_type;
-        if(!defined_type) defined_type = (struct ast *)operand->resolved_type;
+        enum ast_kind *defined_type = operand->defined_type;
+        if(!defined_type) defined_type = &operand->resolved_type->kind;
         
         push_cast(context, lhs_or_rhs, promoted_type, defined_type, operand, site);
     }
@@ -670,8 +759,8 @@ func struct ast_type *perform_usual_arithmetic_conversions(struct ast_type *lhs,
 
 func void maybe_insert_arithmetic_conversion_casts(struct context *context, struct expr *op_lhs, struct expr *op_rhs, struct token *site){
     
-    maybe_insert_cast_from_special_int_to_int(context, AST_cast_lhs, op_lhs, site);
-    maybe_insert_cast_from_special_int_to_int(context, AST_cast, op_rhs, site);
+    maybe_insert_cast_from_special_int_to_int(context, op_lhs, /*is_lhs*/1);
+    maybe_insert_cast_from_special_int_to_int(context, op_rhs, /*is_lhs*/0);
     
     if(!type_is_arithmetic(op_lhs->resolved_type) || !type_is_arithmetic(op_rhs->resolved_type)) return;
     
@@ -681,38 +770,42 @@ func void maybe_insert_arithmetic_conversion_casts(struct context *context, stru
     if(op_lhs->resolved_type != promoted_type){
         // :retain_type_information_through_promotion
         // if it was promoted, we retain the information about the actual size in the defined_type
-        struct ast *defined_type = op_lhs->defined_type;
-        if(!defined_type) defined_type = (struct ast *)op_lhs->resolved_type;
+        enum ast_kind *defined_type = op_lhs->defined_type;
+        if(!defined_type) defined_type = &op_lhs->resolved_type->kind;
         push_cast(context, AST_cast_lhs, promoted_type, defined_type, op_lhs, site);
     }
     
     if(op_rhs->resolved_type != promoted_type){
-        struct ast *defined_type = op_rhs->defined_type;
-        if(!defined_type) defined_type = (struct ast *)op_rhs->resolved_type;
+        enum ast_kind *defined_type = op_rhs->defined_type;
+        if(!defined_type) defined_type = &op_rhs->resolved_type->kind;
         push_cast(context, AST_cast, promoted_type, defined_type, op_rhs, site);
     }
 }
 
-func void maybe_cast_literal_0_to_void_pointer(struct context *context, struct expr *_lhs, struct expr *_rhs, struct token *site){
+func void maybe_cast_literal_0_to_void_pointer(struct expr *lhs, struct expr *rhs){
     
-    struct ast *lhs = _lhs->ast;
-    struct ast *rhs = _rhs->ast;
-    
-    if(_lhs->resolved_type->kind == AST_pointer_type && rhs->kind == AST_integer_literal){
-        if(integer_literal_as_u64(_rhs) == 0){
-            push_cast(context, AST_cast_lhs, _lhs->resolved_type, _lhs->defined_type, _rhs, site);
+    if(lhs->resolved_type->kind == AST_pointer_type && rhs->ir->kind == IR_integer_literal){
+        
+        if(integer_literal_as_u64(rhs) == 0){
+            rhs->ir->kind = IR_pointer_literal;
+            rhs->resolved_type = lhs->resolved_type;
+            rhs->defined_type  = lhs->defined_type;
+            ((struct ir_pointer_literal *)rhs->ir)->type = lhs->resolved_type;
         }
         return;
     }
     
-    if(_rhs->resolved_type->kind == AST_pointer_type && lhs->kind == AST_integer_literal){
-        if(integer_literal_as_u64(_lhs) == 0){
-            push_cast(context, AST_cast, _rhs->resolved_type, _rhs->defined_type, _lhs, site);
+    if(rhs->resolved_type->kind == AST_pointer_type && lhs->ir->kind == IR_integer_literal){
+        if(integer_literal_as_u64(lhs) == 0){
+            lhs->ir->kind = IR_pointer_literal;
+            lhs->resolved_type = rhs->resolved_type;
+            lhs->defined_type  = rhs->defined_type;
+            ((struct ir_pointer_literal *)lhs->ir)->type = rhs->resolved_type;
         }
     }
 }
 
-func void maybe_insert_cast_from_void_pointer(struct context *context, struct expr *lhs, struct expr *rhs, struct token *site){
+func void maybe_insert_cast_from_void_pointer(struct expr *lhs, struct expr *rhs){
     
     if(lhs->resolved_type->kind != AST_pointer_type) return;
     if(rhs->resolved_type->kind != AST_pointer_type) return;
@@ -720,15 +813,13 @@ func void maybe_insert_cast_from_void_pointer(struct context *context, struct ex
     struct ast_pointer_type *lhs_pointer = (struct ast_pointer_type *)lhs->resolved_type;
     struct ast_pointer_type *rhs_pointer = (struct ast_pointer_type *)rhs->resolved_type;
     
-    if(lhs_pointer->pointer_to == rhs_pointer->pointer_to) return;
-    
     if(lhs_pointer->pointer_to == &globals.typedef_void){
-        push_cast(context, AST_cast_lhs, rhs->resolved_type, rhs->defined_type, lhs, site);
+        lhs->resolved_type = rhs->resolved_type;
         return;
     }
     
     if(rhs_pointer->pointer_to == &globals.typedef_void){
-        push_cast(context, AST_cast, lhs->resolved_type, lhs->defined_type, rhs, site);
+        rhs->resolved_type = lhs->resolved_type;
         return;
     }
 }
@@ -737,10 +828,9 @@ func void maybe_insert_cast_from_void_pointer(struct context *context, struct ex
 
 func struct ast_scope *parser_push_new_scope(struct context *context, struct token *token, enum scope_flags flags){
     
-    struct ast_scope *scope = push_ast(context, scope);
+    struct ast_scope *scope = push_struct(context->arena, struct ast_scope);
     scope->flags = flags;
     scope->token = token;
-    set_resolved_type(&scope->base, &globals.typedef_void, null);
     
     struct ast_scope *parent = context->current_scope;
     if(parent){
@@ -770,7 +860,7 @@ func void parser_scope_pop(struct context *context, struct ast_scope *scope){
 
 struct type_info_return{
     struct ast_type *type;
-    struct ast *defined_type;
+    enum ast_kind *defined_type;
 };
 
 func void sleep_or_error_on_unresolved_type(struct context *context, struct ast_type *type){
@@ -973,17 +1063,17 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
     return (wanted == given) ? ret : null;
 }
 
-func struct string report_type_mismatch__internal(struct context *context, char *prefix, struct ast_type *type, struct ast *defined_type){
+func struct string report_type_mismatch__internal(struct context *context, char *prefix, struct ast_type *type, enum ast_kind *defined_type){
     struct string ret = zero_struct;
     
     b32 handled = false;
     if(defined_type){
-        if(defined_type->kind == AST_typedef){
+        if(*defined_type == AST_typedef){
             struct ast_declaration *decl = cast(struct ast_declaration *)defined_type;
             struct string lhs_string = push_type_string(context->arena, &context->scratch, decl->type);
             ret = push_format_string(&context->scratch, "%s '%.*s' (aka %.*s)", prefix, decl->identifier->amount, decl->identifier->data, lhs_string.amount, lhs_string.data);
             handled = true;
-        }else if(defined_type->kind == AST_enum){
+        }else if(*defined_type == AST_enum){
             struct string lhs_string = push_type_string(context->arena, &context->scratch, cast(struct ast_type *)defined_type);
             ret = push_format_string(&context->scratch, "%s '%.*s'", prefix, lhs_string.amount, lhs_string.data);
             handled = true;
@@ -997,7 +1087,7 @@ func struct string report_type_mismatch__internal(struct context *context, char 
     return ret;
 }
 
-func void report_type_mismatch_error(struct context *context, struct ast_type *lhs, struct ast *lhs_defined_type, struct ast_type *rhs, struct ast *rhs_defined_type, struct token *location){
+func void report_type_mismatch_error(struct context *context, struct ast_type *lhs, enum ast_kind *lhs_defined_type, struct ast_type *rhs, enum ast_kind *rhs_defined_type, struct token *location){
     struct string lhs_string = report_type_mismatch__internal(context, "Wanted", lhs, lhs_defined_type);
     struct string rhs_string = report_type_mismatch__internal(context, "given", rhs, rhs_defined_type);
     
@@ -1005,7 +1095,7 @@ func void report_type_mismatch_error(struct context *context, struct ast_type *l
 }
 
 
-func void report_type_mismatch_warning(struct context *context, struct ast_type *lhs, struct ast *lhs_defined_type, struct ast_type *rhs, struct ast *rhs_defined_type, struct token *location){
+func void report_type_mismatch_warning(struct context *context, struct ast_type *lhs, enum ast_kind *lhs_defined_type, struct ast_type *rhs, enum ast_kind *rhs_defined_type, struct token *location){
     struct string lhs_string = report_type_mismatch__internal(context, "Wanted", lhs, lhs_defined_type);
     struct string rhs_string = report_type_mismatch__internal(context, "given", rhs, rhs_defined_type);
     
@@ -1050,17 +1140,16 @@ enum type_qualifiers{
 struct declarator_return{
     struct token *ident;
     struct ast_type *type;
-    struct ast *defined_type;
+    enum ast_kind *defined_type;
 };
 
 func struct ast_declaration *push_declaration_for_declarator(struct context *context, struct declarator_return declarator){
-    struct ast_declaration *decl = push_ast(context, declaration);
+    struct ast_declaration *decl = push_struct(context->arena, struct ast_declaration);
+    decl->kind         = AST_declaration;
     decl->type         = declarator.type;
     decl->defined_type = declarator.defined_type;
     decl->identifier   = declarator.ident;
     decl->offset_on_stack = -1;
-    set_resolved_type(&decl->base, &globals.typedef_void, null);
-    
     return decl;
 }
 
@@ -1106,7 +1195,7 @@ enum declaration_specifier_flag{
 
 struct declaration_specifiers{
     
-    struct ast *defined_type_specifier;
+    enum ast_kind *defined_type_specifier;
     struct ast_type *type_specifier;
     u64 specifier_flags;
     
@@ -1114,49 +1203,21 @@ struct declaration_specifiers{
 };
 
 func struct expr invalid_ast(struct context *context){
-    struct ast *invalid = _parser_ast_push(context, context->arena, sizeof(struct ast), alignof(struct ast), AST_invalid);
-    set_resolved_type(invalid, &globals.typedef_poison, null);
-    return (struct expr){invalid, get_current_token_for_error_report(context), &globals.typedef_poison};
+    struct ir *invalid = push_ir(context, AST_invalid);
+    return (struct expr){.ir = invalid, get_current_token_for_error_report(context), &globals.typedef_poison};
 }
 
 // :forward_declarations :predeclarations
-func struct declaration_specifiers parse_declaration_specifiers(struct context *context, struct ast_type *optional_type_specifier, struct ast *optional_defined_type_speicifer);
+func struct declaration_specifiers parse_declaration_specifiers(struct context *context, struct ast_type *optional_type_specifier, enum ast_kind *optional_defined_type_speicifer);
 func struct expr parse_expression(struct context *context, b32 should_skip_comma_expression);
-func struct declaration_list parse_declaration_list(struct context *context, struct ast_type *optional_type, struct ast *optional_defined_type);
-func struct declarator_return parse_declarator(struct context *context, struct ast_type *initial_type, struct ast *initial_defined_type, enum declarator_kind_flags declarator_kind_flags);
+func struct declaration_list parse_declaration_list(struct context *context, struct ast_type *optional_type, enum ast_kind *optional_defined_type);
+func struct declarator_return parse_declarator(struct context *context, struct ast_type *initial_type, enum ast_kind *initial_defined_type, enum declarator_kind_flags declarator_kind_flags);
 
-func struct ast *parse_declaration_list_in_imperative_scope(struct context *context, struct ast_type *optional_type, struct ast *optional_defined_type){
+func int parse_declaration_list_in_imperative_scope(struct context *context, struct ast_type *optional_type, enum ast_kind *optional_defined_type){
     assert(context->current_scope);
     
-    struct declaration_list list = parse_declaration_list(context, optional_type, optional_defined_type);
-    if(context->should_exit_statement) return &globals.empty_statement;
-    
-    // set 'decl->offset_on_stack' for all local declarations
-    for(struct declaration_node *node = list.first; node; node = node->next){
-        struct ast_declaration *decl = node->decl;
-        if(decl->base.kind == AST_typedef) continue;
-        if(decl->base.kind == AST_function) continue;
-        
-        if(!(decl->flags & DECLARATION_FLAGS_is_local_persist) && !(decl->flags & DECLARATION_FLAGS_is_global)){
-            parser_emit_memory_location(context, decl);
-        }
-    }
-    
-    if(list.first && list.first == list.last){
-        // we have one element, return it as is, no need for a list
-        return &list.first->decl->base;
-    }
-    
-    // push 'AST_declaration_list' for this 'declaration_list'
-    
-    struct token *token = get_current_token_for_error_report(context);
-    if(list.first) token = list.first->decl->identifier;
-    
-    struct ast_declaration_list *decl_list = push_ast(context, declaration_list);
-    decl_list->list = list;
-    
-    set_resolved_type(&decl_list->base, &globals.typedef_void, null);
-    return &decl_list->base;
+    struct declaration_list declaration_list = parse_declaration_list(context, optional_type, optional_defined_type);
+    return declaration_list.first && declaration_list.first->decl->kind == AST_function;
 }
 
 func struct ast_type *push_unresolved_type(struct context *context, struct token *sleep_on, enum ast_kind kind){
@@ -1245,7 +1306,7 @@ func b32 check_binary_for_basic_types(struct context *context, struct ast_type *
 #define __readeflags __builtin_ia32_readeflags_u64
 #endif
 
-func void push_dot_or_arrow(struct context *context, struct compound_member *found, struct expr *operand, enum ast_kind ast_kind){
+func void push_dot_or_arrow(struct context *context, struct compound_member *found, struct expr *operand, enum ir_kind ir_kind){
     
     // :unresolved_types
     //
@@ -1259,31 +1320,33 @@ func void push_dot_or_arrow(struct context *context, struct compound_member *fou
     //        Sleeps on 'unresovled' when parsing the structure.
     //                                                                        07.02.2023
     
-    struct ast *ret = 0;
+    struct ir *ret = 0;
     
-    if(operand->ast->kind == AST_pointer_literal){
-        assert(ast_kind == AST_member_deref); // We cannot use '.' on a pointer.
+    if(operand->ir->kind == IR_pointer_literal){
+        assert(ir_kind == IR_member_deref); // We cannot use '.' on a pointer.
         
-        struct ast_pointer_literal *pointer = (struct ast_pointer_literal *)operand->ast;
-        pointer->base.kind = AST_pointer_literal_deref;
+        struct ir_pointer_literal *pointer = (struct ir_pointer_literal *)operand->ir;
+        pointer->base.kind = IR_pointer_literal_deref;
         pointer->pointer += found->offset_in_type;
         
         ret = &pointer->base;
-    }else if(operand->ast->kind == AST_pointer_literal_deref && ast_kind == AST_member){
+        pointer->type = found->type;
+    }else if(operand->ir->kind == IR_pointer_literal_deref && ir_kind == IR_member){
         // We are here --------------v
         // ((struct arst *)0)->member.submember
         
-        struct ast_pointer_literal *pointer_literal_deref = (struct ast_pointer_literal *)operand->ast;
+        struct ir_pointer_literal *pointer_literal_deref = (struct ir_pointer_literal *)operand->ir;
         pointer_literal_deref->pointer += found->offset_in_type;
         ret = &pointer_literal_deref->base;
+        pointer_literal_deref->type = found->type;
     }else{
-        struct ast_dot_or_arrow *op = (struct ast_dot_or_arrow *)_parser_ast_push(context, &context->ast_arena, sizeof(struct ast_dot_or_arrow), alignof(struct ast_dot_or_arrow), ast_kind);
+        struct ir_dot_or_arrow *op = push_struct(&context->ir_arena, struct ir_dot_or_arrow);
+        op->base.kind = ir_kind;
         op->member = found;
         ret = &op->base;
     }
     
-    set_resolved_type(ret, found->type, found->defined_type);
-    operand->ast = ret;
+    operand->ir = ret;
     operand->resolved_type = found->type;
     operand->defined_type  = found->defined_type;
 }
@@ -1300,10 +1363,10 @@ func struct compound_member *find_member_in_compound(struct ast_compound_type *c
     return null;
 }
 
-func void handle_dot_or_arrow(struct context *context, struct ast_compound_type *compound, struct expr *operand, enum ast_kind ast_kind){
+func void handle_dot_or_arrow(struct context *context, struct ast_compound_type *compound, struct expr *operand, enum ir_kind ir_kind){
     
     char *error = "Expected an identifier following '->'.";
-    if(ast_kind == AST_member){
+    if(ir_kind == IR_member){
         error = "Expected an identifier following '.'.";
     }
     
@@ -1321,7 +1384,7 @@ func void handle_dot_or_arrow(struct context *context, struct ast_compound_type 
         return;
     }
     
-    push_dot_or_arrow(context, found, operand, ast_kind);
+    push_dot_or_arrow(context, found, operand, ir_kind);
 }
 
 //_____________________________________________________________________________________________________________________
@@ -1368,7 +1431,7 @@ void function_maybe_add_line_information(struct context *context, struct token *
         
         struct ast_function *current_function = context->current_function;
         
-        u32 offset = (u32)(arena_current(&context->ast_arena) - current_function->start_in_ast_arena);
+        u32 offset = (u32)(arena_current(&context->ir_arena) - current_function->start_in_ir_arena);
         
         if(context->last_offset_pushed == offset){
             // @note: If the last statement did not produce code, we update the line.
@@ -1394,17 +1457,17 @@ func struct expr parse_constant_integer_expression(struct context *context, int 
     
     struct expr constant_expression = parse_expression(context, should_skip_comma_expression);
     
-    struct ast_integer_literal *ret = push_ast(context, integer_literal);
+    struct ir_integer_literal *ret = push_struct(context->arena, struct ir_integer_literal);
     
-    if(constant_expression.ast->kind != AST_integer_literal){
+    if(constant_expression.ir->kind != IR_integer_literal){
         report_error(context, constant_expression.token, message);
-        set_resolved_type(&ret->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
+        ret->type = &globals.typedef_s32;
     }else{
-        *ret = *(struct ast_integer_literal *)constant_expression.ast;
-        pop_from_ast_arena(context, (struct ast_integer_literal *)constant_expression.ast);
+        *ret = *(struct ir_integer_literal *)constant_expression.ir;
+        pop_from_ir_arena(context, (struct ir_integer_literal *)constant_expression.ir);
     }
     
-    constant_expression.ast = &ret->base;
+    constant_expression.ir = &ret->base;
     return constant_expression;
 }
 
@@ -1424,7 +1487,7 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
     //     
     
     struct ast_type *type_specifier = null;
-    struct ast *defined_type_specifier = null;
+    enum ast_kind *defined_type_specifier = null;
     
     struct token *token = get_current_token(context);
     switch(token->type){
@@ -1436,7 +1499,7 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
             
             next_token(context);
             type_specifier = ast_typedef->type;
-            defined_type_specifier = &ast_typedef->base;
+            defined_type_specifier = &ast_typedef->kind;
         }break;
         
         
@@ -1492,43 +1555,40 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
     return ret;
 }
 
-func void maybe_load_address_for_array_or_function(struct context *context, enum ast_kind rhs_or_lhs, struct expr *operand, struct token *site){
-    struct ast *ast = operand->ast;
+func void maybe_load_address_for_array_or_function(struct context *context, enum ir_kind rhs_or_lhs, struct expr *operand, struct token *site){
+    struct ir *ir = operand->ir;
     
     if(operand->resolved_type->kind == AST_array_type){
         
         struct ast_array_type *array = (struct ast_array_type *)operand->resolved_type;
+        struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, site);
         
-        if(ast->kind == AST_pointer_literal_deref){
+        if(ir->kind == IR_pointer_literal_deref){
             // @hack: constant propergate an edge case needed for 'FIELD_OFFSET(struct s, array[1])';
             //        or written out: '(smm)&(((struct s *)0)->array[1])'.
             //        here '((struct s *)0)->array' gets subscripted and  therefore we load the address of it.
+            ir->kind = IR_pointer_literal;
             
-            ast->kind = AST_pointer_literal;
+            struct ir_pointer_literal *lit = (struct ir_pointer_literal *)ir;
+            lit->type = pointer_type;
         }else{
-            ast = ast_push_unary_expression(context, rhs_or_lhs, ast);
+            ir = push_ir(context, rhs_or_lhs);
         }
         
-        struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, site);
-        set_resolved_type(ast, pointer_type, null);
-        
-        operand->ast = ast;
+        operand->ir = ir;
         operand->resolved_type = pointer_type;
         operand->defined_type = null;
     }else if(operand->resolved_type->kind == AST_function_type){
         
         struct ast_type *pointer = parser_push_pointer_type(context, operand->resolved_type, null, site);
         
-        struct ast *address = ast_push_unary_expression(context, rhs_or_lhs, ast);
-        set_resolved_type(address, pointer, null);
-        
-        operand->ast = address;
+        operand->ir = push_ir(context, rhs_or_lhs);
         operand->resolved_type = pointer;
         operand->defined_type  = null;
     }
 }
 
-func void handle_pointer_arithmetic(struct context *context, enum ast_kind ast_kind, struct token *token, struct expr *op_lhs, struct expr *op_rhs, struct expr *operand){
+func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kind, struct token *token, struct expr *op_lhs, struct expr *op_rhs, struct expr *operand){
     
     // @cleanup: where do we check for void?
     
@@ -1558,39 +1618,32 @@ func void handle_pointer_arithmetic(struct context *context, enum ast_kind ast_k
     
     assert(deref_type->size >= 0);
     
-    if(integer->ast->kind == AST_integer_literal && pointer->ast->kind == AST_pointer_literal){
-        struct ast_integer_literal *lit = (struct ast_integer_literal *)integer->ast;
+    if(integer->ir->kind == IR_integer_literal && pointer->ir->kind == IR_pointer_literal){
+        struct ir_integer_literal *lit = (struct ir_integer_literal *)integer->ir;
         
-        struct ast_pointer_literal *pointer_lit = (struct ast_pointer_literal *)pointer->ast;
-        if(ast_kind == AST_binary_plus){
+        struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)pointer->ir;
+        if(ir_kind == IR_add_u64){
             pointer_lit->pointer += integer_literal_as_s64(integer);
         }else{
             pointer_lit->pointer -= integer_literal_as_s64(integer);
         }
         
-        pop_from_ast_arena(context, lit); // @cleanup: for now assume 'pointer + integer'
-    }else if(integer->ast->kind == AST_integer_literal){
-        struct ast_integer_literal *lit = (struct ast_integer_literal *)integer->ast;
+        pop_from_ir_arena(context, lit); // @cleanup: for now assume 'pointer + integer'
+    }else if(integer->ir->kind == IR_integer_literal){
+        struct ir_integer_literal *lit = (struct ir_integer_literal *)integer->ir;
         
         // Upconvert to s64.
         lit->_s64 = integer_literal_as_s64(integer);
         
-        if(lit->_s64 == 0){
-            pop_from_ast_arena(context, lit); // @cleanup: for now assume 'pointer + integer'
-            operand->ast = pointer->ast;
+        // @cleanup: Check for compile time overflow?
+        if(type_is_signed(integer->resolved_type)){
+            lit->_s64 *= deref_type->size;
         }else{
-            
-            // @cleanup: Check for compile time overflow?
-            if(type_is_signed(integer->resolved_type)){
-                lit->_s64 *= deref_type->size;
-            }else{
-                lit->_u64 *= deref_type->size;
-            }
-            set_resolved_type(&lit->base, &globals.typedef_u64, null);
-            
-            operand->ast = ast_push_binary_expression(context, ast_kind, pointer, integer);
-            set_resolved_type(operand->ast, &pointer_type->base, pointer->defined_type);
+            lit->_u64 *= deref_type->size;
         }
+        lit->type = &globals.typedef_u64;
+        
+        operand->ir = push_ir(context, ir_kind);
     }else{
         
         if(integer->resolved_type != &globals.typedef_s64){
@@ -1598,14 +1651,12 @@ func void handle_pointer_arithmetic(struct context *context, enum ast_kind ast_k
         }
         
         if(deref_type->size != 1){
-            ast_push_s64_literal(context, deref_type->size);
-            struct ast *new_index = ast_push_binary_expression(context, AST_binary_times, integer, size_lit);
-            // @cleanup: s64?
-            set_resolved_type(new_index, &globals.typedef_u64, null);
+            ast_push_s64_literal(context, deref_type->size, token);
+            
+            push_ir(context, IR_multiply_u64);
         }
         
-        operand->ast = ast_push_binary_expression(context, ast_kind, pointer, integer);
-        set_resolved_type(operand->ast, &pointer_type->base, pointer->defined_type);
+        operand->ir = push_ir(context, ir_kind);
     }
     
     operand->resolved_type = pointer->resolved_type;
@@ -1617,37 +1668,38 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
     struct ast_type *lhs_type = lhs->resolved_type;
     assert(lhs_type->kind == AST_array_type || lhs_type->kind == AST_pointer_type);
     
-    enum ast_kind subscript_kind = AST_none;
+    enum ir_kind subscript_kind = AST_none;
     struct ast_type *dereferenced_resolved_type = null;
-    struct ast      *dereferenced_defined_type  = null;
+    enum ast_kind   *dereferenced_defined_type  = null;
     
     if(lhs_type->kind == AST_pointer_type){
-        subscript_kind = AST_pointer_subscript;
+        subscript_kind = IR_pointer_subscript;
         
         struct ast_pointer_type *pointer = (struct ast_pointer_type *)lhs_type;
         dereferenced_resolved_type = pointer->pointer_to;
         dereferenced_defined_type  = pointer->pointer_to_defined_type;
     }else if(lhs_type->kind == AST_array_type){
-        subscript_kind = AST_array_subscript;
+        subscript_kind = IR_array_subscript;
         
         struct ast_array_type *array = (struct ast_array_type *)lhs_type;
         
-        if(lhs->ast->kind == AST_pointer_literal_deref && index->ast->kind == AST_integer_literal){
+        if(lhs->ir->kind == IR_pointer_literal_deref && index->ir->kind == IR_integer_literal){
             
             // Transform
             //    (*((int (*) [])0))[3]
             // Into
             //    *((int *) 12)
             
-            struct ast_pointer_literal *pointer_literal_deref = (struct ast_pointer_literal *)lhs->ast;
+            struct ir_pointer_literal *pointer_literal_deref = (struct ir_pointer_literal *)lhs->ir;
             pointer_literal_deref->pointer += array->element_type->size * integer_literal_as_u64(index); // @cleanup: overflow?
             
             struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, token);
-            set_resolved_type(lhs->ast, pointer_type, null);
+            pointer_literal_deref->type = pointer_type;
+            
             lhs->resolved_type = pointer_type;
             lhs->defined_type = null;
             
-            pop_from_ast_arena(context, (struct ast_integer_literal *)index->ast);
+            pop_from_ir_arena(context, (struct ir_integer_literal *)index->ir);
             return;
         }
         
@@ -1657,21 +1709,20 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
         invalid_code_path;
     }
     
-    maybe_insert_cast_from_special_int_to_int(context, AST_cast, index, token);
+    maybe_insert_cast_from_special_int_to_int(context, index, /*is_lhs*/0);
     push_cast(context, AST_cast, &globals.typedef_s64, null, index, token);
     
-    struct ast_subscript *subscript = _parser_ast_push(context, &context->ast_arena, sizeof(struct ast_subscript), alignof(struct ast_subscript), subscript_kind);
+    struct ir_subscript *subscript = push_struct(&context->ir_arena, struct ir_subscript);
+    subscript->base.kind = subscript_kind;
+    subscript->type = dereferenced_resolved_type;
     
-    set_resolved_type(&subscript->base, dereferenced_resolved_type, dereferenced_defined_type);
-    
-    lhs->ast = &subscript->base;
     lhs->resolved_type = dereferenced_resolved_type;
     lhs->defined_type = dereferenced_defined_type;
 }
 
-func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struct context *context, struct ast_type *lhs_type, struct ast *lhs_defined_type, struct expr *rhs, struct token *assignment){
+func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struct context *context, struct ast_type *lhs_type, enum ast_kind *lhs_defined_type, struct expr *rhs, struct token *assignment){
     
-    maybe_insert_cast_from_special_int_to_int(context, AST_cast, rhs, assignment);
+    maybe_insert_cast_from_special_int_to_int(context, rhs, /*is_lhs*/0);
     
     // :translate_atomic_to_non_atomic_and_back
     // 
@@ -1689,6 +1740,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
     
     b32 should_report_warning = false;
     b32 should_push_cast = false;
+    b32 should_skip_check = false;
     
     if(lhs_type == &globals.typedef_Bool){
         if(type_is_arithmetic(rhs_type) || rhs_type->kind == AST_pointer_type){
@@ -1701,16 +1753,17 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
         // Assigning from a integer or float to a bitfield.
         // 
         
-        struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)lhs_type;
+        struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)lhs_type;
         if(rhs_type != bitfield->base_type){
             push_cast(context, AST_cast, bitfield->base_type, null, rhs, assignment);
         }
-        should_push_cast = true;
+        
+        should_skip_check = true;
     }else if(lhs_type->kind == AST_pointer_type && rhs_type->kind == AST_integer_type){
         should_push_cast = true;
         
         // 'pointer' = 'integer'
-        if(rhs->ast->kind == AST_integer_literal){
+        if(rhs->ir->kind == IR_integer_literal){
             if(integer_literal_as_u64(rhs) != 0){
                 should_report_warning  = true;
             }
@@ -1724,7 +1777,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
         
         if(wanted_pointer->pointer_to == &globals.typedef_void || given_pointer->pointer_to == &globals.typedef_void){
             // One of the sides is 'void *'. This is fine.
-            should_push_cast = true;
+            should_skip_check = true;
         }else{
             while(wanted_pointer->pointer_to->kind == AST_pointer_type && given_pointer->pointer_to->kind == AST_pointer_type){
                 wanted_pointer = cast(struct ast_pointer_type *)wanted_pointer->pointer_to;
@@ -1743,12 +1796,12 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
             
             if(!types_are_equal(wanted_pointer->pointer_to, given_pointer->pointer_to)){
                 should_report_warning  = true;
-                should_push_cast = true;
+                should_skip_check = true;
             }
         }
     }else if(lhs_type->kind == AST_float_type && rhs_type->kind == AST_integer_type){
         should_push_cast = true;
-        if(rhs->ast->kind != AST_integer_literal){
+        if(rhs->ir->kind != IR_integer_literal){
             should_report_warning  = true;
         }
     }else if(lhs_type->kind == AST_integer_type && rhs_type->kind == AST_float_type){
@@ -1767,7 +1820,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
     }else if(lhs_type->kind == AST_integer_type && rhs_type->kind == AST_integer_type){
         should_push_cast = true;
         
-        if(rhs->ast->kind == AST_integer_literal && assignment->type != TOKEN_and_equals){
+        if(rhs->ir->kind == IR_integer_literal && assignment->type != TOKEN_and_equals){
             b32 fits;
             if(type_is_signed(lhs_type)){
                 s64 value = integer_literal_as_s64(rhs);
@@ -1825,7 +1878,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
     
     if(should_push_cast){
         push_cast(context, AST_cast, lhs_type, lhs_defined_type, rhs, assignment);
-    }else{
+    }else if(!should_skip_check){
         if(!types_are_equal(lhs_type, rhs->resolved_type)){
             report_type_mismatch_error(context, lhs_type, lhs_defined_type, rhs->resolved_type, rhs->defined_type, assignment);
         }
@@ -1886,9 +1939,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
             // This is an extension, we allow 'int a = {}' and '(int){}'.
             // GCC/Clang complain about empty scalar initializer, but I think its pretty obvious 
             // what you want here and makes some type-agnostic macros work.
-            initializer.ast = ast_push_s32_literal(context, 0);
-            initializer.token = get_current_token(context);
-            initializer.resolved_type = &globals.typedef_s32;
+            initializer = ast_push_s32_literal(context, 0, initial_open_curly);
         }else{
             // 
             // 'int a = {1, 2, 3}' only generates a warning in gcc and clang.
@@ -1902,14 +1953,13 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         
         expect_token(context, TOKEN_closed_curly, "More than one member in initializer-list for scalar type.");
         
-        maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &initializer, initializer.token);
+        maybe_load_address_for_array_or_function(context, IR_load_address, &initializer, initializer.token);
         maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type_to_initialize, /*ast_to_initialize->defined_type*/null, &initializer, initial_open_curly); // @cleanup:
         
-        struct ast_initializer *ast_initializer = push_expression(context, initializer);
-        ast_initializer->offset = base_offset;
-        ast_initializer->lhs_type = type_to_initialize;
-        
-        set_resolved_type(&ast_initializer->base, type_to_initialize, null); // @cleanup: defined type?
+        struct ir_initializer *ir_initializer = push_struct(&context->ir_arena, struct ir_initializer);
+        ir_initializer->base.kind = IR_initializer;
+        ir_initializer->offset = base_offset;
+        ir_initializer->lhs_type = type_to_initialize;
         return;
     }
     
@@ -2090,7 +2140,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         // 
                         
                         struct ast *end_index = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false);
-                        if(end_index->kind != AST_integer_literal){
+                        if(end_index->kind != IR_integer_literal){
                             report_error(context, end_index->token, "Expected a constant integer expression in range designator. (e.g.: [1 ... moose]).");
                             goto error;
                         }
@@ -2254,18 +2304,19 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                 goto error;
             }
             
-            
             if(!array_type->is_of_unknown_size && (designator_node->array_at + file_data.size > array_type->amount_of_elements)){
                 report_error(context, embed, "#embed produces too many initializers for the array initialized. The #embed produces %lld initializers at offset %lld in the array and the array has %lld elements.", file_data.size, designator_node->array_at, array_type->amount_of_elements);
                 goto error;
             }
             
-            /*struct ast_embed *ast_embed = */push_expression(context, embed); // @note: This gets its value from the token.
+            struct ir_embed *ir_embed = push_struct(&context->ir_arena, struct ir_embed);
+            ir_embed->base.kind = IR_embed;
+            ir_embed->token = embed;
             
-            struct ast_initializer *initializer = push_expression(context, initializer);
+            struct ir_initializer *initializer = push_struct(&context->ir_arena, struct ir_initializer);
+            initializer->base.kind = IR_initializer;
             initializer->offset = designator_node->offset_at;
             initializer->lhs_type = current_object_type;
-            set_resolved_type(&initializer->base, current_object_type, null);
             
             // @note: We need to add -1 here, because the code below assumes it was not incremented.
             designator_node->array_at  += (file_data.size - 1); 
@@ -2273,7 +2324,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         }else{
             struct expr expression = parse_expression(context, /*skip_comma_expression*/true);
             
-            if(designator_stack.first->member_at == 0 && expression.ast->kind == AST_string_literal && designator_stack.first->lhs_type->kind == AST_array_type){
+            if(designator_stack.first->member_at == 0 && expression.ir->kind == IR_string_literal && designator_stack.first->lhs_type->kind == AST_array_type){
                 // 
                 // The C-spec allows the initializer of a character array to be optionally brace enclosed.
                 // In this case, we end up here.
@@ -2304,10 +2355,10 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         goto error;
                     }
                     
-                    struct ast_initializer *initializer = push_expression(context, initializer);
+                    struct ir_initializer *initializer = push_struct(&context->ir_arena, struct ir_initializer);
+                    initializer->base.kind = IR_initializer;
                     initializer->offset = designator_stack.first ? designator_stack.first->offset_at : base_offset;
                     initializer->lhs_type = current_object_type;
-                    set_resolved_type(&initializer->base, current_object_type, null);
                     
                     continue;
                 }
@@ -2316,7 +2367,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
             
             while(true){
                 
-                if(current_object_type->kind == AST_array_type && expression.ast->kind == AST_string_literal){
+                if(current_object_type->kind == AST_array_type && expression.ir->kind == IR_string_literal){
                     // 
                     // This is the case for:
                     //      struct { u8 array[8]; } asd = {"asd"};
@@ -2333,10 +2384,10 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                             goto error;
                         }
                         
-                        struct ast_initializer *initializer = push_expression(context, initializer);
+                        struct ir_initializer *initializer = push_struct(&context->ir_arena, struct ir_initializer);
+                        initializer->base.kind = IR_initializer;
                         initializer->offset = designator_stack.first->offset_at;
                         initializer->lhs_type = current_object_type;
-                        set_resolved_type(&initializer->base, current_object_type, null);
                         break;
                     }
                 }
@@ -2346,10 +2397,10 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     // This checks for struct {v2 a;} a = { return_v2() };
                     //
                     
-                    struct ast_initializer *initializer = push_expression(context, initializer);
+                    struct ir_initializer *initializer = push_struct(&context->ir_arena, struct ir_initializer);
+                    initializer->base.kind = IR_initializer;
                     initializer->offset = designator_stack.first->offset_at;
                     initializer->lhs_type = current_object_type;
-                    set_resolved_type(&initializer->base, current_object_type, null);
                     break;
                 }
                 
@@ -2376,13 +2427,13 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     new_node->offset_at = designator_stack.first->offset_at;
                     new_node->lhs_type = current_object_type;
                 }else{
-                    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &expression, expression.token);
+                    maybe_load_address_for_array_or_function(context, IR_load_address, &expression, expression.token);
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_object_type, /*@cleanup*/null, &expression, site);
                     
-                    struct ast_initializer *initializer = push_expression(context, initializer);
+                    struct ir_initializer *initializer = push_struct(&context->ir_arena, struct ir_initializer);
+                    initializer->base.kind = IR_initializer;
                     initializer->offset = designator_stack.first->offset_at;
                     initializer->lhs_type = current_object_type;
-                    set_resolved_type(&initializer->base, current_object_type, null);
                     break;
                 }
                 
@@ -2468,16 +2519,16 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
 // This routine patches 'decl->assign_expr' and 'decl->type' instead of returning them.
 func void parse_initializer(struct context *context, struct ast_declaration *decl, struct token *equals){
     
-    struct ast_skip *ast_skip = null;
+    struct ir_skip *ir_skip = null;
     if(decl->flags & DECLARATION_FLAGS_is_local_persist){
         // 
         // For local static declarations (local presist declarations), we don't want to execute their initializer.
-        // Hence, we add a _skip_ node which just tells us how many bytes to skip in the `ast_arena`.
+        // Hence, we add a _skip_ node which just tells us how many bytes to skip in the `ir_arena`.
         // In the future, there may be a better solution, where we immediately evaluate the initializer
         // and therefor do not have to do this junk.
         //                                                       - Pascal Beyer 02.03.2025
-        // 
-        ast_skip = push_expression(context, skip);
+        ir_skip = push_struct(&context->ir_arena, struct ir_skip);
+        ir_skip->base.kind = IR_skip;
     }
     
     // 
@@ -2489,7 +2540,7 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
     //     5) struct s a = ?;
     //     6) struct s a = {?};
     // 
-    struct ast *initializer_start = null;
+    struct ir *initializer_start = null;
     struct ast_type *type = decl->type;
     
     if(peek_token(context, TOKEN_open_curly)){
@@ -2498,16 +2549,15 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
         // 
         struct token *open_curly = get_current_token(context);
         
-        struct ast_compound_literal *compound_literal = push_expression(context, compound_literal);
-        set_resolved_type(&compound_literal->base, decl->type, decl->defined_type);
-        
+        struct ir_compound_literal *compound_literal = push_struct(&context->ir_arena, struct ir_compound_literal);
+        compound_literal->base.kind = IR_compound_literal;
         compound_literal->decl = decl;
         
         parse_initializer_list(context, decl->type, 0, &compound_literal->trailing_array_size);
         
         initializer_start = &compound_literal->base;
         
-        compound_literal->initializer_size = arena_current(&context->ast_arena) - (u8 *)(compound_literal + 1);
+        compound_literal->initializer_size = arena_current(&context->ir_arena) - (u8 *)(compound_literal + 1);
         
         if(type_is_array_of_unknown_size(type)){
             // 
@@ -2531,16 +2581,15 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
             
             // Set the new type.
             type = &array_type->base;
-            set_resolved_type(&compound_literal->base, &array_type->base, null);
             
             // Reset the trailing array size, to not overallocate later on.
             compound_literal->trailing_array_size = 0;
         }
         
     }else{
-        struct ast_identifier *lhs = push_expression(context, identifier);
+        struct ir_identifier *lhs = push_struct(&context->ir_arena, struct ir_identifier);
+        lhs->base.kind = IR_identifier;
         lhs->decl = decl;
-        set_resolved_type(&lhs->base, decl->type, decl->defined_type);
         
         // 
         // Parse an initializer like:
@@ -2572,7 +2621,7 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
             //     int a[3] = U"asd";
             // 
             
-            if(expr.ast->kind != AST_string_literal){
+            if(expr.ir->kind != IR_string_literal){
                 // :Error print the string literal thing only for integer arrays?
                 report_error(context, equals, "Array can only be initialized by {initializer-list} or \"string literal\".");
                 return;
@@ -2612,14 +2661,14 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
             }
             
         }else{
-            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &expr, expr.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &expr, expr.token);
             maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type, decl->defined_type, &expr, equals);
         }
         
-        struct ast_initializer *ast_initializer = push_expression(context, initializer);
+        struct ir_initializer *ast_initializer = push_struct(&context->ir_arena, struct ir_initializer);
+        ast_initializer->base.kind = IR_initializer;
         ast_initializer->offset = 0;
         ast_initializer->lhs_type = decl->type;
-        set_resolved_type(&ast_initializer->base, decl->type, decl->defined_type);
         
         // The 'assign_expr' is only used for 'evaluate_static_initializer'.
         // In this case we have to re-iterate the whole expression.
@@ -2627,10 +2676,10 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
         initializer_start = &lhs->base;
     }
     
-    push_expression(context, pop_expression);
+    push_ir(context, IR_pop_expression);
     
-    if(ast_skip){
-        ast_skip->size_to_skip = (u32)(arena_current(&context->ast_arena) - (u8*)ast_skip);
+    if(ir_skip){
+        ir_skip->size_to_skip = (u32)(arena_current(&context->ir_arena) - (u8*)ir_skip);
     }
     
     if(!context->current_scope){
@@ -2649,10 +2698,10 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
 // @note: for compare_exressions we set the resolved_type afterwards
 func void perform_float_operation(struct context *context, enum ast_kind binary_op, struct expr *op_lhs, struct expr *op_rhs){
     
-    struct ast_float_literal *lhs = (struct ast_float_literal *)op_lhs->ast;
-    struct ast_float_literal *rhs = (struct ast_float_literal *)op_rhs->ast;
+    struct ir_float_literal *lhs = (struct ir_float_literal *)op_lhs->ir;
+    struct ir_float_literal *rhs = (struct ir_float_literal *)op_rhs->ir;
     
-    assert(lhs->base.kind == AST_float_literal && rhs->base.kind == AST_float_literal);
+    assert(lhs->base.kind == IR_float_literal && rhs->base.kind == IR_float_literal);
     // @cleanup: how to deal with float vs double
     
     s32 compare_value = -1;
@@ -2671,30 +2720,30 @@ func void perform_float_operation(struct context *context, enum ast_kind binary_
         invalid_default_case();
     }
     
-    pop_from_ast_arena(context, rhs);
+    pop_from_ir_arena(context, rhs);
     
     if(compare_value != -1){
         // "The result has type int".
-        struct ast_integer_literal *lit = (struct ast_integer_literal *)lhs;
-        lit->base.kind = AST_integer_literal;
+        struct ir_integer_literal *lit = (struct ir_integer_literal *)lhs;
+        lit->base.kind = IR_integer_literal;
         lit->_u64 = 1;
-        set_resolved_type(&lit->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
+        lit->type = &globals.typedef_s32;
         op_rhs->resolved_type = &globals.typedef_s32;
-        op_rhs->defined_type =(struct ast *)&globals.typedef_u8;
+        op_rhs->defined_type = &globals.typedef_u8.kind;
     }
     
-    op_rhs->ast = &lhs->base; // @note: type is already correct.
+    op_rhs->ir = &lhs->base; // @note: type is already correct.
 }
 
 // @note: for compare_exressions we set the resolved_type afterwards
-// @WARNING: This frees the 'op_rhs' from the `ast_arena`.
+// @WARNING: This frees the 'op_rhs' from the `ir_arena`.
 // @cleanup: Revert this to take an ast_kind as well.
 // @note: returns in op_rhs.
 func void perform_integer_operation(struct context *context, struct token *operation, struct expr *lhs_expr, struct expr *rhs_expr){
-    struct ast_integer_literal *lhs = cast(struct ast_integer_literal *)lhs_expr->ast;
-    struct ast_integer_literal *rhs = cast(struct ast_integer_literal *)rhs_expr->ast;
+    struct ir_integer_literal *lhs = cast(struct ir_integer_literal *)lhs_expr->ir;
+    struct ir_integer_literal *rhs = cast(struct ir_integer_literal *)rhs_expr->ir;
     
-    assert(lhs->base.kind == AST_integer_literal && rhs->base.kind == AST_integer_literal);
+    assert(lhs->base.kind == IR_integer_literal && rhs->base.kind == IR_integer_literal);
     
     struct ast_type *promoted_type = perform_usual_arithmetic_conversions(lhs_expr->resolved_type, rhs_expr->resolved_type);
     
@@ -2760,16 +2809,16 @@ switch(operation->type){                                                  \
     
 #undef __perform_integer_operation
     
-    struct ast *defined_type = null;
-    if(value <= max_u8)  defined_type = (struct ast *)&globals.typedef_u8;
-    else if(value <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
-    else if(value <= max_u32) defined_type = (struct ast *)&globals.typedef_u32;
+    enum ast_kind *defined_type = null;
+    if(value <= max_u8)  defined_type = &globals.typedef_u8.kind;
+    else if(value <= max_u16) defined_type = &globals.typedef_u16.kind;
+    else if(value <= max_u32) defined_type = &globals.typedef_u32.kind;
     
-    set_resolved_type(&lhs->base, promoted_type, defined_type);
+    lhs->type = promoted_type;
     
-    pop_from_ast_arena(context, rhs);
+    pop_from_ir_arena(context, rhs);
     
-    rhs_expr->ast = &lhs->base;
+    rhs_expr->ir = &lhs->base;
     rhs_expr->resolved_type = promoted_type;
     rhs_expr->defined_type = defined_type;
 }
@@ -2814,7 +2863,7 @@ func b32 check_types_for_increment_or_decrement(struct context *context, struct 
 // pushes a declaration without a name with type 'type' and 'defined_type', this declaration is not initialized, and the declaration 
 // is not reachable. It then returns an identifier that references this declaration.
 // This is used for struct literal kind of situations.
-func struct ast_declaration *push_unnamed_declaration(struct context *context, struct ast_type *type, struct ast *defined_type, struct token *site){
+func struct ast_declaration *push_unnamed_declaration(struct context *context, struct ast_type *type, enum ast_kind *defined_type, struct token *site){
     struct declarator_return declarator = {
         .ident = site,
         .type  =  type,
@@ -2834,7 +2883,7 @@ func struct ast_declaration *push_unnamed_declaration(struct context *context, s
 }
 
 void maybe_insert_implicit_nodes_for_varargs_argument(struct context *context, struct expr *expr, struct token *token){
-    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, expr, token);
+    maybe_load_address_for_array_or_function(context, IR_load_address, expr, token);
     
     if(expr->resolved_type->kind == AST_integer_type || expr->resolved_type->kind == AST_bitfield_type){
         // "The integer promotions are performed on each argument."
@@ -2843,8 +2892,11 @@ void maybe_insert_implicit_nodes_for_varargs_argument(struct context *context, s
     
     if(expr->resolved_type == &globals.typedef_f32){
         // "Arguments that have type float are promoted to double."
+        push_ir(context, IR_cast_f32_to_f64); // @hmm: no constant propagation.
+        
         // :retain_type_information_through_promotion
-        push_cast(context, AST_cast, &globals.typedef_f64, (struct ast *)expr->resolved_type, expr, token);
+        expr->resolved_type = &globals.typedef_f64;
+        expr->defined_type = &globals.typedef_f32.kind;
     }
 }
 
@@ -2996,7 +3048,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
             // 
             // Duplicate the emit_location on the stack.
             // 
-            _parser_ast_push(context, &context->ast_arena, sizeof(struct ast), alignof(struct ast), AST_duplicate);
+            push_ir(context, IR_duplicate);
             
             if(depth_or_minus_one != -1){
                 string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("    "));
@@ -3011,7 +3063,8 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
                 if(type->kind == AST_struct || type->kind == AST_union){
                     struct ast_compound_type *compound = (struct ast_compound_type *)type;
                     
-                    struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)_parser_ast_push(context, &context->ast_arena, sizeof(struct ast_dot_or_arrow), alignof(struct ast_dot_or_arrow), AST_member);
+                    struct ir_dot_or_arrow *dot = push_struct(&context->ir_arena, struct ir_dot_or_arrow);
+                    dot->base.kind = IR_member;
                     dot->member = &compound->members[node->member_at];
                     
                     string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("."));
@@ -3020,9 +3073,11 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
                 }else if(type->kind == AST_array_type){
                     struct ast_array_type *array_type = (struct ast_array_type *)type;
                     
-                    ast_push_u64_literal(context, node->array_at);
-                    struct ast *subscript = _parser_ast_push(context, &context->ast_arena, sizeof(struct ast_subscript), alignof(struct ast_subscript), AST_array_subscript);
-                    set_resolved_type(subscript, array_type->element_type, null);
+                    ast_push_u64_literal(context, node->array_at, null);
+                    
+                    struct ir_subscript *subscript = push_struct(&context->ir_arena, struct ir_subscript);
+                    subscript->base.kind = IR_array_subscript;
+                    subscript->type = array_type->element_type;
                     
                     struct string string = push_format_string(&context->scratch, "[%llu]", node->array_at);
                     string_list_postfix_no_copy(pretty_print_list, &context->scratch, string);
@@ -3040,7 +3095,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
             // 
             // Swap in the correct result.
             // 
-            _parser_ast_push(context, &context->ast_arena, sizeof(struct ast), alignof(struct ast), AST_swap_lhs_rhs);
+            push_ir(context, IR_swap_lhs_rhs);
             
             dll_remove(designator_stack, designator_stack.first);
             
@@ -3080,7 +3135,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
         // 
         // Pop on the expression.
         // 
-        push_expression(context, pop_expression);
+        push_ir(context, IR_pop_expression);
         
     }else{
         // No need to push a declaration for these, they are just read once anyway, 
@@ -3095,7 +3150,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
     
     (void)printlike_function_type;
     
-    if(format_string_argument->ast->kind != AST_string_literal){
+    if(format_string_argument->ir->kind != IR_string_literal){
         
         // 
         // The first argument in the 'variable_arguments' is the format string, or if not present
@@ -3109,11 +3164,13 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
         // 
         // Build the string literal and then swap it into the correct position.
         // 
-        struct ast_string_literal *format_string_literal = push_expression(context, string_literal);
+        struct ir_string_literal *format_string_literal = push_struct(&context->ir_arena, struct ir_string_literal);
+        format_string_literal->base.kind = IR_string_literal;
         format_string_literal->string_kind = STRING_KIND_utf8;
         
-        ast_push_unary_expression(context, AST_implicit_address_conversion, format_string_literal);
-        push_expression(context, swap_lhs_rhs);
+        push_ir(context, IR_load_address);
+        
+        push_ir(context, IR_swap_lhs_rhs);
         
         struct string_list pretty_print_list = zero_struct;
         
@@ -3128,46 +3185,6 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
         }
         
         format_string_literal->value = string_list_flatten(pretty_print_list, context->arena);
-        
-#if 0
-        //
-        // We don't have a string literal. Build one based on the arguments. @cleanup: warn on 'char *' pointer?
-        //
-        struct string identifier = zero_struct;
-        format_string = string("{}\n");
-        
-        if(format_string_argument->ast->kind == AST_identifier){
-            struct ast_identifier *ast_identifier = (struct ast_identifier *)format_string_argument->ast;
-            identifier = ast_identifier->decl->identifier->string;
-        }
-        
-        struct ast_type *type = format_string_argument->resolved_type;
-        if(type->kind == AST_struct || type->kind == AST_union){
-            struct ast_compound_type *compound = (struct ast_compound_type *)type;
-            if(compound->amount_of_members > 3){
-                format_string = string("{:#}\n");
-            }
-        }
-        
-        if(identifier.size){
-            format_string = push_format_string(context->arena, "%.*s = %.*s", identifier.size, identifier.data, format_string.size, format_string.data);
-        }
-        
-        // 
-        // Build the string literal and then swap it into the correct position.
-        // 
-        
-        struct ast_string_literal *lit = push_expression(context, string_literal);
-        lit->value = format_string;
-        lit->string_kind = STRING_KIND_utf8;
-        
-        ast_push_unary_expression(context, AST_implicit_address_conversion, lit);
-        
-        push_expression(context, swap_lhs_rhs);
-        
-        argument = *format_string_argument;
-        *call_arguments_count += 1;
-#endif
         return;
     }
     
@@ -3176,11 +3193,11 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
         return;
     }
     
-    struct ast_string_literal *format_string_literal = (struct ast_string_literal *)format_string_argument->ast;
+    struct ir_string_literal *format_string_literal = (struct ir_string_literal *)format_string_argument->ir;
     struct string format_string = format_string_literal->value;
     
     // Once we have the string literal, we can add the `implicit_address_conversion`.
-    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, format_string_argument, format_string_argument->token);
+    maybe_load_address_for_array_or_function(context, IR_load_address, format_string_argument, format_string_argument->token);
     
     // 
     // Start parsing the format string.
@@ -3407,7 +3424,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
             // L coverts to long double for aA eE fF gG.
             // 
             
-            struct ast *defined_type = argument.defined_type;
+            enum ast_kind *defined_type = argument.defined_type;
             struct ast_type *promoted_type = argument.resolved_type;
             struct ast_type *unpromoted_type = promoted_type;
             if(conversion_specifier == 'n'){
@@ -3426,7 +3443,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
             if(defined_type){
                 struct ast_type *original = unpromoted_type;
                 
-                if(defined_type->kind == AST_typedef){
+                if(*defined_type == AST_typedef){
                     unpromoted_type = ((struct ast_declaration *)defined_type)->type;
                 }else{
                     unpromoted_type = (struct ast_type *)defined_type;
@@ -3450,7 +3467,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                         
                         struct string type_string = string("");
                         
-                        if(defined_type && defined_type->kind == AST_typedef){
+                        if(defined_type && *defined_type == AST_typedef){
                             struct ast_declaration *ast_typedef = (struct ast_declaration *)defined_type;
                             type_string = ast_typedef->identifier->string;
                         }
@@ -3772,9 +3789,9 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                     return;
                 }
                 
-                struct ast_identifier *ident = push_expression(context, identifier);
+                struct ir_identifier *ident = push_struct(&context->ir_arena, struct ir_identifier);
+                ident->base.kind = IR_identifier;
                 ident->decl = declaration;
-                set_resolved_type(&ident->base, declaration->type, declaration->defined_type);
                 
                 *call_arguments_count += 1;
                 
@@ -3783,7 +3800,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                     string_list_postfix(&pretty_print_list, &context->scratch, identifier_equals);
                 }
                 
-                struct expr argument = {&ident->base, format_string_argument->token, declaration->type, declaration->defined_type};
+                struct expr argument = {.ir = &ident->base, format_string_argument->token, declaration->type, declaration->defined_type};
                 
                 printlike__infer_format_string_and_arguments_for_argument(context, &argument, &pretty_print_list, flags, field_width, precision, type_specifiers, call_arguments_count);
                 continue;
@@ -3807,43 +3824,79 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
 }
 
 // :compound_assignments
-func void punt_compound_assignment(struct context *context, struct expr *lhs, struct expr *rhs, struct token *site, enum ast_kind AST_binary_op){
+func void punt_compound_assignment(struct context *context, struct expr *lhs, struct expr *rhs, struct token *site, enum ast_kind ast_kind){
     // 
-    // AST_duplicate_lhs:
+    // IR_duplicate_lhs:
     //     {lhs, rhs} -> {lhs, lhs, rhs}
-    // AST_op:
+    // IR_op:
     //     {lhs, lhs, rhs} -> {lhs, result}
-    // AST_assignment:
+    // IR_store:
     //     {lhs, result} -> {result}
     //     
     
-    struct ast *dup = (struct ast *)push_expression(context, duplicate_lhs);
-    set_resolved_type(dup, lhs->resolved_type, lhs->defined_type); // ?
+    struct ir *dup = push_ir(context, IR_duplicate_lhs);
     
-    struct expr dup_expr = {dup, site, lhs->resolved_type, lhs->defined_type};
+    struct expr dup_expr = {.ir = dup, site, lhs->resolved_type, lhs->defined_type};
     
-    // 
-    // AST_op:
-    // 
     maybe_insert_arithmetic_conversion_casts(context, &dup_expr, rhs, site);
     
-    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, AST_binary_op, dup, rhs);
-    set_resolved_type(&op->base, dup_expr.resolved_type, dup_expr.defined_type); // This is the promoted type.
+    enum ir_type ir_type = ir_type_from_type(dup_expr.resolved_type);
+    enum ir_kind op_ir_kind;
     
-    rhs->ast = &op->base;
-    rhs->resolved_type = dup_expr.resolved_type;
+    switch(ast_kind){
+        case AST_plus_assignment:{
+            u32 type_index = ((ir_type - IR_TYPE_s32) >> 1) + (ir_type == IR_TYPE_f64);
+            op_ir_kind = IR_add_u32 + type_index;
+        }break;
+        case AST_minus_assignment:{
+            u32 type_index = ((ir_type - IR_TYPE_s32) >> 1) + (ir_type == IR_TYPE_f64);
+            op_ir_kind = IR_subtract_u32 + type_index;
+        }break;
+        case AST_and_assignment:{
+            op_ir_kind = IR_and_u32 + ((ir_type - IR_TYPE_s32) >> 1);
+        }break;
+        case AST_or_assignment:{
+            op_ir_kind = IR_or_u32 + ((ir_type - IR_TYPE_s32) >> 1);
+        }break;
+        case AST_xor_assignment:{
+            op_ir_kind = IR_xor_u32 + ((ir_type - IR_TYPE_s32) >> 1);
+        }break;
+        case AST_modulo_assignment:{
+            op_ir_kind = IR_mod_s32 + (ir_type - IR_TYPE_s32);
+        }break;
+        case AST_divide_assignment:{
+            op_ir_kind = IR_divide_s32 + (ir_type - IR_TYPE_s32);
+        }break;
+        case AST_times_assignment:{
+            op_ir_kind = IR_multiply_s32 + (ir_type - IR_TYPE_s32);
+        }break;
+        case AST_left_shift_assignment:{
+            op_ir_kind = IR_left_shift_s32 + (ir_type - IR_TYPE_s32);
+        }break;
+        case AST_right_shift_assignment:{
+            op_ir_kind = IR_right_shift_s32 + (ir_type - IR_TYPE_s32);
+        }break;
+        invalid_default_case(op_ir_kind = IR_start);
+    }
+    
+    rhs->ir = push_ir(context, op_ir_kind);
+    rhs->resolved_type = dup_expr.resolved_type; // Might have changed in the conversion cast.
     rhs->defined_type = dup_expr.defined_type;
-    
-    // 
-    // AST_assignment:
-    // 
     
     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, site);
     
-    struct ast *value_assignment = ast_push_binary_expression(context, AST_assignment, lhs, rhs);
-    set_resolved_type(value_assignment, lhs->resolved_type, lhs->defined_type);
+    // @copy and paste from AST_assignment case.
+    struct ast_type *lhs_type = lhs->resolved_type;
+    if(lhs_type->kind == AST_bitfield_type){
+        struct ir_store_bitfield *bitfield_assignment = push_struct(&context->ir_arena, struct ir_store_bitfield);
+        bitfield_assignment->base.kind = IR_store_bitfield;
+        bitfield_assignment->bitfield_type = (struct ast_bitfield_type *)lhs_type;
+        rhs->ir = &bitfield_assignment->base;
+    }else{
+        enum ir_kind ir_kind = (lhs_type->flags & TYPE_FLAG_is_atomic) ? IR_store_atomic : IR_store;
+        rhs->ir = push_ir(context, ir_kind);
+    }
     
-    rhs->ast = value_assignment;
     rhs->resolved_type = lhs->resolved_type;
     rhs->defined_type = lhs->defined_type;
 }
@@ -3893,13 +3946,13 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
         
         // :sizeof/alignof threading bug
         case TOKEN_sizeof:{
-            struct ast_stack_entry *entry = ast_stack_push(context, AST_sizeof,  next_token(context), null); 
-            entry->other = arena_current(&context->ast_arena); // For sizeof(expression), we have to delete the whole expression.
+            struct ast_stack_entry *entry = ast_stack_push(context, AST_sizeof, next_token(context), null); 
+            entry->other = arena_current(&context->ir_arena); // For sizeof(expression), we have to delete the whole expression.
             goto restart;
         }
         case TOKEN_alignof:{
-            struct ast_stack_entry *entry = ast_stack_push(context, AST_alignof,  next_token(context), null); 
-            entry->other = arena_current(&context->ast_arena); // For alignof(expression), we have to delete the whole expression.
+            struct ast_stack_entry *entry = ast_stack_push(context, AST_alignof, next_token(context), null); 
+            entry->other = arena_current(&context->ir_arena); // For alignof(expression), we have to delete the whole expression.
             goto restart;
         }
         
@@ -3933,8 +3986,8 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     
                     struct ast_declaration *compound_literal_declaration = push_unnamed_declaration(context, type_to_cast_to.type, type_to_cast_to.defined_type, open_curly);
                     
-                    struct ast_compound_literal *compound_literal = push_expression(context, compound_literal);
-                    set_resolved_type(&compound_literal->base, type_to_cast_to.type, type_to_cast_to.defined_type);
+                    struct ir_compound_literal *compound_literal = push_struct(&context->ir_arena, struct ir_compound_literal);
+                    compound_literal->base.kind = IR_compound_literal;
                     compound_literal->decl = compound_literal_declaration;
                     compound_literal->decl->assign_expr = &compound_literal->base;
                     
@@ -3942,7 +3995,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     
                     if(context->should_exit_statement) return invalid_ast(context);
                     
-                    compound_literal->initializer_size = arena_current(&context->ast_arena) - (u8 *)(compound_literal + 1);
+                    compound_literal->initializer_size = arena_current(&context->ir_arena) - (u8 *)(compound_literal + 1);
                     
                     if(type_is_array_of_unknown_size(type_to_cast_to.type)){
                         struct ast_array_type *array_of_unknown_size = (struct ast_array_type *)type_to_cast_to.type;
@@ -3961,7 +4014,6 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                         
                         // Set the new type.
                         compound_literal_declaration->type = &array_type->base;
-                        set_resolved_type(&compound_literal->base, &array_type->base, null);
                         
                         // Reset the trailing array size, to not overallocate later on.
                         compound_literal->trailing_array_size = 0;
@@ -3972,7 +4024,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                         parser_emit_memory_location(context, compound_literal_declaration);
                     }
                     
-                    operand.ast = &compound_literal->base;
+                    operand.ir = &compound_literal->base;
                     operand.token = open_curly;
                     operand.resolved_type = compound_literal_declaration->type;
                     operand.defined_type = compound_literal_declaration->defined_type;
@@ -4020,10 +4072,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     u64 value = is_alignof ? type->alignment : type->size;
                     
                     // "The [..] type (an unsigned integer type) is 'size_t', defined in <stddef.h>."
-                    operand.ast = ast_push_u64_literal(context, value);
-                    operand.token = size_or_alignof->token;
-                    operand.resolved_type = &globals.typedef_u64;
-                    operand.defined_type = operand.ast->defined_type;
+                    operand = ast_push_u64_literal(context, value, size_or_alignof->token);
                     
                     context->in_lhs_expression = false;
                     
@@ -4041,7 +4090,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                 }
                 
                 // @note: The defined type being the operand is sort of weird.
-                struct ast_stack_entry *ast_stack_entry = ast_stack_push(context, AST_cast, open_paren, &(struct expr){type_to_cast_to.defined_type});
+                struct ast_stack_entry *ast_stack_entry = ast_stack_push(context, AST_cast, open_paren, &(struct expr){(struct ir *)type_to_cast_to.defined_type});
                 ast_stack_entry->other = type_to_cast_to.type;
                 goto restart;
             }else{
@@ -4060,14 +4109,14 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
             }
         }break;
         
-        
         // 
         // :primary_expression parse_primary_expression
         // 
         
         case TOKEN_character_literal:{
             struct token *lit_token = next_token(context);
-            struct ast_integer_literal *lit = push_expression(context, integer_literal);
+            struct ir_integer_literal *lit = push_struct(&context->ir_arena, struct ir_integer_literal);
+            lit->base.kind = IR_integer_literal;
             
             struct escaped_string escaped = handle_escaping(context, lit_token);
             assert(escaped.string_kind != STRING_KIND_invalid); // this should not be possible as the tokenizer only allows certain sequences.
@@ -4095,7 +4144,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
             //      its value is the one that results when an object with type char whose value is that 
             //      of the single character or escape sequence is converted to type int."
             struct ast_type *type    = null;
-            struct ast *defined_type = null;
+            enum ast_kind *defined_type = null;
             
             u64 value = 0;
             switch(escaped.string_kind){
@@ -4113,11 +4162,11 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     
                     if(escaped.string.size == 1){
                         type = &globals.typedef_s32;
-                        defined_type = (struct ast *)&globals.typedef_s8;
+                        defined_type = &globals.typedef_s8.kind;
                         value = *(s8 *)escaped.string.data;
                     }else if(escaped.string.size == 2){
                         type = &globals.typedef_s32;
-                        defined_type = (struct ast *)&globals.typedef_s16;
+                        defined_type = &globals.typedef_s16.kind;
                         value = *(u16 *)escaped.string.data;
                     }else if(escaped.string.size <= 4){
                         type = &globals.typedef_s32;
@@ -4160,9 +4209,9 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
             }
             
             lit->_u64 = value;
+            lit->type = type;
             
-            set_resolved_type(&lit->base, type, defined_type);
-            operand.ast = &lit->base;
+            operand.ir = &lit->base;
             operand.token = lit_token;
             operand.resolved_type = type;
             operand.defined_type = defined_type;
@@ -4176,7 +4225,6 @@ case NUMBER_KIND_##type:{ \
         report_warning(context, WARNING_compile_time_truncation, lit_token, "Literal is prefixed '%s', but does not fit.", #type); \
     } \
     lit->_##type = (type)val; \
-    set_resolved_type(&lit->base, &globals.typedef_##type, null);\
     operand.resolved_type = &globals.typedef_##type;\
 }break
         
@@ -4186,16 +4234,14 @@ case NUMBER_KIND_##type:{ \
             
             if(lit_token->size == 1 && lit_token->data[0] == '0'){
                 // @note: Fast path for 0.
-                operand.ast = ast_push_s32_literal(context, 0);
-                operand.token = lit_token;
-                operand.resolved_type = &globals.typedef_s32;
-                operand.defined_type = (struct ast *)&globals.typedef_u8;
-                
+                operand = ast_push_s32_literal(context, 0, lit_token);
                 context->in_lhs_expression = false;
                 break;
             }
             
-            struct ast_integer_literal *lit = push_expression(context, integer_literal);
+            struct ir_integer_literal *lit = push_struct(&context->ir_arena, struct ir_integer_literal);
+            lit->base.kind = IR_integer_literal;
+            
             struct parsed_integer parsed_integer = parse_base10_literal(context, lit_token);
             u64 val = parsed_integer.value;
             
@@ -4203,14 +4249,14 @@ case NUMBER_KIND_##type:{ \
             //  in which its value can be represented."
             
             
-            operand.ast = &lit->base;
+            operand.ir = &lit->base;
             operand.token = lit_token;
             
             switch(parsed_integer.number_kind){
                 case NUMBER_KIND_invalid:{
                     assert(context->should_exit_statement);
-                    set_resolved_type(&lit->base, &globals.typedef_s32, null);
-                    return (struct expr){&lit->base, lit_token};
+                    lit->type = &globals.typedef_s32;
+                    return (struct expr){.ir = &lit->base, lit_token, &globals.typedef_s32};
                 }break;
                 
                 explicit_number_kind_case(s8);
@@ -4225,14 +4271,12 @@ case NUMBER_KIND_##type:{ \
                 case NUMBER_KIND_long: // @cleanup: if we do long vs int think about this
                 case NUMBER_KIND_int:{
                     if(val <= max_s32){
-                        struct ast *defined_type = 0;
+                        enum ast_kind *defined_type = 0;
                         
-                        if(val <= max_u8) defined_type = (struct ast *)&globals.typedef_u8;
-                        else if(val <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+                        if(val <= max_u8) defined_type = &globals.typedef_u8.kind;
+                        else if(val <= max_u16) defined_type = &globals.typedef_u16.kind;
                         
                         lit->_s32 = (s32)val;
-                        set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
-                        
                         operand.resolved_type = &globals.typedef_s32;
                         operand.defined_type  = defined_type;
                         break;
@@ -4241,14 +4285,11 @@ case NUMBER_KIND_##type:{ \
                 case NUMBER_KIND_long_long:{
                     if(val <= max_s64){
                         lit->_s64 = (s64)val;
-                        set_resolved_type(&lit->base, &globals.typedef_s64, null);
-                        
                         operand.resolved_type = &globals.typedef_s64;
                         operand.defined_type  = null;
                         break;
                     }
                     lit->_u64 = (u64)val;
-                    set_resolved_type(&lit->base, &globals.typedef_u64, null);
                     operand.resolved_type = &globals.typedef_u64;
                     operand.defined_type  = null;
                     report_warning(context, WARNING_integer_literal_too_large_to_be_signed, lit_token, "Integer literal exceeds the maximum value representable as a signed integer and is interpreted as unsigned.");
@@ -4257,32 +4298,31 @@ case NUMBER_KIND_##type:{ \
                 case NUMBER_KIND_unsigned:{
                     if(val <= max_u32){
                         lit->_u32 = (u32)val;
-                        set_resolved_type(&lit->base, &globals.typedef_u32, null);
                         operand.resolved_type = &globals.typedef_u32;
                         operand.defined_type  = null;
                     }else{
                         lit->_u64 = (u64)val;
-                        set_resolved_type(&lit->base, &globals.typedef_u64, null);
                         operand.resolved_type = &globals.typedef_u64;
                         operand.defined_type  = null;
                     }
                 } break;
                 case NUMBER_KIND_unsigned_long_long:{
                     lit->_u64 = val;
-                    set_resolved_type(&lit->base, &globals.typedef_u64, null);
                     operand.resolved_type = &globals.typedef_u64;
                     operand.defined_type  = null;
                 }break;
                 invalid_default_case();
             }
             
+            lit->type = operand.resolved_type;
             context->in_lhs_expression = false;
         }break;
         
         case TOKEN_binary_literal:
         case TOKEN_hex_literal:{
             struct token *lit_token = next_token(context);
-            struct ast_integer_literal *lit = push_expression(context, integer_literal);
+            struct ir_integer_literal *lit = push_struct(&context->ir_arena, struct ir_integer_literal);
+            lit->base.kind = IR_integer_literal;
             
             struct parsed_integer parsed_integer;
             if(lit_token->type == TOKEN_hex_literal){
@@ -4293,14 +4333,14 @@ case NUMBER_KIND_##type:{ \
             
             u64 val = parsed_integer.value;
             
-            operand.ast = &lit->base;
+            operand.ir = &lit->base;
             operand.token = lit_token;
             
             switch(parsed_integer.number_kind){
                 case NUMBER_KIND_invalid:{
                     assert(context->should_exit_statement);
-                    set_resolved_type(&lit->base, &globals.typedef_s32, null);
-                    return (struct expr){&lit->base, lit_token};
+                    lit->type = &globals.typedef_s32;
+                    return (struct expr){ .ir = &lit->base, lit_token, &globals.typedef_s32};
                 }break;
                 
                 explicit_number_kind_case(s8);
@@ -4314,7 +4354,7 @@ case NUMBER_KIND_##type:{ \
                 
                 case NUMBER_KIND_s128: case NUMBER_KIND_u128:{
                     report_error(context, lit_token, "128-bit literals are not supported.");
-                    return (struct expr){&lit->base, lit_token};
+                    return (struct expr){.ir = &lit->base, lit_token, &globals.typedef_s32};
                 }
                 
 #undef explicit_number_kind_case
@@ -4324,27 +4364,23 @@ case NUMBER_KIND_##type:{ \
                     
                     if(val <= max_s32){
                         
-                        struct ast *defined_type = 0;
-                        if(val <= max_u8) defined_type = (struct ast *)&globals.typedef_u8;
-                        else if(val <= max_u16) defined_type = (struct ast *)&globals.typedef_u16;
+                        enum ast_kind *defined_type = 0;
+                        if(val <= max_u8) defined_type = &globals.typedef_u8.kind;
+                        else if(val <= max_u16) defined_type = &globals.typedef_u16.kind;
                         
                         lit->_s32 = (s32)val;
-                        set_resolved_type(&lit->base, &globals.typedef_s32, defined_type);
                         operand.resolved_type = &globals.typedef_s32;
                         operand.defined_type  = defined_type;
                     }else if(val <= max_u32){
                         lit->_u32 = (u32)val;
-                        set_resolved_type(&lit->base, &globals.typedef_u32, null);
                         operand.resolved_type = &globals.typedef_u32;
                         operand.defined_type  = null;
                     }else if(val <= max_s64){
                         lit->_s64 = (s64)val;
-                        set_resolved_type(&lit->base, &globals.typedef_s64, null);
                         operand.resolved_type = &globals.typedef_s64;
                         operand.defined_type  = null;
                     }else{
                         lit->_u64 = (u64)val;
-                        set_resolved_type(&lit->base, &globals.typedef_u64, null);
                         operand.resolved_type = &globals.typedef_u64;
                         operand.defined_type  = null;
                     }
@@ -4352,12 +4388,10 @@ case NUMBER_KIND_##type:{ \
                 case NUMBER_KIND_long_long:{
                     if(val <= max_s64){
                         lit->_s64 = (s64)val;
-                        set_resolved_type(&lit->base, &globals.typedef_s64, null);
                         operand.resolved_type = &globals.typedef_s64;
                         operand.defined_type  = null;
                     }else{
                         lit->_u64 = (u64)val;
-                        set_resolved_type(&lit->base, &globals.typedef_u64, null);
                         operand.resolved_type = &globals.typedef_u64;
                         operand.defined_type  = null;
                     }
@@ -4366,31 +4400,30 @@ case NUMBER_KIND_##type:{ \
                 case NUMBER_KIND_unsigned:{
                     if(val <= max_u32){
                         lit->_u32 = (u32)val;
-                        set_resolved_type(&lit->base, &globals.typedef_u32, null);
                         operand.resolved_type = &globals.typedef_u32;
                         operand.defined_type  = null;
                     }else{
                         lit->_u64 = val;
-                        set_resolved_type(&lit->base, &globals.typedef_u64, null);
                         operand.resolved_type = &globals.typedef_u64;
                         operand.defined_type  = null;
                     }
                 }break;
                 case NUMBER_KIND_unsigned_long_long:{
                     lit->_u64 = val;
-                    set_resolved_type(&lit->base, &globals.typedef_u64, null);
                     operand.resolved_type = &globals.typedef_u64;
                     operand.defined_type  = null;
                 }break;
                 invalid_default_case();
             }
             
+            lit->type = operand.resolved_type;
             context->in_lhs_expression = false;
         }break;
         
         case TOKEN_string_literal:{
             struct token *string_literal_token = next_token(context);
-            struct ast_string_literal *lit = push_expression(context, string_literal);
+            struct ir_string_literal *lit = push_struct(&context->ir_arena, struct ir_string_literal);
+            lit->base.kind = IR_string_literal;
             
             struct token_and_string *string_base = 0, one_string_storage;
             smm total_string_size = 0;
@@ -4470,9 +4503,9 @@ case NUMBER_KIND_##type:{ \
             type->base.size = type->amount_of_elements * element_type->size;
             type->base.alignment = element_type->alignment;
             
-            set_resolved_type(&lit->base, &type->base, null);
+            lit->type = &type->base;
             
-            operand.ast = &lit->base;
+            operand.ir = &lit->base;
             operand.token = string_literal_token;
             operand.resolved_type = &type->base;
             operand.defined_type = null;
@@ -4488,7 +4521,8 @@ case NUMBER_KIND_##type:{ \
         case TOKEN_float_hex_literal:
         case TOKEN_float_literal:{
             struct token *float_token = next_token(context);
-            struct ast_float_literal *f = push_expression(context, float_literal);
+            struct ir_float_literal *f = push_struct(&context->ir_arena, struct ir_float_literal);
+            f->base.kind = IR_float_literal;
             
             struct string string = token_get_string(float_token);
             assert(string.size);
@@ -4527,10 +4561,10 @@ case NUMBER_KIND_##type:{ \
             
             struct ast_type *type = is_32_bit ? &globals.typedef_f32 : &globals.typedef_f64;
             
-            set_resolved_type(&f->base, type, null);
+            f->type = type;
             f->value = val;
             
-            operand.ast = &f->base;
+            operand.ir = &f->base;
             operand.token = float_token;
             operand.resolved_type = type;
             operand.defined_type = null;
@@ -4564,8 +4598,8 @@ case NUMBER_KIND_##type:{ \
                     report_error(context, token, "Undeclared identifier.");
                 }
                 return invalid_ast(context);
-            }else if(lookup->base.kind != AST_declaration && lookup->base.kind != AST_function){
-                assert(lookup->base.kind == AST_typedef);
+            }else if(lookup->kind != AST_declaration && lookup->kind != AST_function){
+                assert(lookup->kind == AST_typedef);
                 
                 if(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries){
                     //
@@ -4597,7 +4631,7 @@ case NUMBER_KIND_##type:{ \
             
             maybe_resolve_unresolved_type(&lookup->type);
             
-            if(lookup->base.kind == AST_function || (lookup->base.kind == AST_declaration && (lookup->flags & DECLARATION_FLAGS_is_global))){
+            if(lookup->kind == AST_function || (lookup->kind == AST_declaration && (lookup->flags & DECLARATION_FLAGS_is_global))){
                 struct ast_declaration *outer_declaration = context->current_function ? &context->current_function->as_decl : context->current_declaration;
                 
                 if(!outer_declaration){
@@ -4631,27 +4665,28 @@ case NUMBER_KIND_##type:{ \
             }
             
             if(lookup->flags & DECLARATION_FLAGS_is_enum_member){
-                assert(lookup->assign_expr->kind == AST_integer_literal);
+                assert(lookup->assign_expr->kind == IR_integer_literal);
                 // @sigh
-                struct ast_integer_literal *source = cast(struct ast_integer_literal *)lookup->assign_expr;
-                struct ast_integer_literal *lit = push_expression(context, integer_literal);
+                struct ir_integer_literal *source = (struct ir_integer_literal *)lookup->assign_expr;
+                struct ir_integer_literal *lit = push_struct(&context->ir_arena, struct ir_integer_literal);
+                lit->base.kind = IR_integer_literal;
                 
                 // @note: right now this only does enums
                 lit->_s32 = source->_s32;
+                lit->type = &globals.typedef_s32;
                 
-                operand.ast = &lit->base;
+                operand.ir = &lit->base;
                 operand.token = token;
                 operand.resolved_type = &globals.typedef_s32;
-                operand.defined_type = (struct ast *)lookup->type;
+                operand.defined_type = &lookup->type->kind;
                 
-                set_resolved_type(operand.ast, operand.resolved_type, operand.defined_type);
                 context->in_lhs_expression = false;
             }else{
-                struct ast_identifier *ident = push_expression(context, identifier);
+                struct ir_identifier *ident = push_struct(&context->ir_arena, struct ir_identifier);
+                ident->base.kind = IR_identifier;
                 ident->decl = lookup;
                 
-                set_resolved_type(&ident->base, lookup->type, lookup->defined_type);
-                operand.ast = &ident->base;
+                operand.ir = &ident->base;
                 operand.token = token;
                 operand.resolved_type = lookup->type;
                 operand.defined_type = lookup->defined_type;
@@ -4669,15 +4704,15 @@ case NUMBER_KIND_##type:{ \
             
             expect_token(context, TOKEN_open_paren, "Expected a '(' after '_Generic'.");
             
-            u8 *ast_arena_start = arena_current(&context->ast_arena);
+            u8 *ir_arena_start = arena_current(&context->ir_arena);
             
             struct expr choice_expression = parse_expression(context, /*skip_comma_expression*/1);
-            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &choice_expression, choice_expression.token);
-            maybe_insert_cast_from_special_int_to_int(context, AST_cast, &choice_expression, choice_expression.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &choice_expression, choice_expression.token);
+            maybe_insert_cast_from_special_int_to_int(context, &choice_expression, /*is_lhs*/0);
             
             struct ast_type *choice = choice_expression.resolved_type;
-            memset(ast_arena_start, 0, context->ast_arena.current - ast_arena_start);
-            context->ast_arena.current = ast_arena_start;
+            
+            context->ir_arena.current = ir_arena_start;
             
             struct expr default_expression = zero_struct;
             struct expr choosen_expression = zero_struct;
@@ -4706,15 +4741,15 @@ case NUMBER_KIND_##type:{ \
                     if(types_are_equal(type_name.type, choice)){
                         choosen_expression = expression;
                     }else{
-                        memset(ast_arena_start, 0, context->ast_arena.current - ast_arena_start);
-                        context->ast_arena.current = ast_arena_start;
+                        memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
+                        context->ir_arena.current = ir_arena_start;
                     }
                 }
             }
             
-            if(choosen_expression.ast){
+            if(choosen_expression.ir){
                 operand = choosen_expression;
-            }else if(default_expression.ast){
+            }else if(default_expression.ir){
                 operand = default_expression;
             }else{
                 // :Error
@@ -4754,13 +4789,13 @@ case NUMBER_KIND_##type:{ \
                 // 
                 
                 if(operand.resolved_type->kind == AST_pointer_type){
-                    struct ir_pointer_increment *increment = push_struct(&context->ast_arena, struct ir_pointer_increment);
+                    struct ir_pointer_increment *increment = push_struct(&context->ir_arena, struct ir_pointer_increment);
                     increment->base.kind = IR_postinc_pointer;
                     increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
                     
                     operand.ir = &increment->base;
                 }else if(operand.resolved_type->kind == AST_bitfield_type){
-                    struct ir_bitfield_increment *increment = push_struct(&context->ast_arena, struct ir_bitfield_increment);
+                    struct ir_bitfield_increment *increment = push_struct(&context->ir_arena, struct ir_bitfield_increment);
                     increment->base.kind = IR_postinc_bitfield;
                     increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
                     
@@ -4769,7 +4804,7 @@ case NUMBER_KIND_##type:{ \
                     enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
                     
                     static u8 ir_type_to_inc_kind[] = {
-                        [IR_bool] = IR_postinc_bool,
+                        [IR_TYPE_bool] = IR_postinc_bool,
                         
                         [IR_TYPE_s8] = IR_postinc_u8,
                         [IR_TYPE_u8] = IR_postinc_u8,
@@ -4797,13 +4832,13 @@ case NUMBER_KIND_##type:{ \
                 if(check_types_for_increment_or_decrement(context, operand.resolved_type, test, "--")) return operand;
                 
                 if(operand.resolved_type->kind == AST_pointer_type){
-                    struct ir_pointer_increment *increment = push_struct(&context->ast_arena, struct ir_pointer_increment);
+                    struct ir_pointer_increment *increment = push_struct(&context->ir_arena, struct ir_pointer_increment);
                     increment->base.kind = IR_postdec_pointer;
                     increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
                     
                     operand.ir = &increment->base;
                 }else if(operand.resolved_type->kind == AST_bitfield_type){
-                    struct ir_bitfield_increment *increment = push_struct(&context->ast_arena, struct ir_bitfield_increment);
+                    struct ir_bitfield_increment *increment = push_struct(&context->ir_arena, struct ir_bitfield_increment);
                     increment->base.kind = IR_postdec_bitfield;
                     increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
                     
@@ -4812,7 +4847,7 @@ case NUMBER_KIND_##type:{ \
                     enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
                     
                     static u8 ir_type_to_inc_kind[] = {
-                        [IR_bool] = IR_postdec_bool,
+                        [IR_TYPE_bool] = IR_postdec_bool,
                         
                         [IR_TYPE_s8] = IR_postdec_u8,
                         [IR_TYPE_u8] = IR_postdec_u8,
@@ -4910,7 +4945,7 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 struct ast_compound_type *compound = cast(struct ast_compound_type *)operand.resolved_type;
-                handle_dot_or_arrow(context, compound, &operand, AST_member);
+                handle_dot_or_arrow(context, compound, &operand, IR_member);
                 
                 // 
                 // @note: Dot does not alter the 'is_lhs_expression' flag.
@@ -4923,7 +4958,7 @@ case NUMBER_KIND_##type:{ \
             case TOKEN_arrow:{
                 treat_dot_as_arrow_because_allow_dot_as_arrow_was_set_and_we_got_a_pointer_type_for_a_dot:;
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, test); // Apperantly, you can use '->' on arrays.
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, test); // Apperantly, you can use '->' on arrays.
                 
                 if(operand.resolved_type->kind == AST_unresolved_type){
                     if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &operand.resolved_type)){
@@ -4953,13 +4988,13 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 struct ast_compound_type *compound = cast(struct ast_compound_type *)pointer->pointer_to;
-                handle_dot_or_arrow(context, compound, &operand, AST_member_deref);
+                handle_dot_or_arrow(context, compound, &operand, IR_member_deref);
                 
                 context->in_lhs_expression = true;
             }break;
             case TOKEN_open_paren:{
                 
-                if(operand.ast->kind == AST_identifier) test = operand.token;
+                if(operand.ir->kind == IR_identifier) test = operand.token;
                 
                 struct token *call_token = test;
                 
@@ -4986,12 +5021,12 @@ case NUMBER_KIND_##type:{ \
                 maybe_resolve_unresolved_type_or_sleep_or_error(context, &function_type->return_type);
                 if(context->should_exit_statement) return operand;
                 
-                if(operand.ast->kind == AST_unary_deref && operand.resolved_type->kind == AST_function_type){
+                if(operand.ir->kind == IR_deref && operand.resolved_type->kind == AST_function_type){
                     // 
                     // Convert '(*function_pointer)()' to 'function_pointer()'.
                     // 
-                    struct ast_unary_op *unary = (struct ast_unary_op *)operand.ast;
-                    pop_from_ast_arena(context, unary);
+                    struct ir_deref *deref = (struct ir_deref *)operand.ir;
+                    pop_from_ir_arena(context, deref);
                 }
                 
                 // @note: For var_args functions the 'call_arguments_count' can differ from the 'function_type->argument_list.count'.
@@ -5005,7 +5040,7 @@ case NUMBER_KIND_##type:{ \
                         
                         if(function_argument_iterator){
                             
-                            assert(function_argument_iterator->value->kind == AST_declaration);
+                            assert(*function_argument_iterator->value == AST_declaration);
                             struct ast_declaration *decl = cast(struct ast_declaration *)function_argument_iterator->value;
                             
                             if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return expr;
@@ -5022,7 +5057,7 @@ case NUMBER_KIND_##type:{ \
                             }
                             
                             // "the arguments are implicitly converted, as if by assignment"
-                            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &expr, expr.token);
+                            maybe_load_address_for_array_or_function(context, IR_load_address, &expr, expr.token);
                             maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, decl->type, decl->defined_type, &expr, expr.token);
                             
                             function_argument_iterator = function_argument_iterator->next;
@@ -5057,8 +5092,8 @@ case NUMBER_KIND_##type:{ \
                     
                     // @note: Careful here, the we pop the operand when we are converting `(*function_pointer)()` to `function_pointer()`.
                     //        Therefore, we also have to check that the token is an identifier.
-                    if(call_token->type == TOKEN_identifier && operand.ast->kind == AST_identifier){
-                        struct ast_identifier *ident = (struct ast_identifier *)operand.ast;
+                    if(call_token->type == TOKEN_identifier && operand.ir->kind == IR_identifier){
+                        struct ir_identifier *ident = (struct ir_identifier *)operand.ir;
                         report_error(context, ident->decl->identifier, "... Here is the declaration of the function.");
                     }
                     end_error_report(context);
@@ -5069,12 +5104,12 @@ case NUMBER_KIND_##type:{ \
                     context->current_statement_returns_a_value = 1;
                 }
                 
-                struct ast_function_call *call = push_expression(context, function_call);
+                struct ir_function_call *call = push_struct(&context->ir_arena, struct ir_function_call);
+                call->base.kind = IR_function_call;
                 call->function_type = function_type;
                 call->call_arguments_count = call_arguments_count;
                 
-                set_resolved_type(&call->base, function_type->return_type, function_type->return_type_defined_type);
-                operand.ast = &call->base;
+                operand.ir = &call->base;
                 operand.resolved_type = function_type->return_type;
                 operand.defined_type = function_type->return_type_defined_type;
                 
@@ -5239,19 +5274,93 @@ case NUMBER_KIND_##type:{ \
             //    !operand, ~operand, (type)operand, *operand
             //    &operand, sizeof operand, _Alignof operand
             //    
-            case AST_unary_predec:
+            
             case AST_unary_preinc:{
-                struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
-                struct ast_unary_op *op = (struct ast_unary_op *)prefix;
-                
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, stack_entry->token)) return operand;
-                char *token_string = (prefix->kind == AST_unary_preinc) ? "++" : "--";
-                if(check_types_for_increment_or_decrement(context, operand.resolved_type, stack_entry->token, token_string)) return operand;
+                if(check_types_for_increment_or_decrement(context, operand.resolved_type, stack_entry->token, "++")) return operand;
                 
-                set_resolved_type(&op->base, operand.resolved_type, operand.defined_type);
+                if(operand.resolved_type->kind == AST_pointer_type){
+                    struct ir_pointer_increment *increment = push_struct(&context->ir_arena, struct ir_pointer_increment);
+                    increment->base.kind = IR_preinc_pointer;
+                    increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
+                    
+                    operand.ir = &increment->base;
+                }else if(operand.resolved_type->kind == AST_bitfield_type){
+                    struct ir_bitfield_increment *increment = push_struct(&context->ir_arena, struct ir_bitfield_increment);
+                    increment->base.kind = IR_preinc_bitfield;
+                    increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
+                    
+                    operand.ir = &increment->base;
+                }else{
+                    enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
+                    
+                    static u8 ir_type_to_inc_kind[] = {
+                        [IR_TYPE_bool] = IR_preinc_bool,
+                        
+                        [IR_TYPE_s8] = IR_preinc_u8,
+                        [IR_TYPE_u8] = IR_preinc_u8,
+                        
+                        [IR_TYPE_s16] = IR_preinc_u16,
+                        [IR_TYPE_u16] = IR_preinc_u16,
+                        
+                        [IR_TYPE_s32] = IR_preinc_u32,
+                        [IR_TYPE_u32] = IR_preinc_u32,
+                        
+                        [IR_TYPE_s64] = IR_preinc_u64,
+                        [IR_TYPE_u64] = IR_preinc_u64,
+                        
+                        [IR_TYPE_f32] = IR_preinc_f32,
+                        [IR_TYPE_f64] = IR_preinc_f32,
+                    };
+                    
+                    operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
+                }
+                
                 context->in_lhs_expression = false;
+            }break;
+            
+            case AST_unary_predec:{
+                if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, stack_entry->token)) return operand;
+                if(check_types_for_increment_or_decrement(context, operand.resolved_type, stack_entry->token, "--")) return operand;
                 
-                operand.ast = prefix; // Type does not change.
+                if(operand.resolved_type->kind == AST_pointer_type){
+                    struct ir_pointer_increment *increment = push_struct(&context->ir_arena, struct ir_pointer_increment);
+                    increment->base.kind = IR_predec_pointer;
+                    increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
+                    
+                    operand.ir = &increment->base;
+                }else if(operand.resolved_type->kind == AST_bitfield_type){
+                    struct ir_bitfield_increment *increment = push_struct(&context->ir_arena, struct ir_bitfield_increment);
+                    increment->base.kind = IR_predec_bitfield;
+                    increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
+                    
+                    operand.ir = &increment->base;
+                }else{
+                    enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
+                    
+                    static u8 ir_type_to_inc_kind[] = {
+                        [IR_TYPE_bool] = IR_predec_bool,
+                        
+                        [IR_TYPE_s8] = IR_predec_u8,
+                        [IR_TYPE_u8] = IR_predec_u8,
+                        
+                        [IR_TYPE_s16] = IR_predec_u16,
+                        [IR_TYPE_u16] = IR_predec_u16,
+                        
+                        [IR_TYPE_s32] = IR_predec_u32,
+                        [IR_TYPE_u32] = IR_predec_u32,
+                        
+                        [IR_TYPE_s64] = IR_predec_u64,
+                        [IR_TYPE_u64] = IR_predec_u64,
+                        
+                        [IR_TYPE_f32] = IR_predec_f32,
+                        [IR_TYPE_f64] = IR_predec_f32,
+                    };
+                    
+                    operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
+                }
+                
+                context->in_lhs_expression = false;
             }break;
             
             case AST_sizeof:{
@@ -5295,16 +5404,11 @@ case NUMBER_KIND_##type:{ \
                 
                 u64 size = operand.resolved_type->size;
                 
-                // @note: Delete the whole <expression> off of the `ast_arena`.
-                u8 *start = stack_entry->other;
-                u8 *end = arena_current(&context->ast_arena); // @note: Scarry stuff...
-                memset(start, 0, end - start);
-                context->ast_arena.current = start;
+                // @note: Delete the whole <expression> off of the `ir_arena`.
+                context->ir_arena.current = stack_entry->other;
                 
                 // Sets in op->operand in the next iteration.
-                operand.ast = ast_push_u64_literal(context, size);
-                operand.resolved_type = &globals.typedef_u64;
-                operand.defined_type = operand.ast->defined_type;
+                operand = ast_push_u64_literal(context, size, operand.token);
                 
                 context->in_lhs_expression = false;
             }break;
@@ -5322,24 +5426,19 @@ case NUMBER_KIND_##type:{ \
                 
                 u64 alignment = operand.resolved_type->alignment;
                 
-                // @note: Delete the whole <expression> off of the `ast_arena`.
-                u8 *start = stack_entry->other;
-                u8 *end = arena_current(&context->ast_arena); // @note: Scarry stuff...
-                memset(start, 0, end - start);
-                context->ast_arena.current = start;
+                // @note: Delete the whole <expression> off of the `ir_arena`.
+                context->ir_arena.current = stack_entry->other;
                 
                 // Sets in op->operand in the next iteration.
-                operand.ast = ast_push_u64_literal(context, alignment);
-                operand.resolved_type = &globals.typedef_u64;
-                operand.defined_type = operand.ast->defined_type;
+                operand = ast_push_u64_literal(context, alignment, operand.token);
                 
                 context->in_lhs_expression = false;
             }break;
             
             case AST_unary_bitwise_not:{
                 
-                if(operand.ast->kind == AST_integer_literal){
-                    struct ast_integer_literal *lit = (struct ast_integer_literal *)operand.ast;
+                if(operand.ir->kind == IR_integer_literal){
+                    struct ir_integer_literal *lit = (struct ir_integer_literal *)operand.ir;
                     
                     // "The result of the ~ is the bitwise complement of its (promoted) operand."
                     perform_integer_promotion_on_literal(&operand);
@@ -5352,30 +5451,30 @@ case NUMBER_KIND_##type:{ \
                 
                 maybe_insert_integer_promotion_cast(context, AST_cast, &operand, stack_entry->token);
                 
-                struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
-                set_resolved_type(prefix, operand.resolved_type, operand.defined_type);
+                assert(operand.resolved_type == &globals.typedef_s32 || operand.resolved_type == &globals.typedef_u32 || operand.resolved_type == &globals.typedef_s64 || operand.resolved_type == &globals.typedef_u64);
                 
-                operand.ast = prefix; // Sets in op->operand in the next iteration. Type does not change.
+                enum ir_kind ir_kind = (operand.resolved_type->size == 4) ? IR_bitwise_not_u32 : IR_bitwise_not_u64;
+                operand.ir = push_ir(context, ir_kind); // Sets in op->operand in the next iteration. Type does not change.
                 
                 context->in_lhs_expression = false;
             }break;
             
             case AST_unary_logical_not:{
                 
-                if(operand.ast->kind == AST_integer_literal){
-                    struct ast_integer_literal *lit = cast(struct ast_integer_literal *)operand.ast;
+                if(operand.ir->kind == IR_integer_literal){
+                    struct ir_integer_literal *lit = cast(struct ir_integer_literal *)operand.ir;
                     lit->_u64 = !integer_literal_as_u64(&operand);
                     
                     // "The result has type int."
-                    set_resolved_type(&lit->base, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
+                    lit->type = &globals.typedef_s32;
                     operand.resolved_type = &globals.typedef_s32;
-                    operand.defined_type  = (struct ast *)&globals.typedef_u8;
+                    operand.defined_type  = &globals.typedef_u8.kind;
                     break;
                 }
                 
                 // @cleanup: Const prop for pointer literals.
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, stack_entry->token)) return operand;
                 
@@ -5383,25 +5482,35 @@ case NUMBER_KIND_##type:{ \
                     maybe_insert_integer_promotion_cast(context, AST_cast, &operand, operand.token);
                 }
                 
-                struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
-                set_resolved_type(prefix, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
+                enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
+                static enum ir_kind ir_kind_for_type[] = {
+                    [IR_TYPE_s32] = IR_logical_not_u32,
+                    [IR_TYPE_u32] = IR_logical_not_u32,
+                    
+                    [IR_TYPE_s64] = IR_logical_not_u64,
+                    [IR_TYPE_u64] = IR_logical_not_u64,
+                    
+                    [IR_TYPE_f32] = IR_logical_not_f32,
+                    [IR_TYPE_f64] = IR_logical_not_f64,
+                    [IR_TYPE_pointer] = IR_logical_not_u64,
+                };
                 
-                operand.ast = prefix; // Sets in op->operand in the next iteration.
+                operand.ir = push_ir(context, ir_kind_for_type[ir_type]); // Sets in op->operand in the next iteration.
                 operand.resolved_type = &globals.typedef_s32;
-                operand.defined_type = (struct ast *)&globals.typedef_u8;
+                operand.defined_type = &globals.typedef_u8.kind;
                 
                 context->in_lhs_expression = false;
             }break;
             
             case AST_unary_plus:{
                 
-                if(operand.ast->kind == AST_integer_literal){
+                if(operand.ir->kind == IR_integer_literal){
                     // "The result of the unary operator + is the value of its (promoted) operand."
                     perform_integer_promotion_on_literal(&operand);
                     
                     // Nothing to do here, 'operand' is in the contant propagated value.
                     break;
-                }else if(operand.ast->kind == AST_float_literal){
+                }else if(operand.ir->kind == IR_float_literal){
                     // Nothing to do here, 'operand' is in the contant propagated value.
                     break;
                 }
@@ -5413,17 +5522,16 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 // @cleanup: Why are we pushing this expresssion?
-                struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
-                set_resolved_type(prefix, operand.resolved_type, operand.defined_type);
-                
-                operand.ast = prefix; // Sets in op->operand in the next iteration. Type does not change.
+                // struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
+                // set_resolved_type(prefix, operand.resolved_type, operand.defined_type);
+                // operand.ast = prefix; // Sets in op->operand in the next iteration. Type does not change.
                 
                 context->in_lhs_expression = false;
             }break;
             
             case AST_unary_minus:{
                 
-                if(operand.ast->kind == AST_integer_literal){
+                if(operand.ir->kind == IR_integer_literal){
                     
                     // "The result of the unary operator - is the negative of its (promoted) operand."
                     perform_integer_promotion_on_literal(&operand);
@@ -5434,7 +5542,7 @@ case NUMBER_KIND_##type:{ \
                     }
                     
                     // @note: Negation is the same of signed and unsigned values.
-                    struct ast_integer_literal *lit = (struct ast_integer_literal *)operand.ast;
+                    struct ir_integer_literal *lit = (struct ir_integer_literal *)operand.ir;
                     switch(operand.resolved_type->size){
                         case 1: lit->_s8  = -lit->_s8;  break;
                         case 2: lit->_s16 = -lit->_s16; break;
@@ -5445,8 +5553,8 @@ case NUMBER_KIND_##type:{ \
                     
                     // We are done here, 'operand' is in the contant propagated value.
                     break;
-                }else if(operand.ast->kind == AST_float_literal){
-                    struct ast_float_literal *lit = (struct ast_float_literal *)operand.ast;
+                }else if(operand.ir->kind == IR_float_literal){
+                    struct ir_float_literal *lit = (struct ir_float_literal *)operand.ir;
                     lit->value = -lit->value;
                     
                     // We are done here, 'operand' is in the contant propagated value.
@@ -5463,33 +5571,41 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
-                set_resolved_type(prefix, operand.resolved_type, operand.defined_type);
+                enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
+                static enum ir_kind ir_kind_for_type[] = {
+                    [IR_TYPE_s32] = IR_negate_u32,
+                    [IR_TYPE_u32] = IR_negate_u32,
+                    
+                    [IR_TYPE_s64] = IR_negate_u64,
+                    [IR_TYPE_u64] = IR_negate_u64,
+                    
+                    [IR_TYPE_f32] = IR_negate_f32,
+                    [IR_TYPE_f64] = IR_negate_f64,
+                };
                 
-                operand.ast = prefix; // Sets in op->operand in the next iteration. Type does not change.
+                operand.ir = push_ir(context, ir_kind_for_type[ir_type]); // Sets in op->operand in the next iteration. Type does not change.
                 
                 context->in_lhs_expression = false;
             }break;
             case AST_unary_deref:{
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(operand.resolved_type->kind != AST_pointer_type){
                     report_error(context, operand.token, "Can only use '->' on a pointer type.");
                     return operand;
                 }
                 
-                if(operand.ast->kind == AST_pointer_literal){
-                    operand.ast->kind = AST_pointer_literal_deref;
+                if(operand.ir->kind == IR_pointer_literal){
+                    operand.ir->kind = IR_pointer_literal_deref;
                     struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)operand.resolved_type;
-                    set_resolved_type(operand.ast, pointer_type->pointer_to, pointer_type->pointer_to_defined_type);
                     operand.resolved_type = pointer_type->pointer_to;
                     operand.defined_type = pointer_type->pointer_to_defined_type;
+                    
+                    struct ir_pointer_literal *lit = (struct ir_pointer_literal *)operand.ir;
+                    lit->type = pointer_type->pointer_to;
                 }else{
-                    struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
-                    struct ast_unary_op *op = (struct ast_unary_op *)prefix;
                     
-                    struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)operand.resolved_type;
-                    
+                    struct ast_pointer_type *pointer = (struct ast_pointer_type *)operand.resolved_type;
                     if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer->pointer_to)) return operand;
                     
                     if(pointer->pointer_to == &globals.typedef_void){
@@ -5497,14 +5613,18 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    set_resolved_type(&op->base, pointer->pointer_to, pointer->pointer_to_defined_type);
-                    operand.ast = prefix; // Sets in op->operand in the next iteration.
+                    struct ir_deref *deref = push_struct(&context->ir_arena, struct ir_deref);
+                    deref->base.kind = IR_deref;
+                    deref->type = pointer->pointer_to;
+                    
+                    operand.ir = &deref->base;
                     operand.resolved_type = pointer->pointer_to;
                     operand.defined_type = pointer->pointer_to_defined_type;
                 }
                 
                 context->in_lhs_expression = true;
             }break;
+            
             case AST_unary_address:{
                 
                 if(!context->in_lhs_expression){
@@ -5512,23 +5632,19 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
-                if(operand.ast->kind == AST_pointer_literal_deref){
-                    operand.ast->kind = AST_pointer_literal;
+                if(operand.ir->kind == IR_pointer_literal_deref){
+                    operand.ir->kind = IR_pointer_literal;
                     
                     struct ast_type *ptr = parser_push_pointer_type(context, operand.resolved_type, operand.defined_type, operand.token);
-                    set_resolved_type(operand.ast, ptr, null);
                     operand.resolved_type = ptr;
                     operand.defined_type = null;
+                    
+                    struct ir_pointer_literal *lit = (struct ir_pointer_literal *)operand.ir;
+                    lit->type = ptr;
                 }else{
-                    struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
-                    struct ast_unary_op *op = (struct ast_unary_op *)prefix;
-                    
-                    struct ast_type *ptr = parser_push_pointer_type(context, operand.resolved_type, operand.defined_type, operand.token);
-                    set_resolved_type(&op->base, ptr, null);
-                    
-                    operand.ast = prefix; // Sets in op->operand in the next iteration.
-                    operand.resolved_type = ptr;
-                    operand.defined_type = 0;
+                    operand.ir = push_ir(context, IR_load_address); // Sets in op->operand in the next iteration.
+                    operand.resolved_type = parser_push_pointer_type(context, operand.resolved_type, operand.defined_type, operand.token);
+                    operand.defined_type = null;
                 }
                 
                 context->in_lhs_expression = false;
@@ -5536,11 +5652,11 @@ case NUMBER_KIND_##type:{ \
             
             case AST_cast:{
                 struct ast_type *type_to_cast_to = stack_entry->other;
-                struct ast *defined_type_to_cast_to = stack_entry->operand.ast;
+                enum ast_kind *defined_type_to_cast_to = (enum ast_kind *)stack_entry->operand.ir;
                 
                 // @cleanup: is this correct?
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
-                maybe_insert_cast_from_special_int_to_int(context, AST_cast, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
                 
                 enum ast_kind kind_to_cast_to = type_to_cast_to->kind;
                 
@@ -5580,7 +5696,14 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                push_cast(context, AST_cast, type_to_cast_to, defined_type_to_cast_to, &operand, operand.token);
+                if(kind_to_cast_to == AST_void_type){
+                    // @note: This is necessary to insert, as (void)0 should not be an integer literal anymore.
+                    operand.ir = push_ir(context, IR_cast_to_void);
+                    operand.resolved_type = &globals.typedef_void;
+                    operand.defined_type = defined_type_to_cast_to;
+                }else{
+                    push_cast(context, AST_cast, type_to_cast_to, defined_type_to_cast_to, &operand, operand.token);
+                }
                 context->in_lhs_expression = false;
             }break;
             
@@ -5595,12 +5718,12 @@ case NUMBER_KIND_##type:{ \
                 struct expr *op_lhs = &stack_entry->operand;
                 struct expr *op_rhs = &operand;
                 
-                if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
+                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
                     perform_integer_operation(context, stack_entry->token, op_lhs, op_rhs);
                 }else{
                     maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs, stack_entry->token);
                     
-                    if(stack_entry->operand.ast->kind == AST_float_literal && operand.ast->kind == AST_float_literal){
+                    if(stack_entry->operand.ir->kind == IR_float_literal && operand.ir->kind == IR_float_literal){
                         perform_float_operation(context, ast_kind, op_lhs, op_rhs);
                     }else{
                         
@@ -5617,14 +5740,19 @@ case NUMBER_KIND_##type:{ \
                             return operand;
                         }
                         
-                        struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
+                        enum ir_kind base = 0;
+                        if(ast_kind == AST_binary_times)  base = IR_multiply_s32;
+                        if(ast_kind == AST_binary_divide) base = IR_divide_s32;
+                        if(ast_kind == AST_binary_mod)    base = IR_mod_s32;
+                        
+                        enum ir_type ir_type = ir_type_from_type(op_lhs->resolved_type);
+                        enum ir_kind ir_kind = base + (ir_type - IR_TYPE_s32);
                         
                         // @note: For '%', the right hand side defined type "bounds" the lhs type as this is an and.
                         //        Hence, we simply reuse the defined type of the rhs.
-                        struct ast *defined_type = (ast_kind == AST_binary_mod) ? op_rhs->defined_type : defined_type_for_binary_op(op_lhs, op_rhs);
-                        set_resolved_type(&op->base, op_lhs->resolved_type, defined_type);
+                        enum ast_kind *defined_type = (ast_kind == AST_binary_mod) ? op_rhs->defined_type : defined_type_for_binary_op(op_lhs, op_rhs);
                         
-                        operand.ast = &op->base;
+                        operand.ir = push_ir(context, ir_kind);
                         operand.resolved_type = op_lhs->resolved_type;
                         operand.defined_type = defined_type;
                     }
@@ -5643,18 +5771,19 @@ case NUMBER_KIND_##type:{ \
                 struct expr *op_lhs = &stack_entry->operand;
                 struct expr *op_rhs = &operand;
                 
-                if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
+                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
                     perform_integer_operation(context, stack_entry->token, op_lhs, op_rhs);
                 }else{
-                    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion_lhs, op_lhs, stack_entry->token);
-                    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, op_rhs, operand.token);
+                    maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs, stack_entry->token);
+                    maybe_load_address_for_array_or_function(context, IR_load_address, op_rhs, operand.token);
                     
                     maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs, stack_entry->token);
                     
                     // @note: interger + pointer is legal, integer - pointer is not.
                     if(op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_integer_type){
                         // 'pointer + integer', 'pointer - integer'
-                        handle_pointer_arithmetic(context, ast_kind, stack_entry->token, op_lhs, op_rhs, &operand);
+                        enum ir_kind ir_kind = ast_kind == AST_binary_plus ? IR_add_u64 : IR_subtract_u64;
+                        handle_pointer_arithmetic(context, ir_kind, stack_entry->token, op_lhs, op_rhs, &operand);
                     }else if(ast_kind == AST_binary_minus && op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_pointer_type){
                         // 'pointer - pointer'
                         
@@ -5666,28 +5795,28 @@ case NUMBER_KIND_##type:{ \
                         // @cleanup: Constant propagate!
                         
                         // Subtract the two pointers.
-                        struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
-                        set_resolved_type(&op->base, &globals.typedef_s64, null);
-                        operand.ast = &op->base;
+                        operand.ir = push_ir(context, IR_subtract_u64);
                         
                         // Divide by the size.
                         struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op_lhs->resolved_type;
                         if(pointer->pointer_to->size != 1){ // @cleanup: 0?
-                            ast_push_s64_literal(context, pointer->pointer_to->size);
-                            operand.ast = ast_push_binary_expression(context, AST_binary_divide, &op->base, size);
+                            ast_push_s64_literal(context, pointer->pointer_to->size, null);
+                            operand.ir = push_ir(context, IR_divide_u64);
                         }
-                        set_resolved_type(operand.ast, &globals.typedef_s64, null);
+                        
                         operand.resolved_type = &globals.typedef_s64;
                         operand.defined_type = null;
                     }else if(op_lhs->resolved_type->kind == AST_integer_type && op_rhs->resolved_type->kind == AST_pointer_type){
                         // swap the arguments, as this is what 'handle_pointer_arithmetic' expects
                         // @cleanup: This is "incorrect", because we want to keep the execution order the same as it in the source code. :ir_refactor should fix this.
+                        // @cleanup: integer - pointer is incorrect.
                         
-                        push_expression(context, swap_lhs_rhs);
+                        push_ir(context, IR_swap_lhs_rhs);
                         
                         // :ir_refactor - This wont work anymore, because it will delete the wrong ast.
-                        handle_pointer_arithmetic(context, ast_kind, stack_entry->token, op_rhs, op_lhs, &operand);
-                    }else if(op_lhs->ast->kind == AST_float_literal && op_rhs->ast->kind == AST_float_literal){
+                        enum ir_kind ir_kind = ast_kind == AST_binary_plus ? IR_add_u64 : IR_subtract_u64;
+                        handle_pointer_arithmetic(context, ir_kind, stack_entry->token, op_rhs, op_lhs, &operand);
+                    }else if(op_lhs->ir->kind == IR_float_literal && op_rhs->ir->kind == IR_float_literal){
                         perform_float_operation(context, ast_kind, op_lhs, op_rhs);
                     }else{
                         
@@ -5698,15 +5827,18 @@ case NUMBER_KIND_##type:{ \
                             return operand;
                         }
                         
-                        struct ast *defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
+                        enum ir_type ir_type = ir_type_from_type(op_lhs->resolved_type);
+                        // 0 - u32, 1 - u64, 2 - f32, 3 - f64
+                        u32 type_index = ((ir_type - IR_TYPE_s32) >> 1) + (ir_type == IR_TYPE_f64);
+                        enum ir_kind ir_base = (ast_kind == AST_binary_plus) ? IR_add_u32 : IR_subtract_u32;
+                        enum ir_kind ir_kind = ir_base + type_index;
                         
-                        struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
-                        set_resolved_type(&op->base, op_lhs->resolved_type, defined_type);
-                        operand.ast = &op->base;
+                        operand.ir = push_ir(context, ir_kind);
                         operand.resolved_type = op_lhs->resolved_type;
-                        operand.defined_type = defined_type;
+                        operand.defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
                     }
                 }
+                
                 context->in_lhs_expression = false;
             }break;
             
@@ -5725,9 +5857,8 @@ case NUMBER_KIND_##type:{ \
                 maybe_insert_integer_promotion_cast(context, AST_cast_lhs, op_lhs, stack_entry->token);
                 maybe_insert_integer_promotion_cast(context, AST_cast, op_rhs, operand.token);
                 
-                
-                if(op_rhs->ast->kind == AST_integer_literal){
-                    struct ast_integer_literal *literal =(struct ast_integer_literal *)op_rhs->ast;
+                if(op_rhs->ir->kind == IR_integer_literal){
+                    struct ir_integer_literal *literal =(struct ir_integer_literal *)op_rhs->ir;
                     
                     if(type_is_signed(op_rhs->resolved_type)){
                         b32 should_error = false;
@@ -5753,9 +5884,9 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    if(op_lhs->ast->kind == AST_integer_literal){
-                        struct ast_integer_literal *lhs_lit = cast(struct ast_integer_literal *)op_lhs->ast;
-                        struct ast_integer_literal *rhs_lit = literal;
+                    if(op_lhs->ir->kind == IR_integer_literal){
+                        struct ir_integer_literal *lhs_lit = cast(struct ir_integer_literal *)op_lhs->ir;
+                        struct ir_integer_literal *rhs_lit = literal;
                         
                         // @note: I think these shifts are implicitly arithmetic when they have to be.
                         
@@ -5783,17 +5914,11 @@ case NUMBER_KIND_##type:{ \
                             }
                         }
                         
-#if !REMOVE_AST
-                        // "The type of the result is that of the promoted left operand."
-                        lhs_lit->base.resolved_type = lhs_type;
-                        lhs_lit->base.defined_type = null;
-#endif
-                        
-                        operand.ast = &lhs_lit->base;
+                        operand.ir = &lhs_lit->base;
                         operand.resolved_type = lhs_type;
                         operand.defined_type = null; // ?
                         
-                        pop_from_ast_arena(context, literal);
+                        pop_from_ir_arena(context, literal);
                         break;
                     }
                 }
@@ -5803,12 +5928,12 @@ case NUMBER_KIND_##type:{ \
                 // @hmm: we require op->rhs->size == 1...
                 push_cast(context, AST_cast, &globals.typedef_u8, null, op_rhs, operand.token);
                 
-                struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
+                enum ir_kind ir_base = (ast_kind == AST_binary_right_shift) ? IR_right_shift_s32 : IR_left_shift_s32;
+                enum ir_type ir_type = ir_type_from_type(op_lhs->resolved_type);
+                enum ir_kind ir_kind = ir_base + (ir_type - IR_TYPE_s32);
+                operand.ir = push_ir(context, ir_kind);
                 
                 // "the type of the result is that of the promoted left operand"
-                set_resolved_type(&op->base, op_lhs->resolved_type, op_lhs->defined_type);
-                
-                operand.ast = &op->base;
                 operand.resolved_type = op_lhs->resolved_type;
                 operand.defined_type = op_lhs->defined_type;
                 
@@ -5830,10 +5955,12 @@ case NUMBER_KIND_##type:{ \
                 struct expr *op_lhs = &stack_entry->operand;
                 struct expr *op_rhs = &operand;
                 
-                if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
+                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
                     perform_integer_operation(context, stack_entry->token, op_lhs, op_rhs);
+                    
                     // "The result has type int."
-                    set_resolved_type(operand.ast, &globals.typedef_s32, null);
+                    struct ir_integer_literal *lit = (struct ir_integer_literal *)op_rhs->ir;
+                    lit->type = &globals.typedef_s32;
                     operand.resolved_type = &globals.typedef_s32;
                     operand.defined_type = null;
                     break;
@@ -5841,18 +5968,18 @@ case NUMBER_KIND_##type:{ \
                 
                 maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs, stack_entry->token);
                 
-                if(op_lhs->ast->kind == AST_float_literal && op_rhs->ast->kind == AST_float_literal){
-                    // @note: perform_float_operation returns an 'AST_integer_literal' in this case
+                if(op_lhs->ir->kind == IR_float_literal && op_rhs->ir->kind == IR_float_literal){
+                    // @note: perform_float_operation returns an 'IR_integer_literal' in this case
                     perform_float_operation(context, ast_kind, op_lhs, op_rhs);
                     break;
                 }
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion_lhs, op_lhs, stack_entry->token);
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, op_rhs, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs, stack_entry->token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, op_rhs, operand.token);
                 
                 if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_basic)) return operand;
                 
-                maybe_cast_literal_0_to_void_pointer(context, op_lhs, op_rhs, stack_entry->token); // @cleanup: this seems sus to me, but all compilers seem to do this.
+                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs); // @cleanup: this seems sus to me, but all compilers seem to do this.
                 
                 struct ast_type *match = types_are_equal(op_lhs->resolved_type, op_rhs->resolved_type);
                 if(!match){
@@ -5884,7 +6011,7 @@ case NUMBER_KIND_##type:{ \
                 
                 operand.ir = push_ir(context, ir_kind);
                 operand.resolved_type = &globals.typedef_s32;
-                operand.defined_type  = (struct ast *)&globals.typedef_u8;
+                operand.defined_type  = &globals.typedef_u8.kind;
                 
                 context->in_lhs_expression = false;
             }break;
@@ -5903,10 +6030,11 @@ case NUMBER_KIND_##type:{ \
                 struct expr *op_rhs = &operand;
                 struct token *op_token = stack_entry->token;
                 
-                if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
+                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
                     perform_integer_operation(context, op_token, op_lhs, op_rhs);
                     // "The result has type int."
-                    set_resolved_type(operand.ast, &globals.typedef_s32, null);
+                    struct ir_integer_literal *lit = (struct ir_integer_literal *)op_rhs->ir;
+                    lit->type = &globals.typedef_s32;
                     operand.resolved_type = &globals.typedef_s32;
                     operand.defined_type = null;
                     break;
@@ -5914,19 +6042,19 @@ case NUMBER_KIND_##type:{ \
                 
                 maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs, stack_entry->token);
                 
-                if(op_lhs->ast->kind == AST_float_literal && op_rhs->ast->kind == AST_float_literal){
-                    // @note: perform_float_operation returns an 'AST_integer_literal' in this case
+                if(op_lhs->ir->kind == IR_float_literal && op_rhs->ir->kind == IR_float_literal){
+                    // @note: perform_float_operation returns an 'IR_integer_literal' in this case
                     perform_float_operation(context, ast_kind, op_lhs, op_rhs);
                     break;
                 }
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion_lhs, op_lhs, stack_entry->token);
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion,     op_rhs, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs, stack_entry->token);
+                maybe_load_address_for_array_or_function(context, IR_load_address,     op_rhs, operand.token);
                 
                 if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_basic)) return operand;
                 
-                maybe_insert_cast_from_void_pointer(context, op_lhs, op_rhs, stack_entry->token);
-                maybe_cast_literal_0_to_void_pointer(context, op_lhs, op_rhs, stack_entry->token);
+                maybe_insert_cast_from_void_pointer(op_lhs, op_rhs);
+                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs);
                 
                 struct ast_type *match = types_are_equal(op_lhs->resolved_type, op_rhs->resolved_type);
                 if(!match){
@@ -5953,7 +6081,7 @@ case NUMBER_KIND_##type:{ \
                 enum ir_kind ir_kind = IR_equals_u32 + information;
                 operand.ir = push_ir(context, ir_kind);
                 operand.resolved_type = &globals.typedef_s32;
-                operand.defined_type  = (struct ast *)&globals.typedef_u8;
+                operand.defined_type  = &globals.typedef_u8.kind;
                 
                 context->in_lhs_expression = false;
             }break;
@@ -5968,7 +6096,7 @@ case NUMBER_KIND_##type:{ \
                 struct expr *op_lhs = &stack_entry->operand;
                 struct expr *op_rhs = &operand;
                 
-                if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
+                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
                     u64 lhs = integer_literal_as_u64(op_lhs);
                     u64 rhs = integer_literal_as_u64(op_rhs);
                     
@@ -5976,12 +6104,13 @@ case NUMBER_KIND_##type:{ \
                     
                     struct ast_type *promoted_type = perform_usual_arithmetic_conversions(op_lhs->resolved_type, op_rhs->resolved_type);
                     
-                    set_resolved_type(op_lhs->ast, promoted_type, null);
-                    ((struct ast_integer_literal *)op_lhs->ast)->_u64 = lhs;
+                    struct ir_integer_literal *lit = (struct ir_integer_literal *)op_lhs->ir;
+                    lit->type = promoted_type;
+                    lit->_u64 = lhs;
                     
-                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand.ast);
+                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
                     
-                    operand.ast = op_lhs->ast;
+                    operand.ir = op_lhs->ir;
                     operand.resolved_type = promoted_type;
                     operand.defined_type = null;
                 }else{
@@ -5995,12 +6124,12 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
+                    enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_and_u32 : IR_and_u64;
+                    operand.ir = push_ir(context, ir_kind);
                     
                     // @note: The right hand side defined type "bounds" the lhs type as this is an and.
-                    //        Hence, we simply reuse the defined type of the rhs.
-                    set_resolved_type(&op->base, op_lhs->resolved_type, op_rhs->defined_type);
-                    operand.ast = &op->base;
+                    //        Hence, we simply reuse the defined type of the rhs. @cleanup: This seems weird, feel like it should be the _smaller_ defined type.
+                    
                     operand.resolved_type = op_lhs->resolved_type;
                     operand.defined_type = op_rhs->defined_type;
                     
@@ -6019,7 +6148,7 @@ case NUMBER_KIND_##type:{ \
                 struct expr *op_lhs = &stack_entry->operand;
                 struct expr *op_rhs = &operand;
                 
-                if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
+                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
                     
                     u64 lhs = integer_literal_as_u64(op_lhs);
                     u64 rhs = integer_literal_as_u64(op_rhs);
@@ -6028,12 +6157,13 @@ case NUMBER_KIND_##type:{ \
                     
                     struct ast_type *promoted_type = perform_usual_arithmetic_conversions(op_lhs->resolved_type, op_rhs->resolved_type);
                     
-                    set_resolved_type(op_lhs->ast, promoted_type, null);
-                    ((struct ast_integer_literal *)op_lhs->ast)->_u64 = lhs;
+                    struct ir_integer_literal *lit = (struct ir_integer_literal *)op_lhs->ir;
+                    lit->type = promoted_type;
+                    lit->_u64 = lhs;
                     
-                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand.ast);
+                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
                     
-                    operand.ast = op_lhs->ast;
+                    operand.ir = op_lhs->ir;
                     operand.resolved_type = promoted_type;
                     operand.defined_type = null;
                 }else{
@@ -6046,13 +6176,11 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    struct ast *defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
+                    enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_xor_u32 : IR_xor_u64;
+                    operand.ir = push_ir(context, ir_kind);
                     
-                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
-                    set_resolved_type(&op->base, op_lhs->resolved_type, defined_type);
-                    operand.ast = &op->base;
                     operand.resolved_type = op_lhs->resolved_type;
-                    operand.defined_type = defined_type;
+                    operand.defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
                     
                     context->in_lhs_expression = false;
                 }
@@ -6068,7 +6196,7 @@ case NUMBER_KIND_##type:{ \
                 struct expr *op_lhs = &stack_entry->operand;
                 struct expr *op_rhs = &operand;
                 
-                if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
+                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
                     
                     u64 lhs = integer_literal_as_u64(op_lhs);
                     u64 rhs = integer_literal_as_u64(op_rhs);
@@ -6077,12 +6205,13 @@ case NUMBER_KIND_##type:{ \
                     
                     struct ast_type *promoted_type = perform_usual_arithmetic_conversions(op_lhs->resolved_type, op_rhs->resolved_type);
                     
-                    set_resolved_type(op_lhs->ast, promoted_type, null);
-                    ((struct ast_integer_literal *)op_lhs->ast)->_u64 = lhs;
+                    struct ir_integer_literal *lit = (struct ir_integer_literal *)op_lhs->ir;
+                    lit->type = promoted_type;
+                    lit->_u64 = lhs;
                     
-                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand.ast);
+                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
                     
-                    operand.ast = op_lhs->ast;
+                    operand.ir = op_lhs->ir;
                     operand.resolved_type = promoted_type;
                     operand.defined_type  = null;
                 }else{
@@ -6095,13 +6224,12 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    struct ast *defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
                     
-                    struct ast_binary_op *op = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, op_lhs, op_rhs);
-                    set_resolved_type(&op->base, op_lhs->resolved_type, defined_type);
-                    operand.ast = &op->base;
+                    enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_or_u32 : IR_or_u64;
+                    operand.ir = push_ir(context, ir_kind);
+                    
                     operand.resolved_type = op_lhs->resolved_type;
-                    operand.defined_type = defined_type;
+                    operand.defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
                     
                     context->in_lhs_expression = false;
                 }
@@ -6114,7 +6242,7 @@ case NUMBER_KIND_##type:{ \
             //    lhs && rhs
             //    
             case AST_logical_and:{
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(!casts_implicitly_to_bool(operand.resolved_type)){
                     // :Error pick a way to say this an stick to it
@@ -6141,20 +6269,21 @@ case NUMBER_KIND_##type:{ \
                 
                 struct expr *op_lhs = &stack_entry->operand;
                 struct expr *op_rhs = &operand;
-                struct ast_jump_if_false *conditional_jump = stack_entry->other;
+                struct ir_jump_node *conditional_jump = stack_entry->other;
                 
-                if(op_lhs->ast->kind == AST_integer_literal && op_rhs->ast->kind == AST_integer_literal){
-                    struct ast_integer_literal *lit = cast(struct ast_integer_literal *)op_lhs->ast;
+                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
+                    struct ir_integer_literal *lit = cast(struct ir_integer_literal *)op_lhs->ir;
                     if(integer_literal_as_u64(op_lhs) && integer_literal_as_u64(op_rhs)){
                         lit->_u64 = 1;
                     }else{
                         lit->_u64 = 0;
                     }
                     
-                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand.ast);
-                    pop_from_ast_arena(context, conditional_jump);
+                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
+                    pop_from_ir_arena(context, conditional_jump);
                     
-                    operand.ast = &lit->base;
+                    lit->type = &globals.typedef_s32;
+                    operand.ir = &lit->base;
                 }else{
                     
                     // 
@@ -6164,42 +6293,35 @@ case NUMBER_KIND_##type:{ \
                     // we should have special cases, that do not load the condition.
                     // 
                     
-                    struct ast_jump_if_false *rhs_jump = push_expression(context, jump_if_false);
+                    struct ir_jump_node *rhs_jump = push_jump(context, IR_jump_if_false);
                     rhs_jump->label_number = conditional_jump->label_number;
                     
-                    struct ast_temp *temp = push_expression(context, temp);
+                    struct ir_temp *temp = push_struct(&context->ir_arena, struct ir_temp);
+                    temp->base.kind = IR_temp;
                     temp->type = &globals.typedef_s32;
-                    set_resolved_type(&temp->base, &globals.typedef_s32, null);
                     
-                    {
-                        ast_push_s32_literal(context, 1);
-                        struct ast *assign = ast_push_binary_expression(context, AST_assignment, &temp->base, rhs);
-                        set_resolved_type(assign, &globals.typedef_s32, null);
-                    }
+                    ast_push_s32_literal(context, 1, null);
+                    push_ir(context, IR_store);
                     
-                    struct ast_jump *jump_end = push_expression(context, jump);
+                    struct ir_jump_node *jump_end = push_jump(context, IR_jump);
                     jump_end->label_number = context->jump_label_index++;
                     
-                    struct ast_jump_label *false_label = push_expression(context, jump_label);
+                    struct ir_jump_node *false_label = push_jump(context, IR_jump_label);
                     false_label->label_number = conditional_jump->label_number;
                     
-                    {
-                        ast_push_s32_literal(context, 0);
-                        struct ast *assign = ast_push_binary_expression(context, AST_assignment, &temp->base, rhs);
-                        set_resolved_type(assign, &globals.typedef_s32, null);
-                    }
+                    ast_push_s32_literal(context, 0, null);
+                    push_ir(context, IR_store);
                     
-                    struct ast_jump_label *end_label = push_expression(context, jump_label);
+                    struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                     end_label->label_number = jump_end->label_number;
                     
                     // ... in the end, temp is on top of the stack, the expression we return.
                     
-                    operand.ast = &temp->base;
+                    operand.ir = &temp->base;
                 }
                 
-                set_resolved_type(operand.ast, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 operand.resolved_type = &globals.typedef_s32;
-                operand.defined_type = (struct ast *)&globals.typedef_u8;
+                operand.defined_type = &globals.typedef_u8.kind;
                 context->in_lhs_expression = false;
             }break;
             
@@ -6226,7 +6348,7 @@ case NUMBER_KIND_##type:{ \
                 //   .end:
                 // 
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(!casts_implicitly_to_bool(operand.resolved_type)){
                     report_error(context, operand.token, "Right of '||' has to be convertible to _Bool.");
@@ -6234,24 +6356,25 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 struct expr *op_lhs_expr = &stack_entry->operand;
-                struct ast *op_lhs = stack_entry->operand.ast;
+                struct ir *op_lhs = stack_entry->operand.ir;
                 
                 struct expr *op_rhs_expr = &operand;
-                struct ast *op_rhs = operand.ast;
-                struct ast_jump_if_true *conditional_jump = stack_entry->other;
+                struct ir *op_rhs = operand.ir;
+                struct ir_jump_node *conditional_jump = stack_entry->other;
                 
-                if(op_lhs->kind == AST_integer_literal && op_rhs->kind == AST_integer_literal){
-                    struct ast_integer_literal *lit = cast(struct ast_integer_literal *)op_lhs;
+                if(op_lhs->kind == IR_integer_literal && op_rhs->kind == IR_integer_literal){
+                    struct ir_integer_literal *lit = cast(struct ir_integer_literal *)op_lhs;
                     if(integer_literal_as_u64(op_lhs_expr) || integer_literal_as_u64(op_rhs_expr)){
                         lit->_u64 = 1;
                     }else{
                         lit->_u64 = 0;
                     }
                     
-                    pop_from_ast_arena(context, (struct ast_integer_literal *)operand.ast);
-                    pop_from_ast_arena(context, conditional_jump);
+                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
+                    pop_from_ir_arena(context, conditional_jump);
                     
-                    operand.ast = &lit->base;
+                    lit->type = &globals.typedef_s32;
+                    operand.ir = &lit->base;
                 }else{
                     
                     // 
@@ -6262,40 +6385,33 @@ case NUMBER_KIND_##type:{ \
                     // we should have special cases, that do not load the condition.
                     // 
                     
-                    struct ast_jump_if_true *rhs_jump = push_expression(context, jump_if_true);
+                    struct ir_jump_node *rhs_jump = push_jump(context, IR_jump_if_true);
                     rhs_jump->label_number = conditional_jump->label_number;
                     
-                    struct ast_temp *temp = push_expression(context, temp);
+                    struct ir_temp *temp = push_struct(&context->ir_arena, struct ir_temp);
+                    temp->base.kind = IR_temp;
                     temp->type = &globals.typedef_s32;
-                    set_resolved_type(&temp->base, &globals.typedef_s32, null);
                     
-                    {
-                        ast_push_s32_literal(context, 0);
-                        struct ast *assign = ast_push_binary_expression(context, AST_assignment, &temp->base, rhs);
-                        set_resolved_type(assign, &globals.typedef_s32, null);
-                    }
+                    ast_push_s32_literal(context, 0, null);
+                    push_ir(context, IR_store);
                     
-                    struct ast_jump *jump_end = push_expression(context, jump);
+                    struct ir_jump_node *jump_end = push_jump(context, IR_jump);
                     jump_end->label_number = context->jump_label_index++;
                     
-                    struct ast_jump_label *true_label = push_expression(context, jump_label);
+                    struct ir_jump_node *true_label = push_jump(context, IR_jump_label);
                     true_label->label_number = conditional_jump->label_number;
                     
-                    {
-                        ast_push_s32_literal(context, 1);
-                        struct ast *assign = ast_push_binary_expression(context, AST_assignment, &temp->base, rhs);
-                        set_resolved_type(assign, &globals.typedef_s32, null);
-                    }
+                    ast_push_s32_literal(context, 1, null);
+                    push_ir(context, IR_store);
                     
-                    struct ast_jump_label *end_label = push_expression(context, jump_label);
+                    struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                     end_label->label_number = jump_end->label_number;
                     
-                    operand.ast = &temp->base;
+                    operand.ir = &temp->base;
                 }
                 
-                set_resolved_type(operand.ast, &globals.typedef_s32, (struct ast *)&globals.typedef_u8);
                 operand.resolved_type = &globals.typedef_s32;
-                operand.defined_type = (struct ast *)&globals.typedef_u8;
+                operand.defined_type  = &globals.typedef_u8.kind;
                 context->in_lhs_expression = false;
             }break;
             
@@ -6332,12 +6448,12 @@ case NUMBER_KIND_##type:{ \
                 struct expr *if_false  = &operand;
                 struct conditional_expression_information *information = stack_entry->other;
                 
-                struct ast *condition = information->condition;
-                struct ast_temp *temp = information->temp;
-                struct ast_jump *end_jump = information->end_jump;
+                struct ir *condition = information->condition;
+                struct ir_temp *temp = information->temp;
+                struct ir_jump_node *end_jump = information->end_jump;
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, if_false, operand.token);
-                maybe_insert_cast_from_special_int_to_int(context, AST_cast, if_false, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, if_false, operand.token);
+                maybe_insert_cast_from_special_int_to_int(context, if_false, /*is_lhs*/0);
                 
                 // "one of the following shall hold":
                 
@@ -6346,7 +6462,12 @@ case NUMBER_KIND_##type:{ \
                     struct ast_type *arithmetic_type = perform_usual_arithmetic_conversions(if_true->resolved_type, if_false->resolved_type);
                     
                     if(if_true->resolved_type != arithmetic_type){
-                        push_cast(context, AST_cast_lhs, arithmetic_type, defined_type_for_promotion(if_true), if_true, stack_entry->token);
+                        u8 *start = context->ir_arena.current;
+                        push_cast(context, AST_cast, arithmetic_type, defined_type_for_promotion(if_true), if_true, stack_entry->token);
+                        if(start != context->ir_arena.current){
+                            *information->cast = *if_true->ir;
+                            if_true->ir->kind = IR_nop;
+                        }
                     }
                     if(if_false->resolved_type != arithmetic_type){
                         push_cast(context, AST_cast, arithmetic_type, defined_type_for_promotion(if_false), if_false, stack_entry->token);
@@ -6355,10 +6476,10 @@ case NUMBER_KIND_##type:{ \
                 }else{
                     
                     // "- one is a pointer to an object and the other is a pointer to void"
-                    maybe_insert_cast_from_void_pointer(context, if_true, if_false, stack_entry->token);
+                    maybe_insert_cast_from_void_pointer(if_true, if_false);
                     
                     // "- one operand is a pointer and the other is a null pointer constant"
-                    maybe_cast_literal_0_to_void_pointer(context, if_true, if_false, stack_entry->token);
+                    maybe_cast_literal_0_to_void_pointer(if_true, if_false);
                     
                     // "- both operands have the same union or structure type"
                     // "- both operands have void type"
@@ -6375,9 +6496,9 @@ case NUMBER_KIND_##type:{ \
                     // @cleanup: Only do this if both paths are const?
                     
                     struct expr *expr = (ast_kind == AST_conditional_expression_true) ? if_true : if_false;
-                    struct ast *ast = expr->ast;
+                    struct ir *ir = expr->ir;
                     
-                    if(ast->kind == AST_integer_literal || ast->kind == AST_pointer_literal || ast->kind == AST_float_literal){
+                    if(ir->kind == IR_integer_literal || ir->kind == IR_pointer_literal || ir->kind == IR_float_literal){
                         // 
                         // We have to constant-propergate this.
                         // Copy it into condition and delete everything afterwards.
@@ -6385,15 +6506,14 @@ case NUMBER_KIND_##type:{ \
                         // This whole thing feels sort-of bad, but it is the best I could come up with.
                         constant_propagated = 1;
                         
-                        static_assert(sizeof(struct ast_integer_literal) == sizeof(struct ast_float_literal));
-                        static_assert(sizeof(struct ast_integer_literal) == sizeof(struct ast_pointer_literal));
-                        memcpy(condition, ast, sizeof(struct ast_integer_literal));
+                        static_assert(sizeof(struct ir_integer_literal) == sizeof(struct ir_float_literal));
+                        static_assert(sizeof(struct ir_integer_literal) == sizeof(struct ir_pointer_literal));
+                        memcpy(condition, ir, sizeof(struct ir_integer_literal));
                         
-                        u8 *past_const = (u8 *)condition + sizeof(struct ast_integer_literal);
-                        memset(past_const, 0, context->ast_arena.current - past_const);
-                        context->ast_arena.current = past_const;
+                        u8 *past_const = (u8 *)condition + sizeof(struct ir_integer_literal);
+                        context->ir_arena.current = past_const;
                         
-                        operand.ast = condition;
+                        operand.ir = condition;
                         operand.resolved_type = expr->resolved_type;
                         operand.defined_type  = expr->defined_type;
                     }
@@ -6401,27 +6521,20 @@ case NUMBER_KIND_##type:{ \
                 
                 if(!constant_propagated){
                     // @cleanup: how should these defined_types propagate in this case?
-                    struct ast *defined_type = if_true->defined_type ? if_true->defined_type : if_false->defined_type;
-                    
-                    struct ast *assign = ast_push_binary_expression(context, AST_assignment, temp, if_false);
-                    set_resolved_type(assign, if_false->resolved_type, if_false->defined_type);
+                    enum ast_kind *defined_type = if_true->defined_type ? if_true->defined_type : if_false->defined_type;
                     
                     // 
                     // @cleanup: This is probably wrong.
                     // 
                     struct ast_type *bigger_type = if_true->resolved_type->size > if_false->resolved_type->size ? if_true->resolved_type : if_false->resolved_type;
                     temp->type = bigger_type;
-                    set_resolved_type(&temp->base, bigger_type, defined_type);
                     
-                    struct ast_jump_label *end_label = push_expression(context, jump_label);
+                    push_ir(context, IR_store);
+                            
+                    struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                     end_label->label_number = end_jump->label_number;
-                    set_resolved_type(&end_label->base, if_true->resolved_type, defined_type);
                     
-                    struct ast_conditional_expression *cond = push_ast(context, conditional_expression);
-                    
-                    set_resolved_type(&cond->base, if_true->resolved_type, defined_type);
-                    
-                    operand.ast = &cond->base;
+                    operand.ir = &temp->base;
                     operand.resolved_type = if_true->resolved_type;
                     operand.defined_type = defined_type;
                 }
@@ -6441,12 +6554,21 @@ case NUMBER_KIND_##type:{ \
             case AST_assignment:{
                 struct expr *lhs = &stack_entry->operand;
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, &operand, stack_entry->token);
                 
-                struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, lhs, operand);
-                set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
-                operand.ast = &assignment->base;
+                struct ast_type *lhs_type = lhs->resolved_type;
+                
+                if(lhs_type->kind == AST_bitfield_type){
+                    struct ir_store_bitfield *bitfield_assignment = push_struct(&context->ir_arena, struct ir_store_bitfield);
+                    bitfield_assignment->base.kind = IR_store_bitfield;
+                    bitfield_assignment->bitfield_type = (struct ast_bitfield_type *)lhs_type;
+                    operand.ir = &bitfield_assignment->base;
+                }else{
+                    enum ir_kind ir_kind = (lhs_type->flags & TYPE_FLAG_is_atomic) ? IR_store_atomic : IR_store;
+                    operand.ir = push_ir(context, ir_kind);
+                }
+                
                 operand.resolved_type = lhs->resolved_type;
                 operand.defined_type = lhs->defined_type;
                 
@@ -6468,7 +6590,7 @@ case NUMBER_KIND_##type:{ \
             //     char a = 1; int b = 0x100; a %= b; 
             // This does not crash, meaning a gets up-converted to 'int' and then modulated by 0x100.
             
-            // For this problem we have the hack/solution 'punt_compound_assignment_with_unnamed_declaration',
+            // For this problem we have the hack/solution 'punt_compound_assignment',
             // which transforms the assignment 'a op= b' into '(unnamed = &a, *unnamed = *unnamed op b)'
             // with assignment cast and arithmetic conversions applied.
             // This is probably pretty slow and produces terrible code, so only use it if you have to!
@@ -6478,7 +6600,7 @@ case NUMBER_KIND_##type:{ \
             case AST_minus_assignment:{
                 struct expr *lhs = &stack_entry->operand;
                 struct expr *rhs = &operand;
-                maybe_insert_cast_from_special_int_to_int(context, AST_cast, rhs, operand.token);
+                maybe_insert_cast_from_special_int_to_int(context, rhs, /*is_lhs*/0);
                 
                 struct ast_type *lhs_type = lhs->resolved_type;
                 struct ast_type *rhs_type = rhs->resolved_type;
@@ -6489,12 +6611,13 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    handle_pointer_arithmetic(context, ast_kind, stack_entry->token, lhs, rhs, &operand);
+                    enum ir_kind ir_kind = ast_kind == AST_plus_assignment ? IR_add_assignment_u64 : IR_subtract_assignment_u64;
+                    handle_pointer_arithmetic(context, ir_kind, stack_entry->token, lhs, rhs, &operand);
                     context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
                     break;
                 }
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, rhs, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, rhs, operand.token);
                 
                 if(rhs->resolved_type->kind == AST_pointer_type){
                     // The rhs should never be a pointer.
@@ -6522,14 +6645,19 @@ case NUMBER_KIND_##type:{ \
                 if(lhs->resolved_type == &globals.typedef_Bool || lhs->resolved_type->kind == AST_bitfield_type) punt = 1;
                 
                 if(punt){
-                    enum ast_kind kind = ast_kind == AST_plus_assignment ? AST_binary_plus : AST_binary_minus;
-                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, kind);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, ast_kind);
                 }else{
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
-                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, lhs, rhs);
-                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
-                    operand.ast = &assignment->base;
+                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
+                    // 0 - u8, 1 - u16, 2 - u32, 3 - u64, 4 - f32, 5 - f64
+                    // 6 - atomic bool, 7 - atomic u8, 8 - atomic u16, 9 atomic u32, 10 - atomic u64
+                    u32 type_index = ((ir_type - IR_TYPE_s8) >> 1) + (ir_type == IR_TYPE_f64);
+                    
+                    enum ir_kind ir_base = (ast_kind == AST_plus_assignment) ? IR_add_assignment_u8 : IR_subtract_assignment_u8;
+                    enum ir_kind ir_kind = ir_base + type_index;
+                    
+                    operand.ir = push_ir(context, ir_kind);
                     operand.resolved_type = lhs->resolved_type;
                     operand.defined_type = lhs->defined_type;
                 }
@@ -6539,20 +6667,20 @@ case NUMBER_KIND_##type:{ \
             
             case AST_modulo_assignment:{
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand.resolved_type, operand.resolved_type, stack_entry->token, CHECK_integer)) return operand;
                 
                 struct expr *lhs = &stack_entry->operand;
                 struct expr *rhs = &operand;
-                maybe_insert_cast_from_special_int_to_int(context, AST_cast, &operand, stack_entry->token);
+                maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
                 
                 // Punt if the right hand side is bigger than the lhs, because we could have situation like
                 //     char a = 1; int b = 0x100; a %= b; 
                 // in which case 'b' cant be truncated to char, or it will crash.
                 b32 punt = (lhs->resolved_type->size < rhs->resolved_type->size);
                 
-                if(rhs->ast->kind == AST_integer_literal){
+                if(rhs->ir->kind == IR_integer_literal){
                     u64 value = integer_literal_as_u64(rhs);
                     if(value == 0){
                         report_error(context, stack_entry->token, "Compile time '%%=' by 0.");
@@ -6569,13 +6697,14 @@ case NUMBER_KIND_##type:{ \
                 if(lhs->resolved_type == &globals.typedef_Bool || (lhs->resolved_type->kind == AST_bitfield_type)) punt = 1;
                 
                 if(punt){
-                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, AST_binary_mod);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, ast_kind);
                 }else{
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
-                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, lhs, rhs);
-                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
-                    operand.ast = &assignment->base;
+                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
+                    enum ir_kind ir_kind = IR_modulo_assignment_s8 + (ir_type - IR_TYPE_s8);
+                    
+                    operand.ir = push_ir(context, ir_kind);
                     operand.resolved_type = lhs->resolved_type;
                     operand.defined_type = lhs->defined_type;
                 }
@@ -6591,22 +6720,28 @@ case NUMBER_KIND_##type:{ \
                 
                 struct expr *lhs = &stack_entry->operand;
                 struct expr *rhs = &operand;
-                maybe_insert_cast_from_special_int_to_int(context, AST_cast, rhs, stack_entry->token);
+                maybe_insert_cast_from_special_int_to_int(context, rhs, /*is_lhs*/0);
                 
                 if(lhs->resolved_type == &globals.typedef_Bool || lhs->resolved_type->kind == AST_bitfield_type){
-                    enum ast_kind punt_kind = 0;
-                    if(ast_kind == AST_and_assignment) punt_kind = AST_binary_and;
-                    if(ast_kind == AST_or_assignment)  punt_kind = AST_binary_or;
-                    if(ast_kind == AST_xor_assignment) punt_kind = AST_binary_xor;
-                    
-                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, punt_kind);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, ast_kind);
                 }else{
                     // These are always fine, we never have to punt.
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
-                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, lhs, rhs);
-                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
-                    operand.ast = &assignment->base;
+                    struct ast_type *lhs_type = lhs->resolved_type;
+                    if(lhs_type == &globals.typedef_atomic_bool) lhs_type = &globals.typedef_atomic_u8;
+                    
+                    enum ir_kind ir_base = 0;
+                    if(ast_kind == AST_and_assignment) ir_base = IR_and_assignment_u8;
+                    if(ast_kind == AST_or_assignment)  ir_base = IR_or_assignment_u8;
+                    if(ast_kind == AST_xor_assignment) ir_base = IR_xor_assignment_u8;
+                    
+                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
+                    u32 type_index = (ir_type - IR_TYPE_s8) >> 1;
+                    if(ir_type >= IR_TYPE_atomic_bool) type_index -= 3;
+                    
+                    enum ir_kind ir_kind = ir_base + type_index;
+                    operand.ir = push_ir(context, ir_kind);
                     operand.resolved_type = lhs->resolved_type;
                     operand.defined_type = lhs->defined_type;
                 }
@@ -6617,14 +6752,14 @@ case NUMBER_KIND_##type:{ \
             case AST_divide_assignment:
             case AST_times_assignment:{
                 
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand.resolved_type, operand.resolved_type, stack_entry->token, CHECK_integer|CHECK_float)) return operand;
                 
                 struct expr *lhs = &stack_entry->operand;
                 struct expr *rhs = &operand;
                 
-                maybe_insert_cast_from_special_int_to_int(context, AST_cast, rhs, stack_entry->token);
+                maybe_insert_cast_from_special_int_to_int(context, rhs, /*is_lhs*/0);
                 
                 struct ast_type *lhs_type = lhs->resolved_type;
                 struct ast_type *rhs_type = rhs->resolved_type;
@@ -6638,7 +6773,7 @@ case NUMBER_KIND_##type:{ \
                 // 
                 if(lhs_type->size < rhs_type->size) punt = true;
                 
-                if(rhs->ast->kind == AST_integer_literal){
+                if(rhs->ir->kind == IR_integer_literal){
                     // 
                     // @copy and paste from above.
                     // 
@@ -6663,14 +6798,18 @@ case NUMBER_KIND_##type:{ \
                 if(lhs->resolved_type == &globals.typedef_Bool || lhs->resolved_type->kind == AST_bitfield_type) punt = 1;
                 
                 if(punt){
-                    enum ast_kind kind = (ast_kind == AST_divide_assignment) ? AST_binary_divide : AST_binary_times;
-                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, kind);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, ast_kind);
                 }else{
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
-                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, lhs, rhs);
-                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
-                    operand.ast = &assignment->base;
+                    if(lhs->resolved_type->kind == AST_atomic_integer_type){
+                        report_error(context, stack_entry->token, "Atomic integer operation currently not supported.");
+                        return operand;
+                    }
+                    
+                    enum ir_kind ir_base = (ast_kind == AST_divide_assignment) ? IR_divide_assignment_s8 : IR_multiply_assignment_s8;
+                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
+                    operand.ir = push_ir(context, ir_base + ir_type - IR_TYPE_s8);
                     operand.resolved_type = lhs->resolved_type;
                     operand.defined_type = lhs->defined_type;
                 }
@@ -6680,23 +6819,27 @@ case NUMBER_KIND_##type:{ \
             
             case AST_left_shift_assignment:
             case AST_right_shift_assignment:{
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand.resolved_type, operand.resolved_type, stack_entry->token, CHECK_integer)) return operand;
                 
                 struct expr *lhs = &stack_entry->operand;
                 struct expr *rhs = &operand;
-                maybe_insert_cast_from_special_int_to_int(context, AST_cast, rhs, operand.token);
+                maybe_insert_cast_from_special_int_to_int(context, rhs, /*is_lhs*/0);
                 
                 if(lhs->resolved_type == &globals.typedef_Bool || lhs->resolved_type->kind == AST_bitfield_type){
-                    enum ast_kind kind = (ast_kind == AST_left_shift_assignment) ? AST_binary_left_shift : AST_binary_right_shift;
-                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, kind);
+                    punt_compound_assignment(context, lhs, rhs, stack_entry->token, ast_kind);
                 }else{
                     push_cast(context, AST_cast, &globals.typedef_u8, null, rhs, operand.token);
                     
-                    struct ast_binary_op *assignment = (struct ast_binary_op *)ast_push_binary_expression(context, ast_kind, lhs, rhs);
-                    set_resolved_type(&assignment->base, lhs->resolved_type, lhs->defined_type);
-                    operand.ast = &assignment->base;
+                    if(lhs->resolved_type->kind == AST_atomic_integer_type){
+                        report_error(context, stack_entry->token, "Atomic integer operation currently not supported.");
+                        return operand;
+                    }
+                    
+                    enum ir_kind ir_base = (ast_kind == AST_left_shift_assignment) ? IR_left_shift_assignment_s8 : IR_right_shift_assignment_s8;
+                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
+                    operand.ir = push_ir(context, ir_base + ir_type - IR_TYPE_s8);
                     operand.resolved_type = lhs->resolved_type;
                     operand.defined_type = lhs->defined_type;
                 }
@@ -6755,14 +6898,14 @@ case NUMBER_KIND_##type:{ \
         
         // Precedence 11
         case TOKEN_logical_and:{
-            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
             
             if(!casts_implicitly_to_bool(operand.resolved_type)){
                 report_error(context, next_token(context), "Left of '&&' has to be convertible to _Bool.");
                 return operand;
             }
             
-            struct ast_jump_if_false *conditional_jump = push_expression(context, jump_if_false);
+            struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_false);
             conditional_jump->label_number = context->jump_label_index++;
             
             struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_and, binary_expression, &operand);
@@ -6772,14 +6915,14 @@ case NUMBER_KIND_##type:{ \
         
         // Precedence 12
         case TOKEN_logical_or:{
-            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
             
             if(!casts_implicitly_to_bool(operand.resolved_type)){
                 report_error(context, next_token(context), "Left of '||' has to be convertible to _Bool.");
                 return operand;
             }
             
-            struct ast_jump_if_true *conditional_jump = push_expression(context, jump_if_true);
+            struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_true);
             conditional_jump->label_number = context->jump_label_index++;
             
             struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_or, binary_expression, &operand);
@@ -6793,8 +6936,8 @@ case NUMBER_KIND_##type:{ \
             
             struct token *question_mark = binary_expression;
             
-            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &operand, operand.token);
-            maybe_insert_cast_from_special_int_to_int(context, AST_cast, &operand, question_mark);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+            maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
             if(!casts_implicitly_to_bool(operand.resolved_type)){
                 report_error(context, question_mark, "Left hand side of '?' has no implicit conversion to bool.");
                 return operand;
@@ -6802,20 +6945,21 @@ case NUMBER_KIND_##type:{ \
             
             context->in_conditional_expression += 1; // :tracking_conditional_expression_depth_for_noreturn_functions
             
-            struct ast_jump_if_false *conditional_jump = push_expression(context, jump_if_false);
+            struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_false);
             conditional_jump->label_number = context->jump_label_index++;
             
-            struct ast_temp *temp = push_expression(context, temp);
+            struct ir_temp *temp = push_struct(&context->ir_arena, struct ir_temp);
+            temp->base.kind = IR_temp;
             
             struct expr if_true = parse_expression(context, false);
-            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &if_true, if_true.token);
-            maybe_insert_cast_from_special_int_to_int(context, AST_cast, &if_true, if_true.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &if_true, if_true.token);
+            maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
             expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
             if(context->should_exit_statement) return operand;
             
             enum ast_kind conditional_expression_kind = AST_conditional_expression;
             
-            if(operand.ast->kind == AST_integer_literal || operand.ast->kind == AST_pointer_literal || operand.ast->kind == AST_float_literal){
+            if(operand.ir->kind == IR_integer_literal || operand.ir->kind == IR_pointer_literal || operand.ir->kind == IR_float_literal){
                 // 
                 // The condition is constant, we emit one of:
                 //     AST_conditional_expression_true
@@ -6823,32 +6967,35 @@ case NUMBER_KIND_##type:{ \
                 // 
                 
                 int is_true;
-                switch(operand.ast->kind){
-                    case AST_integer_literal: is_true = integer_literal_as_u64(&operand) ? 1 : 0;                  break;
-                    case AST_pointer_literal: is_true = ((struct ast_pointer_literal *)operand.ast)->pointer ? 1 : 0; break;
-                    case AST_float_literal:   is_true = ((struct ast_float_literal *)operand.ast)->value ? 1 : 0;     break;
+                switch(operand.ir->kind){
+                    case IR_integer_literal: is_true = integer_literal_as_u64(&operand) ? 1 : 0;                  break;
+                    case IR_pointer_literal: is_true = ((struct ir_pointer_literal *)operand.ir)->pointer ? 1 : 0; break;
+                    case IR_float_literal:   is_true = ((struct ir_float_literal *)operand.ir)->value ? 1 : 0;     break;
                     invalid_default_case(is_true = false);
                 }
                 
                 conditional_expression_kind = is_true ? AST_conditional_expression_true : AST_conditional_expression_false;
             }
             
-            struct ast *assign = ast_push_binary_expression(context, AST_assignment, &temp->base, if_true.ast);
-            set_resolved_type(assign, if_true.resolved_type, if_true.defined_type);
+            struct ir *cast = null;
+            if(type_is_arithmetic(if_true.resolved_type)){
+                cast = push_ir(context, IR_nop);
+            }
+            push_ir(context, IR_store);
             
-            set_resolved_type(&temp->base, if_true.resolved_type, if_true.defined_type);
             temp->type = if_true.resolved_type;
             
-            struct ast_jump *end_jump = push_expression(context, jump);
+            struct ir_jump_node *end_jump = push_jump(context, IR_jump);
             end_jump->label_number = context->jump_label_index++;
             
-            struct ast_jump_label *if_false_label = push_expression(context, jump_label);
+            struct ir_jump_node *if_false_label = push_jump(context, IR_jump_label);
             if_false_label->label_number = conditional_jump->label_number;
             
             struct conditional_expression_information *conditional_expression_information = push_struct(&context->scratch, struct conditional_expression_information);
-            conditional_expression_information->condition = operand.ast;
+            conditional_expression_information->condition = operand.ir;
             conditional_expression_information->temp = temp;
             conditional_expression_information->end_jump = end_jump;
+            conditional_expression_information->cast = cast;
             
             struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, &if_true);
             entry->other = conditional_expression_information;
@@ -6940,7 +7087,7 @@ case NUMBER_KIND_##type:{ \
                 break;
             }
             
-            push_expression(context, pop_expression);
+            push_ir(context, IR_pop_expression);
             
             ast_stack_push(context, AST_comma_expression, binary_expression, &operand);
             goto restart;
@@ -6970,7 +7117,7 @@ func void check_and_set_declaration_specifier_flag(struct context *context, stru
     }
 }
 
-func struct declaration_specifiers parse_declaration_specifiers(struct context *context, struct ast_type *optional_type_specifier, struct ast *optional_defined_type_specifier){
+func struct declaration_specifiers parse_declaration_specifiers(struct context *context, struct ast_type *optional_type_specifier, enum ast_kind *optional_defined_type_specifier){
     
     struct declaration_specifiers specifiers = zero_struct;
     specifiers.type_specifier         = optional_type_specifier;
@@ -7380,7 +7527,7 @@ case TOKEN_##type_name:{                                                 \
                         
                         struct declaration_specifiers struct_specifiers = parse_declaration_specifiers(context, null, null);
                         struct ast_type *lhs_type    = struct_specifiers.type_specifier;
-                        struct ast *lhs_defined_type = struct_specifiers.defined_type_specifier;
+                        enum ast_kind *lhs_defined_type = struct_specifiers.defined_type_specifier;
                         
                         // @cleanup: Disallow extern typedef static register thread_local...
                         
@@ -7710,17 +7857,19 @@ case TOKEN_##type_name:{                                                 \
                         
                         
                         // "an identifier declared as an enumeration constant has type int".
-                        struct ast_integer_literal *literal = push_ast(context, integer_literal);
+                        struct ir_integer_literal *literal = push_struct(context->arena, struct ir_integer_literal);
+                        literal->base.kind = IR_integer_literal;
                         literal->_s32 = (s32)current_value;
-                        set_resolved_type(&literal->base, &globals.typedef_s32, cast(struct ast *)ast_enum);
+                        literal->type = &globals.typedef_s32;
                         
                         //
                         // the c-spec says: enum members are ints, and the enum is of a size that can hold all enum members
-                        struct ast_declaration *decl = push_ast(context, declaration);
+                        struct ast_declaration *decl = push_struct(context->arena, struct ast_declaration);
+                        decl->kind = AST_declaration;
                         decl->identifier = ident;
                         decl->flags |= DECLARATION_FLAGS_is_enum_member;
                         decl->type = &ast_enum->base;
-                        decl->assign_expr = &literal->base;
+                        decl->assign_expr = (struct ir *)&literal->base;
                         decl->offset_on_stack = -1;
                         decl->compilation_unit = context->current_compilation_unit;
                         
@@ -7740,7 +7889,7 @@ case TOKEN_##type_name:{                                                 \
                         register_compound_type(context, &ast_enum->base, ast_enum->base.token);
                     }
                     
-                    specifiers.defined_type_specifier = (struct ast *)&ast_enum->base;
+                    specifiers.defined_type_specifier = &ast_enum->base.kind;
                     specifiers.type_specifier = &globals.typedef_s32;
                 }else{ // no open curly
                     if(!name){
@@ -7760,7 +7909,7 @@ case TOKEN_##type_name:{                                                 \
                             report_error(context, name, "Got 'enum %.*s' but '%.*s' is %s.", name->size, name->data, name->size, name->data, error);
                         }
                         
-                        specifiers.defined_type_specifier = (struct ast *)lookup;
+                        specifiers.defined_type_specifier = &lookup->kind;
                         specifiers.type_specifier = &globals.typedef_s32;
                     }
                 }
@@ -7784,7 +7933,7 @@ case TOKEN_##type_name:{                                                 \
                     // If it is a typedef to an unresolved type, we just give back an unresolved type and its fine.
                     // This is treated the same way 'struct unresolved' would be.
                     
-                    specifiers.defined_type_specifier = &ast_typedef->base;
+                    specifiers.defined_type_specifier = &ast_typedef->kind;
                     specifiers.type_specifier = ast_typedef->type;
                 }else{
                     if(globals.compile_stage < COMPILE_STAGE_parse_function){
@@ -7923,12 +8072,12 @@ case TOKEN_##type_name:{                                                 \
     return specifiers;
 }
 
-func struct declaration_list parse_declaration_list(struct context *context, struct ast_type *type_specifier, struct ast *defined_type_specifier){
+func struct declaration_list parse_declaration_list(struct context *context, struct ast_type *type_specifier, enum ast_kind *defined_type_specifier){
+    
+    struct declaration_list ret = zero_struct;
     
     // @cleanup: explain this again
     b32 should_set_sleeping_ident = !context->sleeping_ident;
-    
-    struct declaration_list ret = zero_struct;
     
     struct declaration_specifiers specifiers = parse_declaration_specifiers(context, type_specifier, defined_type_specifier);
     if(context->should_exit_statement) goto end;
@@ -8012,13 +8161,13 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(!decl){
                 // Push the declaration so we can continue as if it was defined.
                 decl = push_declaration_for_declarator(context, declarator);
-                if(declarator.type->kind == AST_function_type) decl->base.kind = AST_function;
+                if(declarator.type->kind == AST_function_type) decl->kind = AST_function;
                 decl->flags |= DECLARATION_FLAGS_is_global;
                 
                 if(globals.output_file_type == OUTPUT_FILE_obj){
                     // If we are compiling to an object, this is fine. 
                     // The declaration is just an unresolved external in the end.
-                    struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(&globals.external_declarations_at_function_scope, &decl->base, declarator.ident);
+                    struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(&globals.external_declarations_at_function_scope, &decl->kind, declarator.ident);
                     if(redecl) decl = redecl;
                 }else{
                     report_error(context, declarator.ident, "This 'extern' variable was never defined.");
@@ -8053,14 +8202,13 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             // This is a function declaration or definition at global or local scope.
             // 
             
-            struct ast_function *function = push_ast(context, function);
+            struct ast_function *function = push_struct(context->arena, struct ast_function);
+            function->kind = AST_function;
             function->type = cast(struct ast_function_type *)declarator.type;
             function->identifier = declarator.ident;
             function->memory_location = null;
             function->offset_in_text_section = -1; // Set atomically when done emitting.
             function->compilation_unit = context->current_compilation_unit;
-            
-            set_resolved_type(&function->base, &globals.typedef_void, null);
             
             if(!context->current_scope) function->as_decl.flags |= DECLARATION_FLAGS_is_global;
             
@@ -8185,8 +8333,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     work_queue_push_work(context, &globals.work_queue_parse_functions, parse_work);
                     
                     function->as_decl.flags |= DECLARATION_FLAGS_is_local_persist;
-                    function->scope = &scope->base;
-                    ast_list_append(&context->local_functions, context->arena, &function->base);
+                    function->scope = scope;
+                    ast_list_append(&context->local_functions, context->arena, &function->kind);
                 }
                 
                 should_break = true; // disallow int a(){}, b;
@@ -8202,7 +8350,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(!context->current_scope && scope){
                 // This is a global declaration and we define it!
                 
-                int we_have_defined_the_function = parser_register_definition(context, decl, &scope->base, scope->token, declarator.type);
+                int we_have_defined_the_function = parser_register_definition(context, decl, (void *)scope, scope->token, declarator.type);
                 
                 if(!we_have_defined_the_function){
                     // If we have not defined the function, we are either `__declspec(selectany) or there was an error. 
@@ -8210,7 +8358,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     // The other option here would be to set a flag and not even parse the function, 
                     // but for now I am will parse both copies.
                     //                                                                              - 19.10.2024
-                    function->scope = &scope->base;
+                    function->scope = scope;
                     decl = &function->as_decl;
                 }else if(specifiers.specifier_flags & SPECIFIER_dllexport){
                     add_global_reference_for_declaration(context->arena, &function->as_decl);
@@ -8256,13 +8404,13 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
             
             decl = push_declaration_for_declarator(context, declarator);
-            if(specifiers.specifier_flags & SPECIFIER_typedef) decl->base.kind = AST_typedef;
+            if(specifiers.specifier_flags & SPECIFIER_typedef) decl->kind = AST_typedef;
             
             if(specifiers.alignment > 0) decl->overwrite_alignment = specifiers.alignment;
             
             if(specifiers.specifier_flags & SPECIFIER_static){ // @note: flag before registering
                 if(context->current_scope){
-                    ast_list_append(&context->current_function->static_variables, context->arena, &decl->base);
+                    ast_list_append(&context->current_function->static_variables, context->arena, &decl->kind);
                     decl->flags |= DECLARATION_FLAGS_is_local_persist;
                 }else{
                     decl->flags |= DECLARATION_FLAGS_is_static;
@@ -8340,6 +8488,10 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 parse_initializer(context, decl, equals);
                 if(context->should_exit_statement) goto end;
             }
+            
+            if(!(decl->flags & DECLARATION_FLAGS_is_local_persist) && !(decl->flags & DECLARATION_FLAGS_is_global)){
+                parser_emit_memory_location(context, decl);
+            }
         }
         
         // This is in arena, as we now have 'ast_declaration_list', maybe this is not necessary, 
@@ -8353,15 +8505,19 @@ func struct declaration_list parse_declaration_list(struct context *context, str
     }while(peek_token_eat(context, TOKEN_comma));
     
     end:;
+    
     return ret;
 }
 
 #include "parse_asm_block.c"
 
-void maybe_report_warning_for_assignment_in_condition(struct context *context, struct ast *condition, struct token *token){
+void maybe_report_warning_for_assignment_in_condition(struct context *context, struct ir *condition, struct token *token){
+    (void)context, (void)condition, (void)token;
+    #if 0 
     if(condition->kind == AST_assignment){
         report_warning(context, WARNING_assignment_in_condition, token, "Assignment withing condition, did you mean '=='?");
     }
+    #endif
 }
 
 func struct ast *parse_imperative_scope(struct context *context);
@@ -8377,12 +8533,12 @@ void parse_static_assert(struct context *context, struct token *static_assert_to
     
     if(peek_token_eat(context, TOKEN_comma)){
         struct expr string_literal_expression = parse_expression(context, /*should_skip_comma_expression*/true);
-        if(string_literal_expression.ast->kind != AST_string_literal){
+        if(string_literal_expression.ir->kind != IR_string_literal){
             report_error(context, string_literal_expression.token, "Second argument to _Static_assert needs to be a string literal.");
         }else{
-            struct ast_string_literal *ast_string_literal = (struct ast_string_literal *)string_literal_expression.ast;
-            string_literal = ast_string_literal->value;
-            pop_from_ast_arena(context, ast_string_literal);
+            struct ir_string_literal *ir_string_literal = (struct ir_string_literal *)string_literal_expression.ir;
+            string_literal = ir_string_literal->value;
+            pop_from_ir_arena(context, ir_string_literal);
         }
     }
     
@@ -8425,9 +8581,9 @@ func void parse_statement(struct context *context){
             
             struct expr condition = parse_expression(context, false);
             
-            maybe_report_warning_for_assignment_in_condition(context, condition.ast, condition.token);
-            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &condition, condition.token);
-            maybe_insert_cast_from_special_int_to_int(context, AST_cast, &condition, condition.token);
+            maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &condition, condition.token);
+            maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
             if(!casts_implicitly_to_bool(condition.resolved_type)){
                 // :Error
                 report_error(context, condition.token, "'if' condition has to cast to bool.");
@@ -8439,7 +8595,7 @@ func void parse_statement(struct context *context){
             int statement_returns_a_value = context->current_statement_returns_a_value;
             
             // :ir_refactor - new
-            struct ast_jump_if_false *condition_jump = push_expression(context, jump_if_false);
+            struct ir_jump_node *condition_jump = push_jump(context, IR_jump_if_false);
             condition_jump->label_number = if_false_label;
             
             // if(context->if_true_label != -1){
@@ -8455,15 +8611,15 @@ func void parse_statement(struct context *context){
             
             if(peek_token_eat(context, TOKEN_else)){
                 
-                struct ast_jump *jump_over_else = push_expression(context, jump);
+                struct ir_jump_node *jump_over_else = push_jump(context, IR_jump);
                 jump_over_else->label_number = context->jump_label_index++;
                 
-                struct ast_jump_label *else_label = push_expression(context, jump_label);
+                struct ir_jump_node *else_label = push_jump(context, IR_jump_label);
                 else_label->label_number = if_false_label;
                 
                 parse_statement(context);
                 
-                struct ast_jump_label *end_label = push_expression(context, jump_label);
+                struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                 end_label->label_number = jump_over_else->label_number;
                 
                 
@@ -8471,7 +8627,7 @@ func void parse_statement(struct context *context){
                 int else_statement_returns_a_value = context->current_statement_returns_a_value;
                 context->current_statement_returns_a_value = statement_returns_a_value | (else_statement_returns_a_value & if_statement_returns_a_value);
             }else{
-                struct ast_jump_label *end_label = push_expression(context, jump_label);
+                struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                 end_label->label_number = if_false_label;
             }
             
@@ -8518,20 +8674,17 @@ func void parse_statement(struct context *context){
                 context->current_continue_label = continue_label_index;
                 context->current_break_label    = break_label_index;
                 
-                struct ast_jump_label *for_label = push_expression(context, jump_label);
+                struct ir_jump_node *for_label = push_jump(context, IR_jump_label);
                 for_label->label_number = for_label_index;
                 
                 if(peek_token(context, TOKEN_semicolon)){
-                    condition.ast = ast_push_s32_literal(context, 1); // desugars to true
-                    condition.token = next_token(context);
-                    condition.resolved_type = &globals.typedef_s32;
-                    condition.defined_type = null;
+                    condition = ast_push_s32_literal(context, 1, next_token(context)); // desugars to true
                 }else{
                     condition = parse_expression(context, false);
-                    maybe_report_warning_for_assignment_in_condition(context, condition.ast, condition.token);
+                    maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
                     
-                    maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &condition, condition.token);
-                    maybe_insert_cast_from_special_int_to_int(context, AST_cast, &condition, condition.token);
+                    maybe_load_address_for_array_or_function(context, IR_load_address, &condition, condition.token);
+                    maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
                     if(!casts_implicitly_to_bool(condition.resolved_type)){
                         // :Error
                         report_error(context, condition.token, "'for' condition has to cast to bool.");
@@ -8542,7 +8695,7 @@ func void parse_statement(struct context *context){
                 }
                 
                 // :ir_refactor - new
-                struct ast_jump_if_false *condition_jump = push_expression(context, jump_if_false);
+                struct ir_jump_node *condition_jump = push_jump(context, IR_jump_if_false);
                 condition_jump->label_number = break_label_index;
                 
                 smm increment_token_at = -1;
@@ -8554,7 +8707,7 @@ func void parse_statement(struct context *context){
                 
                 parse_statement(context);
                 
-                struct ast_jump_label *continue_label = push_expression(context, jump_label);
+                struct ir_jump_node *continue_label = push_jump(context, IR_jump_label);
                 continue_label->label_number = continue_label_index;
                 
                 if(increment_token_at != -1){
@@ -8566,15 +8719,15 @@ func void parse_statement(struct context *context){
                     // Because of how expressions work, this is also where skip_until_tokens_are_balanced moved us.
                     expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'for'.");
                     
-                    push_expression(context, pop_expression);
+                    push_ir(context, IR_pop_expression);
                     
                     context->token_at = past_body;
                 }
                 
-                struct ast_jump *loop_jump = push_expression(context, jump);
+                struct ir_jump_node *loop_jump = push_jump(context, IR_jump);
                 loop_jump->label_number = for_label_index;
                 
-                struct ast_jump_label *break_label = push_expression(context, jump_label);
+                struct ir_jump_node *break_label = push_jump(context, IR_jump_label);
                 break_label->label_number = break_label_index;
                 
                 context->current_continue_label = old_continue_label_index;
@@ -8583,7 +8736,7 @@ func void parse_statement(struct context *context){
             parser_scope_pop(context, scope);
             
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
-            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ast->kind == AST_integer_literal && integer_literal_as_u64(&condition) != 0;
+            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ir->kind == IR_integer_literal && integer_literal_as_u64(&condition) != 0;
             
             // @note: For a loop line `for(int i = 0; i < n; i++){ return i; }` The "returns a value" would be true, 
             // but we don't know if 'i < n', so we disregard the loops "returns a value".
@@ -8604,14 +8757,14 @@ func void parse_statement(struct context *context){
             // @note: We desugar 'while' to 'for(;condition;)'.
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
             
-            struct ast_jump_label *continue_label = push_expression(context, jump_label);
+            struct ir_jump_node *continue_label = push_jump(context, IR_jump_label);
             continue_label->label_number = continue_label_index;
             
             struct expr condition = parse_expression(context, false);
-            maybe_report_warning_for_assignment_in_condition(context, condition.ast, condition.token);
+            maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
             
-            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &condition, condition.token);
-            maybe_insert_cast_from_special_int_to_int(context, AST_cast, &condition, condition.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &condition, condition.token);
+            maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
             if(!casts_implicitly_to_bool(condition.resolved_type)){
                 report_error(context, condition.token, "'while' condition has to cast to bool.");
                 return;
@@ -8619,7 +8772,7 @@ func void parse_statement(struct context *context){
             expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'while'.");
             
             // :ir_refactor - new
-            struct ast_jump_if_false *condition_jump = push_expression(context, jump_if_false);
+            struct ir_jump_node *condition_jump = push_jump(context, IR_jump_if_false);
             condition_jump->label_number = break_label_index;
             
             // Get the initial "returns a value state".
@@ -8631,14 +8784,14 @@ func void parse_statement(struct context *context){
             
             parser_scope_pop(context, scope);
             
-            struct ast_jump *loop_jump = push_expression(context, jump);
+            struct ir_jump_node *loop_jump = push_jump(context, IR_jump);
             loop_jump->label_number = continue_label_index;
             
-            struct ast_jump_label *break_label = push_expression(context, jump_label);
+            struct ir_jump_node *break_label = push_jump(context, IR_jump_label);
             break_label->label_number = break_label_index;
             
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
-            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ast->kind == AST_integer_literal && integer_literal_as_u64(&condition) != 0;
+            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ir->kind == IR_integer_literal && integer_literal_as_u64(&condition) != 0;
             context->current_statement_returns_a_value = statement_returns_a_value | is_infinite_loop; // See 'for' case for comment.
             
             needs_semicolon = false;
@@ -8663,7 +8816,7 @@ func void parse_statement(struct context *context){
             //    cond-jump loop
             //  break:
             
-            struct ast_jump_label *loop_label = push_expression(context, jump_label);
+            struct ir_jump_node *loop_label = push_jump(context, IR_jump_label);
             loop_label->label_number = loop_label_index;
             
             struct ast_scope *scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_can_continue | SCOPE_FLAG_can_break);
@@ -8674,14 +8827,14 @@ func void parse_statement(struct context *context){
             expect_token(context, TOKEN_while, "Missing 'while' in do-while statement.");
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
             
-            struct ast_jump_label *continue_label = push_expression(context, jump_label);
+            struct ir_jump_node *continue_label = push_jump(context, IR_jump_label);
             continue_label->label_number = continue_label_index;
             
             struct expr condition = parse_expression(context, false);
-            maybe_report_warning_for_assignment_in_condition(context, condition.ast, condition.token);
+            maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
             
-            maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &condition, condition.token);            
-            maybe_insert_cast_from_special_int_to_int(context, AST_cast, &condition, condition.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &condition, condition.token);            
+            maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
             if(!casts_implicitly_to_bool(condition.resolved_type)){
                 report_error(context, condition.token, "'while' condition has to cast to bool.");
                 return;
@@ -8689,14 +8842,14 @@ func void parse_statement(struct context *context){
             expect_token(context, TOKEN_closed_paren, "Expected ')' ending 'while'-condition.");
             
             // :ir_refactor - new
-            struct ast_jump_if_true *condition_jump = push_expression(context, jump_if_true);
+            struct ir_jump_node *condition_jump = push_jump(context, IR_jump_if_true);
             condition_jump->label_number = loop_label_index;
             
-            struct ast_jump_label *break_label = push_expression(context, jump_label);
+            struct ir_jump_node *break_label = push_jump(context, IR_jump_label);
             break_label->label_number = break_label_index;
             
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
-            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ast->kind == AST_integer_literal && integer_literal_as_u64(&condition) != 0;
+            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ir->kind == IR_integer_literal && integer_literal_as_u64(&condition) != 0;
             
             // do <> while(); loops are a little bit different to the other loops, as their body is guaranteed to be executed one time.
             // Hence, we can say they return a value, if their body (or condition) returns a value, or its an infinite loop.
@@ -8725,7 +8878,7 @@ func void parse_statement(struct context *context){
                 scope->flags |= SCOPE_FLAG_found_an_alive_break;
             }
             
-            struct ast_jump *loop_jump = push_expression(context, jump);
+            struct ir_jump_node *loop_jump = push_jump(context, IR_jump);
             loop_jump->label_number = context->current_break_label;
             
         }break;
@@ -8742,7 +8895,7 @@ func void parse_statement(struct context *context){
                 return;
             }
             
-            struct ast_jump *loop_jump = push_expression(context, jump);
+            struct ir_jump_node *loop_jump = push_jump(context, IR_jump);
             loop_jump->label_number = context->current_continue_label;
             
             // We cannot escape infinte loops through a 'continue'.
@@ -8753,7 +8906,7 @@ func void parse_statement(struct context *context){
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'switch'.");
             
             struct expr switch_on = parse_expression(context, false);
-            maybe_insert_cast_from_special_int_to_int(context, AST_cast, &switch_on, switch_on.token);
+            maybe_insert_cast_from_special_int_to_int(context, &switch_on, /*is_lhs*/0);
             
             if(switch_on.resolved_type->kind != AST_integer_type){
                 report_error(context, switch_on.token, "Can only switch on integers.");
@@ -8769,12 +8922,13 @@ func void parse_statement(struct context *context){
             smm old_break_label_index    = context->current_break_label;
             context->current_break_label = break_label_index;
             
-            struct ast_switch *ast_switch = push_expression(context, switch);
+            struct ir_switch *ir_switch = push_struct(&context->ir_arena, struct ir_switch);
+            ir_switch->base.kind = IR_switch;
             
-            struct ast_switch *previous_switch = context->current_switch;
-            struct expr        previous_switch_on = context->current_switch_on;
-            struct token      *previous_switch_default_label_token = context->current_switch_default_label_token;
-            context->current_switch = ast_switch;
+            struct ir_switch *previous_switch = context->current_switch;
+            struct expr       previous_switch_on = context->current_switch_on;
+            struct token     *previous_switch_default_label_token = context->current_switch_default_label_token;
+            context->current_switch = ir_switch;
             context->current_switch_on = switch_on;
             context->current_switch_default_label_token = 0;
             
@@ -8791,17 +8945,16 @@ func void parse_statement(struct context *context){
             context->current_switch_default_label_token = previous_switch_default_label_token;
             
             // The switch returns a value, if its statement does, there is a default case (or in the future if its exhaustive ) and there was no alive break.
-            int switch_returns_a_value = context->current_statement_returns_a_value && ast_switch->default_jump_label && !(scope->flags & SCOPE_FLAG_found_an_alive_break);
+            int switch_returns_a_value = context->current_statement_returns_a_value && ir_switch->default_jump_label && !(scope->flags & SCOPE_FLAG_found_an_alive_break);
             context->current_statement_returns_a_value = statement_returns_a_value | switch_returns_a_value;
             
-            struct ast_jump_label *break_label = push_expression(context, jump_label);
+            struct ir_jump_node *break_label = push_jump(context, IR_jump_label);
             break_label->label_number = break_label_index;
             
-            if(!ast_switch->default_jump_label){
-                ast_switch->default_jump_label = break_label;
+            if(!ir_switch->default_jump_label){
+                ir_switch->default_jump_label = break_label;
             }
             
-            set_resolved_type(&ast_switch->base, &globals.typedef_void, null);
             needs_semicolon = false;
             context->current_break_label = old_break_label_index;
         }break;
@@ -8819,32 +8972,32 @@ func void parse_statement(struct context *context){
             struct expr *switch_on = &context->current_switch_on;
             maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, switch_on->resolved_type, switch_on->defined_type, &const_expr, const_expr.token);
             
-            assert(const_expr.ast->kind == AST_integer_literal);
+            assert(const_expr.ir->kind == IR_integer_literal);
             assert(const_expr.resolved_type == context->current_switch_on.resolved_type);
             
             u64 value = integer_literal_as_u64(&const_expr);
             
-            for(struct ast_list_node *node = context->current_switch->case_list.first; node; node = node->next){
-                struct ast_case *ast_case = (struct ast_case *)node->value;
-                if(ast_case->value == value){
+            for(struct ir_case *ir_case = context->current_switch->case_list.first; ir_case; ir_case = ir_case->next){
+                if(ir_case->value == value){
                     begin_error_report(context);
                     if(type_is_signed(switch_on->resolved_type)){
                         report_error(context, initial_token, "Case '%lld' already handled.", (smm)value);
                     }else{
                         report_error(context, initial_token, "Case '%llu' already handled.", value);
                     }
-                    report_error(context, ast_case->token, "... Here is the previous case.");
+                    report_error(context, ir_case->token, "... Here is the previous case.");
                     end_error_report(context);
                 }
             }
             
-            struct ast_case *ast_case = push_expression(context, case);
-            ast_case->value = value;
-            ast_case->token = initial_token;
+            struct ir_case *ir_case = push_struct(&context->ir_arena, struct ir_case);
+            ir_case->base.kind = IR_case;
+            ir_case->value = value;
+            ir_case->token = initial_token;
             expect_token(context, TOKEN_colon, "Expected ':' after 'case'-label.");
             needs_semicolon = false;
             
-            ast_list_append(&context->current_switch->case_list, context->arena, &ast_case->base);
+            sll_push_back(context->current_switch->case_list, ir_case);
             
             if(!peek_token(context, TOKEN_closed_curly)) parse_statement(context);
         }break;
@@ -8867,7 +9020,7 @@ func void parse_statement(struct context *context){
             expect_token(context, TOKEN_colon, "Expected ':' after 'default'.");
             needs_semicolon = false;
             
-            struct ast_jump_label *default_label = push_expression(context, jump_label);
+            struct ir_jump_node *default_label = push_jump(context, IR_jump_label);
             default_label->label_number = context->jump_label_index++;
             context->current_switch->default_jump_label = default_label;
             
@@ -8894,7 +9047,7 @@ func void parse_statement(struct context *context){
                 //        Let's support it for now!
                 
                 struct expr return_expression = parse_expression(context, false);
-                maybe_load_address_for_array_or_function(context, AST_implicit_address_conversion, &return_expression, return_expression.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &return_expression, return_expression.token);
                 maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_function_type->return_type, current_function_type->return_type_defined_type, &return_expression, initial_token);
             }
             
@@ -8904,8 +9057,7 @@ func void parse_statement(struct context *context){
                 report_warning(context, WARNING_return_in_noreturn_function, initial_token, "'return' in function declared as '_Noreturn'.");
             }
             
-            struct ast_return *ast_return = push_expression(context, return);
-            set_resolved_type(&ast_return->base, &globals.typedef_void, null);
+            push_ir(context, IR_return);
         }break;
         case TOKEN_open_curly:{
             struct ast_scope *scope = parser_push_new_scope(context, initial_token, SCOPE_FLAG_none);
@@ -8931,7 +9083,7 @@ func void parse_statement(struct context *context){
             context->current_statement_returns_a_value = 1;
             
             // :ir_refactor - new way.
-            struct ast_jump *goto_jump = push_expression(context, jump);
+            struct ir_jump_node *goto_jump = push_jump(context, IR_jump);
             ast_goto->jump = goto_jump;
         }break;
         case TOKEN_identifier:{
@@ -8957,7 +9109,7 @@ func void parse_statement(struct context *context){
                 // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
                 context->current_statement_returns_a_value = 0;
                 
-                struct ast_jump_label *jump_label = push_expression(context, jump_label);
+                struct ir_jump_node *jump_label = push_jump(context, IR_jump_label);
                 jump_label->label_number = context->jump_label_index++;
                 label->jump_label = jump_label;
                 
@@ -8968,7 +9120,8 @@ func void parse_statement(struct context *context){
             
             struct ast_declaration *lookup = lookup_typedef(context, context->current_compilation_unit, initial_token, /*silent*/true);
             if(lookup){
-                parse_declaration_list_in_imperative_scope(context, lookup->type, /*defined_type*/&lookup->base);
+                int is_function_declaration = parse_declaration_list_in_imperative_scope(context, lookup->type, /*defined_type*/&lookup->kind);
+                if(is_function_declaration) needs_semicolon = false;
                 break;
             }
             
@@ -8976,7 +9129,7 @@ func void parse_statement(struct context *context){
             
             parse_expression(context, false);
             
-            push_expression(context, pop_expression);
+            push_ir(context, IR_pop_expression);
         }break;
         
         // @cleanup: noreturn, inline, ?
@@ -8990,16 +9143,16 @@ func void parse_statement(struct context *context){
         case TOKEN_float:    case TOKEN_double:
         case TOKEN_struct:   case TOKEN_union:    case TOKEN_enum:{
             prev_token(context);
-            struct ast *ast = parse_declaration_list_in_imperative_scope(context, null, null);
+            int is_function_declaration = parse_declaration_list_in_imperative_scope(context, null, null);
             
             // @note: A function declaration (which is not a definition) does need a semicolon.
-            if(ast->kind == AST_function) needs_semicolon = false;
+            if(is_function_declaration) needs_semicolon = false;
         }break;
         
         case TOKEN_asm:{
-            struct ast_asm_block *asm_block = push_expression(context, asm_block);
+            struct ir_asm_block *asm_block = push_struct(&context->ir_arena, struct ir_asm_block);
+            asm_block->base.kind = IR_asm_block;
             asm_block->token = initial_token;
-            set_resolved_type(&asm_block->base, &globals.typedef_void, null);
             
             expect_token(context, TOKEN_open_curly, "Expected '{' after '__asm__'.");
             
@@ -9017,8 +9170,8 @@ func void parse_statement(struct context *context){
             prev_token(context);
             
             // If it is nothing else; it's gotta be an assignment or expression.
-             parse_expression(context, false);
-            push_expression(context, pop_expression);
+            parse_expression(context, false);
+            push_ir(context, IR_pop_expression);
         }break;
         
         case TOKEN_invalid:{
@@ -9080,7 +9233,7 @@ func struct ast *parse_imperative_scope(struct context *context){
         if(!decl) continue;
         if(decl->flags & DECLARATION_FLAGS_is_global) continue; // We don't track the used information for external declarations at function scope.
         
-        if(decl->base.kind == AST_declaration){
+        if(decl->kind == AST_declaration){
             if(decl->_times_referenced == 0){
                 report_warning(context, WARNING_unused_local_variable, decl->identifier, "Local variable is never used.");
             }else if(decl->_times_referenced == decl->_times_written){
@@ -9097,7 +9250,7 @@ func struct ast *parse_imperative_scope(struct context *context){
     return (struct ast *)scope;
 }
 
-func struct declarator_return parse_declarator(struct context* context, struct ast_type *_initial_type, struct ast *_initial_defined_type, enum declarator_kind_flags declarator_kind_flags){
+func struct declarator_return parse_declarator(struct context* context, struct ast_type *_initial_type, enum ast_kind *_initial_defined_type, enum declarator_kind_flags declarator_kind_flags){
     
     struct declarator_return ret = zero_struct;
     ret.type = _initial_type;
@@ -9395,7 +9548,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                         struct ast_array_type *array = cast(struct ast_array_type *)declarator.type;
                         declarator.type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, declarator.ident);
                         if(!declarator.defined_type){
-                            declarator.defined_type = cast(struct ast *)array;
+                            declarator.defined_type = &array->base.kind;
                         }
                     }else if(declarator.type->kind == AST_function_type){
                         // 
@@ -9407,7 +9560,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                     
                     struct ast_declaration *decl = push_declaration_for_declarator(context, declarator);
                     
-                    ast_list_append(&function->argument_list, context->arena, &decl->base);
+                    ast_list_append(&function->argument_list, context->arena, &decl->kind);
                     
                     if(decl->assign_expr){ // @cleanup: This can never happen right? we should 'peek_token(context, TOKEN_equals)' if anything.
                         report_error(context, prev_token(context), "Assignment in function declaration. Default arguments are invalid.");

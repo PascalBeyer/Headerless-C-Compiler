@@ -377,21 +377,19 @@ enum ast_kind{
     AST_unresolved_type,
     
     // Primary Expressions
-    AST_identifier,
-    AST_string_literal,
-    AST_integer_literal,
-    AST_float_literal,
-    AST_compound_literal,
+    // AST_string_literal,
+    // AST_integer_literal,
+    // AST_float_literal,
     
-    AST_pointer_literal,             // (struct s *)1337
-    AST_pointer_literal_deref,       // *(struct s *)1337 or ((struct s *)1337)->member
+    // AST_identifier,
+    // AST_compound_literal,
+    
+    // AST_pointer_literal,             // (struct s *)1337
+    // AST_pointer_literal_deref,       // *(struct s *)1337 or ((struct s *)1337)->member
     
     // Unary Expressions
     AST_cast,
     AST_cast_lhs,
-    
-    AST_implicit_address_conversion, // Used if an array or a function is implicitly converted to a pointer.
-    AST_implicit_address_conversion_lhs,
     
     AST_unary_postinc,
     AST_unary_postdec,
@@ -467,14 +465,10 @@ enum ast_kind{
     AST_divide_assignment,
     AST_modulo_assignment,
     
-    AST_duplicate,
-    AST_duplicate_lhs, // For punting compound assignments.
-    AST_swap_lhs_rhs,  // For weird stuff like `integer + pointer` or `integer[array]`.
-    
     AST_member,
     AST_member_deref,
-    AST_pointer_subscript,
-    AST_array_subscript,
+    // AST_pointer_subscript,
+    // AST_array_subscript,
     
     AST_comma_expression,
     
@@ -484,33 +478,15 @@ enum ast_kind{
     
     AST_function_call,
     
-    AST_initializer, // Used inside initializer lists.
+    // AST_initializer, // Used inside initializer lists.
     AST_array_range, // GNU extension: array[1 ... 5] - only allowed in initializers.
     
     // Statements
     AST_scope,
     
-    AST_empty_statement, 
-    AST_return,
-    
-    AST_switch,
-    AST_case,
+    AST_empty_statement, // @cleanup: get rid of me!
     
     AST_asm_block,
-    AST_embed,
-    
-    AST_panic, 
-    
-    // :ir_refactor
-    AST_jump_if_true,
-    AST_jump_if_false,
-    AST_jump,
-    AST_jump_label,
-    
-    AST_pop_expression,
-    
-    AST_temp,
-    AST_skip,
     
     AST_emitted_float_literal, // yuck, we copy float-literals in the back-end.
     
@@ -519,30 +495,12 @@ enum ast_kind{
 
 #include "ir.h"
 
-#define REMOVE_AST 0
-
-struct ast{
-    enum ast_kind kind;
-    s32 s;
-#if !REMOVE_AST
-    struct ast_type *resolved_type;
-    struct ast *defined_type; 
-#endif
-    // :defined_types
-    // if the ast has a 'AST_typedef' or 'AST_enum' type, we store it here for error reporting. 
-    // Also if it is just promoted, we retain that information, so we can warn on 'u8 = u8 + u8' usw.
-    // :retain_type_information_through_promotion 
-};
-
 struct expr{
-    union{
-        struct ast *ast;
-        struct ir *ir;
-    };
+    struct ir *ir;
     struct token *token;
     
     struct ast_type *resolved_type;
-    struct ast *defined_type; 
+    enum ast_kind *defined_type; 
     // :defined_types
     // if the ast has a 'AST_typedef' or 'AST_enum' type, we store it here for error reporting. 
     // Also if it is just promoted, we retain that information, so we can warn on 'u8 = u8 + u8' usw.
@@ -573,7 +531,7 @@ struct ast_type{
 
 struct ast_list_node{
     struct ast_list_node *next;
-    struct ast *value;
+    enum ast_kind *value;
 };
 
 struct ast_list{
@@ -610,9 +568,10 @@ struct declaration_node{
 
 struct ast_declaration{
     // @WARNING: This needs to match the part in ast_function.
-    struct ast base;
+    enum ast_kind kind;
+    
     struct ast_type *type;
-    struct ast *defined_type; // Either 'AST_enum' or 'AST_typedef' or 'null' :defined_types
+    enum ast_kind *defined_type; // Either 'AST_enum' or 'AST_typedef' or 'null' :defined_types
     struct token *identifier;
     
     smm offset_on_stack; // - stack relative if the declarations  is in a function scope
@@ -630,7 +589,7 @@ struct ast_declaration{
     //        This is sort of confusing, as the 'initializer' has to be "interpreted",
     //        and starts of with the "lhs".
     //        For enum members this is an AST_integer_literal.
-    struct ast *assign_expr; // the rhs of '=' if it exists, @WARNING: same slot as function->scope
+    struct ir *assign_expr; // the rhs of '=' if it exists, @WARNING: same slot as function->scope
     
     s64 overwrite_alignment;
     
@@ -648,25 +607,15 @@ struct ast_declaration{
 
 struct declaration_list{
     struct ast_type *type_specifier;
-    struct ast *defined_type_specifier;
+    enum ast_kind *defined_type_specifier;
     struct declaration_node *first;
     struct declaration_node *last;
-};
-
-struct ast_declaration_list{
-    struct ast base;
-    struct declaration_list list;
-};
-
-struct ast_identifier{ 
-    struct ast base;
-    struct ast_declaration *decl;
 };
 
 struct ast_pointer_type{
     struct ast_type base;
     struct ast_type *pointer_to;
-    struct ast *pointer_to_defined_type; // :defined_types
+    enum ast_kind *pointer_to_defined_type; // :defined_types
 };
 
 struct ast_unresolved_type{
@@ -690,7 +639,7 @@ struct ast_array_type{
     b32 is_of_unknown_size;
     smm amount_of_elements;
     struct ast_type *element_type;
-    struct ast *element_type_defined_type; // :defined_types
+    enum ast_kind *element_type_defined_type; // :defined_types
 };
 
 struct ast_bitfield_type{
@@ -698,63 +647,6 @@ struct ast_bitfield_type{
     struct ast_type *base_type;
     u32 bit_index;
     u32 width;
-};
-
-// @note: needs to match ast_pointer_literal below
-struct ast_integer_literal{
-    struct ast base;
-    union{
-        s8 _s8;
-        u8 _u8;
-        
-        u16 _u16;
-        s16 _s16;
-        
-        s32 _s32;
-        u32 _u32;
-        
-        s64 _s64;
-        u64 _u64;
-    };
-};
-
-// @note: needs to match ast_integer_literal above
-struct ast_pointer_literal{
-    struct ast base;
-    u8 *pointer;
-};
-
-// We have to be able to cast lhs float literals.
-struct ast_float_literal{
-    struct ast base;
-    f64 value;
-};
-
-// These get allocated in `emit_x64`.
-struct ast_emitted_float_literal{
-    struct ast base;
-    f64 value;
-    
-    struct ast_emitted_float_literal *next;
-    u32 relative_virtual_address; // @note: float  literals get loaded rip relative, so this is here to patch
-};
-
-struct ast_string_literal{
-    struct ast base;
-    struct ast_string_literal *next;
-    
-    struct string value;
-    enum string_kind string_kind;
-    u32 relative_virtual_address;
-    u32 symbol_table_index; // needed for .obj (this should maybe be named unique_string_index as that is what it realy is)
-};
-
-struct ast_compound_literal{
-    struct ast base;
-    struct ast_declaration *decl;
-    
-    smm initializer_size;
-    smm trailing_array_size;
 };
 
 inline smm get_declaration_alignment(struct ast_declaration *decl){
@@ -765,103 +657,21 @@ inline smm get_declaration_alignment(struct ast_declaration *decl){
 
 inline smm get_declaration_size(struct ast_declaration *decl){
     smm size = decl->type->size;
-    if(decl->assign_expr && decl->assign_expr->kind == AST_compound_literal){
-        struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)decl->assign_expr;
+    if(decl->assign_expr && decl->assign_expr->kind == IR_compound_literal){
+        struct ir_compound_literal *compound_literal = (struct ir_compound_literal *)decl->assign_expr;
         size += compound_literal->trailing_array_size;
     }
     return size;
 }
 
-struct ast_unary_op{
-    struct ast base;
-};
-
-struct ast_binary_op{
-    struct ast base;
-};
-
-struct ast_cast{ // @ir_refactor: In the future there should be more than just `AST_cast` such that we can get rid of the `operand` member.
-    struct ast base;
-    struct ast_type *cast_to;
-    struct ast_type *cast_what;
-};
-
-// :ir_refactor - This is how all "ast" should look.
-struct ast_duplicate_lhs{
-    struct ast base;
-};
-
-struct ast_skip{
-    struct ast base;
-    u32 size_to_skip;
-};
-
-struct ast_swap_lhs_rhs{
-    struct ast base;
-};
-
-struct ast_panic{
-    struct ast base;
-};
-
-struct ast_temp{
-    struct ast base;
-    struct ast_type *type;
-};
-
-struct ast_pop_expression{
-    struct ast base;
-};
-
-struct ast_pop_lhs_expression{
-    struct ast base;
-};
-
-struct ast_jump{
-    struct ast base;
-    smm label_number;
-};
-
-struct ast_jump_if_true{
-    struct ast base;
-    smm label_number;
-};
-
-struct ast_jump_if_false{
-    struct ast base;
-    smm label_number;
-};
-
-struct ast_jump_label{
-    struct ast base;
-    smm label_number;
-};
-
-struct ast_dot_or_arrow{
-    struct ast base;
-    struct compound_member *member; // @cleanup: This should probably be an index.
-};
-
-struct ast_subscript{
-    struct ast base;
-};
-
+#if 0 
 struct ast_array_range{ // array[1 ... 5] - only allowed in initializers.
     struct ast base;
     struct ast *lhs;
     u64 start_index;
     u64 end_index;
 };
-
-struct ast_initializer{
-    struct ast base;
-    u64 offset;
-    struct ast_type *lhs_type;
-};
-
-struct ast_return{
-    struct ast base;
-};
+#endif
 
 enum scope_flags{
     SCOPE_FLAG_none              = 0x0,
@@ -870,15 +680,10 @@ enum scope_flags{
     SCOPE_FLAG_is_function_scope = 0x4, // This is the root scope of a functions, this might still have a parent, if the function is local.
     
     SCOPE_FLAG_found_an_alive_break = 0x10, // This is set if there is a 'break' statement in a block which does not return.
-    
 };
 
 struct ast_scope{
-    struct ast base;
-    struct token *token;
     struct ast_scope *parent;
-    
-    struct ast_asm_block *asm_block;
     
     struct{
         struct ast_scope *next;
@@ -886,6 +691,10 @@ struct ast_scope{
         struct ast_scope *last; // @note: if the order does not matter, we could eliminate this member... not sure.
         smm count;
     } subscopes;
+    
+    struct token *token;
+    
+    struct ir_asm_block *asm_block;
     
     enum scope_flags flags;
     
@@ -907,20 +716,20 @@ struct ast_scope{
 static struct token *get_initializer_token(struct ast_declaration *decl){
     if(decl->flags & DECLARATION_FLAGS_is_enum_member) return decl->identifier;
     
-    if(decl->base.kind == AST_function){
+    if(decl->kind == AST_function){
         struct ast_scope *scope = (struct ast_scope *)decl->assign_expr;
         return scope->token;
     }
     
-    assert(decl->assign_expr && (decl->assign_expr->kind == AST_identifier || decl->assign_expr->kind == AST_compound_literal));
-    struct ast_identifier *ident = (struct ast_identifier *)decl->assign_expr;
+    assert(decl->assign_expr && (decl->assign_expr->kind == IR_identifier || decl->assign_expr->kind == IR_compound_literal));
+    struct ir_identifier *ident = (struct ir_identifier *)decl->assign_expr;
     return ident->decl->identifier;
 }
 
 struct compound_member{
     struct token *name;
     struct ast_type *type;
-    struct ast *defined_type;
+    enum ast_kind *defined_type;
     
     // :next_member_increment
     // 
@@ -953,7 +762,7 @@ struct ast_compound_type{
 struct ast_function_type{
     struct ast_type base;
     struct ast_type *return_type;
-    struct ast *return_type_defined_type; // :defined_type @cleanup: make sure this is filled 
+    enum ast_kind *return_type_defined_type; // :defined_type @cleanup: make sure this is filled 
     
     b64 flags;
     
@@ -963,7 +772,7 @@ struct ast_function_type{
 struct ast_function{
     union{
         struct{
-            struct ast base;
+            enum ast_kind kind;
             struct ast_function_type *type;
             struct ast *defined_type; // either 'AST_enum' or 'AST_typedef' or 'null'
             struct token *identifier;
@@ -972,7 +781,7 @@ struct ast_function{
             smm relative_virtual_address; // needs to be 64 bit, as we point to it not knowing its size
             smm symbol_table_index; // for .obj
             struct compilation_unit *compilation_unit;
-            struct ast *scope; // @WARNING: We use that this is in the same slot as 'ast_declaration->assign_expr'.
+            struct ast_scope *scope; // @WARNING: We use that this is in the same slot as 'ast_declaration->assign_expr'.
             smm overwrite_alignment;
             u64 decl_flags;
             
@@ -987,8 +796,8 @@ struct ast_function{
         struct ast_declaration as_decl;
     };
     
-    u8 *start_in_ast_arena;
-    u8 *end_in_ast_arena;
+    u8 *start_in_ir_arena;
+    u8 *end_in_ir_arena;
     
     
     u8 *base_of_prolog;
@@ -1013,7 +822,7 @@ struct ast_function{
     struct{ // @cleanup: should we have a line information arena?
         struct function_line_information{
             u32 line;
-            u32 offset;// :function_line_information - This is first the offset in the 'ast_arena', then later the offset in the code.
+            u32 offset;// :function_line_information - This is first the offset in the 'ir_arena', then later the offset in the code.
         } *data;
         smm size;
         smm capacity;
@@ -1027,28 +836,6 @@ struct ast_function{
     struct dll_import_node *dll_import_node;
 };
 
-struct ast_switch{
-    struct ast base;
-    
-    struct ast_jump_label *default_jump_label; // Either the default case or the break label.
-    
-    struct ast_list case_list;
-};
-
-struct ast_case{
-    struct ast base;
-    struct token *token;
-    u64 value;
-    
-    struct jump_context *jump; // We use this as a label, only used in emit.
-};
-
-struct ast_function_call{
-    struct ast base;
-    struct ast_function_type *function_type;
-    smm call_arguments_count;
-};
-
 struct ast_label{
     struct ast_label *next;
     
@@ -1057,7 +844,7 @@ struct ast_label{
     struct atom ident;
     
     // :ir_refactor - new way.
-    struct ast_jump_label *jump_label;
+    struct ir_jump_node *jump_label;
 };
 
 struct ast_goto{
@@ -1067,31 +854,14 @@ struct ast_goto{
     struct atom ident;
     
     // :ir_refactor - new way.
-    struct ast_jump *jump;
-};
-
-struct ast_conditional_expression{
-    struct ast base;
+    struct ir_jump_node *jump;
 };
 
 struct conditional_expression_information{
-    struct ast *condition;
-    struct ast_temp *temp;
-    struct ast_jump *end_jump;
-};
-
-struct ast_asm_block{
-    struct ast base;
-    struct token *token;
-    struct{
-        struct asm_instruction *first;
-        struct asm_instruction *last;
-    }instructions;
-};
-
-struct ast_embed{
-    struct ast base;
-    struct token *token;
+    struct ir *condition;
+    struct ir *cast;
+    struct ir_temp *temp;
+    struct ir_jump_node *end_jump;
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////

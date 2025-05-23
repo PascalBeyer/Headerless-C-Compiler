@@ -598,7 +598,7 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
     
     if(scope->amount_of_declarations){
         
-        if((struct ast_scope *)function->scope != scope){
+        if(function->scope != scope){
             struct codeview_block32{
                 u16 length;
                 u16 kind;
@@ -635,12 +635,12 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
             struct ast_declaration *decl = scope->declarations[declaration_index];
             if(!decl) continue;
             
-            if(decl->base.kind == AST_typedef){
+            if(decl->kind == AST_typedef){
                 // @cleanup: S_UDT
                 continue;
             }
             
-            if(decl->base.kind == AST_function){
+            if(decl->kind == AST_function){
                 // @cleanup: What should we do here?
                 continue;
             }
@@ -684,7 +684,7 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
         codeview_emit_debug_information_for_function__recursive(function, arena, subscope, relocation_arena, debug_symbols_base);
     }
     
-    if(scope->amount_of_declarations && (struct ast_scope *)function->scope != scope){
+    if(scope->amount_of_declarations && function->scope != scope){
         *push_struct(arena, u16) = /*length*/2;
         *push_struct(arena, u16) = /*S_END*/6;
     }
@@ -765,10 +765,10 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         struct ast_table *table = &compilation_unit->static_declaration_table;
         
         for(u64 table_index = 0; table_index < table->capacity; table_index++){
-            struct ast *ast = table->nodes[table_index].ast;
+            enum ast_kind *ast = table->nodes[table_index].ast;
             if(!ast) continue;
             
-            if(ast->kind == AST_declaration){
+            if(*ast == AST_declaration){
                 struct ast_declaration *decl = (struct ast_declaration *)ast;
                 
                 if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
@@ -782,18 +782,18 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 if(decl->flags & DECLARATION_FLAGS_is_thread_local){
                     if((decl->flags & DECLARATION_FLAGS_is_extern) && !decl->assign_expr){
-                        ast_list_append(&external_variables, scratch, &decl->base);
+                        ast_list_append(&external_variables, scratch, &decl->kind);
                     }else{
-                        ast_list_append(&tls_variables, scratch, &decl->base);
+                        ast_list_append(&tls_variables, scratch, &decl->kind);
                     }
                     continue;
                 }
                 
                 if(decl->flags & DECLARATION_FLAGS_is_static){
                     if(decl->assign_expr){
-                        ast_list_append(&defined_variables, scratch, &decl->base);
+                        ast_list_append(&defined_variables, scratch, &decl->kind);
                     }else{
-                        ast_list_append(&zero_initialized_statics, scratch, &decl->base);
+                        ast_list_append(&zero_initialized_statics, scratch, &decl->kind);
                     }
                     continue;
                 }
@@ -802,37 +802,37 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     string_list_postfix(&directives, scratch, push_format_string(scratch, "/EXPORT:%.*s,DATA ", decl->identifier->size, decl->identifier->data));
                     
                     if(decl->assign_expr){
-                        ast_list_append(&defined_variables, scratch, &decl->base);
+                        ast_list_append(&defined_variables, scratch, &decl->kind);
                     }else{
-                        ast_list_append(&automatic_variables, scratch, &decl->base);
+                        ast_list_append(&automatic_variables, scratch, &decl->kind);
                     }
                     continue;
                 }
                 
                 if(decl->assign_expr){
                     if(decl->flags & DECLARATION_FLAGS_is_selectany){
-                        ast_list_append(&selectany_variables, scratch, &decl->base);
+                        ast_list_append(&selectany_variables, scratch, &decl->kind);
                         selectany_sections += 1; // @cleanup: .debug$S ?
                         continue;
                     }
                     
-                    ast_list_append(&defined_variables, scratch, &decl->base);
+                    ast_list_append(&defined_variables, scratch, &decl->kind);
                     continue;
                 }
                 
                 if(decl->flags & DECLARATION_FLAGS_is_extern){
-                    ast_list_append(&external_variables, scratch, &decl->base);
+                    ast_list_append(&external_variables, scratch, &decl->kind);
                     continue;
                 }
                 
                 if(decl->flags & DECLARATION_FLAGS_is_dllimport){
-                    ast_list_append(&external_variables, scratch, &decl->base);
+                    ast_list_append(&external_variables, scratch, &decl->kind);
                     continue;
                 }
                 
-                ast_list_append(&automatic_variables, scratch, &decl->base);
+                ast_list_append(&automatic_variables, scratch, &decl->kind);
                 
-            }else if(ast->kind == AST_function){
+            }else if(*ast == AST_function){
                 struct ast_function *function = (struct ast_function *)ast;
                 
                 if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
@@ -851,7 +851,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     //     continue;
                     // }
                     
-                    ast_list_append(&defined_functions, scratch, &function->base);
+                    ast_list_append(&defined_functions, scratch, &function->kind);
                     
                     // @cleanup: These should work different for selectany.
                     for_ast_list(function->static_variables){
@@ -860,9 +860,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     continue;
                 }
                 
-                ast_list_append(&external_functions, scratch, &function->base);
+                ast_list_append(&external_functions, scratch, &function->kind);
             }else{
-                assert(ast->kind == AST_typedef);
+                assert(*ast == AST_typedef);
             }
         }
     }
@@ -873,10 +873,10 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         if(!decl) continue;
         if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
         
-        if(decl->base.kind == AST_declaration){
-            ast_list_append(&external_variables, scratch, &decl->base);
+        if(decl->kind == AST_declaration){
+            ast_list_append(&external_variables, scratch, &decl->kind);
         }else{
-            ast_list_append(&external_functions, scratch, &decl->base);
+            ast_list_append(&external_functions, scratch, &decl->kind);
         }
     }
     
@@ -895,7 +895,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     
     if(tls_variables.count){
         // If there were tls variables, the index was referenced.
-        ast_list_append(&external_variables, scratch, &globals.tls_index_declaration->base);
+        ast_list_append(&external_variables, scratch, &globals.tls_index_declaration->kind);
     }
     
     
@@ -1245,14 +1245,14 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         u8 *rdata_base = arena_current(arena);
         
         struct{
-            struct ast_string_literal *literals;
+            struct ir_string_literal *literals;
             smm amount_of_literals;
         } string_literals_by_size[5] = zero_struct; // only index 1, 2, 4 are used.
         
         for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
             struct context *thread_context = globals.thread_infos[thread_index].context;
-            for(struct ast_string_literal *lit = thread_context->string_literals.first; lit; ){
-                struct ast_string_literal *next = lit->next;
+            for(struct ir_string_literal *lit = thread_context->string_literals.first; lit; ){
+                struct ir_string_literal *next = lit->next;
                 
                 // :string_kind_is_element_size
                 lit->next = string_literals_by_size[lit->string_kind].literals;
@@ -1279,10 +1279,10 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
             push_zero_align(arena, element_size);
             
-            for(struct ast_string_literal *lit = string_literals_by_size[element_size].literals; lit; lit = lit->next){
+            for(struct ir_string_literal *lit = string_literals_by_size[element_size].literals; lit; lit = lit->next){
                 
 #if defined(_Debug)
-                struct ast_array_type *array = (struct ast_array_type *)lit->base.resolved_type;
+                struct ast_array_type *array = (struct ast_array_type *)lit->type;
                 assert(array->element_type->size == element_size);
 #endif
                 
@@ -1325,16 +1325,16 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         struct{
-            struct ast_emitted_float_literal *literals;
+            struct ir_emitted_float_literal *literals;
             smm amount_of_literals;
         } float_literals_by_type[2] = zero_struct; // 0 - float, 1 - double
         
         for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
             struct context *thread_context = globals.thread_infos[thread_index].context;
-            for(struct ast_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; ){
-                struct ast_emitted_float_literal *next = lit->next;
+            for(struct ir_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; ){
+                struct ir_emitted_float_literal *next = lit->next;
                 
-                int is_double = (lit->base.resolved_type == &globals.typedef_f64);
+                int is_double = (lit->type == &globals.typedef_f64);
                 
                 lit->next = float_literals_by_type[is_double].literals;
                 float_literals_by_type[is_double].literals = lit;
@@ -1360,7 +1360,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             smm capacity = u64_round_up_to_next_power_of_two((u64)(1.5 * amount_of_literals));
             void **table = push_data(scratch, void *, capacity);
             
-            for(struct ast_emitted_float_literal *lit = float_literals_by_type[is_double].literals; lit; lit = lit->next){
+            for(struct ir_emitted_float_literal *lit = float_literals_by_type[is_double].literals; lit; lit = lit->next){
                 
                 u64 hash = xor_shift64(*(u64 *)&lit->value);
                 
@@ -1553,7 +1553,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
             
             for(u64 table_index = 0; table_index < table->capacity; table_index++){
-                struct ast *ast = table->nodes[table_index].ast;
+                enum ast_kind *ast = table->nodes[table_index].ast;
                 if(!ast) continue;
                 
                 struct ast_declaration *decl = (struct ast_declaration *)ast;
@@ -1564,12 +1564,12 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     continue;
                 }
                 
-                if(decl->base.kind == AST_typedef){
+                if(decl->kind == AST_typedef){
                     register_type(&type_index_allocator, arena, scratch, decl->type);
                     continue;
                 }
                 
-                if(ast->kind == AST_declaration){
+                if(*ast == AST_declaration){
                     
                     // For dllimports, the defining dll has the declaration and type information.
                     if(decl->flags & DECLARATION_FLAGS_is_dllimport) continue;
@@ -1614,7 +1614,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             struct ast_stack_node{
                 struct ast_scope *scope;
             } *stack = push_uninitialized_data(&stack_arena, struct ast_stack_node, ast_stack_capacity);
-            stack[0].scope = (struct ast_scope *)function->scope;
+            stack[0].scope = function->scope;
             
 #define push_to_stack(scope_to_push) {\
     if(ast_stack_size == ast_stack_capacity){\
@@ -1935,7 +1935,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 *frameproc_length = (u16)(arena_current(arena) - (u8 *)(frameproc_length + 1));
                 
-                codeview_emit_debug_information_for_function__recursive(function, arena, (struct ast_scope *)function->scope, scratch, debug_symbols_base);
+                codeview_emit_debug_information_for_function__recursive(function, arena, function->scope, scratch, debug_symbols_base);
                 
                 *push_struct(arena, u16) = 2; // length
                 *push_struct(arena, u16) = /*S_PROC_ID_END*/0x114f;
@@ -1976,7 +1976,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 relocation->destination_offset = (u32)((u8 *)&lines_header->offset_in_section_contribution - debug_symbols_base);
                 relocation->source_declaration = &function->as_decl;
                 
-                struct ast_scope *scope = (struct ast_scope *)function->scope;
+                struct ast_scope *scope = function->scope;
                 u32 file_index = scope->token->file_index;
                 struct file *file = globals.file_table.data[file_index];
                 
@@ -2042,7 +2042,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
                 
                 for(u64 table_index = 0; table_index < table->capacity; table_index++){
-                    struct ast *ast = table->nodes[table_index].ast;
+                    enum ast_kind *ast = table->nodes[table_index].ast;
                     if(!ast) continue;
                     
                     struct ast_declaration *decl = (struct ast_declaration *)ast;
@@ -2059,7 +2059,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         u32 enum_type_index = decl->type->pdb_type_index;
                         assert(enum_type_index);
                         
-                        s32 value = (s32)integer_literal_to_bytes(decl->assign_expr);
+                        s32 value = (s32)integer_literal_to_bytes((struct ir *)decl->assign_expr);
                         
                         u16 *length = push_struct(arena, u16);
                         *push_struct(arena, u16) = /*S_CONSTANT*/0x1107;
@@ -2071,7 +2071,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         continue;
                     }
                     
-                    if(decl->base.kind == AST_typedef){
+                    if(decl->kind == AST_typedef){
                         // 
                         // Emit a 'S_UDT' for all typedefs.
                         // 
@@ -2085,7 +2085,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         *length = (u16)(arena_current(arena)- (u8 *)(length + 1));
                     }
                     
-                    if(ast->kind == AST_declaration){
+                    if(*ast == AST_declaration){
                         assert(!(decl->flags & DECLARATION_FLAGS_is_local_persist));
                         
                         // @note: dllimports do not have debug symbols.
@@ -2645,12 +2645,12 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 continue;
             }
             
-            if(dest_declaration->base.kind == AST_function){
+            if(dest_declaration->kind == AST_function){
                 patch->next = text_patches;
                 text_patches = patch;
                 amount_of_text_patches += 1;
             }else{
-                assert(dest_declaration->base.kind == AST_declaration);
+                assert(dest_declaration->kind == AST_declaration);
                 
                 if(dest_declaration->flags & DECLARATION_FLAGS_is_thread_local){
                     patch->next = tls_patches;
@@ -2727,17 +2727,17 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 relocation->relocation_type = /*SECREL*/0xB;
             }
             
-            enum ast_kind source_kind = patch->source->kind;
+            enum ast_kind source_kind = *patch->source;
             
             if(source_kind == AST_function || source_kind == AST_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)source->symbol_table_index;
             }else if(source_kind == AST_emitted_float_literal){
-                struct ast_emitted_float_literal *source = (struct ast_emitted_float_literal *)patch->source;
+                struct ir_emitted_float_literal *source = (struct ir_emitted_float_literal *)patch->source;
                 
                 u32 symbol_table_index;
-                if(source->base.resolved_type == &globals.typedef_f64){
+                if(source->type == &globals.typedef_f64){
                     symbol_table_index = (u32)(double_symbol_base + (source->relative_virtual_address - double_start_offset) / 8);
                 }else{
                     symbol_table_index = (u32)(float_symbol_base + (source->relative_virtual_address - float_start_offset) / 4);
@@ -2745,8 +2745,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 relocation->source_symbol_table_index = symbol_table_index;
             }else{
-                assert(source_kind == AST_string_literal);
-                struct ast_string_literal *source = (struct ast_string_literal *)patch->source;
+                assert(source_kind == IR_string_literal);
+                struct ir_string_literal *source = (struct ir_string_literal *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)(string_symbol_base + source->symbol_table_index);
             }
@@ -2781,7 +2781,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             assert(patch->kind == PATCH_absolute); // There should only be absolute patches to .data
             
             struct ast_declaration *declaration = (struct ast_declaration *)patch->dest_declaration;
-            assert(declaration->base.kind == AST_declaration);
+            assert(declaration->kind == AST_declaration);
             
             struct coff_relocation *relocation = (void *)(data_relocations_data + 10 * index++);
             relocation->relocation_type = /*ADDR64*/1;
@@ -2790,7 +2790,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             // @note: We need the source offset to already be applied to the data.
             *(u64 *)(declaration->memory_location + patch->location_offset_in_dest_declaration) = patch->location_offset_in_source_declaration;
             
-            enum ast_kind source_kind = patch->source->kind;
+            enum ast_kind source_kind = *patch->source;
             
             if(source_kind == AST_function || source_kind == AST_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
@@ -2798,8 +2798,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 u32 is_reference_to_stub = (source->flags & DECLARATION_FLAGS_need_dllimport_stub_function) != 0;
                 relocation->source_symbol_table_index = (u32)source->symbol_table_index + is_reference_to_stub;
             }else{
-                assert(source_kind == AST_string_literal);
-                struct ast_string_literal *source = (struct ast_string_literal *)patch->source;
+                assert(source_kind == IR_string_literal);
+                struct ir_string_literal *source = (struct ir_string_literal *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)(string_symbol_base + source->symbol_table_index);
             }
@@ -2836,7 +2836,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             assert(patch->kind == PATCH_absolute); // There should only be absolute patches to .data
             
             struct ast_declaration *declaration = (struct ast_declaration *)patch->dest_declaration;
-            assert(declaration->base.kind == AST_declaration);
+            assert(declaration->kind == AST_declaration);
             
             struct coff_relocation *relocation = (void *)(tls_relocations_data + 10 * index++);
             relocation->relocation_type = /*ADDR64*/1;
@@ -2845,7 +2845,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             // @note: We need the source offset to already be applied to the data.
             *(u64 *)(declaration->memory_location + patch->location_offset_in_dest_declaration) = patch->location_offset_in_source_declaration;
             
-            enum ast_kind source_kind = patch->source->kind;
+            enum ast_kind source_kind = *patch->source;
             
             if(source_kind == AST_function || source_kind == AST_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
@@ -2853,8 +2853,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 u32 is_reference_to_stub = (source->flags & DECLARATION_FLAGS_need_dllimport_stub_function) != 0;
                 relocation->source_symbol_table_index = (u32)source->symbol_table_index + is_reference_to_stub;
             }else{
-                assert(source_kind == AST_string_literal);
-                struct ast_string_literal *source = (struct ast_string_literal *)patch->source;
+                assert(source_kind == IR_string_literal);
+                struct ir_string_literal *source = (struct ir_string_literal *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)(string_symbol_base + source->symbol_table_index);
             }

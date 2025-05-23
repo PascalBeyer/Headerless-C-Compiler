@@ -167,9 +167,7 @@ int main(){
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10
     };
     
-    for(u32 i = 0; i < array_count(u32_array); i++){
-        assert(i + 1 == u32_array[i]);
-    }
+    for(u32 i = 0; i < array_count(u32_array); i++){ assert(i + 1 == u32_array[i]); }
     assert(u32_array[0] <= u32_array[2]);
     
     char array_string[13] = "i'm an array";
