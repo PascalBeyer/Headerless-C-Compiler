@@ -1,3 +1,6 @@
+// broken 
+
+// This is not the test it claims to be.
 
 typedef _Atomic(char)      atomic_char;
 

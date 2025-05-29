@@ -110,7 +110,7 @@ struct asm_operand{
             smm offset;
         };
         struct{ // ASM_ARG_declaration_reference
-            struct ast *expr;
+            struct expr expr;
             b32 is_inline_asm_function_argument;
             b32 is_inline_asm_function_argument_that_needs_to_be_an_integer;
             b32 is_inline_asm_function_argument_that_can_be_integer;
@@ -1288,23 +1288,25 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     struct asm_operand operand = {0};
     
     // @cleanup: ASM_ARG_declaration_dereference for '*decl' and 'decl[10]'.
-    struct ast *expr = parse_expression(context, /*skip_comma = */true);
+    struct expr expr = parse_expression(context, /*skip_comma = */true);
     if(context->should_exit_statement) return operand;
     
-    if(expr->kind == AST_integer_literal){
+    if(expr.ir->kind == IR_integer_literal){
         // Integer literals are fine!
         operand.kind      = ASM_ARG_immediate;
-        operand.immediate = integer_literal_as_u64(expr);
-        operand.size      = expr->resolved_type->size;
+        operand.immediate = integer_literal_as_u64(&expr);
+        operand.size      = expr.resolved_type->size;
+        
+        pop_from_ir_arena(context, (struct ir_integer_literal *)expr.ir);
         return operand;
     }
     
     operand.kind = ASM_ARG_declaration_reference;
     operand.expr = expr;
-    operand.size = expr->resolved_type->size;
+    operand.size = expr.resolved_type->size;
     
-    if(context->in_inline_asm_function && operand.expr->kind == AST_identifier){
-        struct ast_identifier *ident = (struct ast_identifier *)expr;
+    if(context->in_inline_asm_function && operand.expr.ir->kind == IR_identifier){
+        struct ir_identifier *ident = (struct ir_identifier *)expr.ir;
         
         //
         // @cleanup: is there not just a flag somewhere we can check?
@@ -1325,34 +1327,36 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     while(true){
         
         // We should end with an identifier, if everything goes well!
-        if(expr->kind == AST_identifier) break;
+        if(expr.ir->kind == IR_identifier) break;
         
-        if(expr->kind == AST_member){
-            struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)expr;
-            expr = dot->lhs;
+        if(expr.ir->kind == AST_member){
+            not_implemented;
+            // struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)expr;
+            // expr = dot->lhs;
             continue;
         }
         
-        if(expr->kind == AST_array_subscript){
-            struct ast_subscript *subscript = (struct ast_subscript *)expr;
-            if(subscript->index->kind == AST_integer_literal){
-                expr = subscript->lhs;
-                continue;
-            }
+        if(expr.ir->kind == IR_array_subscript){
+            not_implemented;
+            // struct ast_subscript *subscript = (struct ast_subscript *)expr;
+            // if(subscript->index->kind == AST_integer_literal){
+                // expr = subscript->lhs;
+                // continue;
+            // }
         }
         
-        report_error(context, expr->token, "Currently, only expressions of the form 'a.b.c' or 'array[<const>]' are allowed as inline asm operands.");
+        report_error(context, expr.token, "Currently, only expressions of the form 'a.b.c' or 'array[<const>]' are allowed as inline asm operands.");
         break;
     }
     
-    struct ast_type *type = operand.expr->resolved_type;
+    struct ast_type *type = expr.resolved_type;
     if(type->kind != AST_integer_type && type->kind != AST_float_type && type->kind != AST_pointer_type && !(type->flags & TYPE_FLAG_is_intrin_type)){
         char *remark = "";
         if(type->kind == AST_union || type->kind == AST_struct){
             remark = " (If you defined your own *mm types, please mark them __declspec(intrin_type)).";
         }
         
-        report_error(context, expr->token, "Invalid type for asm operand.%s", remark);
+        report_error(context, expr.token, "Invalid type for asm operand.%s", remark);
     }
     
     operand.register_kind_when_loaded = get_register_kind_for_type(type);
@@ -1458,6 +1462,7 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
     if(!finished){
         skip_scale:
         
+        struct token *start_token = get_current_token(context);
         struct asm_operand operand = asm_maybe_parse_expression_operand(context);
         expect_token(context, TOKEN_closed_index, "Expected ']' ending the memory operand.");
         
@@ -1467,10 +1472,11 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
         }else if(operand.kind == ASM_ARG_declaration_reference){
             
             smm pointer_to_size = 0;
-            if(operand.expr->resolved_type->kind != AST_pointer_type){
-                report_error(context, operand.expr->token, "Expression inside memory operand must be a pointer.");
+            if(operand.expr.resolved_type->kind != AST_pointer_type){
+                // @note: The token is sort of a hack.
+                report_error(context, start_token, "Expression inside memory operand must be a pointer.");
             }else{
-                pointer_to_size = ((struct ast_pointer_type *)operand.expr->resolved_type)->pointer_to->size;
+                pointer_to_size = ((struct ast_pointer_type *)operand.expr.resolved_type)->pointer_to->size;
             }
             
             operand.kind = ASM_ARG_declaration_dereference;
@@ -1483,7 +1489,7 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
             
             return operand;
         }else if(operand.kind == ASM_ARG_declaration_dereference){
-            report_error(context, operand.expr->token, "Cannot have a derefenrence inside of a memory operand (e.g.: 'mov [*pointer], 1' is illegal).");
+            report_error(context, start_token, "Cannot have a derefenrence inside of a memory operand (e.g.: 'mov [*pointer], 1' is illegal).");
         }else{
             // @note: There should have already been an error, but just to make sure, here is a bad error message!
             report_syntax_error(context, get_current_token_for_error_report(context), "Invalid asm memory operand.");
@@ -1731,7 +1737,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             case ASM_ARG_declaration_reference:{
                 b32 should_error = false;
                 
-                struct ast_type *type = operand.expr->resolved_type;
+                struct ast_type *type = operand.expr.resolved_type;
                 if(operand.is_inline_asm_function_argument && type->kind == AST_integer_type){
                     
                     if((desired_operand_flags & ASM_OP_KIND_any_imm) == (desired_operand_flags & (ASM_OP_KIND_any_regm | ASM_OP_KIND_any_imm))){
@@ -2224,7 +2230,15 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
 }
 
 
-func void parse_asm_block(struct context *context, struct ast_asm_block *asm_block){
+func void parse_asm_block(struct context *context, struct ir_asm_block *asm_block){
+    
+    struct ir_skip *ir_skip = null;
+    if(!context->in_inline_asm_function){
+        // @HACK: skip all the ir that is in the block.
+        ir_skip = push_struct(&context->ir_arena, struct ir_skip);
+        ir_skip->base.kind = IR_skip;
+    }
+    
     // note they should always 'ballance', thus this scope _should_ end but lets be careful
     while(!peek_token_eat(context, TOKEN_closed_curly) && !peek_token(context, TOKEN_invalid)){
         
@@ -2243,5 +2257,10 @@ func void parse_asm_block(struct context *context, struct ast_asm_block *asm_blo
             }
             break;
         }
+    }
+    
+    
+    if(ir_skip){
+        ir_skip->size_to_skip = (u32)(arena_current(&context->ir_arena) - (u8*)ir_skip);
     }
 }

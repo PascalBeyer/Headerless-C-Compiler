@@ -593,147 +593,101 @@ struct debug_symbols_relocation_info{
 };
 
 
-void codeview_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast *ast, struct memory_arena *relocation_arena, u8 *debug_symbols_base){
-    assert(ast->byte_offset_in_function >= 0);
+void codeview_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast_scope *scope, struct memory_arena *relocation_arena, u8 *debug_symbols_base){
+    // assert(ast->byte_offset_in_function >= 0);
     
-    switch(ast->kind){
-        case AST_scope:{
-            struct ast_scope *scope = (struct ast_scope *)ast;
-            
-            if(scope->amount_of_declarations){
-                
-                if(function->scope != ast){
-                    struct codeview_block32{
-                        u16 length;
-                        u16 kind;
-                        u32 pointer_to_parent; // filled in by the linker
-                        u32 pointer_to_end;    // filled in by the linker
-                        u32 scope_size;
-                        u32 offset_in_section;
-                        u16 section;
-                    } *block = push_struct(arena, struct codeview_block32);
-                    block->length = sizeof(*block) - 2;
-                    block->kind   = /*S_BLOCK32*/0x1103;
-                    block->scope_size = scope->scope_end_byte_offset_in_function - scope->base.byte_offset_in_function;
-                    
-                    block->offset_in_section = scope->base.byte_offset_in_function; // relocated by relocation.
-                    block->section = 0; // filled in by relocation.
-                    
-                    struct debug_symbols_relocation_info *relocation = push_struct(relocation_arena, struct debug_symbols_relocation_info);
-                    relocation->destination_offset = (u32)((u8 *)&block->offset_in_section - debug_symbols_base);
-                    relocation->source_declaration = &function->as_decl;
-                }
-                
-                for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
-                    struct ast_declaration *decl = scope->declarations[declaration_index];
-                    if(!decl) continue;
-                    
-                    if(decl->base.kind == AST_typedef){
-                        // @cleanup: S_UDT
-                        continue;
-                    }
-                    
-                    if(decl->base.kind == AST_function){
-                        // @cleanup: What should we do here?
-                        continue;
-                    }
-                    
-                    if(decl->flags & DECLARATION_FLAGS_is_local_persist){
-                        // @cleanup: S_LDATA32
-                        continue;
-                    }
-                    
-                    if(decl->flags & DECLARATION_FLAGS_is_enum_member){
-                        // @cleanup: S_CONSTANT
-                        continue;
-                    }
-                    
-                    // 
-                    // It's a "normal" declaration.
-                    // 
-                    
-                    struct codeview_regrel32{
-                        u16 length;
-                        u16 kind;
-                        u32 offset_of_register;
-                        u32 type_index;
-                        u16 register_index;
-                        u8 identifier[];
-                    } *regrel = push_struct_(arena, offset_in_type(struct codeview_regrel32, identifier) + decl->identifier->string.size + 1, /*alignment*/4);
-                    
-                    regrel->kind = /*S_REGREL32*/0x1111;
-                    regrel->offset_of_register = (s32)(-decl->offset_on_stack);
-                    regrel->type_index = decl->type->pdb_type_index;
-                    regrel->register_index = /*CV_AMD64_RBP*/334;
-                    memcpy(regrel->identifier, decl->identifier->string.data, decl->identifier->string.size);
-                    regrel->identifier[decl->identifier->string.size] = 0;
-                    
-                    push_f3f2f1_align(arena, sizeof(u32));
-                    regrel->length = (u16)(arena_current(arena) - (u8 *)&regrel->kind);
-                }
-            }
-            
-            for_ast_list(scope->statement_list){
-                codeview_emit_debug_information_for_function__recursive(function, arena, it->value, relocation_arena, debug_symbols_base);
-            }
-            
-            if(scope->amount_of_declarations && function->scope != ast){
-                *push_struct(arena, u16) = /*length*/2;
-                *push_struct(arena, u16) = /*S_END*/6;
-            }
-            
-        }break;
+    if(scope->amount_of_declarations){
         
-        case AST_if:{
-            struct ast_if *ast_if = cast(struct ast_if *)ast;
-            codeview_emit_debug_information_for_function__recursive(function, arena, ast_if->statement, relocation_arena, debug_symbols_base);
-            if(ast_if->else_statement){
-                codeview_emit_debug_information_for_function__recursive(function, arena, ast_if->else_statement, relocation_arena, debug_symbols_base);
-            }
-        }break;
-        
-        case AST_do_while: case AST_for:{
-            struct ast_for *ast_for = (struct ast_for *)ast;
+        if(function->scope != scope){
+            struct codeview_block32{
+                u16 length;
+                u16 kind;
+                u32 pointer_to_parent; // filled in by the linker
+                u32 pointer_to_end;    // filled in by the linker
+                u32 scope_size;
+                u32 offset_in_section;
+                u16 section;
+            } *block = push_struct(arena, struct codeview_block32);
+            block->length = sizeof(*block) - 2;
+            block->kind   = /*S_BLOCK32*/0x1103;
             
-            if(ast_for->scope_for_decl->amount_of_declarations){
-                // 
-                // @hack: The statement_list of the 'ast_for->scope_for_decl' is actually empty, 
-                //        not containing the 'ast_for->body'. Hence, we have introduce the S_BLOCK32
-                //        then somehow the 'ast_for->body' and finally end with the 'S_END'.
-                //        We do this is the most hacky way, by first emitting the code for the 'scope_for_decl'
-                //        this will end for an 'S_END', we "pop" this 'S_END' and emit the code for the 'ast_for->body'.
-                //        Finally, we re-emit the 'S_END'.
-                // 
-                
-                codeview_emit_debug_information_for_function__recursive(function, arena, &ast_for->scope_for_decl->base, relocation_arena, debug_symbols_base);
-                arena->current -= 4;
-                codeview_emit_debug_information_for_function__recursive(function, arena, ast_for->body, relocation_arena, debug_symbols_base);
-                *push_struct(arena, u16) = /*length*/2;
-                *push_struct(arena, u16) = /*S_END*/6;
-                
+            if(scope->start_line_index == -1){
+                // Function is empty.
+                block->scope_size = 0;
+                block->offset_in_section = 0; // ?
             }else{
-                // 
-                // We don't need a scope for the body.
-                // 
-                codeview_emit_debug_information_for_function__recursive(function, arena, ast_for->body, relocation_arena, debug_symbols_base);
+                struct function_line_information start = function->line_information.data[scope->start_line_index];
+                struct function_line_information end   = function->line_information.data[scope->end_line_index];
+                
+                // @cleanup: Does this correctly include function->size_of_prologue?
+                block->scope_size = end.offset - start.offset;
+                block->offset_in_section = start.offset; // relocated by relocation.
             }
-        }break;
+            
+            block->section = 0; // filled in by relocation.
+            
+            struct debug_symbols_relocation_info *relocation = push_struct(relocation_arena, struct debug_symbols_relocation_info);
+            relocation->destination_offset = (u32)((u8 *)&block->offset_in_section - debug_symbols_base);
+            relocation->source_declaration = &function->as_decl;
+        }
         
-        case AST_switch:{
-            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-            codeview_emit_debug_information_for_function__recursive(function, arena, ast_switch->statement, relocation_arena, debug_symbols_base);
-        }break;
-        case AST_label:{
-            struct ast_label *ast_label = cast(struct ast_label *)ast;
-            if(ast_label->statement) codeview_emit_debug_information_for_function__recursive(function, arena, ast_label->statement, relocation_arena, debug_symbols_base);
-        }break;
-        case AST_case:{
-            struct ast_case *ast_case = cast(struct ast_case *)ast;
-            if(ast_case->statement) codeview_emit_debug_information_for_function__recursive(function, arena, ast_case->statement, relocation_arena, debug_symbols_base);
-        }break;
-        default: break;
+        for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
+            struct ast_declaration *decl = scope->declarations[declaration_index];
+            if(!decl) continue;
+            
+            if(decl->kind == AST_typedef){
+                // @cleanup: S_UDT
+                continue;
+            }
+            
+            if(decl->kind == AST_function){
+                // @cleanup: What should we do here?
+                continue;
+            }
+            
+            if(decl->flags & DECLARATION_FLAGS_is_local_persist){
+                // @cleanup: S_LDATA32
+                continue;
+            }
+            
+            if(decl->flags & DECLARATION_FLAGS_is_enum_member){
+                // @cleanup: S_CONSTANT
+                continue;
+            }
+            
+            // 
+            // It's a "normal" declaration.
+            // 
+            
+            struct codeview_regrel32{
+                u16 length;
+                u16 kind;
+                u32 offset_of_register;
+                u32 type_index;
+                u16 register_index;
+                u8 identifier[];
+            } *regrel = push_struct_(arena, offset_in_type(struct codeview_regrel32, identifier) + decl->identifier->string.size + 1, /*alignment*/4);
+            
+            regrel->kind = /*S_REGREL32*/0x1111;
+            regrel->offset_of_register = (s32)(-decl->offset_on_stack);
+            regrel->type_index = decl->type->pdb_type_index;
+            regrel->register_index = /*CV_AMD64_RBP*/334;
+            memcpy(regrel->identifier, decl->identifier->string.data, decl->identifier->string.size);
+            regrel->identifier[decl->identifier->string.size] = 0;
+            
+            push_f3f2f1_align(arena, sizeof(u32));
+            regrel->length = (u16)(arena_current(arena) - (u8 *)&regrel->kind);
+        }
     }
     
+    for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+        codeview_emit_debug_information_for_function__recursive(function, arena, subscope, relocation_arena, debug_symbols_base);
+    }
+    
+    if(scope->amount_of_declarations && function->scope != scope){
+        *push_struct(arena, u16) = /*length*/2;
+        *push_struct(arena, u16) = /*S_END*/6;
+    }
 }
 
 void print_obj(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
@@ -811,10 +765,10 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         struct ast_table *table = &compilation_unit->static_declaration_table;
         
         for(u64 table_index = 0; table_index < table->capacity; table_index++){
-            struct ast *ast = table->nodes[table_index].ast;
+            enum ast_kind *ast = table->nodes[table_index].ast;
             if(!ast) continue;
             
-            if(ast->kind == AST_declaration){
+            if(*ast == AST_declaration){
                 struct ast_declaration *decl = (struct ast_declaration *)ast;
                 
                 if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
@@ -828,18 +782,18 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 if(decl->flags & DECLARATION_FLAGS_is_thread_local){
                     if((decl->flags & DECLARATION_FLAGS_is_extern) && !decl->assign_expr){
-                        ast_list_append(&external_variables, scratch, &decl->base);
+                        ast_list_append(&external_variables, scratch, &decl->kind);
                     }else{
-                        ast_list_append(&tls_variables, scratch, &decl->base);
+                        ast_list_append(&tls_variables, scratch, &decl->kind);
                     }
                     continue;
                 }
                 
                 if(decl->flags & DECLARATION_FLAGS_is_static){
                     if(decl->assign_expr){
-                        ast_list_append(&defined_variables, scratch, &decl->base);
+                        ast_list_append(&defined_variables, scratch, &decl->kind);
                     }else{
-                        ast_list_append(&zero_initialized_statics, scratch, &decl->base);
+                        ast_list_append(&zero_initialized_statics, scratch, &decl->kind);
                     }
                     continue;
                 }
@@ -848,37 +802,37 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     string_list_postfix(&directives, scratch, push_format_string(scratch, "/EXPORT:%.*s,DATA ", decl->identifier->size, decl->identifier->data));
                     
                     if(decl->assign_expr){
-                        ast_list_append(&defined_variables, scratch, &decl->base);
+                        ast_list_append(&defined_variables, scratch, &decl->kind);
                     }else{
-                        ast_list_append(&automatic_variables, scratch, &decl->base);
+                        ast_list_append(&automatic_variables, scratch, &decl->kind);
                     }
                     continue;
                 }
                 
                 if(decl->assign_expr){
                     if(decl->flags & DECLARATION_FLAGS_is_selectany){
-                        ast_list_append(&selectany_variables, scratch, &decl->base);
+                        ast_list_append(&selectany_variables, scratch, &decl->kind);
                         selectany_sections += 1; // @cleanup: .debug$S ?
                         continue;
                     }
                     
-                    ast_list_append(&defined_variables, scratch, &decl->base);
+                    ast_list_append(&defined_variables, scratch, &decl->kind);
                     continue;
                 }
                 
                 if(decl->flags & DECLARATION_FLAGS_is_extern){
-                    ast_list_append(&external_variables, scratch, &decl->base);
+                    ast_list_append(&external_variables, scratch, &decl->kind);
                     continue;
                 }
                 
                 if(decl->flags & DECLARATION_FLAGS_is_dllimport){
-                    ast_list_append(&external_variables, scratch, &decl->base);
+                    ast_list_append(&external_variables, scratch, &decl->kind);
                     continue;
                 }
                 
-                ast_list_append(&automatic_variables, scratch, &decl->base);
+                ast_list_append(&automatic_variables, scratch, &decl->kind);
                 
-            }else if(ast->kind == AST_function){
+            }else if(*ast == AST_function){
                 struct ast_function *function = (struct ast_function *)ast;
                 
                 if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
@@ -897,7 +851,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     //     continue;
                     // }
                     
-                    ast_list_append(&defined_functions, scratch, &function->base);
+                    ast_list_append(&defined_functions, scratch, &function->kind);
                     
                     // @cleanup: These should work different for selectany.
                     for_ast_list(function->static_variables){
@@ -906,9 +860,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     continue;
                 }
                 
-                ast_list_append(&external_functions, scratch, &function->base);
+                ast_list_append(&external_functions, scratch, &function->kind);
             }else{
-                assert(ast->kind == AST_typedef);
+                assert(*ast == AST_typedef);
             }
         }
     }
@@ -919,10 +873,10 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         if(!decl) continue;
         if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
         
-        if(decl->base.kind == AST_declaration){
-            ast_list_append(&external_variables, scratch, &decl->base);
+        if(decl->kind == AST_declaration){
+            ast_list_append(&external_variables, scratch, &decl->kind);
         }else{
-            ast_list_append(&external_functions, scratch, &decl->base);
+            ast_list_append(&external_functions, scratch, &decl->kind);
         }
     }
     
@@ -941,7 +895,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     
     if(tls_variables.count){
         // If there were tls variables, the index was referenced.
-        ast_list_append(&external_variables, scratch, &globals.tls_index_declaration->base);
+        ast_list_append(&external_variables, scratch, &globals.tls_index_declaration->kind);
     }
     
     
@@ -1291,14 +1245,14 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         u8 *rdata_base = arena_current(arena);
         
         struct{
-            struct ast_string_literal *literals;
+            struct ir_string_literal *literals;
             smm amount_of_literals;
         } string_literals_by_size[5] = zero_struct; // only index 1, 2, 4 are used.
         
         for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
             struct context *thread_context = globals.thread_infos[thread_index].context;
-            for(struct ast_string_literal *lit = thread_context->string_literals.first; lit; ){
-                struct ast_string_literal *next = lit->next;
+            for(struct ir_string_literal *lit = thread_context->string_literals.first; lit; ){
+                struct ir_string_literal *next = lit->next;
                 
                 // :string_kind_is_element_size
                 lit->next = string_literals_by_size[lit->string_kind].literals;
@@ -1325,10 +1279,10 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
             push_zero_align(arena, element_size);
             
-            for(struct ast_string_literal *lit = string_literals_by_size[element_size].literals; lit; lit = lit->next){
+            for(struct ir_string_literal *lit = string_literals_by_size[element_size].literals; lit; lit = lit->next){
                 
 #if defined(_Debug)
-                struct ast_array_type *array = (struct ast_array_type *)lit->base.resolved_type;
+                struct ast_array_type *array = (struct ast_array_type *)lit->type;
                 assert(array->element_type->size == element_size);
 #endif
                 
@@ -1371,16 +1325,16 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         struct{
-            struct ast_float_literal *literals;
+            struct ir_emitted_float_literal *literals;
             smm amount_of_literals;
         } float_literals_by_type[2] = zero_struct; // 0 - float, 1 - double
         
         for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
             struct context *thread_context = globals.thread_infos[thread_index].context;
-            for(struct ast_float_literal *lit = thread_context->float_literals.first; lit; ){
-                struct ast_float_literal *next = lit->next;
+            for(struct ir_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; ){
+                struct ir_emitted_float_literal *next = lit->next;
                 
-                int is_double = (lit->base.resolved_type == &globals.typedef_f64);
+                int is_double = (lit->type == &globals.typedef_f64);
                 
                 lit->next = float_literals_by_type[is_double].literals;
                 float_literals_by_type[is_double].literals = lit;
@@ -1406,7 +1360,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             smm capacity = u64_round_up_to_next_power_of_two((u64)(1.5 * amount_of_literals));
             void **table = push_data(scratch, void *, capacity);
             
-            for(struct ast_float_literal *lit = float_literals_by_type[is_double].literals; lit; lit = lit->next){
+            for(struct ir_emitted_float_literal *lit = float_literals_by_type[is_double].literals; lit; lit = lit->next){
                 
                 u64 hash = xor_shift64(*(u64 *)&lit->value);
                 
@@ -1599,7 +1553,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
             
             for(u64 table_index = 0; table_index < table->capacity; table_index++){
-                struct ast *ast = table->nodes[table_index].ast;
+                enum ast_kind *ast = table->nodes[table_index].ast;
                 if(!ast) continue;
                 
                 struct ast_declaration *decl = (struct ast_declaration *)ast;
@@ -1610,12 +1564,12 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     continue;
                 }
                 
-                if(decl->base.kind == AST_typedef){
+                if(decl->kind == AST_typedef){
                     register_type(&type_index_allocator, arena, scratch, decl->type);
                     continue;
                 }
                 
-                if(ast->kind == AST_declaration){
+                if(*ast == AST_declaration){
                     
                     // For dllimports, the defining dll has the declaration and type information.
                     if(decl->flags & DECLARATION_FLAGS_is_dllimport) continue;
@@ -1658,116 +1612,52 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
             smm ast_stack_capacity = 32;
             struct ast_stack_node{
-                struct ast *ast;
+                struct ast_scope *scope;
             } *stack = push_uninitialized_data(&stack_arena, struct ast_stack_node, ast_stack_capacity);
-            stack[0].ast = function->scope;
+            stack[0].scope = function->scope;
             
-#define push_to_stack(ast_to_push) {\
+#define push_to_stack(scope_to_push) {\
     if(ast_stack_size == ast_stack_capacity){\
         push_uninitialized_data(&stack_arena, struct ast_stack_node, ast_stack_capacity);\
         ast_stack_capacity *= 2;\
     }\
-    stack[ast_stack_size++].ast = (ast_to_push);\
+    stack[ast_stack_size++].scope = (scope_to_push);\
 }
             
             for(smm ast_stack_size = 1; ast_stack_size > 0; ){
                 
-                struct ast *ast = stack[--ast_stack_size].ast;
+                struct ast_scope *scope = stack[--ast_stack_size].scope;
                 
-                switch(ast->kind){
-                    
-                    case AST_typedef: case AST_declaration:{
-                        struct ast_declaration *decl = (struct ast_declaration *)ast;
-                        register_type(&type_index_allocator, arena, scratch, decl->type);
-                    }break;
-                    
-                    case AST_declaration_list:{
-                        struct ast_declaration_list *list = cast(struct ast_declaration_list *)ast;
-                        for(struct declaration_node *node = list->list.first; node; node = node->next){
-                            register_type(&type_index_allocator, arena, scratch, node->decl->type);
-                        }
-                    }break;
-                    
-                    case AST_if:{
-                        struct ast_if *ast_if = (struct ast_if *)ast;
-                        
-                        // 
-                        // First recurse into the 'condition', then the 'statement', then the 'else_statement'.
-                        // 
-                        
-                        if(ast_if->else_statement) push_to_stack(ast_if->else_statement);
-                        push_to_stack(ast_if->statement);
-                        push_to_stack(ast_if->condition);
-                    }break;
-                    
-                    case AST_do_while:{
-                        struct ast_for *do_while = (struct ast_for *)ast;
-                        
-                        // 
-                        // First recurse into the 'body', and then into the 'condition'.
-                        // 
-                        
-                        if(do_while->condition) push_to_stack(do_while->condition);
-                        push_to_stack(do_while->body);
-                    }break;
-                    
-                    case AST_for:{
-                        struct ast_for *ast_for = (struct ast_for *)ast;
-                        
-                        // 
-                        // First recurse into the 'decl', then the 'condition', 
-                        // then the 'body' and finially the 'increment'.
-                        // 
-                        if(ast_for->increment) push_to_stack(ast_for->increment);
-                        push_to_stack(ast_for->body);
-                        if(ast_for->condition) push_to_stack(ast_for->condition);
-                        if(ast_for->decl) push_to_stack(ast_for->decl);
-                    }break;
-                    
-                    case AST_scope:{
-                        struct ast_scope *scope = (struct ast_scope *)ast;
-                        
-                        // 
-                        // Push all the statements to the ast stack in reverse order.
-                        // 
-                        
-                        smm statement_list_count = scope->statement_list.count;
-                        
-                        if(ast_stack_size + statement_list_count > ast_stack_capacity){
-                            push_uninitialized_data(&stack_arena, struct ast_stack_node, statement_list_count);
-                        }
-                        
-                        ast_stack_size += statement_list_count;
-                        
-                        smm statement_index = 0;
-                        for_ast_list(scope->statement_list){
-                            stack[ast_stack_size - (statement_index++ + 1)].ast = it->value;
-                        }
-                        assert(statement_index == statement_list_count);
-                    }break;
-                    
-                    case AST_switch:{
-                        struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-                        
-                        // 
-                        // First recurse into the thing we 'switch_on' then the 'statement'.
-                        // 
-                        
-                        push_to_stack(ast_switch->statement);
-                        push_to_stack(ast_switch->switch_on);
-                    }break;
-                    
-                    case AST_label:{
-                        struct ast_label *ast_label = cast(struct ast_label *)ast;
-                        if(ast_label->statement) push_to_stack(ast_label->statement);
-                    }break;
-                    case AST_case:{
-                        struct ast_case *ast_case = cast(struct ast_case *)ast;
-                        if(ast_case->statement) push_to_stack(ast_case->statement);
-                    }break;
-                    
-                    default: break;
+                for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
+                    struct ast_declaration *decl = scope->declarations[declaration_index];
+                    if(!decl) continue;
+                    register_type(&type_index_allocator, arena, scratch, decl->type);
                 }
+                
+                for(smm compound_index = 0; compound_index < scope->current_max_amount_of_compound_types; compound_index++){
+                    struct ast_compound_type *compound = scope->compound_types[compound_index];
+                    if(!compound) continue;
+                    register_type(&type_index_allocator, arena, scratch, &compound->base);
+                }
+                
+                // 
+                // Push all the statements to the ast stack in reverse order.
+                // 
+                
+                smm subscope_count = scope->subscopes.count;
+                
+                if(ast_stack_size + subscope_count > ast_stack_capacity){
+                    push_uninitialized_data(&stack_arena, struct ast_stack_node, subscope_count);
+                }
+                
+                ast_stack_size += subscope_count;
+                
+                smm subscope_index = 0;
+                for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+                    stack[ast_stack_size - (subscope_index++ + 1)].scope = subscope;
+                }
+                
+                assert(subscope_index == subscope_count);
             }
         }
         
@@ -2086,7 +1976,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 relocation->destination_offset = (u32)((u8 *)&lines_header->offset_in_section_contribution - debug_symbols_base);
                 relocation->source_declaration = &function->as_decl;
                 
-                u32 file_index = function->scope->token->file_index;
+                struct ast_scope *scope = function->scope;
+                u32 file_index = scope->token->file_index;
                 struct file *file = globals.file_table.data[file_index];
                 
                 struct codeview_lines_block{
@@ -2105,186 +1996,22 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 // };
                 // 
                 
-                smm line   = function->scope->token->line;
-                smm offset = 0;
-                
                 u8 *lines_start = arena_current(arena);
                 
                 // 
-                // Emit an initial line for the start of the function.
+                // Emit an initial line for the prologue.
                 // 
-                *push_struct(arena, u32) = (u32)offset;
-                *push_struct(arena, u32) = (u32)(line | /*is_statement*/0x80000000);
+                *push_struct(arena, u32) = 0;
+                *push_struct(arena, u32) = (u32)(scope->token->line | /*is_statement*/0x80000000);
                 
-                smm ast_stack_capacity = 32;
-                struct ast_stack_node{
-                    struct ast *ast;
-                } *stack = push_uninitialized_data(&stack_arena, struct ast_stack_node, ast_stack_capacity);
-                stack[0].ast = function->scope;
-                
-                // 
-                // To iterate the nodes in the correct order (orderered by offset), 
-                // we have iterate depth first (emit all line-information for grand-children 
-                // before any other children).
-                // 
-                // This means we have to use a stack and push the nodes in reverse order.
-                // 
-                for(smm ast_stack_size = 1; ast_stack_size > 0; ){
+                for(smm index = 0; index < function->line_information.size; index++){
+                    struct function_line_information line = function->line_information.data[index];
                     
-                    struct ast *ast = stack[--ast_stack_size].ast;
+                    u32 offset = (u32)(line.offset + function->size_of_prolog);
                     
-                    switch(ast->kind){
-                        case AST_typedef: case AST_function:{
-                            // These have no code associated with them.
-                        }break;
-                        
-                        case AST_if:{
-                            struct ast_if *ast_if = (struct ast_if *)ast;
-                            
-                            // 
-                            // First recurse into the 'condition', then the 'statement', then the 'else_statement'.
-                            // 
-                            
-                            if(ast_if->else_statement) push_to_stack(ast_if->else_statement);
-                            push_to_stack(ast_if->statement);
-                            push_to_stack(ast_if->condition);
-                        }break;
-                        
-                        case AST_do_while:{
-                            struct ast_for *do_while = (struct ast_for *)ast;
-                            
-                            // 
-                            // First recurse into the 'body', and then into the 'condition'.
-                            // 
-                            
-                            push_to_stack(do_while->body);
-                            if(do_while->condition) push_to_stack(do_while->condition);
-                        }break;
-                        
-                        case AST_for:{
-                            struct ast_for *ast_for = (struct ast_for *)ast;
-                            
-                            // 
-                            // First recurse into the 'decl', then the 'condition', 
-                            // then the 'body' and finially the 'increment'.
-                            // 
-                            if(ast_for->increment) push_to_stack(ast_for->increment);
-                            push_to_stack(ast_for->body);
-                            if(ast_for->condition) push_to_stack(ast_for->condition);
-                            if(ast_for->decl) push_to_stack(ast_for->decl);
-                        }break;
-                        
-                        case AST_scope:{
-                            struct ast_scope *scope = (struct ast_scope *)ast;
-                            
-                            // 
-                            // Push all the statements to the ast stack in reverse order.
-                            // 
-                            
-                            smm statement_list_count = scope->statement_list.count;
-                            ast_stack_size += statement_list_count;
-                            
-                            if(ast_stack_size + statement_list_count > ast_stack_capacity){
-                                push_uninitialized_data(&stack_arena, struct ast_stack_node, statement_list_count);
-                            }
-                            
-                            smm statement_index = 0;
-                            for_ast_list(scope->statement_list){
-                                stack[ast_stack_size - (statement_index++ + 1)].ast = it->value;
-                            }
-                            assert(statement_index == statement_list_count);
-                        }break;
-                        
-                        case AST_switch:{
-                            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-                            
-                            // 
-                            // First recurse into the thing we 'switch_on' then the 'statement'.
-                            // 
-                            
-                            push_to_stack(ast_switch->statement);
-                            push_to_stack(ast_switch->switch_on);
-                        }break;
-                        
-                        case AST_label:{
-                            struct ast_label *ast_label = cast(struct ast_label *)ast;
-                            if(ast_label->statement) push_to_stack(ast_label->statement);
-                        }break;
-                        case AST_case:{
-                            struct ast_case *ast_case = cast(struct ast_case *)ast;
-                            if(ast_case->statement) push_to_stack(ast_case->statement);
-                        }break;
-                        
-                        case AST_declaration:{
-                            struct ast_declaration *decl = (struct ast_declaration *)ast;
-                            
-                            // Dont emit lines for declarations that dont have initializers.
-                            if(!decl->assign_expr) break;
-                            
-                            // Dont emit lines for declarations that are static.
-                            if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist | DECLARATION_FLAGS_is_global)) break;
-                            
-                            push_to_stack(decl->assign_expr);
-                        }break;
-                        
-                        case AST_compound_literal:{
-                            // 
-                            // We recurse into compound literals as they might be multi-line.
-                            // 
-                            
-                            struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)ast;
-                            
-                            // 
-                            // Push all the initializers to the ast stack in reverse order.
-                            // 
-                            
-                            smm assignment_list_count = compound_literal->assignment_list.count;
-                            ast_stack_size += assignment_list_count;
-                            
-                            if(ast_stack_size + assignment_list_count > ast_stack_capacity){
-                                push_uninitialized_data(&stack_arena, struct ast_stack_node, assignment_list_count);
-                            }
-                            
-                            smm assignment_index = 0;
-                            for_ast_list(compound_literal->assignment_list){
-                                stack[(ast_stack_size - 1) - assignment_index++].ast = it->value;
-                            }
-                            assert(assignment_index == assignment_list_count);
-                        }break;
-                        
-                        // 
-                        // These two last ones are the ones that actually do emit line records:
-                        // 
-                        
-                        case AST_asm_block:{
-                            struct ast_asm_block *asm_block = cast(struct ast_asm_block *)ast;
-                            for(struct asm_instruction *inst = asm_block->instructions.first; inst; inst = inst->next){
-                                offset = inst->byte_offset_in_function + function->size_of_prolog;
-                                line   = inst->token->line;
-                                
-                                *push_struct(arena, u32) = (u32)offset;
-                                *push_struct(arena, u32) = (u32)(line | /*is_statement*/0x80000000);
-                            }
-                        }break;
-                        
-                        default:{
-                            smm ast_line = ast->token->line;
-                            
-                            assert(ast->byte_offset_in_function >= 0);
-                            
-                            smm ast_offset = function->size_of_prolog + ast->byte_offset_in_function;
-                            assert(ast_offset >= offset);
-                            
-                            offset = ast_offset;
-                            line   = ast_line;
-                            
-                            *push_struct(arena, u32) = (u32)offset;
-                            *push_struct(arena, u32) = (u32)(line | /*is_statement*/0x80000000);
-                        }break;
-                    }
+                    *push_struct(arena, u32) = (u32)offset;
+                    *push_struct(arena, u32) = (u32)(line.line | /*is_statement*/0x80000000);
                 }
-                
-#undef push_to_stack
                 
                 smm lines_size = arena_current(arena) - lines_start;
                 
@@ -2315,7 +2042,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
                 
                 for(u64 table_index = 0; table_index < table->capacity; table_index++){
-                    struct ast *ast = table->nodes[table_index].ast;
+                    enum ast_kind *ast = table->nodes[table_index].ast;
                     if(!ast) continue;
                     
                     struct ast_declaration *decl = (struct ast_declaration *)ast;
@@ -2332,7 +2059,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         u32 enum_type_index = decl->type->pdb_type_index;
                         assert(enum_type_index);
                         
-                        s32 value = integer_literal_as_s32(decl->assign_expr);
+                        s32 value = (s32)integer_literal_to_bytes((struct ir *)decl->assign_expr);
                         
                         u16 *length = push_struct(arena, u16);
                         *push_struct(arena, u16) = /*S_CONSTANT*/0x1107;
@@ -2344,7 +2071,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         continue;
                     }
                     
-                    if(decl->base.kind == AST_typedef){
+                    if(decl->kind == AST_typedef){
                         // 
                         // Emit a 'S_UDT' for all typedefs.
                         // 
@@ -2358,7 +2085,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         *length = (u16)(arena_current(arena)- (u8 *)(length + 1));
                     }
                     
-                    if(ast->kind == AST_declaration){
+                    if(*ast == AST_declaration){
                         assert(!(decl->flags & DECLARATION_FLAGS_is_local_persist));
                         
                         // @note: dllimports do not have debug symbols.
@@ -2918,12 +2645,12 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 continue;
             }
             
-            if(dest_declaration->base.kind == AST_function){
+            if(dest_declaration->kind == AST_function){
                 patch->next = text_patches;
                 text_patches = patch;
                 amount_of_text_patches += 1;
             }else{
-                assert(dest_declaration->base.kind == AST_declaration);
+                assert(dest_declaration->kind == AST_declaration);
                 
                 if(dest_declaration->flags & DECLARATION_FLAGS_is_thread_local){
                     patch->next = tls_patches;
@@ -3000,17 +2727,17 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 relocation->relocation_type = /*SECREL*/0xB;
             }
             
-            enum ast_kind source_kind = patch->source->kind;
+            enum ast_kind source_kind = *patch->source;
             
             if(source_kind == AST_function || source_kind == AST_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)source->symbol_table_index;
-            }else if(source_kind == AST_float_literal){
-                struct ast_float_literal *source = (struct ast_float_literal *)patch->source;
+            }else if(source_kind == AST_emitted_float_literal){
+                struct ir_emitted_float_literal *source = (struct ir_emitted_float_literal *)patch->source;
                 
                 u32 symbol_table_index;
-                if(source->base.resolved_type == &globals.typedef_f64){
+                if(source->type == &globals.typedef_f64){
                     symbol_table_index = (u32)(double_symbol_base + (source->relative_virtual_address - double_start_offset) / 8);
                 }else{
                     symbol_table_index = (u32)(float_symbol_base + (source->relative_virtual_address - float_start_offset) / 4);
@@ -3018,8 +2745,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 relocation->source_symbol_table_index = symbol_table_index;
             }else{
-                assert(source_kind == AST_string_literal);
-                struct ast_string_literal *source = (struct ast_string_literal *)patch->source;
+                assert(source_kind == IR_string_literal);
+                struct ir_string_literal *source = (struct ir_string_literal *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)(string_symbol_base + source->symbol_table_index);
             }
@@ -3054,7 +2781,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             assert(patch->kind == PATCH_absolute); // There should only be absolute patches to .data
             
             struct ast_declaration *declaration = (struct ast_declaration *)patch->dest_declaration;
-            assert(declaration->base.kind == AST_declaration);
+            assert(declaration->kind == AST_declaration);
             
             struct coff_relocation *relocation = (void *)(data_relocations_data + 10 * index++);
             relocation->relocation_type = /*ADDR64*/1;
@@ -3063,7 +2790,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             // @note: We need the source offset to already be applied to the data.
             *(u64 *)(declaration->memory_location + patch->location_offset_in_dest_declaration) = patch->location_offset_in_source_declaration;
             
-            enum ast_kind source_kind = patch->source->kind;
+            enum ast_kind source_kind = *patch->source;
             
             if(source_kind == AST_function || source_kind == AST_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
@@ -3071,8 +2798,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 u32 is_reference_to_stub = (source->flags & DECLARATION_FLAGS_need_dllimport_stub_function) != 0;
                 relocation->source_symbol_table_index = (u32)source->symbol_table_index + is_reference_to_stub;
             }else{
-                assert(source_kind == AST_string_literal);
-                struct ast_string_literal *source = (struct ast_string_literal *)patch->source;
+                assert(source_kind == IR_string_literal);
+                struct ir_string_literal *source = (struct ir_string_literal *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)(string_symbol_base + source->symbol_table_index);
             }
@@ -3109,7 +2836,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             assert(patch->kind == PATCH_absolute); // There should only be absolute patches to .data
             
             struct ast_declaration *declaration = (struct ast_declaration *)patch->dest_declaration;
-            assert(declaration->base.kind == AST_declaration);
+            assert(declaration->kind == AST_declaration);
             
             struct coff_relocation *relocation = (void *)(tls_relocations_data + 10 * index++);
             relocation->relocation_type = /*ADDR64*/1;
@@ -3118,7 +2845,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             // @note: We need the source offset to already be applied to the data.
             *(u64 *)(declaration->memory_location + patch->location_offset_in_dest_declaration) = patch->location_offset_in_source_declaration;
             
-            enum ast_kind source_kind = patch->source->kind;
+            enum ast_kind source_kind = *patch->source;
             
             if(source_kind == AST_function || source_kind == AST_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
@@ -3126,8 +2853,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 u32 is_reference_to_stub = (source->flags & DECLARATION_FLAGS_need_dllimport_stub_function) != 0;
                 relocation->source_symbol_table_index = (u32)source->symbol_table_index + is_reference_to_stub;
             }else{
-                assert(source_kind == AST_string_literal);
-                struct ast_string_literal *source = (struct ast_string_literal *)patch->source;
+                assert(source_kind == IR_string_literal);
+                struct ir_string_literal *source = (struct ir_string_literal *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)(string_symbol_base + source->symbol_table_index);
             }

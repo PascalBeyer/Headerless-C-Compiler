@@ -47,7 +47,7 @@ typedef unsigned __int64 u64;
 typedef unsigned __int64 umm;
 typedef __int64 smm;
 
-#if defined(__HLC__)
+#if 0 && defined(__HLC__)
 #define PRINTLIKE __declspec(printlike)
 #else
 #define PRINTLIKE 

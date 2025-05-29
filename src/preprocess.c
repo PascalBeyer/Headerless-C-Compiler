@@ -2865,8 +2865,9 @@ func s64 static_if_evaluate(struct context *context){
                 struct token *token = next_token(context);
                 
                 // We are gonna report an error, set the token.
-                if(token->type != TOKEN_identifier){ 
-                    report_error(context, get_current_token_for_error_report(context), "Expected an identifier after 'defined'.");
+                if(token->type != TOKEN_identifier){ // @cleanup: Is this just expect token?
+                    if(token->type == TOKEN_invalid) token = get_current_token_for_error_report(context);
+                    report_error(context, token, "Expected an identifier after 'defined'.");
                     return 0;
                 }
                 

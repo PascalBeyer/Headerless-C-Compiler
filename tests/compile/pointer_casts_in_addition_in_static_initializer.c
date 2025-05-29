@@ -2,7 +2,7 @@
 struct structure{
     int *hello;
     int *hello2;
-}s = {
+} s = {
     (int *)((char *)&s + ((__int64)&(((struct structure*)0)->hello))),
     (int *)((char *)&s + ((__int64)&(((struct structure*)0)->hello2))),
 };

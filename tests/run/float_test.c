@@ -49,5 +49,12 @@ int main(){
         assert(a);
     }
     
+    assert(f > 0.5f);
+    assert(f >= 0.5f);
+    assert(f >= 1.0f);
+    assert(f <= 1.0f);
+    assert(f <= 1.5f);
+    assert(f < 1.5f);
+    
     return 0;
 }

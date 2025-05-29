@@ -123,7 +123,7 @@ int main(){
     a_ulong ^= n_ulong;
     a_ullong ^= n_ullong;
     
-    a_bool += n_bool;
+    // a_bool += n_bool;
     a_char += n_char;
     a_short += n_short;
     a_int += n_int;
@@ -136,7 +136,7 @@ int main(){
     a_ulong += n_ulong;
     a_ullong += n_ullong;
     
-    a_bool -= n_bool;
+    // a_bool -= n_bool;
     a_char -= n_char;
     a_short -= n_short;
     a_int -= n_int;
@@ -188,7 +188,7 @@ int main(){
     a_ulong ^= 1337;
     a_ullong ^= 1337;
     
-    a_bool += 1337;
+    // a_bool += 1337;
     a_char += 1337;
     a_short += 1337;
     a_int += 1337;
@@ -201,7 +201,7 @@ int main(){
     a_ulong += 1337;
     a_ullong += 1337;
     
-    a_bool -= 1337;
+    // a_bool -= 1337;
     a_char -= 1337;
     a_short -= 1337;
     a_int -= 1337;

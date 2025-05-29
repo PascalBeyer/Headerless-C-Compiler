@@ -952,8 +952,8 @@ func u32 tpi_maybe_emit_predecl(struct pdb_write_context *context, struct ast_ty
     return type_index;
 }
 
-func void tpi_emit_type_index_or_predecl_type_index(struct pdb_write_context *context, struct ast_type *type, struct ast *defined_type){
-    if(defined_type && defined_type->kind == AST_enum){
+func void tpi_emit_type_index_or_predecl_type_index(struct pdb_write_context *context, struct ast_type *type, enum ast_kind *defined_type){
+    if(defined_type && *defined_type == AST_enum){
         struct ast_type *ast_enum = cast(struct ast_type *)defined_type;
         if(ast_enum->flags & TYPE_FLAG_pdb_permanent){
             out_int(ast_enum->pdb_type_index, u32);
@@ -1274,54 +1274,22 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
     }
 }
 
-func void tpi_register_all_types_in_ast__recursive(struct pdb_write_context *context, struct ast *ast){
-    switch(ast->kind){
-        case AST_declaration:{
-            struct ast_declaration *decl = cast(struct ast_declaration *)ast;
-            tpi_register_type(context, decl->type);
-        }break;
-        case AST_declaration_list:{
-            struct ast_declaration_list *list = cast(struct ast_declaration_list *)ast;
-            for(struct declaration_node *node = list->list.first; node; node = node->next){
-                tpi_register_type(context, node->decl->type);
-            }
-        }break;
-        case AST_if:{
-            struct ast_if *ast_if = cast(struct ast_if *)ast;
-            tpi_register_all_types_in_ast__recursive(context, ast_if->statement);
-            if(ast_if->else_statement){
-                tpi_register_all_types_in_ast__recursive(context, ast_if->else_statement);
-            }
-        }break;
-        case AST_do_while:
-        case AST_for:{
-            struct ast_for *ast_for = cast(struct ast_for *)ast;
-            // @yuck @ugly @hack: ast_for->decl is any statement right now
-            if(ast_for->decl) tpi_register_all_types_in_ast__recursive(context, ast_for->decl);
-            tpi_register_all_types_in_ast__recursive(context, &ast_for->scope_for_decl->base);
-            tpi_register_all_types_in_ast__recursive(context, ast_for->body);
-        }break;
-        case AST_scope:{
-            struct ast_scope *scope = cast(struct ast_scope *)ast;
-            for_ast_list(scope->statement_list){
-                tpi_register_all_types_in_ast__recursive(context, it->value);
-            }
-        }break;
-        case AST_switch:{
-            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-            tpi_register_all_types_in_ast__recursive(context, ast_switch->statement);
-        }break;
-        case AST_label:{
-            struct ast_label *ast_label = cast(struct ast_label *)ast;
-            if(ast_label->statement) tpi_register_all_types_in_ast__recursive(context, ast_label->statement);
-        }break;
-        case AST_case:{
-            struct ast_case *ast_case = cast(struct ast_case *)ast;
-            if(ast_case->statement) tpi_register_all_types_in_ast__recursive(context, ast_case->statement);
-        }break;
-        default:{
-            // everything else is fine.
-        }break;
+func void tpi_register_all_types_in_scope__recursive(struct pdb_write_context *context, struct ast_scope *scope){
+    
+    for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
+        struct ast_declaration *decl = scope->declarations[declaration_index];
+        if(!decl) continue;
+        tpi_register_type(context, decl->type);
+    }
+    
+    for(smm compound_index = 0; compound_index < scope->current_max_amount_of_compound_types; compound_index++){
+        struct ast_compound_type *compound = scope->compound_types[compound_index];
+        if(!compound) continue;
+        tpi_register_type(context, &compound->base);
+    }
+    
+    for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+        tpi_register_all_types_in_scope__recursive(context, subscope);
     }
 }
 
@@ -1335,7 +1303,7 @@ func void pdb_emit_regrels_for_scope(struct pdb_write_context *context, struct a
         if(!decl) continue;
         
         // Skip typedefs.
-        if(decl->base.kind != AST_declaration) continue;
+        if(decl->kind != AST_declaration) continue;
         
         // Enums don't get 'S_REGREL32'... @cleanup: maybe they get constants?
         if((decl->flags & DECLARATION_FLAGS_is_enum_member)) continue;
@@ -1359,8 +1327,18 @@ func void pdb_emit_regrels_for_scope(struct pdb_write_context *context, struct a
 func struct pdb_location pdb_begin_scope(struct pdb_write_context *context, struct ast_function *function, struct ast_scope *scope){
     
     struct pdb_location pointer_to_end_loc;
-    smm scope_size = scope->scope_end_byte_offset_in_function - scope->base.byte_offset_in_function;
-    smm offset_in_text_section = function->offset_in_text_section + scope->base.byte_offset_in_function + function->size_of_prolog;
+    smm scope_size = 0;
+    smm offset_in_text_section = function->offset_in_text_section;
+    
+    if(scope->start_line_index != -1){ // Only -1 for empty functions.
+        
+        struct function_line_information start = function->line_information.data[scope->start_line_index];
+        struct function_line_information end   = function->line_information.data[scope->end_line_index];
+        
+        // @cleanup: Does this correctly include function->size_of_prologue?
+        scope_size = end.offset - start.offset;
+        offset_in_text_section = function->offset_in_text_section + function->size_of_prolog + start.offset; // relocated by relocation.
+    }
     
     smm scope_offset_in_symbol_stream = pdb_current_offset_from_location(context, context->module_stream_begin);
     begin_symbol(0x1103);{// S_BLOCK32
@@ -1374,94 +1352,39 @@ func struct pdb_location pdb_begin_scope(struct pdb_write_context *context, stru
     return pointer_to_end_loc;
 }
 
-func void emit_debug_info_for_ast__recursive(struct pdb_write_context *context, struct ast_function *function, struct ast *ast){
-    assert(ast->byte_offset_in_function >= 0);
-    switch(ast->kind){
-        case AST_scope:{
-            // @cleanup: skip if there are no declarations in the scope.
-            
-            
-            struct pdb_location pointer_to_end_loc = zero_struct;
-            struct ast_scope *scope = cast(struct ast_scope *)ast;
-            smm old_offset = context->current_block32_offset_in_stream;
-            
-            if(ast != function->scope){
-                // @note: do not emit a scope for the initial scope as it is implied by the frameproc
-                pointer_to_end_loc = pdb_begin_scope(context, function, scope);
-            }
-            
-            pdb_emit_regrels_for_scope(context, scope);
-            
-            for_ast_list(scope->statement_list){
-                emit_debug_info_for_ast__recursive(context, function, it->value);
-            }
-            
-            if(ast != function->scope){
-                u32 diff = pdb_current_offset_from_location(context, context->module_stream_begin);
-                stream_write_bytes(context, &pointer_to_end_loc, &diff, sizeof(u32));
-                begin_symbol(0x6);{ // S_END
-                }end_symbol();
-            }
-            context->current_block32_offset_in_stream = old_offset; // @cleanup: should maybe be called pointer
-            
-        }break;
-        case AST_if:{
-            struct ast_if *ast_if = cast(struct ast_if *)ast;
-            emit_debug_info_for_ast__recursive(context, function, ast_if->statement);
-            if(ast_if->else_statement){
-                emit_debug_info_for_ast__recursive(context, function, ast_if->else_statement);
-            }
-        }break;
-        case AST_do_while:
-        case AST_for:{
-            struct ast_for *ast_for = cast(struct ast_for *)ast;
-            
-            // 
-            // @clenaup: This is really ugly.
-            //           The body for the ast_for is at 'ast_for->body', 
-            //           but the declaration lives in 'ast_for->scope_for_decl'.
-            //           The 'ast_for->scope_for_decl' is empty and does not contain 'ast_for->body'.
-            //           Hence, we have to emit a block manually.
-            // 
-            
-            
-            smm old_offset = context->current_block32_offset_in_stream;
-            struct pdb_location pointer_to_end_loc = pdb_begin_scope(context, function, ast_for->scope_for_decl);
-            pdb_emit_regrels_for_scope(context, ast_for->scope_for_decl);
-            
-            if(ast_for->decl){
-                emit_debug_info_for_ast__recursive(context, function, ast_for->decl);
-            }
-            emit_debug_info_for_ast__recursive(context, function, ast_for->body);
-            
-            // end the scope for the _for_ declaration.
-            u32 diff = pdb_current_offset_from_location(context, context->module_stream_begin);
-            stream_write_bytes(context, &pointer_to_end_loc, &diff, sizeof(u32));
-            begin_symbol(0x6);{ // S_END
-            }end_symbol();
-            context->current_block32_offset_in_stream = old_offset; // @cleanup: should maybe be called pointer
-        }break;
-        case AST_switch:{
-            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-            emit_debug_info_for_ast__recursive(context, function, ast_switch->statement);
-        }break;
-        case AST_label:{
-            struct ast_label *ast_label = cast(struct ast_label *)ast;
-            if(ast_label->statement) emit_debug_info_for_ast__recursive(context, function, ast_label->statement);
-        }break;
-        case AST_case:{
-            struct ast_case *ast_case = cast(struct ast_case *)ast;
-            if(ast_case->statement) emit_debug_info_for_ast__recursive(context, function, ast_case->statement);
-        }break;
-        default: break;
+func void emit_debug_info_for_scope__recursive(struct pdb_write_context *context, struct ast_function *function, struct ast_scope *scope){
+    
+    // @cleanup: skip if there are no declarations in the scope.
+    
+    
+    struct pdb_location pointer_to_end_loc = zero_struct;
+    smm old_offset = context->current_block32_offset_in_stream;
+    
+    if(scope != function->scope){
+        // @note: do not emit a scope for the initial scope as it is implied by the frameproc
+        pointer_to_end_loc = pdb_begin_scope(context, function, scope);
     }
+    
+    pdb_emit_regrels_for_scope(context, scope);
+    
+    for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+        emit_debug_info_for_scope__recursive(context, function, subscope);
+    }
+    
+    if(scope != function->scope){
+        u32 diff = pdb_current_offset_from_location(context, context->module_stream_begin);
+        stream_write_bytes(context, &pointer_to_end_loc, &diff, sizeof(u32));
+        begin_symbol(0x6);{ // S_END
+        }end_symbol();
+    }
+    context->current_block32_offset_in_stream = old_offset; // @cleanup: should maybe be called pointer
 }
 
 
 func void emit_debug_info_for_function(struct pdb_write_context *context, struct ast_function *function){
     // @cleanup: is this needed somewhere else?
     context->current_block32_offset_in_stream = function->debug_symbol_offset;
-    emit_debug_info_for_ast__recursive(context, function, function->scope);
+    emit_debug_info_for_scope__recursive(context, function, function->scope);
 }
 
 //_____________________________________________________________________________________________________________________
@@ -1478,122 +1401,38 @@ func void emit_one_pdb_line_info(struct pdb_write_context *context){
     context->pdb_amount_of_lines += 1;
 }
 
-func void emit_pdb_line_info_for_ast__recursive(struct pdb_write_context *context, struct ast_function *function, struct ast *ast){
-    
-    switch(ast->kind){
-        case AST_typedef:
-        case AST_function:{
-            // these have no code associated with them.
-        }break;
-        
-        case AST_if:{
-            struct ast_if *ast_if = cast(struct ast_if *)ast;
-            // @cleanup: this did not work... one line if with a 'continue' as the thing! << recheck this
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_if->condition);
-            
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_if->statement);
-            if(ast_if->else_statement){
-                emit_pdb_line_info_for_ast__recursive(context, function, ast_if->else_statement);
-            }
-        }break;
-        case AST_do_while:{
-            struct ast_for *do_while = cast(struct ast_for *)ast;
-            
-            if(do_while->condition){
-                emit_pdb_line_info_for_ast__recursive(context, function, do_while->condition);
-            }
-            
-            emit_pdb_line_info_for_ast__recursive(context, function, do_while->body);
-        }break;
-        case AST_for:{
-            struct ast_for *ast_for = cast(struct ast_for *)ast;
-            if(ast_for->decl){
-                emit_pdb_line_info_for_ast__recursive(context, function, ast_for->decl);
-            }
-            
-            if(ast_for->condition){
-                emit_pdb_line_info_for_ast__recursive(context, function, ast_for->condition);
-            }
-            
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_for->body);
-            
-            if(ast_for->increment){
-                emit_pdb_line_info_for_ast__recursive(context, function, ast_for->increment);
-            }
-        }break;
-        case AST_scope:{
-            struct ast_scope *scope = cast(struct ast_scope *)ast;
-            for_ast_list(scope->statement_list){
-                emit_pdb_line_info_for_ast__recursive(context, function, it->value);
-            }
-        }break;
-        case AST_switch:{
-            struct ast_switch *ast_switch = cast(struct ast_switch *)ast;
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_switch->switch_on);
-            emit_pdb_line_info_for_ast__recursive(context, function, ast_switch->statement);
-        }break;
-        case AST_case:{
-            struct ast_case *ast_case = cast(struct ast_case *)ast;
-            if(ast_case->statement) emit_pdb_line_info_for_ast__recursive(context, function, ast_case->statement);
-        }break;
-        case AST_label:{
-            struct ast_label *ast_label = cast(struct ast_label *)ast;
-            if(ast_label->statement) emit_pdb_line_info_for_ast__recursive(context, function, ast_label->statement);
-        }break;
-        
-        case AST_asm_block:{
-            struct ast_asm_block *asm_block = cast(struct ast_asm_block *)ast;
-            for(struct asm_instruction *inst = asm_block->instructions.first; inst; inst = inst->next){
-                context->pdb_offset_at = inst->byte_offset_in_function + function->size_of_prolog;
-                context->pdb_line_at   = inst->token->line;
-                emit_one_pdb_line_info(context);
-            }
-        }break;
-        
-        case AST_declaration:{
-            struct ast_declaration *decl = (struct ast_declaration *)ast;
-            
-            // dont emit lines for declarations that dont have initializers
-            if(!decl->assign_expr) break;
-            
-            // dont emit lines for declarations that are static
-            if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)) break;
-            
-            if(decl->assign_expr->kind == AST_compound_literal){
-                // recurse into struct literals as these can be (and often are) multi line!
-                struct ast_compound_literal *compound_literal = (struct ast_compound_literal *)decl->assign_expr;
-                for_ast_list(compound_literal->assignment_list){
-                    emit_pdb_line_info_for_ast__recursive(context, function, it->value);
-                }
-                break;
-            }
-        } // fallthrough
-        default:{
-            
-            if(ast->token->line != context->pdb_line_at){
-                assert(ast->byte_offset_in_function >= 0); // make sure we set the value.
-                
-                
-                smm offset_at = ast->byte_offset_in_function + function->size_of_prolog;
-                
-                // @cleanup: if '==' we should have not emit the last entry. I am ignoring this for now.
-                //           This probably means 'emit_one_pdb_line_info' is supposed to be "lazy".
-                assert(offset_at >= context->pdb_offset_at);
-                context->pdb_offset_at = offset_at;
-                context->pdb_line_at   = ast->token->line;
-                emit_one_pdb_line_info(context);
-            }
-        }break;
-    }
-}
-
 func void emit_pdb_line_info_for_function(struct pdb_write_context *context, struct ast_function *function){
+    
+#if 0
     context->pdb_amount_of_lines = 0;
     context->pdb_offset_at = 0;
     context->pdb_line_at   = function->scope->token->line;
     emit_one_pdb_line_info(context); // emit an initial one and then we always emit _after_ updating
     
     emit_pdb_line_info_for_ast__recursive(context, function, function->scope);
+#else   
+    
+    const u32 is_statement = 0x80000000;
+    
+    struct ast_scope *scope = function->scope;
+    
+    // 
+    // Emit an initial line for the prologue.
+    // 
+    out_int(0, u32);
+    out_int(scope->token->line | is_statement, u32);
+    
+    for(smm index = 0; index < function->line_information.size; index++){
+        struct function_line_information line = function->line_information.data[index];
+        
+        u32 offset = (u32)(line.offset + function->size_of_prolog);
+        
+        out_int(offset, u32);
+        out_int(line.line | is_statement, u32);
+    }
+    context->pdb_amount_of_lines = function->line_information.size;
+    
+#endif
     
 }
 
@@ -1627,8 +1466,8 @@ func void insert_function_into_the_right_list(struct symbol_context *symbol_cont
     
     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
         assert(function->dll_import_node);
-        ast_list_append(&symbol_context->dll_imports, scratch, &function->base);
-        if(function->as_decl.flags & DECLARATION_FLAGS_need_dllimport_stub_function) ast_list_append(&symbol_context->dll_function_stubs, scratch, &function->base);
+        ast_list_append(&symbol_context->dll_imports, scratch, &function->kind);
+        if(function->as_decl.flags & DECLARATION_FLAGS_need_dllimport_stub_function) ast_list_append(&symbol_context->dll_function_stubs, scratch, &function->kind);
         return;
     }
     
@@ -1636,18 +1475,18 @@ func void insert_function_into_the_right_list(struct symbol_context *symbol_cont
     assert(function->scope);
     
     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
-        ast_list_append(&symbol_context->dllexports, scratch, &function->base);
+        ast_list_append(&symbol_context->dllexports, scratch, &function->kind);
     }
     
-    ast_list_append(&symbol_context->functions_with_a_body, scratch, &function->base);
+    ast_list_append(&symbol_context->functions_with_a_body, scratch, &function->kind);
     assert(function->scope);
     
     for_ast_list(function->static_variables){
         struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
         if(decl->assign_expr){
-            ast_list_append(&symbol_context->initialized_declarations, scratch, &decl->base);
+            ast_list_append(&symbol_context->initialized_declarations, scratch, &decl->kind);
         }else{
-            ast_list_append(&symbol_context->uninitialized_declarations, scratch, &decl->base);
+            ast_list_append(&symbol_context->uninitialized_declarations, scratch, &decl->kind);
         }
     }
 }
@@ -1657,14 +1496,14 @@ func void add_declarations_for_ast_table(struct symbol_context *symbol_context, 
         struct ast_node *node = table->nodes + i;
         if(!node->ast) continue;
         
-        if(node->ast->kind == AST_declaration || node->ast->kind == AST_typedef){
+        if(*node->ast == AST_declaration || *node->ast == AST_typedef){
             struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
             
             // Skip unreachable declarations.
             if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
         }
         
-        if(node->ast->kind == AST_typedef){
+        if(*node->ast == AST_typedef){
             ast_list_append(&symbol_context->typedefs, arena, node->ast);
             continue;
         }
@@ -1677,11 +1516,11 @@ func void add_declarations_for_ast_table(struct symbol_context *symbol_context, 
             assert(decl->flags & DECLARATION_FLAGS_is_static);
         }
         
-        if(node->ast->kind == AST_function){
-            struct ast_function *function = cast(struct ast_function *)node->ast;
+        if(*node->ast == AST_function){
+            struct ast_function *function = (struct ast_function *)node->ast;
             insert_function_into_the_right_list(symbol_context, function, arena);
         }else{
-            assert(node->ast->kind == AST_declaration);
+            assert(*node->ast == AST_declaration);
             struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
             if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
             
@@ -1750,7 +1589,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     struct ast_list *dllexports = &symbol_context.dllexports;
     
     if(tls_declarations->count){
-        ast_list_append(uninitialized_declarations, arena, &globals.tls_index_declaration->base);
+        ast_list_append(uninitialized_declarations, arena, &globals.tls_index_declaration->kind);
     }
     
     
@@ -2166,15 +2005,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
                 struct context *thread_context = globals.thread_infos[thread_index].context;
-                for(struct ast_string_literal *lit = thread_context->string_literals.first; lit; lit = lit->next){
+                for(struct ir_string_literal *lit = thread_context->string_literals.first; lit; lit = lit->next){
                     
                     // :string_kind_is_element_size
                     smm element_size = (smm)lit->string_kind;
-                    
-#if defined(_Debug)
-                    struct ast_array_type *array = (struct ast_array_type *)lit->base.resolved_type;
-                    assert(array->element_type->size == element_size);
-#endif
+
                     struct string string_literal = lit->value;
                     
                     u64 hash = string_djb2_hash(string_literal);
@@ -2220,13 +2055,13 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
             struct context *thread_context = globals.thread_infos[thread_index].context;
             
-            for(struct ast_float_literal *lit = thread_context->float_literals.first; lit; lit = lit->next){
-                if(lit->base.resolved_type == &globals.typedef_f32){
+            for(struct ir_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; lit = lit->next){
+                if(lit->type == &globals.typedef_f32){
                     f32 *_float = push_struct(arena, f32);
                     *_float = (f32)lit->value;
                     lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
                 }else{
-                    assert(lit->base.resolved_type == &globals.typedef_f64);
+                    assert(lit->type == &globals.typedef_f64);
                     f64 *_float = push_struct(arena, f64);
                     *_float = lit->value;
                     lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
@@ -2287,7 +2122,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             u32 i = 0;
             for_ast_list(*dllexports){
-                assert(it->value->kind == AST_function);
+                assert(*it->value == AST_function);
                 struct ast_function *function = cast(struct ast_function *)it->value;
                 assert(function->relative_virtual_address); // The function better be emitted!
                 
@@ -2440,7 +2275,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             // The destination has to have memory associated with it so 'memory_location'.
             assert(patch->dest_declaration->memory_location);
-            if(patch->source->kind == AST_declaration || patch->source->kind == AST_function){
+            if(*patch->source == AST_declaration || *patch->source == AST_function){
                 // The source has to have memory when loaded, i.e. a 'relative virtual address'.
                 struct ast_declaration *decl = (struct ast_declaration *)patch->source;
                 assert(decl->relative_virtual_address > 0);
@@ -2451,7 +2286,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             // @hack... this is ugly.. we emit first the body then the prolog, so everything is actually
             //          relative to 'function->memory_location + function->size_of_prolog'
             // @cleanup: could we do everything relative to 'emit_pool.base'?
-            if(patch->dest_declaration->base.kind == AST_function){
+            if(patch->dest_declaration->kind == AST_function){
                 struct ast_function *function = cast(struct ast_function *)patch->dest_declaration;
                 
                 memory_location += function->size_of_prolog;
@@ -2459,10 +2294,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }
             
             if(patch->kind == PATCH_rip_relative){
-                assert(patch->dest_declaration->base.kind == AST_function);
+                assert(patch->dest_declaration->kind == AST_function);
                 assert(patch->rip_at >= 0);
                 
-                if(patch->source->kind == AST_function || patch->source->kind == AST_declaration){
+                if(*patch->source == AST_function || *patch->source == AST_declaration){
                     struct ast_declaration *source_declaration = cast(struct ast_declaration *)patch->source;
                     
                     // :patches_are_32_bit all functions that might need a patch are from us thus 32 bit are enough,
@@ -2474,8 +2309,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     source_location += patch->location_offset_in_source_declaration;
                     smm rip_at = dest_location + patch->rip_at;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
-                }else if(patch->source->kind == AST_float_literal){
-                    struct ast_float_literal *f = cast(struct ast_float_literal *)patch->source;
+                }else if(*patch->source == AST_emitted_float_literal){
+                    struct ir_emitted_float_literal *f = (struct ir_emitted_float_literal *)patch->source;
                     assert(f->relative_virtual_address);
                     
                     smm dest_location = patch->dest_declaration->relative_virtual_address;
@@ -2483,13 +2318,13 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     smm source_location = f->relative_virtual_address;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
                 }else{
-                    if(patch->source->kind != AST_string_literal){
-                        report_internal_compiler_error(patch->source->token, "Not a string literal, but %d\n", patch->source->kind);
+                    if(*patch->source != IR_string_literal){
+                        report_internal_compiler_error(null, "Not a string literal, but %d\n", *patch->source);
                         continue;
                     }
                     
-                    assert(patch->source->kind == AST_string_literal);
-                    struct ast_string_literal *lit = cast(struct ast_string_literal *)patch->source;
+                    assert(*patch->source == IR_string_literal);
+                    struct ir_string_literal *lit = cast(struct ir_string_literal *)patch->source;
                     
                     smm dest_location = patch->dest_declaration->relative_virtual_address;
                     smm source_location = lit->relative_virtual_address;
@@ -2498,14 +2333,14 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
                 }
             }else if(patch->kind == PATCH_absolute){
-                assert(patch->dest_declaration->base.kind == AST_declaration);
+                assert(patch->dest_declaration->kind == AST_declaration);
                 
                 smm source_location;
-                if(patch->source->kind == AST_function || patch->source->kind == AST_declaration){
+                if(*patch->source == AST_function || *patch->source == AST_declaration){
                     struct ast_declaration *decl = cast(struct ast_declaration *)patch->source;
                     
                     if(decl->flags & DECLARATION_FLAGS_is_dllimport){
-                        assert(decl->base.kind == AST_function);
+                        assert(decl->kind == AST_function);
                         struct ast_function *function = (struct ast_function *)decl;
                         struct dll_import_node *import_node = function->dll_import_node;
                         source_location = import_node->stub_relative_virtual_address + exe->header->ImageBase;
@@ -2516,8 +2351,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                         source_location += patch->location_offset_in_source_declaration;
                     }
                 }else{
-                    assert(patch->source->kind == AST_string_literal);
-                    struct ast_string_literal *lit = cast(struct ast_string_literal *)patch->source;
+                    assert(*patch->source == IR_string_literal);
+                    struct ir_string_literal *lit = (struct ir_string_literal *)patch->source;
                     
                     source_location = (smm)lit->relative_virtual_address + exe->header->ImageBase;
                 }
@@ -2681,7 +2516,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
     }
     
-    if (globals.cli_options.no_debug || /*we failed to write the .exe*/globals.an_error_has_occurred) {
+    if(globals.cli_options.no_debug || /*we failed to write the .exe*/globals.an_error_has_occurred){
         end_temporary_memory(temporary_memory);
         return;
     }
@@ -2972,7 +2807,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             // @incomplete:
             for_ast_list(*functions_with_a_body){
                 struct ast_function *function = cast(struct ast_function *)it->value;
-                tpi_register_all_types_in_ast__recursive(context, function->scope);
+                tpi_register_all_types_in_scope__recursive(context, function->scope);
             }
             
             
@@ -3576,6 +3411,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // now comes the line info
         for_ast_list(*functions_with_a_body){
             struct ast_function *function = cast(struct ast_function *)it->value;
+            struct ast_scope *scope = function->scope;
             
             out_int(0xf2, u32); // DEBUG_S_LINES
             struct pdb_location size_loc = stream_allocate_bytes(context, sizeof(u32));
@@ -3590,7 +3426,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct pdb_location block_begin = get_current_pdb_location(context);
             
             // offset of the file info in the 0xf4 DEBUG_S_SECTION
-            out_int(globals.file_table.data[function->scope->token->file_index]->offset_in_f4, u32);
+            out_int(globals.file_table.data[scope->token->file_index]->offset_in_f4, u32);
             struct pdb_location amount_of_lines_loc = stream_allocate_bytes(context, sizeof(u32));
             struct pdb_location block_write = stream_allocate_bytes(context, sizeof(u32));
             
