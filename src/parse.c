@@ -1465,7 +1465,10 @@ func struct expr parse_constant_integer_expression(struct context *context, int 
     
     if(constant_expression.ir->kind != IR_integer_literal){
         report_error(context, constant_expression.token, message);
+        ret->base.kind = IR_integer_literal;
+        ret->_u64 = 0;
         ret->type = &globals.typedef_s32;
+        constant_expression.resolved_type = &globals.typedef_s32;
     }else{
         *ret = *(struct ir_integer_literal *)constant_expression.ir;
         pop_from_ir_arena(context, (struct ir_integer_literal *)constant_expression.ir);
@@ -1729,6 +1732,7 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
     subscript->base.kind = subscript_kind;
     subscript->type = dereferenced_resolved_type;
     
+    lhs->ir = &subscript->base;
     lhs->resolved_type = dereferenced_resolved_type;
     lhs->defined_type = dereferenced_defined_type;
 }
@@ -5135,7 +5139,7 @@ case NUMBER_KIND_##type:{ \
             }break;
         }
         
-        operand.token = test;
+        if(do_continue) operand.token = test;
     }
     
     static enum precedence{
@@ -5736,15 +5740,15 @@ case NUMBER_KIND_##type:{ \
                 }else{
                     maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs, stack_entry->token);
                     
+                    // @note: only checking the rhs works, because of the arithmetic conversion casts.
+                    if(ast_kind == AST_binary_mod && op_rhs->resolved_type->kind == AST_float_type){
+                        report_error(context, operand.token, "Operator '%%' is illegal for floats.");
+                        return operand;
+                    }
+                    
                     if(stack_entry->operand.ir->kind == IR_float_literal && operand.ir->kind == IR_float_literal){
                         perform_float_operation(context, ast_kind, op_lhs, op_rhs);
                     }else{
-                        
-                        // @note: only checking the rhs works, because of the arithmetic conversion casts.
-                        if(ast_kind == AST_binary_mod && op_rhs->resolved_type->kind == AST_float_type){
-                            report_error(context, operand.token, "Operator '%%' is illegal for floats.");
-                            return operand;
-                        }
                         
                         if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer | CHECK_float)) return operand;
                         
@@ -9096,6 +9100,7 @@ func void parse_statement(struct context *context){
             struct ast_goto *ast_goto = push_struct(&context->scratch, struct ast_goto);
             struct token *ident = expect_token(context, TOKEN_identifier, "Missing identifier after 'goto'.");
             ast_goto->ident = ident->atom;
+            ast_goto->token = ident;
             sll_push_back(context->goto_list, ast_goto);
             
             context->current_statement_returns_a_value = 1;

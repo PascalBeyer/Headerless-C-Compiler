@@ -3921,7 +3921,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 struct emit_location *loaded = emit_location_invalid(context);
                 
-                if(ir_kind <= IR_preinc_u8){
+                if(ir_kind < IR_preinc_u8){
                     if(ir_arena_at < current_function->end_in_ir_arena){ // @paranoid
                         struct ir *next_ir = (struct ir *)ir_arena_at;
                         if(next_ir->kind != IR_pop_expression){
@@ -4092,7 +4092,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     emit_location_allow_spilling(context, loaded);
                 }
                 
-                if(ir_kind <= IR_preinc_u8){
+                if(ir_kind < IR_preinc_u8){
                     free_emit_location(context, loc);
                     
                     emit_location_stack[emit_location_stack_at-1] = loaded;
