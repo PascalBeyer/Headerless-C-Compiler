@@ -84,11 +84,11 @@ static typedef unsigned long long ullong;
 //_____________________________________________________________________________________________________________________
 // Atomic fences
 
-__declspec(inline_asm) void atomic_thread_fence(memory_order order){
+__declspec(inline_asm) void atomic_thread_fence(memory_order){
     lock or dword ptr[rsp], 0
 }
 
-__declspec(inline_asm) void atomic_signal_fence(memory_order order){
+__declspec(inline_asm) void atomic_signal_fence(memory_order){
     // noop?
 }
 

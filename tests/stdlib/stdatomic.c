@@ -17,12 +17,12 @@ atomic_ulong a_ulong;
 atomic_ullong a_ullong;
 
 // To make the naming more consistent.
-static typedef long long llong;
-static typedef unsigned char      uchar;
-static typedef unsigned short     ushort;
-static typedef unsigned int       uint;
-static typedef unsigned long      ulong;
-static typedef unsigned long long ullong;
+typedef long long llong;
+typedef unsigned char      uchar;
+typedef unsigned short     ushort;
+typedef unsigned int       uint;
+typedef unsigned long      ulong;
+typedef unsigned long long ullong;
 
 int main(){
     
