@@ -1351,7 +1351,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 //
                 // @cleanup: should this jump out (if its not the last memonic)?
                 //
-                if(context->current_function->type->return_type->kind == AST_float_type){
+                if(get_register_kind_for_type(context->current_inline_asm_function->type->return_type) == REGISTER_KIND_xmm){
                     context->asm_block_return = emit_load_float(context, operand);
                 }else{
                     context->asm_block_return = emit_load_gpr(context, operand);
@@ -1375,6 +1375,8 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
         }
         
     }
+    
+    context->inline_asm_mode = null;
     
     //
     // Free all registers that were used by the user.

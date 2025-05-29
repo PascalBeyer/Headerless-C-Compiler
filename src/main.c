@@ -872,6 +872,7 @@ struct context{
     u8 *current_emit_base;
     smm current_emit_offset_of_rsp; // done in register_declaration
     struct token *inline_asm_mode;
+    struct ast_function *current_inline_asm_function;
     struct emit_location *asm_block_return;
     
     smm max_amount_of_function_call_arguments;
@@ -2120,7 +2121,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
     }
     
     struct{
-        enum ast_kind *ast;
+        enum ir_kind *ast;
         smm offset;
         int is_address;
     } ast_stack[4]; // @paranoid: We should be able to put this to 2, because the only binary expression we handle are + and -, hence we cannot exceed depth 2.
@@ -2129,10 +2130,10 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
     u8 *base = (u8 *)initializer;
     smm ast_offset = 0;
     while(ast_offset < initializer_end){
-        enum ast_kind *ast_kind = (enum ast_kind *)(base + ast_offset);
+        enum ir_kind *ir_kind = (enum ir_kind *)(base + ast_offset);
         smm start_ast_offset = ast_offset;
         
-        switch((int)*ast_kind){
+        switch(*ir_kind){
             
             // 
             // Primary expressions:
@@ -2140,40 +2141,40 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             
             case IR_integer_literal:{
                 ast_offset += sizeof(struct ir_integer_literal);
-                ast_stack[ast_stack_at].ast = ast_kind;
+                ast_stack[ast_stack_at].ast = ir_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
             }break;
             case IR_float_literal:{
                 ast_offset += sizeof(struct ir_float_literal);
-                ast_stack[ast_stack_at].ast = ast_kind;
+                ast_stack[ast_stack_at].ast = ir_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
             }break;
             case IR_string_literal:{ // @cleanup: mark it as being used?
                 ast_offset += sizeof(struct ir_string_literal);
-                ast_stack[ast_stack_at].ast = ast_kind;
+                ast_stack[ast_stack_at].ast = ir_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
                 
                 // Mark this string literal as being used.
-                struct ir_string_literal *string_literal = (struct ir_string_literal *)ast_kind;
+                struct ir_string_literal *string_literal = (struct ir_string_literal *)ir_kind;
                 sll_push_back(context->string_literals, string_literal);
                 context->string_literals.amount_of_strings += 1;
             }break;
             case IR_pointer_literal:{
                 ast_offset += sizeof(struct ir_pointer_literal);
-                ast_stack[ast_stack_at].ast = ast_kind;
+                ast_stack[ast_stack_at].ast = ir_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
             }break;
             
             case IR_identifier:{
-                struct ir_identifier *identifier = (struct ir_identifier *)ast_kind;
+                struct ir_identifier *identifier = (struct ir_identifier *)ir_kind;
                 struct ast_declaration *decl = identifier->decl;
                 
                 // @cleanup: This is currently called from main inside of an error_report.
@@ -2216,7 +2217,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             }break;
             
             case IR_compound_literal:{
-                struct ir_compound_literal *compound_literal = (struct ir_compound_literal *)ast_kind;
+                struct ir_compound_literal *compound_literal = (struct ir_compound_literal *)ir_kind;
                 
                 // Add this compound literal to the list of unnamed global declarations.
                 // @cleanup: This might not be emitted I think.
@@ -2233,7 +2234,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             
             case IR_embed:{
                 ast_offset += sizeof(struct ir_embed);
-                ast_stack[ast_stack_at].ast = ast_kind;
+                ast_stack[ast_stack_at].ast = ir_kind;
                 ast_stack[ast_stack_at].offset = 0;
                 ast_stack[ast_stack_at].is_address = 0;
                 ast_stack_at++;
@@ -2246,7 +2247,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             case IR_member:{
                 ast_offset += sizeof(struct ir_dot_or_arrow);
                 
-                struct ir_dot_or_arrow *dot = (struct ir_dot_or_arrow *)ast_kind;
+                struct ir_dot_or_arrow *dot = (struct ir_dot_or_arrow *)ir_kind;
                 ast_stack[ast_stack_at-1].offset += dot->member->offset_in_type;
             }break;
             
@@ -2283,7 +2284,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             // 
             
             case IR_array_subscript:{
-                struct ir_subscript *subscript = (struct ir_subscript *)ast_kind;
+                struct ir_subscript *subscript = (struct ir_subscript *)ir_kind;
                 ast_offset += sizeof(struct ir_subscript);
                 ast_stack_at -= 1;
                 
@@ -2337,7 +2338,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 
                 ast_stack_at -= 1;
                 
-                smm offset_in_ast = *ast_kind == AST_binary_plus ? offset_lhs + offset_rhs : offset_lhs - offset_rhs;
+                smm offset_in_ast = *ir_kind == IR_add_u64 ? offset_lhs + offset_rhs : offset_lhs - offset_rhs;
                 
                 if(patch_lhs == patch_rhs){
                     // @note: This includes the case where 'patch_lhs == patch_rhs == null'.
@@ -2354,7 +2355,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             }break;
             
             case IR_initializer:{
-                struct ir_initializer *initializer_for_offset = (struct ir_initializer *)ast_kind;
+                struct ir_initializer *initializer_for_offset = (struct ir_initializer *)ir_kind;
                 ast_offset += sizeof(*initializer_for_offset);
                 
                 ast_stack_at -= 1;
@@ -2502,7 +2503,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
         }
         
         assert(start_ast_offset != ast_offset);
-        assert(ast_stack_at <= 2);
+        assert(ast_stack_at <= 3);
     }
 }
 
@@ -2726,6 +2727,10 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 if(!skip) *push_uninitialized_struct(&context->scratch, char) = ' ';
             }
             
+            if(token->type == TOKEN_pragma_pack){
+                struct string pragma = string("#pragma ");
+                memcpy(push_uninitialized_data(&context->scratch, char, pragma.size), pragma.data, pragma.size);
+            }
             last_token = token;
             
             memcpy(push_uninitialized_data(&context->scratch, char, token->string.size), token->string.data, token->string.size);

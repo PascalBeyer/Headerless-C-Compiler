@@ -3,6 +3,7 @@
 
 STORAGE_TYPE int global_array[] = { 1, 2, 3, 4, 5 };
 STORAGE_TYPE int *add_for_global_array = global_array + 1;
+STORAGE_TYPE int *add_wrong_way_for_global_array = 1 + global_array;
 STORAGE_TYPE int *sub_for_global_array = global_array - 1;
 STORAGE_TYPE int global_variable = 1;
 STORAGE_TYPE int *add_for_global_variable = &global_variable + 1;

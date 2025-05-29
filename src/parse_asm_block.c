@@ -2231,6 +2231,14 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
 
 
 func void parse_asm_block(struct context *context, struct ir_asm_block *asm_block){
+    
+    struct ir_skip *ir_skip = null;
+    if(!context->in_inline_asm_function){
+        // @HACK: skip all the ir that is in the block.
+        ir_skip = push_struct(&context->ir_arena, struct ir_skip);
+        ir_skip->base.kind = IR_skip;
+    }
+    
     // note they should always 'ballance', thus this scope _should_ end but lets be careful
     while(!peek_token_eat(context, TOKEN_closed_curly) && !peek_token(context, TOKEN_invalid)){
         
@@ -2249,5 +2257,10 @@ func void parse_asm_block(struct context *context, struct ir_asm_block *asm_bloc
             }
             break;
         }
+    }
+    
+    
+    if(ir_skip){
+        ir_skip->size_to_skip = (u32)(arena_current(&context->ir_arena) - (u8*)ir_skip);
     }
 }

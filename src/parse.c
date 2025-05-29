@@ -1120,6 +1120,10 @@ func b32 casts_implicitly_to_bool(struct ast_type *resolved_type){
         return false; // we should have loaded the array. (also this does not make that much sense)
     }
     
+    if(resolved_type->kind == AST_bitfield_type){
+        return false; // we should have loaded the bitfield.
+    }
+    
     return true;
 }
 
@@ -1588,7 +1592,7 @@ func void maybe_load_address_for_array_or_function(struct context *context, enum
     }
 }
 
-func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kind, struct token *token, struct expr *op_lhs, struct expr *op_rhs, struct expr *operand){
+func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kind, struct token *token, struct expr *op_lhs, struct expr *op_rhs, struct expr *operand, int need_swap){
     
     // @cleanup: where do we check for void?
     
@@ -1628,7 +1632,14 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
             pointer_lit->pointer -= integer_literal_as_s64(integer);
         }
         
-        pop_from_ir_arena(context, lit); // @cleanup: for now assume 'pointer + integer'
+        if(integer->ir < pointer->ir){
+            *(struct ir_pointer_literal *)lit = *pointer_lit;
+            pop_from_ir_arena(context, pointer_lit);
+            operand->ir = &lit->base;
+        }else{
+            pop_from_ir_arena(context, lit);
+            operand->ir = &pointer_lit->base;
+        }
     }else if(integer->ir->kind == IR_integer_literal){
         struct ir_integer_literal *lit = (struct ir_integer_literal *)integer->ir;
         
@@ -1645,6 +1656,8 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
         
         operand->ir = push_ir(context, ir_kind);
     }else{
+        
+        if(need_swap) push_ir(context, IR_swap_lhs_rhs);
         
         if(integer->resolved_type != &globals.typedef_s64){
             push_cast(context, AST_cast, &globals.typedef_s64, null, /*integer-expr*/op_rhs, token);
@@ -4819,7 +4832,7 @@ case NUMBER_KIND_##type:{ \
                         [IR_TYPE_u64] = IR_postinc_u64,
                         
                         [IR_TYPE_f32] = IR_postinc_f32,
-                        [IR_TYPE_f64] = IR_postinc_f32,
+                        [IR_TYPE_f64] = IR_postinc_f64,
                     };
                     
                     operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
@@ -4862,7 +4875,7 @@ case NUMBER_KIND_##type:{ \
                         [IR_TYPE_u64] = IR_postdec_u64,
                         
                         [IR_TYPE_f32] = IR_postdec_f32,
-                        [IR_TYPE_f64] = IR_postdec_f32,
+                        [IR_TYPE_f64] = IR_postdec_f64,
                     };
                     
                     operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
@@ -5310,7 +5323,7 @@ case NUMBER_KIND_##type:{ \
                         [IR_TYPE_u64] = IR_preinc_u64,
                         
                         [IR_TYPE_f32] = IR_preinc_f32,
-                        [IR_TYPE_f64] = IR_preinc_f32,
+                        [IR_TYPE_f64] = IR_preinc_f64,
                     };
                     
                     operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
@@ -5354,7 +5367,7 @@ case NUMBER_KIND_##type:{ \
                         [IR_TYPE_u64] = IR_predec_u64,
                         
                         [IR_TYPE_f32] = IR_predec_f32,
-                        [IR_TYPE_f64] = IR_predec_f32,
+                        [IR_TYPE_f64] = IR_predec_f64,
                     };
                     
                     operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
@@ -5591,7 +5604,7 @@ case NUMBER_KIND_##type:{ \
                 maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(operand.resolved_type->kind != AST_pointer_type){
-                    report_error(context, operand.token, "Can only use '->' on a pointer type.");
+                    report_error(context, stack_entry->token, "Can only use '*' on a pointer type.");
                     return operand;
                 }
                 
@@ -5783,7 +5796,7 @@ case NUMBER_KIND_##type:{ \
                     if(op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_integer_type){
                         // 'pointer + integer', 'pointer - integer'
                         enum ir_kind ir_kind = ast_kind == AST_binary_plus ? IR_add_u64 : IR_subtract_u64;
-                        handle_pointer_arithmetic(context, ir_kind, stack_entry->token, op_lhs, op_rhs, &operand);
+                        handle_pointer_arithmetic(context, ir_kind, stack_entry->token, op_lhs, op_rhs, &operand, /*need_swap*/false);
                     }else if(ast_kind == AST_binary_minus && op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_pointer_type){
                         // 'pointer - pointer'
                         
@@ -5807,15 +5820,12 @@ case NUMBER_KIND_##type:{ \
                         operand.resolved_type = &globals.typedef_s64;
                         operand.defined_type = null;
                     }else if(op_lhs->resolved_type->kind == AST_integer_type && op_rhs->resolved_type->kind == AST_pointer_type){
-                        // swap the arguments, as this is what 'handle_pointer_arithmetic' expects
-                        // @cleanup: This is "incorrect", because we want to keep the execution order the same as it in the source code. :ir_refactor should fix this.
-                        // @cleanup: integer - pointer is incorrect.
                         
-                        push_ir(context, IR_swap_lhs_rhs);
+                        if(ast_kind == AST_binary_minus){
+                            report_error(context, stack_entry->token, "Cannot subtract pointer from integer.");
+                        }
                         
-                        // :ir_refactor - This wont work anymore, because it will delete the wrong ast.
-                        enum ir_kind ir_kind = ast_kind == AST_binary_plus ? IR_add_u64 : IR_subtract_u64;
-                        handle_pointer_arithmetic(context, ir_kind, stack_entry->token, op_rhs, op_lhs, &operand);
+                        handle_pointer_arithmetic(context, IR_add_u64, stack_entry->token, op_rhs, op_lhs, &operand, /*need_swap*/true);
                     }else if(op_lhs->ir->kind == IR_float_literal && op_rhs->ir->kind == IR_float_literal){
                         perform_float_operation(context, ast_kind, op_lhs, op_rhs);
                     }else{
@@ -6242,6 +6252,7 @@ case NUMBER_KIND_##type:{ \
             //    lhs && rhs
             //    
             case AST_logical_and:{
+                maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
                 maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(!casts_implicitly_to_bool(operand.resolved_type)){
@@ -6348,6 +6359,7 @@ case NUMBER_KIND_##type:{ \
                 //   .end:
                 // 
                 
+                maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
                 maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
                 
                 if(!casts_implicitly_to_bool(operand.resolved_type)){
@@ -6361,6 +6373,11 @@ case NUMBER_KIND_##type:{ \
                 struct expr *op_rhs_expr = &operand;
                 struct ir *op_rhs = operand.ir;
                 struct ir_jump_node *conditional_jump = stack_entry->other;
+                
+                // 
+                // @note: For a condition like '0 || (print("hello!\n"), 0)' we should not constant propagate.
+                //        At least for now, in theory, the first part (`0 ||`) could be removed.
+                // 
                 
                 if(op_lhs->kind == IR_integer_literal && op_rhs->kind == IR_integer_literal){
                     struct ir_integer_literal *lit = cast(struct ir_integer_literal *)op_lhs;
@@ -6612,7 +6629,7 @@ case NUMBER_KIND_##type:{ \
                     }
                     
                     enum ir_kind ir_kind = ast_kind == AST_plus_assignment ? IR_add_assignment_u64 : IR_subtract_assignment_u64;
-                    handle_pointer_arithmetic(context, ir_kind, stack_entry->token, lhs, rhs, &operand);
+                    handle_pointer_arithmetic(context, ir_kind, stack_entry->token, lhs, rhs, &operand, /*need_swap*/false);
                     context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
                     break;
                 }
@@ -6850,7 +6867,9 @@ case NUMBER_KIND_##type:{ \
             case AST_comma_expression:{
                 assert(!should_skip_comma_expression);
                 
-                // Operand stays the same.
+                // We have to change the operand, as otherwise we may try to const propagate in situations where we should not.
+                operand.ir = push_ir(context, IR_nop);
+                
                 context->in_lhs_expression = false; // @hmm: should we allow (3, a) = 3; probably not
             }break;
             
@@ -6898,6 +6917,7 @@ case NUMBER_KIND_##type:{ \
         
         // Precedence 11
         case TOKEN_logical_and:{
+            maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
             maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
             
             if(!casts_implicitly_to_bool(operand.resolved_type)){
@@ -6915,6 +6935,7 @@ case NUMBER_KIND_##type:{ \
         
         // Precedence 12
         case TOKEN_logical_or:{
+            maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
             maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
             
             if(!casts_implicitly_to_bool(operand.resolved_type)){
@@ -8564,10 +8585,7 @@ func void parse_statement(struct context *context){
     
     b32 needs_semicolon = true;
     
-    if(initial_token->type != TOKEN_semicolon){
-        // The only statement that produces 0 ir instructions is the empty statement.
-        function_maybe_add_line_information(context, initial_token);
-    }
+    function_maybe_add_line_information(context, initial_token);
     
     switch(initial_token->type){
         case TOKEN_semicolon:{
