@@ -4364,6 +4364,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         memset(&void_pointer->base, 0, sizeof(void_pointer->base));
         void_pointer->base.kind = AST_pointer_type;
         void_pointer->base.size = 8;
+        void_pointer->base.alignment = 8;
         globals.typedef_void_pointer = &void_pointer->base;
         
         globals.wake_event = CreateEventA(0, true, 0, 0);
