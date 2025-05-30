@@ -635,12 +635,12 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
             struct ast_declaration *decl = scope->declarations[declaration_index];
             if(!decl) continue;
             
-            if(decl->kind == AST_typedef){
+            if(decl->kind == IR_typedef){
                 // @cleanup: S_UDT
                 continue;
             }
             
-            if(decl->kind == AST_function){
+            if(decl->kind == IR_function){
                 // @cleanup: What should we do here?
                 continue;
             }
@@ -768,7 +768,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             enum ast_kind *ast = table->nodes[table_index].ast;
             if(!ast) continue;
             
-            if(*ast == AST_declaration){
+            if(*ast == IR_declaration){
                 struct ast_declaration *decl = (struct ast_declaration *)ast;
                 
                 if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
@@ -832,7 +832,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 ast_list_append(&automatic_variables, scratch, &decl->kind);
                 
-            }else if(*ast == AST_function){
+            }else if(*ast == IR_function){
                 struct ast_function *function = (struct ast_function *)ast;
                 
                 if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
@@ -862,7 +862,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 
                 ast_list_append(&external_functions, scratch, &function->kind);
             }else{
-                assert(*ast == AST_typedef);
+                assert(*ast == IR_typedef);
             }
         }
     }
@@ -873,7 +873,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         if(!decl) continue;
         if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
         
-        if(decl->kind == AST_declaration){
+        if(decl->kind == IR_declaration){
             ast_list_append(&external_variables, scratch, &decl->kind);
         }else{
             ast_list_append(&external_functions, scratch, &decl->kind);
@@ -1564,12 +1564,12 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     continue;
                 }
                 
-                if(decl->kind == AST_typedef){
+                if(decl->kind == IR_typedef){
                     register_type(&type_index_allocator, arena, scratch, decl->type);
                     continue;
                 }
                 
-                if(*ast == AST_declaration){
+                if(*ast == IR_declaration){
                     
                     // For dllimports, the defining dll has the declaration and type information.
                     if(decl->flags & DECLARATION_FLAGS_is_dllimport) continue;
@@ -2071,7 +2071,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         continue;
                     }
                     
-                    if(decl->kind == AST_typedef){
+                    if(decl->kind == IR_typedef){
                         // 
                         // Emit a 'S_UDT' for all typedefs.
                         // 
@@ -2085,7 +2085,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         *length = (u16)(arena_current(arena)- (u8 *)(length + 1));
                     }
                     
-                    if(*ast == AST_declaration){
+                    if(*ast == IR_declaration){
                         assert(!(decl->flags & DECLARATION_FLAGS_is_local_persist));
                         
                         // @note: dllimports do not have debug symbols.
@@ -2645,12 +2645,12 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 continue;
             }
             
-            if(dest_declaration->kind == AST_function){
+            if(dest_declaration->kind == IR_function){
                 patch->next = text_patches;
                 text_patches = patch;
                 amount_of_text_patches += 1;
             }else{
-                assert(dest_declaration->kind == AST_declaration);
+                assert(dest_declaration->kind == IR_declaration);
                 
                 if(dest_declaration->flags & DECLARATION_FLAGS_is_thread_local){
                     patch->next = tls_patches;
@@ -2727,9 +2727,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 relocation->relocation_type = /*SECREL*/0xB;
             }
             
-            enum ast_kind source_kind = *patch->source;
+            enum ast_kind source_kind = patch->source->kind;
             
-            if(source_kind == AST_function || source_kind == AST_declaration){
+            if(source_kind == IR_function || source_kind == IR_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)source->symbol_table_index;
@@ -2781,7 +2781,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             assert(patch->kind == PATCH_absolute); // There should only be absolute patches to .data
             
             struct ast_declaration *declaration = (struct ast_declaration *)patch->dest_declaration;
-            assert(declaration->kind == AST_declaration);
+            assert(declaration->kind == IR_declaration);
             
             struct coff_relocation *relocation = (void *)(data_relocations_data + 10 * index++);
             relocation->relocation_type = /*ADDR64*/1;
@@ -2790,9 +2790,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             // @note: We need the source offset to already be applied to the data.
             *(u64 *)(declaration->memory_location + patch->location_offset_in_dest_declaration) = patch->location_offset_in_source_declaration;
             
-            enum ast_kind source_kind = *patch->source;
+            enum ast_kind source_kind = patch->source->kind;
             
-            if(source_kind == AST_function || source_kind == AST_declaration){
+            if(source_kind == IR_function || source_kind == IR_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
                 
                 u32 is_reference_to_stub = (source->flags & DECLARATION_FLAGS_need_dllimport_stub_function) != 0;
@@ -2836,7 +2836,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             assert(patch->kind == PATCH_absolute); // There should only be absolute patches to .data
             
             struct ast_declaration *declaration = (struct ast_declaration *)patch->dest_declaration;
-            assert(declaration->kind == AST_declaration);
+            assert(declaration->kind == IR_declaration);
             
             struct coff_relocation *relocation = (void *)(tls_relocations_data + 10 * index++);
             relocation->relocation_type = /*ADDR64*/1;
@@ -2845,9 +2845,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             // @note: We need the source offset to already be applied to the data.
             *(u64 *)(declaration->memory_location + patch->location_offset_in_dest_declaration) = patch->location_offset_in_source_declaration;
             
-            enum ast_kind source_kind = *patch->source;
+            enum ast_kind source_kind = patch->source->kind;
             
-            if(source_kind == AST_function || source_kind == AST_declaration){
+            if(source_kind == IR_function || source_kind == IR_declaration){
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
                 
                 u32 is_reference_to_stub = (source->flags & DECLARATION_FLAGS_need_dllimport_stub_function) != 0;

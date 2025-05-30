@@ -1303,7 +1303,7 @@ func void pdb_emit_regrels_for_scope(struct pdb_write_context *context, struct a
         if(!decl) continue;
         
         // Skip typedefs.
-        if(decl->kind != AST_declaration) continue;
+        if(decl->kind != IR_declaration) continue;
         
         // Enums don't get 'S_REGREL32'... @cleanup: maybe they get constants?
         if((decl->flags & DECLARATION_FLAGS_is_enum_member)) continue;
@@ -1496,14 +1496,14 @@ func void add_declarations_for_ast_table(struct symbol_context *symbol_context, 
         struct ast_node *node = table->nodes + i;
         if(!node->ast) continue;
         
-        if(*node->ast == AST_declaration || *node->ast == AST_typedef){
+        if(*node->ast == IR_declaration || *node->ast == IR_typedef){
             struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
             
             // Skip unreachable declarations.
             if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
         }
         
-        if(*node->ast == AST_typedef){
+        if(*node->ast == IR_typedef){
             ast_list_append(&symbol_context->typedefs, arena, node->ast);
             continue;
         }
@@ -1516,11 +1516,11 @@ func void add_declarations_for_ast_table(struct symbol_context *symbol_context, 
             assert(decl->flags & DECLARATION_FLAGS_is_static);
         }
         
-        if(*node->ast == AST_function){
+        if(*node->ast == IR_function){
             struct ast_function *function = (struct ast_function *)node->ast;
             insert_function_into_the_right_list(symbol_context, function, arena);
         }else{
-            assert(*node->ast == AST_declaration);
+            assert(*node->ast == IR_declaration);
             struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
             if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
             
@@ -2122,7 +2122,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             u32 i = 0;
             for_ast_list(*dllexports){
-                assert(*it->value == AST_function);
+                assert(*it->value == IR_function);
                 struct ast_function *function = cast(struct ast_function *)it->value;
                 assert(function->relative_virtual_address); // The function better be emitted!
                 
@@ -2273,9 +2273,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         
         for(struct patch_node *patch = thread_context->local_patch_list.first; patch; patch = patch->next){
             
+            enum ir_kind source_kind = patch->source->kind;
+            
             // The destination has to have memory associated with it so 'memory_location'.
             assert(patch->dest_declaration->memory_location);
-            if(*patch->source == AST_declaration || *patch->source == AST_function){
+            if(source_kind == IR_declaration || source_kind == IR_function){
                 // The source has to have memory when loaded, i.e. a 'relative virtual address'.
                 struct ast_declaration *decl = (struct ast_declaration *)patch->source;
                 assert(decl->relative_virtual_address > 0);
@@ -2286,7 +2288,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             // @hack... this is ugly.. we emit first the body then the prolog, so everything is actually
             //          relative to 'function->memory_location + function->size_of_prolog'
             // @cleanup: could we do everything relative to 'emit_pool.base'?
-            if(patch->dest_declaration->kind == AST_function){
+            if(patch->dest_declaration->kind == IR_function){
                 struct ast_function *function = cast(struct ast_function *)patch->dest_declaration;
                 
                 memory_location += function->size_of_prolog;
@@ -2294,10 +2296,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }
             
             if(patch->kind == PATCH_rip_relative){
-                assert(patch->dest_declaration->kind == AST_function);
+                assert(patch->dest_declaration->kind == IR_function);
                 assert(patch->rip_at >= 0);
                 
-                if(*patch->source == AST_function || *patch->source == AST_declaration){
+                if(source_kind == IR_function || source_kind == IR_declaration){
                     struct ast_declaration *source_declaration = cast(struct ast_declaration *)patch->source;
                     
                     // :patches_are_32_bit all functions that might need a patch are from us thus 32 bit are enough,
@@ -2309,7 +2311,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     source_location += patch->location_offset_in_source_declaration;
                     smm rip_at = dest_location + patch->rip_at;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
-                }else if(*patch->source == AST_emitted_float_literal){
+                }else if(source_kind == AST_emitted_float_literal){
                     struct ir_emitted_float_literal *f = (struct ir_emitted_float_literal *)patch->source;
                     assert(f->relative_virtual_address);
                     
@@ -2318,12 +2320,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     smm source_location = f->relative_virtual_address;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
                 }else{
-                    if(*patch->source != IR_string_literal){
+                    if(source_kind != IR_string_literal){
                         report_internal_compiler_error(null, "Not a string literal, but %d\n", *patch->source);
                         continue;
                     }
                     
-                    assert(*patch->source == IR_string_literal);
                     struct ir_string_literal *lit = cast(struct ir_string_literal *)patch->source;
                     
                     smm dest_location = patch->dest_declaration->relative_virtual_address;
@@ -2333,14 +2334,14 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
                 }
             }else if(patch->kind == PATCH_absolute){
-                assert(patch->dest_declaration->kind == AST_declaration);
+                assert(patch->dest_declaration->kind == IR_declaration);
                 
                 smm source_location;
-                if(*patch->source == AST_function || *patch->source == AST_declaration){
+                if(source_kind == IR_function || source_kind == IR_declaration){
                     struct ast_declaration *decl = cast(struct ast_declaration *)patch->source;
                     
                     if(decl->flags & DECLARATION_FLAGS_is_dllimport){
-                        assert(decl->kind == AST_function);
+                        assert(decl->kind == IR_function);
                         struct ast_function *function = (struct ast_function *)decl;
                         struct dll_import_node *import_node = function->dll_import_node;
                         source_location = import_node->stub_relative_virtual_address + exe->header->ImageBase;
@@ -2351,7 +2352,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                         source_location += patch->location_offset_in_source_declaration;
                     }
                 }else{
-                    assert(*patch->source == IR_string_literal);
+                    assert(source_kind == IR_string_literal);
                     struct ir_string_literal *lit = (struct ir_string_literal *)patch->source;
                     
                     source_location = (smm)lit->relative_virtual_address + exe->header->ImageBase;

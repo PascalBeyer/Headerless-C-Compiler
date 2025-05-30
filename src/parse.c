@@ -76,16 +76,16 @@ func struct ast_type *_parser_type_push(struct context *context, struct token *t
 // IR building stuff
 
 static struct ir *push_ir(struct context *context, enum ir_kind ir_kind){
-    struct ir *ir = push_struct_(&context->ir_arena, sizeof(struct ir), 8); // @note: No need to zero, 'arena' never has any non-zero bytes.
+    struct ir *ir = push_struct_(&context->ir_arena, sizeof(struct ir), 1); // @note: No need to zero, 'arena' never has any non-zero bytes.
     ir->kind  = ir_kind;
-    ir->s = get_unique_ast_serial(context);
+    // ir->s = get_unique_ast_serial(context);
     return ir;
 }
 
 static struct ir_jump_node *push_jump(struct context *context, enum ir_kind ir_kind){
-    struct ir_jump_node *ir = push_struct_(&context->ir_arena, sizeof(struct ir_jump_node), 8); // @note: No need to zero, 'arena' never has any non-zero bytes.
+    struct ir_jump_node *ir = push_struct_(&context->ir_arena, sizeof(struct ir_jump_node), 1); // @note: No need to zero, 'arena' never has any non-zero bytes.
     ir->base.kind  = ir_kind;
-    ir->base.s = get_unique_ast_serial(context);
+    // ir->base.s = get_unique_ast_serial(context);
     return ir;
 }
 
@@ -272,7 +272,7 @@ func u64 integer_literal_as_u64(struct expr *lit){
 }
 
 static struct ast_type *defined_type_to_type(enum ast_kind *defined_type){
-    if(*defined_type == AST_typedef){
+    if(*defined_type == IR_typedef){
         return ((struct ast_declaration *)defined_type)->type;
     }else{
         return (struct ast_type *)defined_type;
@@ -662,7 +662,7 @@ func void maybe_insert_cast_from_special_int_to_int(struct context *context, str
         operand->defined_type = null;
         
         struct ir_load_bitfield *ir_load_bitfield = push_struct(&context->ir_arena, struct ir_load_bitfield);
-        ir_load_bitfield->base.kind = IR_load_bitfield + is_lhs;
+        ir_load_bitfield->base.kind = IR_load_bitfield + (u8)is_lhs;
         ir_load_bitfield->bitfield_type = bitfield;
         operand->ir = &ir_load_bitfield->base;
         
@@ -1068,7 +1068,7 @@ func struct string report_type_mismatch__internal(struct context *context, char 
     
     b32 handled = false;
     if(defined_type){
-        if(*defined_type == AST_typedef){
+        if(*defined_type == IR_typedef){
             struct ast_declaration *decl = cast(struct ast_declaration *)defined_type;
             struct string lhs_string = push_type_string(context->arena, &context->scratch, decl->type);
             ret = push_format_string(&context->scratch, "%s '%.*s' (aka %.*s)", prefix, decl->identifier->amount, decl->identifier->data, lhs_string.amount, lhs_string.data);
@@ -1149,7 +1149,7 @@ struct declarator_return{
 
 func struct ast_declaration *push_declaration_for_declarator(struct context *context, struct declarator_return declarator){
     struct ast_declaration *decl = push_struct(context->arena, struct ast_declaration);
-    decl->kind         = AST_declaration;
+    decl->kind         = IR_declaration;
     decl->type         = declarator.type;
     decl->defined_type = declarator.defined_type;
     decl->identifier   = declarator.ident;
@@ -1221,7 +1221,7 @@ func int parse_declaration_list_in_imperative_scope(struct context *context, str
     assert(context->current_scope);
     
     struct declaration_list declaration_list = parse_declaration_list(context, optional_type, optional_defined_type);
-    return declaration_list.first && declaration_list.first->decl->kind == AST_function;
+    return declaration_list.first && declaration_list.first->decl->kind == IR_function;
 }
 
 func struct ast_type *push_unresolved_type(struct context *context, struct token *sleep_on, enum ast_kind kind){
@@ -3460,7 +3460,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
             if(defined_type){
                 struct ast_type *original = unpromoted_type;
                 
-                if(*defined_type == AST_typedef){
+                if(*defined_type == IR_typedef){
                     unpromoted_type = ((struct ast_declaration *)defined_type)->type;
                 }else{
                     unpromoted_type = (struct ast_type *)defined_type;
@@ -3484,7 +3484,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                         
                         struct string type_string = string("");
                         
-                        if(defined_type && *defined_type == AST_typedef){
+                        if(defined_type && *defined_type == IR_typedef){
                             struct ast_declaration *ast_typedef = (struct ast_declaration *)defined_type;
                             type_string = ast_typedef->identifier->string;
                         }
@@ -3893,7 +3893,7 @@ func void punt_compound_assignment(struct context *context, struct expr *lhs, st
         case AST_right_shift_assignment:{
             op_ir_kind = IR_right_shift_s32 + (ir_type - IR_TYPE_s32);
         }break;
-        invalid_default_case(op_ir_kind = IR_start);
+        invalid_default_case(op_ir_kind = IR_invalid);
     }
     
     rhs->ir = push_ir(context, op_ir_kind);
@@ -4615,8 +4615,8 @@ case NUMBER_KIND_##type:{ \
                     report_error(context, token, "Undeclared identifier.");
                 }
                 return invalid_ast(context);
-            }else if(lookup->kind != AST_declaration && lookup->kind != AST_function){
-                assert(lookup->kind == AST_typedef);
+            }else if(lookup->kind != IR_declaration && lookup->kind != IR_function){
+                assert(lookup->kind == IR_typedef);
                 
                 if(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries){
                     //
@@ -4648,7 +4648,7 @@ case NUMBER_KIND_##type:{ \
             
             maybe_resolve_unresolved_type(&lookup->type);
             
-            if(lookup->kind == AST_function || (lookup->kind == AST_declaration && (lookup->flags & DECLARATION_FLAGS_is_global))){
+            if(lookup->kind == IR_function || (lookup->kind == IR_declaration && (lookup->flags & DECLARATION_FLAGS_is_global))){
                 struct ast_declaration *outer_declaration = context->current_function ? &context->current_function->as_decl : context->current_declaration;
                 
                 if(!outer_declaration){
@@ -5057,7 +5057,7 @@ case NUMBER_KIND_##type:{ \
                         
                         if(function_argument_iterator){
                             
-                            assert(*function_argument_iterator->value == AST_declaration);
+                            assert(*function_argument_iterator->value == IR_declaration);
                             struct ast_declaration *decl = cast(struct ast_declaration *)function_argument_iterator->value;
                             
                             if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return expr;
@@ -6311,12 +6311,14 @@ case NUMBER_KIND_##type:{ \
                     struct ir_jump_node *rhs_jump = push_jump(context, IR_jump_if_false);
                     rhs_jump->label_number = conditional_jump->label_number;
                     
-                    struct ir_temp *temp = push_struct(&context->ir_arena, struct ir_temp);
-                    temp->base.kind = IR_temp;
-                    temp->type = &globals.typedef_s32;
+                    struct ast_declaration *temp = push_unnamed_declaration(context, &globals.typedef_s32, null, stack_entry->token);
+                    struct ir_identifier *lhs = push_struct(&context->ir_arena, struct ir_identifier);
+                    lhs->base.kind = IR_identifier;
+                    lhs->decl = temp;
                     
                     ast_push_s32_literal(context, 1, null);
                     push_ir(context, IR_store);
+                    push_ir(context, IR_pop_expression);
                     
                     struct ir_jump_node *jump_end = push_jump(context, IR_jump);
                     jump_end->label_number = context->jump_label_index++;
@@ -6324,15 +6326,21 @@ case NUMBER_KIND_##type:{ \
                     struct ir_jump_node *false_label = push_jump(context, IR_jump_label);
                     false_label->label_number = conditional_jump->label_number;
                     
+                    lhs = push_struct(&context->ir_arena, struct ir_identifier);
+                    lhs->base.kind = IR_identifier;
+                    lhs->decl = temp;
                     ast_push_s32_literal(context, 0, null);
                     push_ir(context, IR_store);
+                    push_ir(context, IR_pop_expression);
                     
                     struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                     end_label->label_number = jump_end->label_number;
                     
                     // ... in the end, temp is on top of the stack, the expression we return.
-                    
-                    operand.ir = &temp->base;
+                    lhs = push_struct(&context->ir_arena, struct ir_identifier);
+                    lhs->base.kind = IR_identifier;
+                    lhs->decl = temp;
+                    operand.ir = &lhs->base;
                 }
                 
                 operand.resolved_type = &globals.typedef_s32;
@@ -6409,12 +6417,14 @@ case NUMBER_KIND_##type:{ \
                     struct ir_jump_node *rhs_jump = push_jump(context, IR_jump_if_true);
                     rhs_jump->label_number = conditional_jump->label_number;
                     
-                    struct ir_temp *temp = push_struct(&context->ir_arena, struct ir_temp);
-                    temp->base.kind = IR_temp;
-                    temp->type = &globals.typedef_s32;
+                    struct ast_declaration *temp = push_unnamed_declaration(context, &globals.typedef_s32, null, stack_entry->token);
+                    struct ir_identifier *lhs = push_struct(&context->ir_arena, struct ir_identifier);
+                    lhs->base.kind = IR_identifier;
+                    lhs->decl = temp;
                     
                     ast_push_s32_literal(context, 0, null);
                     push_ir(context, IR_store);
+                    push_ir(context, IR_pop_expression);
                     
                     struct ir_jump_node *jump_end = push_jump(context, IR_jump);
                     jump_end->label_number = context->jump_label_index++;
@@ -6422,13 +6432,23 @@ case NUMBER_KIND_##type:{ \
                     struct ir_jump_node *true_label = push_jump(context, IR_jump_label);
                     true_label->label_number = conditional_jump->label_number;
                     
+                    lhs = push_struct(&context->ir_arena, struct ir_identifier);
+                    lhs->base.kind = IR_identifier;
+                    lhs->decl = temp;
+                    
                     ast_push_s32_literal(context, 1, null);
                     push_ir(context, IR_store);
+                    push_ir(context, IR_pop_expression);
                     
                     struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                     end_label->label_number = jump_end->label_number;
                     
-                    operand.ir = &temp->base;
+                    lhs = push_struct(&context->ir_arena, struct ir_identifier);
+                    lhs->base.kind = IR_identifier;
+                    lhs->decl = temp;
+                    operand.ir = &lhs->base;
+                    
+                    operand.ir = &lhs->base;
                 }
                 
                 operand.resolved_type = &globals.typedef_s32;
@@ -6470,8 +6490,11 @@ case NUMBER_KIND_##type:{ \
                 struct conditional_expression_information *information = stack_entry->other;
                 
                 struct ir *condition = information->condition;
-                struct ir_temp *temp = information->temp;
+                struct ir_identifier *temp1 = information->temp;
+                
                 struct ir_jump_node *end_jump = information->end_jump;
+                struct ir_jump_node *if_false_label = (struct ir_jump_node *)(end_jump + 1);
+                struct ir_identifier *temp2 = (struct ir_identifier *)(if_false_label + 1);
                 
                 maybe_load_address_for_array_or_function(context, IR_load_address, if_false, operand.token);
                 maybe_insert_cast_from_special_int_to_int(context, if_false, /*is_lhs*/0);
@@ -6548,14 +6571,23 @@ case NUMBER_KIND_##type:{ \
                     // @cleanup: This is probably wrong.
                     // 
                     struct ast_type *bigger_type = if_true->resolved_type->size > if_false->resolved_type->size ? if_true->resolved_type : if_false->resolved_type;
-                    temp->type = bigger_type;
+                    
+                    struct ast_declaration *temp_decl = push_unnamed_declaration(context, bigger_type, null, question_mark);
+                    
+                    temp1->decl = temp_decl;
+                    temp2->decl = temp_decl;
                     
                     push_ir(context, IR_store);
-                            
+                    push_ir(context, IR_pop_expression);
+                    
                     struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                     end_label->label_number = end_jump->label_number;
                     
-                    operand.ir = &temp->base;
+                    
+                    struct ir_identifier *lhs = push_struct(&context->ir_arena, struct ir_identifier);
+                    lhs->base.kind = IR_identifier;
+                    lhs->decl = temp_decl;
+                    operand.ir = &lhs->base;
                     operand.resolved_type = if_true->resolved_type;
                     operand.defined_type = defined_type;
                 }
@@ -6973,8 +7005,8 @@ case NUMBER_KIND_##type:{ \
             struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_false);
             conditional_jump->label_number = context->jump_label_index++;
             
-            struct ir_temp *temp = push_struct(&context->ir_arena, struct ir_temp);
-            temp->base.kind = IR_temp;
+            struct ir_identifier *temp1 = push_struct(&context->ir_arena, struct ir_identifier);
+            temp1->base.kind = IR_identifier;
             
             struct expr if_true = parse_expression(context, false);
             maybe_load_address_for_array_or_function(context, IR_load_address, &if_true, if_true.token);
@@ -7007,8 +7039,11 @@ case NUMBER_KIND_##type:{ \
                 cast = push_ir(context, IR_nop);
             }
             push_ir(context, IR_store);
+            push_ir(context, IR_pop_expression);
             
-            temp->type = if_true.resolved_type;
+            // 
+            // @WARINING: We assume we know the order of these nodes to get temp2 from end_jump.
+            // 
             
             struct ir_jump_node *end_jump = push_jump(context, IR_jump);
             end_jump->label_number = context->jump_label_index++;
@@ -7016,9 +7051,12 @@ case NUMBER_KIND_##type:{ \
             struct ir_jump_node *if_false_label = push_jump(context, IR_jump_label);
             if_false_label->label_number = conditional_jump->label_number;
             
+            struct ir_identifier *temp2 = push_struct(&context->ir_arena, struct ir_identifier);
+            temp2->base.kind = IR_identifier;
+            
             struct conditional_expression_information *conditional_expression_information = push_struct(&context->scratch, struct conditional_expression_information);
             conditional_expression_information->condition = operand.ir;
-            conditional_expression_information->temp = temp;
+            conditional_expression_information->temp = temp1;
             conditional_expression_information->end_jump = end_jump;
             conditional_expression_information->cast = cast;
             
@@ -7890,7 +7928,7 @@ case TOKEN_##type_name:{                                                 \
                         //
                         // the c-spec says: enum members are ints, and the enum is of a size that can hold all enum members
                         struct ast_declaration *decl = push_struct(context->arena, struct ast_declaration);
-                        decl->kind = AST_declaration;
+                        decl->kind = IR_declaration;
                         decl->identifier = ident;
                         decl->flags |= DECLARATION_FLAGS_is_enum_member;
                         decl->type = &ast_enum->base;
@@ -8186,7 +8224,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(!decl){
                 // Push the declaration so we can continue as if it was defined.
                 decl = push_declaration_for_declarator(context, declarator);
-                if(declarator.type->kind == AST_function_type) decl->kind = AST_function;
+                if(declarator.type->kind == AST_function_type) decl->kind = IR_function;
                 decl->flags |= DECLARATION_FLAGS_is_global;
                 
                 if(globals.output_file_type == OUTPUT_FILE_obj){
@@ -8228,7 +8266,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             // 
             
             struct ast_function *function = push_struct(context->arena, struct ast_function);
-            function->kind = AST_function;
+            function->kind = IR_function;
             function->type = cast(struct ast_function_type *)declarator.type;
             function->identifier = declarator.ident;
             function->memory_location = null;
@@ -8429,7 +8467,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
             
             decl = push_declaration_for_declarator(context, declarator);
-            if(specifiers.specifier_flags & SPECIFIER_typedef) decl->kind = AST_typedef;
+            if(specifiers.specifier_flags & SPECIFIER_typedef) decl->kind = IR_typedef;
             
             if(specifiers.alignment > 0) decl->overwrite_alignment = specifiers.alignment;
             
@@ -9256,7 +9294,7 @@ func struct ast *parse_imperative_scope(struct context *context){
         if(!decl) continue;
         if(decl->flags & DECLARATION_FLAGS_is_global) continue; // We don't track the used information for external declarations at function scope.
         
-        if(decl->kind == AST_declaration){
+        if(decl->kind == IR_declaration){
             if(decl->_times_referenced == 0){
                 report_warning(context, WARNING_unused_local_variable, decl->identifier, "Local variable is never used.");
             }else if(decl->_times_referenced == decl->_times_written){

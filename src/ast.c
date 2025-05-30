@@ -354,12 +354,10 @@ enum ast_kind{
     AST_invalid,
     AST_none = AST_invalid,
     
-    // Declarations
+    // @note: these match the IR_* versions.
     AST_declaration,
     AST_function,
     AST_typedef,
-    
-    AST_declaration_list,
     
     // Types
     AST_void_type,
@@ -376,16 +374,6 @@ enum ast_kind{
     
     AST_unresolved_type,
     
-    // Primary Expressions
-    // AST_string_literal,
-    // AST_integer_literal,
-    // AST_float_literal,
-    
-    // AST_identifier,
-    // AST_compound_literal,
-    
-    // AST_pointer_literal,             // (struct s *)1337
-    // AST_pointer_literal_deref,       // *(struct s *)1337 or ((struct s *)1337)->member
     
     // Unary Expressions
     AST_cast,
@@ -434,21 +422,6 @@ enum ast_kind{
     AST_binary_bigger,
     AST_binary_smaller,
     
-    AST_binary_bigger_equals_signed,
-    AST_binary_smaller_equals_signed,
-    AST_binary_bigger_signed,
-    AST_binary_smaller_signed,
-    
-    // Float comparisons @WARNING: we use the order.
-    AST_binary_logical_equals_float,
-    AST_binary_logical_unequals_float,
-    
-    AST_binary_bigger_equals_float,
-    AST_binary_smaller_equals_float,
-    AST_binary_bigger_float,
-    AST_binary_smaller_float,
-    
-    
     AST_logical_and,
     AST_logical_or,
     
@@ -467,8 +440,6 @@ enum ast_kind{
     
     AST_member,
     AST_member_deref,
-    // AST_pointer_subscript,
-    // AST_array_subscript,
     
     AST_comma_expression,
     
@@ -486,7 +457,6 @@ enum ast_kind{
     
     AST_empty_statement, // @cleanup: get rid of me!
     
-    
     AST_emitted_float_literal, // yuck, we copy float-literals in the back-end.
     
     AST_count,
@@ -500,8 +470,9 @@ struct expr{
     
     struct ast_type *resolved_type;
     enum ast_kind *defined_type; 
+    
     // :defined_types
-    // if the ast has a 'AST_typedef' or 'AST_enum' type, we store it here for error reporting. 
+    // if the ast has a 'IR_typedef' or 'AST_enum' type, we store it here for error reporting. 
     // Also if it is just promoted, we retain that information, so we can warn on 'u8 = u8 + u8' usw.
     // :retain_type_information_through_promotion 
 };
@@ -567,7 +538,10 @@ struct declaration_node{
 
 struct ast_declaration{
     // @WARNING: This needs to match the part in ast_function.
-    enum ast_kind kind;
+    union{
+        struct ir base;
+        enum ir_kind kind;
+    };
     
     struct ast_type *type;
     enum ast_kind *defined_type; // Either 'AST_enum' or 'AST_typedef' or 'null' :defined_types
@@ -715,7 +689,7 @@ struct ast_scope{
 static struct token *get_initializer_token(struct ast_declaration *decl){
     if(decl->flags & DECLARATION_FLAGS_is_enum_member) return decl->identifier;
     
-    if(decl->kind == AST_function){
+    if(decl->kind == IR_function){
         struct ast_scope *scope = (struct ast_scope *)decl->assign_expr;
         return scope->token;
     }
@@ -771,9 +745,12 @@ struct ast_function_type{
 struct ast_function{
     union{
         struct{
-            enum ast_kind kind;
+            union{
+                struct ir base;
+                enum ir_kind kind;
+            };
             struct ast_function_type *type;
-            struct ast *defined_type; // either 'AST_enum' or 'AST_typedef' or 'null'
+            struct ast *defined_type; // either 'AST_enum' or 'IR_typedef' or 'null'
             struct token *identifier;
             smm offset_in_text_section;
             u8 *memory_location; // @cleanup: rename? this is where the thing onces emitted. here for patching
@@ -859,7 +836,7 @@ struct ast_goto{
 struct conditional_expression_information{
     struct ir *condition;
     struct ir *cast;
-    struct ir_temp *temp;
+    struct ir_identifier *temp;
     struct ir_jump_node *end_jump;
 };
 

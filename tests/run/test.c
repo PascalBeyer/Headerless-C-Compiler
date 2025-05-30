@@ -114,9 +114,9 @@ int main(){
 #define times_three(a) (a + a + a)
     int var = 123;
     assert(times_three(var) == 3 * 123);
-    assert(times_three(var++) == 3 * 123 + 3);
+    assert(times_three(var++) == 3 * 123 + 3);    // (var++ + var++) + var++ | var++ var++ + var++ + | 123 124 + 125 + 
     assert(times_three((var = 123)) == 3 * 123);
-    assert(times_three(--var) == 3 * 123 - 6);
+    assert(times_three(--var) == 3 * 123 - 6);   // (--var + --var) + --var | --var --var + --var + | 122  121 + 120 + 
     assert(times_three((var = 111)));
     
     assert((var = 12) + (var = 13) == 25);

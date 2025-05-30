@@ -1,5 +1,4 @@
 
-
 enum ir_type{
     IR_TYPE_void,
     IR_TYPE_bool,
@@ -41,8 +40,11 @@ enum ir_type{
 };
 
 enum ir_kind{
+    IR_invalid,
     
-    IR_start = AST_count, // For now!
+    IR_declaration,
+    IR_function,
+    IR_typedef,
     
     IR_identifier,
     IR_string_literal,
@@ -358,7 +360,6 @@ enum ir_kind{
     IR_right_shift_assignment_u64,
     
     IR_nop,
-    IR_temp,
     IR_embed,
     IR_initializer,
     IR_asm_block,
@@ -479,11 +480,8 @@ enum ir_kind{
     IR_truncate_to_u16_lhs,
     IR_truncate_to_u32,
     IR_truncate_to_u32_lhs,
-};
-
-struct ir{
-    enum ir_kind kind;
-    s32 s;
+    
+    IR_count,
 };
 
 static int ir_type_size[] = {
@@ -510,6 +508,15 @@ static int ir_type_signed(enum ir_type ir_type){
     u32 integer_type_index = (u32)(ir_type - IR_TYPE_s8);
     return integer_type_index <= (IR_TYPE_u64 - IR_TYPE_s8) && !(integer_type_index & 1);
 }
+
+#pragma pack(push, 1)
+
+struct ir{
+    // enum ir_kind kind;
+    u16 kind;
+};
+
+static_assert(IR_count < 0x10000);
 
 struct ir_identifier{ 
     struct ir base;
@@ -573,11 +580,6 @@ struct ir_skip{
 struct ir_jump_node{
     struct ir base;
     smm label_number;
-};
-
-struct ir_temp{ // @cleanup: This thing is sort of stupid.
-    struct ir base;
-    struct ast_type *type;
 };
 
 struct ir_embed{
@@ -677,3 +679,4 @@ struct ir_string_literal{
     u32 symbol_table_index; // needed for .obj (this should maybe be named unique_string_index as that is what it realy is)
 };
 
+#pragma pack(pop)
