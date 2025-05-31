@@ -4236,10 +4236,10 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
             context->in_lhs_expression = false;
         }break;
         
-#define explicit_number_kind_case(type)\
+#define explicit_number_kind_case(type, postfix)\
 case NUMBER_KIND_##type:{ \
     if(type##_min > (smm)val || type##_max < (smm)val){ \
-        report_warning(context, WARNING_compile_time_truncation, lit_token, "Literal is prefixed '%s', but does not fit.", #type); \
+        report_warning(context, WARNING_compile_time_truncation, lit_token, "Literal is postfixed '" #postfix "', but does not fit into a '%s'.", #type); \
     } \
     lit->_##type = (type)val; \
     operand.resolved_type = &globals.typedef_##type;\
@@ -4276,14 +4276,14 @@ case NUMBER_KIND_##type:{ \
                     return (struct expr){.ir = &lit->base, lit_token, &globals.typedef_s32};
                 }break;
                 
-                explicit_number_kind_case(s8);
-                explicit_number_kind_case(s16);
-                explicit_number_kind_case(s32);
-                explicit_number_kind_case(s64);
-                explicit_number_kind_case(u8);
-                explicit_number_kind_case(u16);
-                explicit_number_kind_case(u32);
-                explicit_number_kind_case(u64);
+                explicit_number_kind_case(s8, i8);
+                explicit_number_kind_case(s16, i16);
+                explicit_number_kind_case(s32, i32);
+                explicit_number_kind_case(s64, i64);
+                explicit_number_kind_case(u8, ui8);
+                explicit_number_kind_case(u16, ui16);
+                explicit_number_kind_case(u32, ui32);
+                explicit_number_kind_case(u64, ui64);
                 
                 case NUMBER_KIND_long: // @cleanup: if we do long vs int think about this
                 case NUMBER_KIND_int:{
@@ -4360,14 +4360,14 @@ case NUMBER_KIND_##type:{ \
                     return (struct expr){ .ir = &lit->base, lit_token, &globals.typedef_s32};
                 }break;
                 
-                explicit_number_kind_case(s8);
-                explicit_number_kind_case(s16);
-                explicit_number_kind_case(s32);
-                explicit_number_kind_case(s64);
-                explicit_number_kind_case(u8);
-                explicit_number_kind_case(u16);
-                explicit_number_kind_case(u32);
-                explicit_number_kind_case(u64);
+                explicit_number_kind_case(s8, i8);
+                explicit_number_kind_case(s16, i16);
+                explicit_number_kind_case(s32, i32);
+                explicit_number_kind_case(s64, i64);
+                explicit_number_kind_case(u8, ui8);
+                explicit_number_kind_case(u16, ui16);
+                explicit_number_kind_case(u32, ui32);
+                explicit_number_kind_case(u64, ui64);
                 
                 case NUMBER_KIND_s128: case NUMBER_KIND_u128:{
                     report_error(context, lit_token, "128-bit literals are not supported.");

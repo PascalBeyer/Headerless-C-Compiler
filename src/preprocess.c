@@ -911,7 +911,7 @@ struct parsed_integer{
         NUMBER_KIND_u16, // ui16
         NUMBER_KIND_u32, // ui32
         NUMBER_KIND_u64, // ui64
-        NUMBER_KIND_u128, // i128 @cleanup: remove me later
+        NUMBER_KIND_u128, // ui128 @cleanup: remove me later
         
         NUMBER_KIND_float32,
         NUMBER_KIND_float64,
