@@ -2225,10 +2225,27 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 ir_offset += sizeof(struct ir_compound_literal);
                 ir_offset += compound_literal->initializer_size;
                 
-                ir_stack[ir_stack_at].ir = &compound_literal->decl->base;
-                ir_stack[ir_stack_at].offset = 0;
-                ir_stack[ir_stack_at].is_address = 0;
-                ir_stack_at++;
+                struct ir *next_ir = (struct ir *)(base + ir_offset);
+                if(next_ir->kind == IR_initializer){
+                    struct ir_initializer *initializer_for_offset = (struct ir_initializer *)next_ir;
+                    ir_offset += sizeof(*initializer_for_offset);
+                    
+                    smm offset = root_offset + initializer_for_offset->offset;
+                    struct ast_type *lhs_type = initializer_for_offset->lhs_type;
+                    smm lhs_size = lhs_type->size;
+                    assert(offset + lhs_size <= data_size);
+                    
+                    // Recursively evaluate the compound literal.
+                    evaluate_static_initializer__internal(context, ir_node, patch_declaration, data, data_size, offset);
+                }else{
+                    // Add this compound literal to the list of unnamed global declarations.
+                    ast_list_append(&context->global_struct_and_array_literals, context->arena, &compound_literal->decl->kind);
+                    
+                    ir_stack[ir_stack_at].ir = &compound_literal->decl->base;
+                    ir_stack[ir_stack_at].offset = 0;
+                    ir_stack[ir_stack_at].is_address = 0;
+                    ir_stack_at++;
+                }
             }break;
             
             case IR_embed:{
@@ -2344,7 +2361,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 
                 smm offset = root_offset + initializer_for_offset->offset;
                 struct ast_type *lhs_type = initializer_for_offset->lhs_type;
-                smm lhs_size = initializer_for_offset->lhs_type->size;
+                smm lhs_size = lhs_type->size;
                 assert(offset + lhs_size <= data_size);
                 
                 if(ir_stack[ir_stack_at].is_address){
