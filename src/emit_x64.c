@@ -2697,39 +2697,53 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 dest->offset = decl_location->offset + offset; // @cleanup: my system is way to confusing about stack offsets
                 
                 if(lhs_type->kind == AST_array_type){
-                    assert(initializer_location->ir && initializer_location->ir->kind == IR_string_literal);
-                    struct ast_array_type   *array = (struct ast_array_type *)lhs_type;
-                    struct ir_string_literal *lit = (struct ir_string_literal *)initializer_location->ir;
                     
-                    // Mark the string literal as being used.
-                    sll_push_back(context->string_literals, lit);
-                    context->string_literals.amount_of_strings += 1;
-                    
-                    smm array_size = array->amount_of_elements * array->element_type->size;
-                    if(array->is_of_unknown_size){
-                        // We are in an initializer like:
+                    if(initializer_location->ir && initializer_location->ir->kind == IR_string_literal){
+                        
+                        assert(initializer_location->ir && initializer_location->ir->kind == IR_string_literal);
+                        struct ast_array_type   *array = (struct ast_array_type *)lhs_type;
+                        struct ir_string_literal *lit = (struct ir_string_literal *)initializer_location->ir;
+                        
+                        // Mark the string literal as being used.
+                        sll_push_back(context->string_literals, lit);
+                        context->string_literals.amount_of_strings += 1;
+                        
+                        smm array_size = array->amount_of_elements * array->element_type->size;
+                        if(array->is_of_unknown_size){
+                            // We are in an initializer like:
+                            // 
+                            // struct s{
+                            //     char array[];
+                            // } arst = {"hello :)"};
+                            // 
+                            // We have made sure to allocate enough space to hold the initializer.
+                            array_size = lit->value.size + array->element_type->size;
+                        }
+                        
+                        smm extra = (array_size == lit->value.size) ? 0 : array->element_type->size;
+                        
+                        if(array->is_of_unknown_size) dest->size = array_size;
+                        
+                        if(array_size > lit->value.size + extra){
+                            // @cleanup: We only would have to zero the upper part of the 'lhs'.
+                            emit_memset(context, dest, 0);
+                        }
+                        
+                        // @cleanup: this seems stupid, this should just be how string literals work, no?
+                        struct emit_location *rhs = emit_location_rip_relative(context, &lit->base, lit->value.size + extra);
+                        emit_memcpy(context, dest, rhs);
+                    }else{
                         // 
-                        // struct s{
-                        //     char array[];
-                        // } arst = {"hello :)"};
+                        // For compound literals in initializers:
+                        //    
+                        //    struct arst{
+                        //        int arst[4];
+                        //    } a = {
+                        //        (int[4]){1, 2, 3},
+                        //    };
                         // 
-                        // We have made sure to allocate enough space to hold the initializer.
-                        array_size = lit->value.size + array->element_type->size;
+                        emit_memcpy(context, dest, initializer_location);
                     }
-                    
-                    smm extra = (array_size == lit->value.size) ? 0 : array->element_type->size;
-                    
-                    if(array->is_of_unknown_size) dest->size = array_size;
-                    
-                    if(array_size > lit->value.size + extra){
-                        // @cleanup: We only would have to zero the upper part of the 'lhs'.
-                        emit_memset(context, dest, 0);
-                    }
-                    
-                    // @cleanup: this seems stupid, this should just be how string literals work, no?
-                    struct emit_location *rhs = emit_location_rip_relative(context, &lit->base, lit->value.size + extra);
-                    emit_memcpy(context, dest, rhs);
-                    
                 }else if(lhs_type->kind == AST_bitfield_type){
                     struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)lhs_type;
                     emit_store_bitfield(context, bitfield, dest, initializer_location);
@@ -4617,11 +4631,17 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             }break;
             
             default:{
+                
+#ifdef FUZZING
+                // Cause a _different_ crash for every ir_kind.
+                ((void (*)(void))(0x13371337 + ir_kind * 0x10))();
+#endif
                 report_internal_compiler_error(null, __FUNCTION__ ": Unhandled ast");
             }break;
         }
         
         assert(ir_arena_at != (u8 *)ir); // We should increment ir_arena_at.
+        assert(emit_location_stack_at < array_count(emit_location_stack)); // @incomplete: We should grow the stack.
     }
     
     for(u32 jump_label_index = 0; jump_label_index < current_function->amount_of_jump_labels; jump_label_index++){

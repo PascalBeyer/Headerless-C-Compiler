@@ -639,7 +639,7 @@ func u32 u32_atomic_preincrement(u32 *val){
 #ifdef FUZZING
 __declspec(dllexport) u8 fuzz_me_buffer[FUZZ_ME_BUFFER_SIZE];
 
-static struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size){
+static struct os_file os_load_file_fuzzing(char *file_name, void *buffer, smm buffer_size){
     struct os_file result = {.data = buffer, .size = 0};
     static b32 not_the_first_time;
     if(not_the_first_time) return result;
@@ -661,7 +661,8 @@ static struct os_file os_load_file(char *file_name, void *buffer, smm buffer_siz
     
     return result;
 }
-#else
+#endif
+
 // @hmm maybe we should have a unified os_memory_range_return, that has error information.
 // filename needs to be zero_terminated
 // you can pass in a zero buffer to find out the size
@@ -735,7 +736,6 @@ static struct os_file os_load_file(char *file_name, void *buffer, smm buffer_siz
     
     return result;
 }
-#endif
 
 func b32 path_is_directory(char *path){
     u32 INVALID_FILE_ATTRIBUTES = u32_max;

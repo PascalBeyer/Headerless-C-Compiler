@@ -2506,7 +2506,15 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
     
     u8 *file_buffer = push_uninitialized_data(context->arena, u8, padded_file_size);
     
+#ifdef FUZZING
+    struct os_file os_file = os_load_file_fuzzing(absolute_file_path, file_buffer, padded_file_size);
+    
+    print("-----------------------------------------------\n");
+    print("%.*s\n", os_file.size, os_file.data);
+    print("-----------------------------------------------\n");
+#else
     struct os_file os_file = os_load_file(absolute_file_path, file_buffer, padded_file_size);
+#endif
     
     // 
     // Clear the added padding, this will *really* zero-terminate the file.
@@ -3117,7 +3125,12 @@ func s64 static_if_evaluate(struct context *context){
             case STATIC_IF_EVALUATE_ternary_condition:{
                 
                 if(binary_expression->type != TOKEN_colon){
-                    report_error(context, binary_expression, "Expected a ':'.");
+                    if(binary_expression == &globals.invalid_token){
+                        report_error(context, get_current_token_for_error_report(context), "Unexpected end in '#if' after '?' operator. Expected ':'.");
+                        
+                    }else{
+                        report_error(context, binary_expression, "Expected a ':'.");
+                    }
                     return 0;
                 }
                 

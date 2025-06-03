@@ -103,8 +103,10 @@ static enum ir_type ir_type_from_type(struct ast_type *type){
 // Sometimes when we are constant propagating, we have to un-emit a literal.
 #define pop_from_ir_arena(context, ast) pop_from_ir_arena_(context, (u8 *)(ast), sizeof(*ast))
 func void pop_from_ir_arena_(struct context *context, u8 *ast_memory, smm size){
-    assert(ast_memory + size == arena_current(&context->ir_arena));
-    context->ir_arena.current = ast_memory;
+    if(!context->should_exit_statement){ // This was causing issues I dunno.
+        assert(ast_memory + size == arena_current(&context->ir_arena));
+        context->ir_arena.current = ast_memory;
+    }
 }
 
 
@@ -620,6 +622,7 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
                 [IR_TYPE_s64][IR_TYPE_s32] = IR_truncate_to_u32,
             };
             
+            assert(ir_cast_what < IR_TYPE_padding1 && ir_cast_to < IR_TYPE_padding1);
             enum ir_kind ir_cast = ir_kind_for_cast[ir_cast_what][ir_cast_to];
             if(ir_cast){
                 if(lhs_or_rhs == AST_cast_lhs) ir_cast += 1;
@@ -2381,6 +2384,13 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                 }
             }
             
+            if(expression.ir->kind == IR_compound_literal){
+                struct ir_compound_literal *compound = (struct ir_compound_literal *)expression.ir;
+                
+                if(compound->trailing_array_size){
+                    report_error(context, expression.token, "Initialization of member to struct literal looses initialization of trailing array member.");
+                }
+            }
             
             while(true){
                 
@@ -2619,78 +2629,101 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
         //
         struct expr expr = parse_expression(context, /*skip_comma_expression*/true);
         
-        if(type->kind == AST_array_type){
+        if(expr.ir->kind == IR_compound_literal && types_are_equal(type, expr.resolved_type)){
+            
+            // For assignments like
             // 
-            // The left hand side is an array, but we don't have an initializer list,
-            // so the right hand side has to be a string literal.
+            //    struct arst{
+            //         int a, b, c;
+            //    } arst = (struct arst){1, 2, 3);
             // 
-            // Cases:
-            //     char a[]  = "asd";
-            //     char a[4] = "asd";
-            //     char a[3] = "asd";
-            //     
-            //     wchar_t a[]  = L"asd";
-            //     wchar_t a[4] = L"asd";
-            //     wchar_t a[3] = L"asd";
-            // 
-            //     int a[]  = U"asd";
-            //     int a[4] = U"asd";
-            //     int a[3] = U"asd";
-            // 
+            // we essentially _remove_ the (struct arst) and transform it into `arst = {1, 2, 3}`.
             
-            if(expr.ir->kind != IR_string_literal){
-                // :Error print the string literal thing only for integer arrays?
-                report_error(context, equals, "Array can only be initialized by {initializer-list} or \"string literal\".");
-                return;
-            }
+            static_assert(sizeof(struct ir_skip) <= sizeof(*lhs));
             
-            // If type is an array of unknown size, patch in the size
-            // we get in this for example for 'char asd[] = "asd";' or struct literals.
-            struct ast_array_type *lhs_type = (struct ast_array_type *)type;
-            struct ast_array_type *rhs_type = (struct ast_array_type *)expr.resolved_type;
+            struct ir_skip *skip = (struct ir_skip *)lhs;
+            skip->base.kind = IR_skip;
+            skip->size_to_skip = sizeof(*lhs);
             
-            if(lhs_type->element_type->kind != AST_integer_type){
-                report_error(context, equals, "Array initialized by string literal has to be of integer type.");
-                return;
-            }
+            struct ir_compound_literal *compound_literal = (struct ir_compound_literal *)expr.ir;
+            compound_literal->decl = decl;
             
-            if(lhs_type->element_type->size != rhs_type->element_type->size){
-                // :error
-                report_error(context, equals, "Mismatching array element types.");
-                return;
-            }
-            
-            // @note: For string literals we can right now have signed unsigned mismatches.
-            
-            if(lhs_type->is_of_unknown_size){
-                // 
-                // We want the type to be patched to the type of the string literal.
-                // 
-                type = &rhs_type->base;
-            }else if(lhs_type->amount_of_elements == (rhs_type->amount_of_elements - 1)){
-                // 
-                // Here we are in the 'char a[3] = "asd"' case.
-                // This should not be an error, we just don't append the zero to the array.
-                // 
-            }else if(lhs_type->amount_of_elements < rhs_type->amount_of_elements){
-                report_error(context, equals, "Array initialized to string literal of size %lld, but the array size is only %lld.", rhs_type->amount_of_elements, lhs_type->amount_of_elements);
-                return;
-            }
-            
+            initializer_start = expr.ir;
         }else{
-            maybe_load_address_for_array_or_function(context, IR_load_address, &expr, expr.token);
-            maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type, decl->defined_type, &expr, equals);
+            
+            if(type->kind == AST_array_type){
+                // 
+                // The left hand side is an array, but we don't have an initializer list,
+                // so the right hand side has to be a string literal.
+                // 
+                // Cases:
+                //     char a[]  = "asd";
+                //     char a[4] = "asd";
+                //     char a[3] = "asd";
+                //     
+                //     wchar_t a[]  = L"asd";
+                //     wchar_t a[4] = L"asd";
+                //     wchar_t a[3] = L"asd";
+                // 
+                //     int a[]  = U"asd";
+                //     int a[4] = U"asd";
+                //     int a[3] = U"asd";
+                // 
+                
+                if(expr.ir->kind != IR_string_literal){
+                    // :Error print the string literal thing only for integer arrays?
+                    report_error(context, equals, "Array can only be initialized by {initializer-list} or \"string literal\".");
+                    return;
+                }
+                
+                // If type is an array of unknown size, patch in the size
+                // we get in this for example for 'char asd[] = "asd";' or struct literals.
+                struct ast_array_type *lhs_type = (struct ast_array_type *)type;
+                struct ast_array_type *rhs_type = (struct ast_array_type *)expr.resolved_type;
+                
+                if(lhs_type->element_type->kind != AST_integer_type){
+                    report_error(context, equals, "Array initialized by string literal has to be of integer type.");
+                    return;
+                }
+                
+                if(lhs_type->element_type->size != rhs_type->element_type->size){
+                    // :error
+                    report_error(context, equals, "Mismatching array element types.");
+                    return;
+                }
+                
+                // @note: For string literals we can right now have signed unsigned mismatches.
+                
+                if(lhs_type->is_of_unknown_size){
+                    // 
+                    // We want the type to be patched to the type of the string literal.
+                    // 
+                    type = &rhs_type->base;
+                }else if(lhs_type->amount_of_elements == (rhs_type->amount_of_elements - 1)){
+                    // 
+                    // Here we are in the 'char a[3] = "asd"' case.
+                    // This should not be an error, we just don't append the zero to the array.
+                    // 
+                }else if(lhs_type->amount_of_elements < rhs_type->amount_of_elements){
+                    report_error(context, equals, "Array initialized to string literal of size %lld, but the array size is only %lld.", rhs_type->amount_of_elements, lhs_type->amount_of_elements);
+                    return;
+                }
+                
+            }else{
+                maybe_load_address_for_array_or_function(context, IR_load_address, &expr, expr.token);
+                maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type, decl->defined_type, &expr, equals);
+            }
+            
+            struct ir_initializer *ast_initializer = push_struct(&context->ir_arena, struct ir_initializer);
+            ast_initializer->base.kind = IR_initializer;
+            ast_initializer->offset = 0;
+            ast_initializer->lhs_type = decl->type;
+            
+            // The 'assign_expr' is only used for 'evaluate_static_initializer'.
+            // In this case we have to re-iterate the whole expression.
+            // This starts right after the lhs and ends at the 'ast_initializer'.
+            initializer_start = &lhs->base;
         }
-        
-        struct ir_initializer *ast_initializer = push_struct(&context->ir_arena, struct ir_initializer);
-        ast_initializer->base.kind = IR_initializer;
-        ast_initializer->offset = 0;
-        ast_initializer->lhs_type = decl->type;
-        
-        // The 'assign_expr' is only used for 'evaluate_static_initializer'.
-        // In this case we have to re-iterate the whole expression.
-        // This starts right after the lhs and ends at the 'ast_initializer'.
-        initializer_start = &lhs->base;
     }
     
     push_ir(context, IR_pop_expression);
@@ -4837,6 +4870,21 @@ case NUMBER_KIND_##type:{ \
                         
                         [IR_TYPE_f32] = IR_postinc_f32,
                         [IR_TYPE_f64] = IR_postinc_f64,
+                        
+                        // @incomplete: There should probably be atomic versions of these.
+                        [IR_TYPE_atomic_bool] = IR_postinc_bool,
+                        
+                        [IR_TYPE_atomic_s8] = IR_postinc_u8,
+                        [IR_TYPE_atomic_u8] = IR_postinc_u8,
+                        
+                        [IR_TYPE_atomic_s16] = IR_postinc_u16,
+                        [IR_TYPE_atomic_u16] = IR_postinc_u16,
+                        
+                        [IR_TYPE_atomic_s32] = IR_postinc_u32,
+                        [IR_TYPE_atomic_u32] = IR_postinc_u32,
+                        
+                        [IR_TYPE_atomic_s64] = IR_postinc_u64,
+                        [IR_TYPE_atomic_u64] = IR_postinc_u64,
                     };
                     
                     operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
@@ -4880,6 +4928,21 @@ case NUMBER_KIND_##type:{ \
                         
                         [IR_TYPE_f32] = IR_postdec_f32,
                         [IR_TYPE_f64] = IR_postdec_f64,
+                        
+                        // @incomplete: There should probably be atomic versions of these.
+                        [IR_TYPE_atomic_bool] = IR_postdec_bool,
+                        
+                        [IR_TYPE_atomic_s8] = IR_postdec_u8,
+                        [IR_TYPE_atomic_u8] = IR_postdec_u8,
+                        
+                        [IR_TYPE_atomic_s16] = IR_postdec_u16,
+                        [IR_TYPE_atomic_u16] = IR_postdec_u16,
+                        
+                        [IR_TYPE_atomic_s32] = IR_postdec_u32,
+                        [IR_TYPE_atomic_u32] = IR_postdec_u32,
+                        
+                        [IR_TYPE_atomic_s64] = IR_postdec_u64,
+                        [IR_TYPE_atomic_u64] = IR_postdec_u64,
                     };
                     
                     operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
@@ -5328,6 +5391,21 @@ case NUMBER_KIND_##type:{ \
                         
                         [IR_TYPE_f32] = IR_preinc_f32,
                         [IR_TYPE_f64] = IR_preinc_f64,
+                        
+                        // @incomplete: There should probably be atomic versions of these.
+                        [IR_TYPE_atomic_bool] = IR_preinc_bool,
+                        
+                        [IR_TYPE_atomic_s8] = IR_preinc_u8,
+                        [IR_TYPE_atomic_u8] = IR_preinc_u8,
+                        
+                        [IR_TYPE_atomic_s16] = IR_preinc_u16,
+                        [IR_TYPE_atomic_u16] = IR_preinc_u16,
+                        
+                        [IR_TYPE_atomic_s32] = IR_preinc_u32,
+                        [IR_TYPE_atomic_u32] = IR_preinc_u32,
+                        
+                        [IR_TYPE_atomic_s64] = IR_preinc_u64,
+                        [IR_TYPE_atomic_u64] = IR_preinc_u64,
                     };
                     
                     operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
@@ -5372,6 +5450,21 @@ case NUMBER_KIND_##type:{ \
                         
                         [IR_TYPE_f32] = IR_predec_f32,
                         [IR_TYPE_f64] = IR_predec_f64,
+                        
+                        // @incomplete: There should probably be atomic versions of these.
+                        [IR_TYPE_atomic_bool] = IR_predec_bool,
+                        
+                        [IR_TYPE_atomic_s8] = IR_predec_u8,
+                        [IR_TYPE_atomic_u8] = IR_predec_u8,
+                        
+                        [IR_TYPE_atomic_s16] = IR_predec_u16,
+                        [IR_TYPE_atomic_u16] = IR_predec_u16,
+                        
+                        [IR_TYPE_atomic_s32] = IR_predec_u32,
+                        [IR_TYPE_atomic_u32] = IR_predec_u32,
+                        
+                        [IR_TYPE_atomic_s64] = IR_predec_u64,
+                        [IR_TYPE_atomic_u64] = IR_predec_u64,
                     };
                     
                     operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
@@ -5492,12 +5585,9 @@ case NUMBER_KIND_##type:{ \
                 // @cleanup: Const prop for pointer literals.
                 
                 maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_insert_integer_promotion_cast(context, AST_cast, &operand, operand.token);
                 
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, stack_entry->token)) return operand;
-                
-                if(operand.resolved_type->kind == AST_integer_type || operand.resolved_type->kind == AST_bitfield_type){
-                    maybe_insert_integer_promotion_cast(context, AST_cast, &operand, operand.token);
-                }
                 
                 enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
                 static enum ir_kind ir_kind_for_type[] = {
@@ -5532,11 +5622,9 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
-                if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_integer | CHECK_float, stack_entry->token)) return operand;
+                maybe_insert_integer_promotion_cast(context, AST_cast, &operand, operand.token);
                 
-                if(operand.resolved_type->kind == AST_integer_type || operand.resolved_type->kind == AST_bitfield_type){
-                    maybe_insert_integer_promotion_cast(context, AST_cast, &operand, operand.token);
-                }
+                if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_integer | CHECK_float, stack_entry->token)) return operand;
                 
                 // @cleanup: Why are we pushing this expresssion?
                 // struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
@@ -5578,14 +5666,12 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
+                maybe_insert_integer_promotion_cast(context, AST_cast, &operand, operand.token);
+                
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_integer | CHECK_float, stack_entry->token)) return operand;
                 
-                if(operand.resolved_type->kind == AST_integer_type || operand.resolved_type->kind == AST_bitfield_type){
-                    maybe_insert_integer_promotion_cast(context, AST_cast, &operand, operand.token);
-                    
-                    if(!type_is_signed(operand.resolved_type)){
-                        report_warning(context, WARNING_unsigned_negation, operand.token, "Negation of an unsigned number is still unsigned.");
-                    }
+                if(operand.resolved_type->kind == AST_integer_type && !type_is_signed(operand.resolved_type)){
+                    report_warning(context, WARNING_unsigned_negation, operand.token, "Negation of an unsigned number is still unsigned.");
                 }
                 
                 enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
@@ -7314,6 +7400,7 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                     
                     if(!is_power_of_two(value)){
                         report_error(context, token, "Alignment must be a power of two.");
+                        value = 1;
                     }
                     
                     if(specifiers.alignment){
@@ -7364,6 +7451,7 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                     
                     if(!is_power_of_two(value)){
                         report_error(context, directive, "Alignment must be a power of two.");
+                        value = 1;
                     }
                     
                     if(specifiers.alignment){
@@ -7470,6 +7558,7 @@ case TOKEN_##type_name:{                                                 \
                         
                         if(!is_power_of_two(value)){
                             report_error(context, declspec, "Alignment must be a power of two.");
+                            value = 1;
                         }
                         
                         if(declspec_alignment != 1){
@@ -8552,7 +8641,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 if(context->should_exit_statement) goto end;
             }
             
-            if(!(decl->flags & DECLARATION_FLAGS_is_local_persist) && !(decl->flags & DECLARATION_FLAGS_is_global)){
+            if(!(specifiers.specifier_flags & SPECIFIER_typedef) && !(decl->flags & DECLARATION_FLAGS_is_local_persist) && !(decl->flags & DECLARATION_FLAGS_is_global)){
                 parser_emit_memory_location(context, decl);
             }
         }

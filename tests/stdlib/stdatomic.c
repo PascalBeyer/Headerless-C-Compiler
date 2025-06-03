@@ -215,6 +215,88 @@ int main(){
     a_ullong -= 1337;
     
     
+    a_bool++;
+    a_char++;
+    a_short++;
+    a_int++;
+    a_long++;
+    a_llong++;
+    
+    a_uchar++;
+    a_ushort++;
+    a_uint++;
+    a_ulong++;
+    a_ullong++;
+    
+    a_bool--;
+    a_char--;
+    a_short--;
+    a_int--;
+    a_long--;
+    a_llong--;
+    
+    a_uchar--;
+    a_ushort--;
+    a_uint--;
+    a_ulong--;
+    a_ullong--;
+    
+    ++a_bool;
+    ++a_char;
+    ++a_short;
+    ++a_int;
+    ++a_long;
+    ++a_llong;
+    
+    ++a_uchar;
+    ++a_ushort;
+    ++a_uint;
+    ++a_ulong;
+    ++a_ullong;
+    
+    --a_bool;
+    --a_char;
+    --a_short;
+    --a_int;
+    --a_long;
+    --a_llong;
+    
+    --a_uchar;
+    --a_ushort;
+    --a_uint;
+    --a_ulong;
+    --a_ullong;
+    
+    !a_uchar;
+    !a_ushort;
+    !a_uint;
+    !a_ulong;
+    !a_ullong;
+    
+    -a_uchar;
+    -a_ushort;
+    -a_uint;
+    -a_ulong;
+    -a_ullong;
+    
+    +a_uchar;
+    +a_ushort;
+    +a_uint;
+    +a_ulong;
+    +a_ullong;
+    
+    ~a_uchar;
+    ~a_ushort;
+    ~a_uint;
+    ~a_ulong;
+    ~a_ullong;
+    
+    (char)a_uchar;
+    (char)a_ushort;
+    (char)a_uint;
+    (char)a_ulong;
+    (char)a_ullong;
+    
 #if 0
     // 
     // Unimplemented compound assignments:

@@ -2120,11 +2120,16 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
         initializer_end = compound_literal->initializer_size;
     }
     
+    // 
+    // In theory this stack could be infinite:
+    // 
+    //     1 + (1 + (1 + (1 + (1 + a))))
+    // 
     struct{
         struct ir *ir;
         smm offset;
         int is_address;
-    } ir_stack[4]; // @paranoid: We should be able to put this to 2, because the only binary expression we handle are + and -, hence we cannot exceed depth 2.
+    } ir_stack[0x100];
     smm ir_stack_at = 0;
     
     u8 *base = (u8 *)initializer;
@@ -2398,7 +2403,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                                 u64 new_value = (mask & old_value) | value;
                                 memcpy(data + offset, &new_value, lhs_type->size);
                             }else{
-                                assert(lhs_type->kind == AST_integer_type || lhs_type->kind == AST_pointer_type);
+                                assert(lhs_type->kind == AST_integer_type || lhs_type->kind == AST_pointer_type || lhs_type->kind == AST_atomic_integer_type);
                                 memcpy(data + offset, &value, lhs_type->size);
                             }
                         }break;
@@ -2425,8 +2430,16 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                         case IR_string_literal:{
                             struct ir_string_literal *str = (struct ir_string_literal *)rhs;
                             
+                            if(lhs_type->kind != AST_array_type){
+                                // This can happen for example for:
+                                //      int a = "arst"[0];
+                                // We could maybe try to evaluate this expression, but for now I'm going to say its non-constant.
+                                // 
+                                // @cleanup: Both clang and gcc allow this.
+                                goto initializer_not_constant;
+                            }
+                            
                             // If the left hand side is not an array, we should be in the 'AST_implicit_address_conversion' case.
-                            assert(lhs_type->kind == AST_array_type);
                             struct ast_array_type *lhs_array = (struct ast_array_type *)lhs_type;
                             
                             smm array_size;
@@ -2495,7 +2508,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
         }
         
         assert(start_ir_offset != ir_offset);
-        assert(ir_stack_at <= 3);
+        assert(ir_stack_at <= array_count(ir_stack)); // @incomplete: We should grow the stack.
     }
 }
 
@@ -3817,7 +3830,13 @@ int main(int argc, char *argv[]){
             
             FindClose(search_handle);
         }else{
+            
+#ifdef FUZZING
+            struct os_file file = os_load_file_fuzzing((char *)path.data, 0, 0);
+#else
             struct os_file file = os_load_file((char *)path.data, 0, 0);
+#endif       
+            
             
             if(file.file_does_not_exist){
                 print("Error: Specified input file '%.*s' does not exist.\n", path.size, path.data);
