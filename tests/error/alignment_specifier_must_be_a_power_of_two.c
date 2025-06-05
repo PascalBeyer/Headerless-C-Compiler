@@ -1,8 +1,8 @@
-// check "(5,16): Error at 'align': Alignment must be a power of two."
-// check "(9,12): Error at 'align': Alignment must be a power of two."
-// check "(14,19): Error at 'align': Alignment must be a power of two."
-// check "(23,5): Error at '_Alignas': Alignment must be a power of two."
-// check "(27,1): Error at '_Alignas': Alignment must be a power of two."
+// check "(10,16): Error at 'align': Alignment must be a power of two."
+// check "(14,12): Error at 'align': Alignment must be a power of two."
+// check "(19,19): Error at 'align': Alignment must be a power of two."
+// check "(25,5): Error at '_Alignas': Alignment must be a power of two."
+// check "(29,1): Error at '_Alignas': Alignment must be a power of two."
 // fail
 
 
