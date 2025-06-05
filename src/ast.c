@@ -457,8 +457,6 @@ enum ast_kind{
     
     AST_empty_statement, // @cleanup: get rid of me!
     
-    AST_emitted_float_literal, // yuck, we copy float-literals in the back-end.
-    
     AST_count,
 };
 

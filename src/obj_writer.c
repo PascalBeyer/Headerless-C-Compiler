@@ -2733,7 +2733,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 struct ast_declaration *source = (struct ast_declaration *)patch->source;
                 
                 relocation->source_symbol_table_index = (u32)source->symbol_table_index;
-            }else if(source_kind == AST_emitted_float_literal){
+            }else if(source_kind == IR_emitted_float_literal){
                 struct ir_emitted_float_literal *source = (struct ir_emitted_float_literal *)patch->source;
                 
                 u32 symbol_table_index;

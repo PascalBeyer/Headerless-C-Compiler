@@ -2637,7 +2637,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 // @note: This sucks!
                 struct ir_emitted_float_literal *emitted = push_struct(context->arena, struct ir_emitted_float_literal);
-                emitted->base.kind = AST_emitted_float_literal;
+                emitted->base.kind = IR_emitted_float_literal;
                 emitted->value = f->value;
                 emitted->type = f->type;
                 
@@ -3984,7 +3984,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         }
                         
                         struct ir_emitted_float_literal *emitted = push_struct(context->arena, struct ir_emitted_float_literal);
-                        emitted->base.kind = AST_emitted_float_literal;
+                        emitted->base.kind = IR_emitted_float_literal;
                         emitted->value = 1.0;
                         emitted->type = &globals.typedef_f32;
                         
@@ -4012,7 +4012,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         }
                         
                         struct ir_emitted_float_literal *emitted = push_struct(context->arena, struct ir_emitted_float_literal);
-                        emitted->base.kind = AST_emitted_float_literal;
+                        emitted->base.kind = IR_emitted_float_literal;
                         emitted->value = 1.0;
                         emitted->type = &globals.typedef_f64;
                         

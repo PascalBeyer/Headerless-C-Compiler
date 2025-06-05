@@ -2311,7 +2311,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     source_location += patch->location_offset_in_source_declaration;
                     smm rip_at = dest_location + patch->rip_at;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
-                }else if(source_kind == AST_emitted_float_literal){
+                }else if(source_kind == IR_emitted_float_literal){
                     struct ir_emitted_float_literal *f = (struct ir_emitted_float_literal *)patch->source;
                     assert(f->relative_virtual_address);
                     

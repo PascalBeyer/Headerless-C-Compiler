@@ -52,6 +52,8 @@ enum ir_kind{
     IR_float_literal,
     IR_compound_literal,
     
+    IR_emitted_float_literal, // yuck, we copy float-literals in the back-end.
+    
     IR_pointer_literal,
     IR_pointer_literal_deref,
     
