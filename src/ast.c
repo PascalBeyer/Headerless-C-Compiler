@@ -490,8 +490,7 @@ enum type_flags{
 struct ast_type{
     enum ast_kind kind;
     enum type_flags flags;
-    struct token *token;
-    s64 s;
+    // struct token *token;
     smm size;      // @note: these could be u32's probably
     smm alignment; // @note: these could be u32's probably
     
@@ -594,7 +593,6 @@ struct ast_pointer_type{
 struct ast_unresolved_type{
     struct ast_type base;
     enum ast_kind kind; // AST_union, AST_struct or AST_enum
-    struct compilation_unit *compilation_unit;
     struct token *sleeping_on;
     struct ast_scope *containing_scope;
 };
@@ -716,7 +714,7 @@ struct compound_member{
 
 struct ast_compound_type{
     struct ast_type base;
-    struct atom identifier;
+    struct token *identifier;
     struct compilation_unit *compilation_unit;
     
     // A dynamic array for the members.
@@ -841,5 +839,4 @@ struct conditional_expression_information{
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
-
 

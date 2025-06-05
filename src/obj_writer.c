@@ -243,7 +243,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                 *push_struct(arena, u16) = /*properties*/0;
                 *push_struct(arena, u32) = /*underlying type*/CV_s32;
                 *push_struct(arena, u32) = fieldlist_type_index;
-                push_zero_terminated_string_copy(arena, ast_enum->identifier.string);
+                push_zero_terminated_string_copy(arena, ast_enum->identifier->string);
                 
                 end_type_record();
             }break;
@@ -277,7 +277,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                         *push_struct(arena, u16) = 0; // size (0 for forward ref)
                         
                         // @cleanup: this could overflow the header length field u16.
-                        push_zero_terminated_string_copy(arena, compound->identifier.string);
+                        push_zero_terminated_string_copy(arena, compound->identifier->string);
                         end_type_record();
                         current_type->pdb_type_index = predeclaration_type_index;
                     }
@@ -390,7 +390,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                     *push_struct(arena, u32) = 0; // vshape
                 }
                 push_unsigned_number_leaf(arena, compound->base.size);
-                push_zero_terminated_string_copy(arena, compound->identifier.string);
+                push_zero_terminated_string_copy(arena, compound->identifier->string);
                 
                 end_type_record();
             }break;
@@ -561,7 +561,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                 }
                 *push_struct(arena, u16) = 0; // size (0 for forward ref)
                 
-                struct string type_name = token_get_string(unresolved->base.token);
+                struct string type_name = token_get_string(unresolved->sleeping_on);
                 
                 // @cleanup: this could overflow the header length field u16.
                 push_zero_terminated_string_copy(arena, type_name);

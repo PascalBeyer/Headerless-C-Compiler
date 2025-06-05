@@ -927,7 +927,7 @@ func u32 tpi_emit_predecl(struct pdb_write_context *context, struct ast_type *ty
             out_int(0, u32);    // derived
             out_int(0, u32);    // vshape
         }
-        stream_emit_size_and_name(context, 0, false, compound->identifier.string);
+        stream_emit_size_and_name(context, 0, false, compound->identifier->string);
     }end_symbol();
     
     struct pdb_type_info *info = get_type_info_for_type_index(context, ret);
@@ -1079,7 +1079,7 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
                     out_int(0, u16);    // @incomplete: properties
                     out_int(CV_s32, u32); // underlying type
                     out_int(fieldlist, u32);
-                    out_string(ast_enum->identifier); // no size for enums
+                    out_string(ast_enum->identifier->string); // no size for enums
                 }end_symbol();
             }break;
             case AST_struct: case AST_union:{
@@ -1123,7 +1123,7 @@ func void tpi_register_type(struct pdb_write_context *context, struct ast_type *
                         out_int(0, u32);         // derived (c++)
                         out_int(0, u32);         // vshape (c++)
                     }
-                    stream_emit_size_and_name(context, type->size, false, compound->identifier.string);
+                    stream_emit_size_and_name(context, type->size, false, compound->identifier->string);
                 }end_symbol();
                 
             }break;
@@ -2946,9 +2946,9 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             assert(type_index < context->maximal_amount_of_type_indices);
             struct pdb_type_info *info = get_type_info_for_type_index(context, type_index);
             
-            if(info->type && /*skip predecls*/type_index == info->type->pdb_type_index && (info->type->kind == AST_struct || info->type->kind == AST_union || info->type->kind == AST_enum) && !atoms_match(((struct ast_compound_type *)info->type)->identifier, globals.unnamed_tag)){
+            if(info->type && /*skip predecls*/type_index == info->type->pdb_type_index && (info->type->kind == AST_struct || info->type->kind == AST_union || info->type->kind == AST_enum) && !atoms_match(((struct ast_compound_type *)info->type)->identifier->atom, globals.unnamed_tag)){
                 struct ast_compound_type *compound = cast(struct ast_compound_type *)info->type;
-                u32 hash = pdb_string_hash(compound->identifier.string);
+                u32 hash = pdb_string_hash(compound->identifier->string);
                 
                 out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32); // could make this tpi.hash_key_size
                 
@@ -3043,15 +3043,15 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         for(u64 i = 0; i < globals.compound_types.capacity; i++){
             struct ast_node *node = globals.compound_types.nodes + i;
             if(!node->token) continue;
-            struct ast_type *type = cast(struct ast_type *)node->ast;
-            assert(type->kind == AST_enum || type->kind == AST_union || type->kind == AST_struct);
-            assert(type->pdb_type_index);
+            struct ast_compound_type *type = cast(struct ast_compound_type *)node->ast;
+            assert(type->base.kind == AST_enum || type->base.kind == AST_union || type->base.kind == AST_struct);
+            assert(type->base.pdb_type_index);
             
-            struct file *file = globals.file_table.data[type->token->file_index];
+            struct file *file = globals.file_table.data[type->identifier->file_index];
             begin_symbol(0x1607);{ // LF_UDT_MOD_SRC_LINE
-                out_int(type->pdb_type_index,  u32); // type_index
+                out_int(type->base.pdb_type_index,  u32); // type_index
                 out_int(file->offset_in_names, u32); // file_name    (offset in /names)
-                out_int(type->token->line,     u32); // line_number
+                out_int(type->identifier->line,     u32); // line_number
                 out_int(1,                     u16); // module_index (@hardcoded one counted)
                 out_f3f2f1_align(sizeof(u32));
             }end_symbol();
@@ -3061,11 +3061,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct ast_declaration *decl = (struct ast_declaration *)it->value;
             struct ast_type *type = decl->type;
             
-            struct file *file = globals.file_table.data[type->token->file_index];
+            struct file *file = globals.file_table.data[decl->identifier->file_index];
             begin_symbol(0x1607);{ // LF_UDT_MOD_SRC_LINE
                 out_int(type->pdb_type_index,  u32); // type_index
                 out_int(file->offset_in_names, u32); // file_name    (offset in /names)
-                out_int(type->token->line,     u32); // line_number
+                out_int(decl->identifier->line,     u32); // line_number
                 out_int(1,                     u16); // module_index (@hardcoded one counted)
                 out_f3f2f1_align(sizeof(u32));
             }end_symbol();

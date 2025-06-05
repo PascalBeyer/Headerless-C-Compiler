@@ -285,7 +285,7 @@ func void end_error_report(struct context *context){
         context->sleep_line = -1;
         // @hmm: this is just _anything_ random that will never wake up.
         //       maybe we should make a designated token
-        context->sleep_on = &globals.token_void;
+        context->sleep_on = &globals.invalid_token;
         
         context->errors_in_this_report = 0;
     }

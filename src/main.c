@@ -530,40 +530,6 @@ static struct{
     } *globally_referenced_declarations;
     
     // 
-    // Tokens for basic types:
-    // 
-    
-    struct token token_void;
-    struct token token_Bool;
-    
-    struct token token_u8;
-    struct token token_u16;
-    struct token token_u32;
-    struct token token_u64;
-    
-    struct token token_s8;
-    struct token token_s16;
-    struct token token_s32;
-    struct token token_s64;
-    
-    struct token token_atomic_bool;
-    
-    struct token token_atomic_u8;
-    struct token token_atomic_u16;
-    struct token token_atomic_u32;
-    struct token token_atomic_u64;
-    
-    struct token token_atomic_s8;
-    struct token token_atomic_s16;
-    struct token token_atomic_s32;
-    struct token token_atomic_s64;
-    
-    struct token token_f32;
-    struct token token_f64;
-    
-    struct token token_poison;
-    
-    // 
     // Basic types:
     // @WARNING: The non-atomic version need to stay in the same order as the atomic versions, 
     //           so that we can use address manipulation to go from atomic to non atomic.
@@ -1030,6 +996,19 @@ func void print_token(struct context *context, struct token *token, b32 print_wh
 #include "ar.c"
 //_____________________________________________________________________________________________________________________
 
+
+static enum ir_type ir_type_from_type(struct ast_type *type){
+    u64 index = type - &globals.typedef_void;
+    if(index <= (u64)(&globals.typedef_atomic_u64 - &globals.typedef_void)){
+        return (enum ir_type)index;
+    }
+    
+    if(type->kind == AST_pointer_type) return IR_TYPE_pointer;
+    
+    invalid_code_path;
+}
+
+
 func struct string push_type_string(struct memory_arena *arena, struct memory_arena *scratch, struct ast_type *type);
 
 func void push_type_string__inner(struct string_list *list, struct memory_arena *arena, struct memory_arena *scratch, struct ast_type *type){
@@ -1038,11 +1017,48 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
         case AST_float_type:
         case AST_integer_type:
         case AST_atomic_integer_type:{
-            string_list_prefix(list, scratch, token_get_string(type->token));
+            
+            enum ir_type ir_type = ir_type_from_type(type);
+            
+            static struct string type_to_string[] = {
+                [IR_TYPE_void] = const_string("void"),
+                [IR_TYPE_bool] = const_string("_Bool"),
+                
+                [IR_TYPE_s8] = const_string("char"), 
+                [IR_TYPE_u8] = const_string("unsigned char"), 
+                
+                [IR_TYPE_s16] = const_string("short"), 
+                [IR_TYPE_u16] = const_string("unsigned short"), 
+                
+                [IR_TYPE_s32] = const_string("int"),
+                [IR_TYPE_u32] = const_string("unsigned int"),
+                
+                [IR_TYPE_s64] = const_string("long long"), 
+                [IR_TYPE_u64] = const_string("unsigned long long"),
+                
+                [IR_TYPE_f32] = const_string("float"),
+                [IR_TYPE_f64] = const_string("double"),
+                
+                [IR_TYPE_atomic_bool] = const_string("_Atomic(_Bool)"),
+                
+                [IR_TYPE_atomic_s8] = const_string("_Atomic(char)"), 
+                [IR_TYPE_atomic_u8] = const_string("_Atomic(unsigned char)"), 
+                
+                [IR_TYPE_atomic_s16] = const_string("_Atomic(short)"), 
+                [IR_TYPE_atomic_u16] = const_string("_Atomic(unsigned short)"), 
+                
+                [IR_TYPE_atomic_s32] = const_string("_Atomic(int)"),
+                [IR_TYPE_atomic_u32] = const_string("_Atomic(unsigned int)"),
+                
+                [IR_TYPE_atomic_s64] = const_string("_Atomic(long long)"), 
+                [IR_TYPE_atomic_u64] = const_string("_Atomic(unsigned long long)"),
+            };
+            
+            string_list_prefix(list, scratch, type_to_string[ir_type]);
         }break;
         case AST_union: case AST_struct: case AST_enum:{
             struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
-            string_list_prefix(list, scratch, compound->identifier.string);
+            string_list_prefix(list, scratch, compound->identifier->string);
             char *prefix = "enum ";
             if(compound->base.kind == AST_union)  prefix = "union ";
             if(compound->base.kind == AST_struct) prefix = "struct ";
@@ -1057,7 +1073,7 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
         }break;
         case AST_unresolved_type:{
             struct ast_unresolved_type *unresolved = (struct ast_unresolved_type *)type;
-            string_list_prefix(list, scratch, token_get_string(unresolved->base.token));
+            string_list_prefix(list, scratch, token_get_string(unresolved->sleeping_on));
             
             struct string type_prefix = type_prefix_for_unresolved_type(unresolved);
             
@@ -1499,7 +1515,7 @@ func struct ast_type *lookup_compound_type(struct context *context, struct atom 
     for(struct ast_scope *it = context->current_scope; it; it = it->parent){
         for(u32 i = 0; i < it->amount_of_compound_types; i++){
             struct ast_compound_type *type = it->compound_types[i];
-            if(atoms_match(ident, type->identifier)){
+            if(atoms_match(ident, type->identifier->atom)){
                 return &type->base;
             }
         }
@@ -1547,7 +1563,7 @@ func struct ast_declaration *lookup_declaration(struct ast_scope *root_scope, st
 // :unresolved_types
 static struct ast_type *lookup_unresolved_type(struct ast_type *type){
     struct ast_unresolved_type *unresolved = (struct ast_unresolved_type *)type;
-    struct atom ident = unresolved->base.token->atom;
+    struct atom ident = unresolved->sleeping_on->atom;
     
     // 
     // If the unresolve type was declared at global scope, only look it up globally,
@@ -1574,7 +1590,7 @@ static struct ast_type *lookup_unresolved_type(struct ast_type *type){
         for(u32 compound_index = 0; compound_index < scope->amount_of_compound_types; compound_index++){
             struct ast_compound_type *compound = scope->compound_types[compound_index];
             
-            if(atoms_match(ident, compound->identifier)){
+            if(atoms_match(ident, compound->identifier->atom)){
                 return &compound->base;
             }
         }
@@ -2011,7 +2027,7 @@ func void register_compound_type(struct context *context, struct ast_type *type,
             // 
             // If its the same type, do not register this one. @cleanup: should we return the other type?
             // 
-            if(types_are_equal((struct ast_type *)redecl, type)) return;
+            if(types_are_equal(redecl, type)) return;
             
             // 
             // Warn on redeclaration at local scope, but still register this.
@@ -2024,12 +2040,13 @@ func void register_compound_type(struct context *context, struct ast_type *type,
             //     return 0;
             // }
             // 
-            // 
             
-            if(should_report_warning_for_token(context, type->token)){
+            struct ast_compound_type *compound_type = (struct ast_compound_type *)redecl;
+            
+            if(should_report_warning_for_token(context, ident)){
                 begin_error_report(context);
-                report_warning(context, WARNING_shadowing_local, type->token, "Redeclaration of type.");
-                report_warning(context, WARNING_shadowing_local, redecl->token, "... Here was the previous declaration.");
+                report_warning(context, WARNING_shadowing_local, compound_type->identifier, "Redeclaration of type.");
+                report_warning(context, WARNING_shadowing_local, ident, "... Here was the previous declaration.");
                 end_error_report(context);
             }
         }
@@ -2055,7 +2072,7 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         struct ast_compound_type *new = (struct ast_compound_type *)type;
         
         // If we have same token we are the same type so we can. @cleanup: Is this correct?
-        if(old->base.token == new->base.token) return;
+        if(old->identifier == new->identifier) return;
         
         // 
         // Reallow declarations of the same type.
@@ -2063,8 +2080,8 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         if(types_are_equal((struct ast_type *)redecl, type)) return;
         
         begin_error_report(context);
-        report_error(context, new->base.token, "[%lld] Redeclaration of type.", new->compilation_unit->index);
-        report_error(context, old->base.token, "[%lld] ... Here was the previous declaration.", old->compilation_unit->index);
+        report_error(context, new->identifier, "[%lld] Redeclaration of type.", new->compilation_unit->index);
+        report_error(context, old->identifier, "[%lld] ... Here was the previous declaration.", old->compilation_unit->index);
         end_error_report(context);
         return;
     }
@@ -3094,11 +3111,11 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
         // for struct this might be a struct declaration, in which case  we are done.
         if(lhs_type->kind == AST_struct || lhs_type->kind == AST_union){
             struct ast_compound_type *compound = cast(struct ast_compound_type *)lhs_type;
-            if(compound->identifier.size == 0){
+            if(compound->identifier->size == 0){
                 // @cleanup: does this report the error in the wrong spot, if we have:
                 //     typedef struct {} asd;
                 //     asd;
-                report_warning(context, WARNING_does_not_declare_anything, compound->base.token, "Anonymous %s declaration does not declare anything.", compound->base.kind == AST_union ? "union" : "struct");
+                report_warning(context, WARNING_does_not_declare_anything, compound->identifier, "Anonymous %s declaration does not declare anything.", compound->base.kind == AST_union ? "union" : "struct");
             }
         }else if(declaration_list.defined_type_specifier && *declaration_list.defined_type_specifier == AST_enum){
             // these are fine. we could exectly check for enum{} I guess
@@ -4017,21 +4034,10 @@ int main(int argc, char *argv[]){
         
         
 #define make_const_typedef(postfix, TOKEN_kind, AST_kind, _string, _size, _align) \
-globals.token_##postfix = (struct token){                                         \
-    .type  = TOKEN_kind,                                                          \
-    .data = (u8 *)_string,                                                        \
-    .size = (u32)(sizeof(_string) - 1),                                           \
-    .string_hash = (u32)string_djb2_hash(string(_string)),                        \
-    .file_index  = /*this is valid!*/-1,                                          \
-    .line  = 0,                                                                   \
-    .column = 0,                                                                  \
-},                                                                                \
 globals.typedef_##postfix = (struct ast_type){                                    \
-    .s = -1,                                                                      \
     .size   = _size,                                                              \
     .alignment = _align,                                                          \
     .kind   = AST_kind,                                                           \
-    .token  = &globals.token_##postfix,                                           \
 }                                                                                 \
 
         make_const_typedef(void, TOKEN_void,     AST_void_type,    "void",               0, 1);
@@ -4199,8 +4205,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         globals.keyword__VA_ARGS__ = atom_for_string(string("__VA_ARGS__"));
         
-        globals.unnamed_tag        = atom_for_string(string("<unnamed-tag>"));
-        globals.unnamed_enum       = atom_for_string(string("<unnamed-enum>"));
+        globals.unnamed_tag  = atom_for_string(string("<unnamed-tag>"));
+        globals.unnamed_enum = atom_for_string(string("<unnamed-enum>"));
         globals.invalid_identifier = atom_for_string(string("<invalid identifier>"));
         
         // :hlc_extension
@@ -4399,7 +4405,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct token *alloca_token = push_dummy_token(arena, atom_for_string(string("_alloca")), TOKEN_identifier);
             struct token *size_token = push_dummy_token(arena, atom_for_string(string("size")), TOKEN_identifier);
             
-            struct ast_function_type *alloca_type = parser_type_push(context, alloca_token, function_type);
+            struct ast_function_type *alloca_type = parser_type_push(context, function_type);
             alloca_type->return_type = &void_pointer->base;
             
             struct declarator_return parameter_declarator = {
@@ -4420,7 +4426,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             // 
             struct token *noop_token = push_dummy_token(arena, atom_for_string(string("__noop")), TOKEN_identifier);
             
-            struct ast_function_type *noop_type = parser_type_push(context, noop_token, function_type);
+            struct ast_function_type *noop_type = parser_type_push(context, function_type);
             noop_type->return_type = &globals.typedef_s32;
             noop_type->flags |= FUNCTION_TYPE_FLAGS_is_varargs;
             
@@ -4433,7 +4439,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             // 
             struct token *debugbreak_token = push_dummy_token(arena, atom_for_string(string("__debugbreak")), TOKEN_identifier);
             
-            struct ast_function_type *debugbreak_type = parser_type_push(context, debugbreak_token, function_type);
+            struct ast_function_type *debugbreak_type = parser_type_push(context, function_type);
             debugbreak_type->return_type = &globals.typedef_void;
             
             register_intrinsic_function_declaration(context, debugbreak_token, debugbreak_type);
@@ -4445,7 +4451,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             
             struct token *token = push_dummy_token(arena, atom_for_string(string("_AddressOfReturnAddress")), TOKEN_identifier);
             
-            struct ast_function_type *type = parser_type_push(context, token, function_type);
+            struct ast_function_type *type = parser_type_push(context, function_type);
             type->return_type = &void_pointer->base;
             
             register_intrinsic_function_declaration(context, token, type);

@@ -58,16 +58,13 @@ func void _parser_sleep(struct context *context, struct token *sleep_on, u32 lin
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define parser_type_push(context, token, type) (struct ast_##type *)_parser_type_push(context, token, sizeof(struct ast_##type), alignof(struct ast_##type), AST_##type)
+#define parser_type_push(context, type) (struct ast_##type *)_parser_type_push(context, sizeof(struct ast_##type), alignof(struct ast_##type), AST_##type)
 
-func struct ast_type *_parser_type_push(struct context *context, struct token *token, smm size, u32 align, enum ast_kind kind){
-    assert(token->type != TOKEN_invalid);
+func struct ast_type *_parser_type_push(struct context *context, smm size, u32 align, enum ast_kind kind){
     
     struct ast_type *type = push_struct_(context->arena, size, align);  // @note: No need to zero, 'arena' never has any non-zero bytes.
     
     type->kind = kind;
-    type->token = token;
-    type->s = get_unique_ast_serial(context);
     
     return type;
 }
@@ -78,26 +75,13 @@ func struct ast_type *_parser_type_push(struct context *context, struct token *t
 static struct ir *push_ir(struct context *context, enum ir_kind ir_kind){
     struct ir *ir = push_struct_(&context->ir_arena, sizeof(struct ir), 1); // @note: No need to zero, 'arena' never has any non-zero bytes.
     ir->kind  = ir_kind;
-    // ir->s = get_unique_ast_serial(context);
     return ir;
 }
 
 static struct ir_jump_node *push_jump(struct context *context, enum ir_kind ir_kind){
     struct ir_jump_node *ir = push_struct_(&context->ir_arena, sizeof(struct ir_jump_node), 1); // @note: No need to zero, 'arena' never has any non-zero bytes.
     ir->base.kind  = ir_kind;
-    // ir->base.s = get_unique_ast_serial(context);
     return ir;
-}
-
-static enum ir_type ir_type_from_type(struct ast_type *type){
-    u64 index = type - &globals.typedef_void;
-    if(index <= (u64)(&globals.typedef_atomic_u64 - &globals.typedef_void)){
-        return (enum ir_type)index;
-    }
-    
-    if(type->kind == AST_pointer_type) return IR_TYPE_pointer;
-    
-    invalid_code_path;
 }
 
 // Sometimes when we are constant propagating, we have to un-emit a literal.
@@ -110,14 +94,14 @@ func void pop_from_ir_arena_(struct context *context, u8 *ast_memory, smm size){
 }
 
 
-#define parser_compound_type_push(context, token, type) (struct ast_compound_type *)_parser_type_push(context, token, sizeof(struct ast_compound_type), alignof(struct ast_compound_type), AST_##type);
+#define parser_compound_type_push(context, type) (struct ast_compound_type *)_parser_type_push(context, sizeof(struct ast_compound_type), alignof(struct ast_compound_type), AST_##type);
 
-func struct ast_type *parser_push_pointer_type(struct context *context, struct ast_type *pointer_to, enum ast_kind *defined_type, struct token *token){
+func struct ast_type *parser_push_pointer_type(struct context *context, struct ast_type *pointer_to, enum ast_kind *defined_type){
     // @cleanup: we could check here if its a basic type and then do some math to figure out the pointer
     // this is kinda complicated, as globals.basic_types is an array of pointers, not basic_types themself.
     // I think we had to iterate
     assert(pointer_to);
-    struct ast_pointer_type *ptr = parser_type_push(context, token, pointer_type);
+    struct ast_pointer_type *ptr = parser_type_push(context, pointer_type);
     ptr->pointer_to = pointer_to;
     ptr->pointer_to_defined_type = defined_type;
     ptr->base.size = 8;
@@ -869,13 +853,13 @@ struct type_info_return{
 func void sleep_or_error_on_unresolved_type(struct context *context, struct ast_type *type){
     struct ast_unresolved_type *unresolved = cast(struct ast_unresolved_type *)type;
     if(globals.compile_stage < COMPILE_STAGE_parse_function){
-        parser_sleep(context, unresolved->base.token, SLEEP_on_struct);
+        parser_sleep(context, unresolved->sleeping_on, SLEEP_on_struct);
     }else{
         // :Error, used ?
         
         struct string type_prefix = type_prefix_for_unresolved_type(unresolved);
         
-        report_error(context, unresolved->base.token, "Undeclared %.*s.", type_prefix.size, type_prefix.data);
+        report_error(context, unresolved->sleeping_on, "Undeclared %.*s.", type_prefix.size, type_prefix.data);
     }
 }
 
@@ -931,7 +915,7 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
     if(wanted->kind == AST_unresolved_type && given->kind == AST_unresolved_type){
         struct ast_unresolved_type *wanted_unresolved = cast(struct ast_unresolved_type *)wanted;
         struct ast_unresolved_type *given_unresolved  = cast(struct ast_unresolved_type *)given;
-        if(atoms_match(wanted_unresolved->base.token->atom, given_unresolved->base.token->atom)){
+        if(atoms_match(wanted_unresolved->sleeping_on->atom, given_unresolved->sleeping_on->atom)){
             return wanted;
         }else{
             return null;
@@ -966,7 +950,7 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
         if(wanted_pointer->pointer_to->kind == AST_unresolved_type && given_pointer->pointer_to->kind == AST_unresolved_type){
             struct ast_unresolved_type *wanted_unresolved = cast(struct ast_unresolved_type *)wanted_pointer->pointer_to;
             struct ast_unresolved_type *given_unresolved  = cast(struct ast_unresolved_type *)given_pointer->pointer_to;
-            if(atoms_match(wanted_unresolved->base.token->atom, given_unresolved->base.token->atom)){
+            if(atoms_match(wanted_unresolved->sleeping_on->atom, given_unresolved->sleeping_on->atom)){
                 return wanted;
             }else{
                 return null;
@@ -1026,7 +1010,7 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
         struct ast_compound_type *wanted_compound = cast(struct ast_compound_type *)wanted;
         struct ast_compound_type *given_compound  = cast(struct ast_compound_type *)given;
         
-        if(!atoms_match(wanted_compound->identifier, given_compound->identifier)) return null;
+        if(!atoms_match(wanted_compound->identifier->atom, given_compound->identifier->atom)) return null;
         if(wanted_compound->amount_of_members != given_compound->amount_of_members) return null;
         
         // The 'current_max' is a function of the the 'amount_of_members' as we only ever add members.
@@ -1047,7 +1031,7 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
     if(wanted->kind == AST_enum){
         struct ast_compound_type *wanted_enum = cast(struct ast_compound_type *)wanted;
         struct ast_compound_type *given_enum  = cast(struct ast_compound_type *)given;
-        if(!atoms_match(wanted_enum->identifier, given_enum->identifier)) return null;
+        if(!atoms_match(wanted_enum->identifier->atom, given_enum->identifier->atom)) return null;
         return ret;
     }
     
@@ -1240,11 +1224,11 @@ func struct ast_type *push_unresolved_type(struct context *context, struct token
     // If it is not defined then, we either sleep or error!
     //
     
-    struct ast_unresolved_type *unresolved = parser_type_push(context, sleep_on, unresolved_type);
-    unresolved->compilation_unit = context->current_compilation_unit;
+    struct ast_unresolved_type *unresolved = parser_type_push(context, unresolved_type);
     unresolved->base.size = -1; // hopefully we fuck up the system enough so that it asserts if we ever accidently use this
     unresolved->containing_scope = context->current_scope;
     unresolved->kind = kind;
+    unresolved->sleeping_on = sleep_on;
     
     return &unresolved->base;
 }
@@ -1386,7 +1370,7 @@ func void handle_dot_or_arrow(struct context *context, struct ast_compound_type 
         
         begin_error_report(context);
         report_error(context, member, "Identifier is not a member of %s.", struct_or_union);
-        report_error(context, compound->base.token, "... Here is the definition of the %s.", struct_or_union);
+        report_error(context, compound->identifier, "... Here is the definition of the %s.", struct_or_union);
         end_error_report(context);
         return;
     }
@@ -1565,13 +1549,13 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
     return ret;
 }
 
-func void maybe_load_address_for_array_or_function(struct context *context, enum ir_kind rhs_or_lhs, struct expr *operand, struct token *site){
+func void maybe_load_address_for_array_or_function(struct context *context, enum ir_kind rhs_or_lhs, struct expr *operand){
     struct ir *ir = operand->ir;
     
     if(operand->resolved_type->kind == AST_array_type){
         
         struct ast_array_type *array = (struct ast_array_type *)operand->resolved_type;
-        struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, site);
+        struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type);
         
         if(ir->kind == IR_pointer_literal_deref){
             // @hack: constant propergate an edge case needed for 'FIELD_OFFSET(struct s, array[1])';
@@ -1590,7 +1574,7 @@ func void maybe_load_address_for_array_or_function(struct context *context, enum
         operand->defined_type = null;
     }else if(operand->resolved_type->kind == AST_function_type){
         
-        struct ast_type *pointer = parser_push_pointer_type(context, operand->resolved_type, null, site);
+        struct ast_type *pointer = parser_push_pointer_type(context, operand->resolved_type, null);
         
         operand->ir = push_ir(context, rhs_or_lhs);
         operand->resolved_type = pointer;
@@ -1712,7 +1696,7 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
             struct ir_pointer_literal *pointer_literal_deref = (struct ir_pointer_literal *)lhs->ir;
             pointer_literal_deref->pointer += array->element_type->size * integer_literal_as_u64(index); // @cleanup: overflow?
             
-            struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, token);
+            struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type);
             pointer_literal_deref->type = pointer_type;
             
             lhs->resolved_type = pointer_type;
@@ -1973,7 +1957,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         
         expect_token(context, TOKEN_closed_curly, "More than one member in initializer-list for scalar type.");
         
-        maybe_load_address_for_array_or_function(context, IR_load_address, &initializer, initializer.token);
+        maybe_load_address_for_array_or_function(context, IR_load_address, &initializer);
         maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type_to_initialize, /*ast_to_initialize->defined_type*/null, &initializer, initial_open_curly); // @cleanup:
         
         struct ir_initializer *ir_initializer = push_struct(&context->ir_arena, struct ir_initializer);
@@ -2012,7 +1996,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
             if(!peek_token(context, TOKEN_closed_curly)){
                 begin_error_report(context);
                 report_error(context, get_current_token_for_error_report(context), "Cannot initialize an empty structure with non-empty initializer-list.");
-                report_error(context, ast_struct->base.token, "... Here is the definition of the empty structure.");
+                report_error(context, ast_struct->identifier, "... Here is the definition of the empty structure.");
                 end_error_report(context);
                 goto error;
             }
@@ -2102,7 +2086,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         
                         begin_error_report(context);
                         report_error(context, identifier, "Identifier is not a member of %s.", struct_or_union);
-                        report_error(context, compound->base.token, "... Here is the definition of the %s.", struct_or_union);
+                        report_error(context, compound->identifier, "... Here is the definition of the %s.", struct_or_union);
                         end_error_report(context);
                         goto error;
                     }
@@ -2266,8 +2250,8 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     char *structure_or_union = (compound->base.kind == AST_struct) ? "structure" : "union";
                     
                     begin_error_report(context);
-                    report_error(context, site, "Too many initializers for %s '%.*s'.", structure_or_union, compound->identifier.size, compound->identifier.data);
-                    report_error(context, compound->base.token, "... Here was the %s defined.", structure_or_union);
+                    report_error(context, site, "Too many initializers for %s '%.*s'.", structure_or_union, compound->identifier->size, compound->identifier->data);
+                    report_error(context, compound->identifier, "... Here was the %s defined.", structure_or_union);
                     end_error_report(context);
                 }else{
                     assert(type->kind == AST_array_type);
@@ -2454,7 +2438,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     new_node->offset_at = designator_stack.first->offset_at;
                     new_node->lhs_type = current_object_type;
                 }else{
-                    maybe_load_address_for_array_or_function(context, IR_load_address, &expression, expression.token);
+                    maybe_load_address_for_array_or_function(context, IR_load_address, &expression);
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_object_type, /*@cleanup*/null, &expression, site);
                     
                     struct ir_initializer *initializer = push_struct(&context->ir_arena, struct ir_initializer);
@@ -2600,7 +2584,7 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
             
             // 
             // Create a new array type, with the newly discovered bounds.
-            struct ast_array_type *array_type = parser_type_push(context, open_curly, array_type); // @cleanup: Better token.
+            struct ast_array_type *array_type = parser_type_push(context, array_type); // @cleanup: Better token.
             array_type->element_type              = array_of_unknown_size->element_type;
             array_type->element_type_defined_type = array_of_unknown_size->element_type_defined_type;
             
@@ -2710,7 +2694,7 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
                 }
                 
             }else{
-                maybe_load_address_for_array_or_function(context, IR_load_address, &expr, expr.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &expr);
                 maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type, decl->defined_type, &expr, equals);
             }
             
@@ -2933,7 +2917,7 @@ func struct ast_declaration *push_unnamed_declaration(struct context *context, s
 }
 
 void maybe_insert_implicit_nodes_for_varargs_argument(struct context *context, struct expr *expr, struct token *token){
-    maybe_load_address_for_array_or_function(context, IR_load_address, expr, token);
+    maybe_load_address_for_array_or_function(context, IR_load_address, expr);
     
     if(expr->resolved_type->kind == AST_integer_type || expr->resolved_type->kind == AST_bitfield_type){
         // "The integer promotions are performed on each argument."
@@ -3042,7 +3026,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
         
         // @cleanup: Check the 'defined_type'?
         string_list_postfix_no_copy(pretty_print_list, &context->scratch, argument_type->kind == AST_struct ? string("(struct ") : string("(union "));
-        string_list_postfix_no_copy(pretty_print_list, &context->scratch, root_compound->identifier.string);
+        string_list_postfix_no_copy(pretty_print_list, &context->scratch, root_compound->identifier->string);
         string_list_postfix_no_copy(pretty_print_list, &context->scratch, (depth_or_minus_one == -1) ? string("){") : string("){\n"));
         
         struct stack_node{
@@ -3247,7 +3231,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
     struct string format_string = format_string_literal->value;
     
     // Once we have the string literal, we can add the `implicit_address_conversion`.
-    maybe_load_address_for_array_or_function(context, IR_load_address, format_string_argument, format_string_argument->token);
+    maybe_load_address_for_array_or_function(context, IR_load_address, format_string_argument);
     
     // 
     // Start parsing the format string.
@@ -4056,7 +4040,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                         
                         // 
                         // Create a new array type, with the newly discovered bounds.
-                        struct ast_array_type *array_type = parser_type_push(context, open_curly, array_type); // @cleanup: Better token.
+                        struct ast_array_type *array_type = parser_type_push(context, array_type); // @cleanup: Better token.
                         array_type->element_type              = array_of_unknown_size->element_type;
                         array_type->element_type_defined_type = array_of_unknown_size->element_type_defined_type;
                         
@@ -4547,7 +4531,7 @@ case NUMBER_KIND_##type:{ \
             lit->value = string;
             lit->string_kind = composed_string_kind;
             
-            struct ast_array_type *type = parser_type_push(context, string_literal_token, array_type);
+            struct ast_array_type *type = parser_type_push(context, array_type);
             type->amount_of_elements = (string.size/element_type->size + 1); // plus one for the zero_terminator
             type->element_type = element_type;
             type->base.size = type->amount_of_elements * element_type->size;
@@ -4757,7 +4741,7 @@ case NUMBER_KIND_##type:{ \
             u8 *ir_arena_start = arena_current(&context->ir_arena);
             
             struct expr choice_expression = parse_expression(context, /*skip_comma_expression*/1);
-            maybe_load_address_for_array_or_function(context, IR_load_address, &choice_expression, choice_expression.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &choice_expression);
             maybe_insert_cast_from_special_int_to_int(context, &choice_expression, /*is_lhs*/0);
             
             struct ast_type *choice = choice_expression.resolved_type;
@@ -5038,7 +5022,7 @@ case NUMBER_KIND_##type:{ \
             case TOKEN_arrow:{
                 treat_dot_as_arrow_because_allow_dot_as_arrow_was_set_and_we_got_a_pointer_type_for_a_dot:;
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, test); // Apperantly, you can use '->' on arrays.
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand); // Apperantly, you can use '->' on arrays.
                 
                 if(operand.resolved_type->kind == AST_unresolved_type){
                     if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &operand.resolved_type)){
@@ -5137,7 +5121,7 @@ case NUMBER_KIND_##type:{ \
                             }
                             
                             // "the arguments are implicitly converted, as if by assignment"
-                            maybe_load_address_for_array_or_function(context, IR_load_address, &expr, expr.token);
+                            maybe_load_address_for_array_or_function(context, IR_load_address, &expr);
                             maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, decl->type, decl->defined_type, &expr, expr.token);
                             
                             function_argument_iterator = function_argument_iterator->next;
@@ -5584,7 +5568,7 @@ case NUMBER_KIND_##type:{ \
                 
                 // @cleanup: Const prop for pointer literals.
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 maybe_insert_integer_promotion_cast(context, AST_cast, &operand, operand.token);
                 
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, stack_entry->token)) return operand;
@@ -5691,7 +5675,7 @@ case NUMBER_KIND_##type:{ \
                 context->in_lhs_expression = false;
             }break;
             case AST_unary_deref:{
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 
                 if(operand.resolved_type->kind != AST_pointer_type){
                     report_error(context, stack_entry->token, "Can only use '*' on a pointer type.");
@@ -5738,7 +5722,7 @@ case NUMBER_KIND_##type:{ \
                 if(operand.ir->kind == IR_pointer_literal_deref){
                     operand.ir->kind = IR_pointer_literal;
                     
-                    struct ast_type *ptr = parser_push_pointer_type(context, operand.resolved_type, operand.defined_type, operand.token);
+                    struct ast_type *ptr = parser_push_pointer_type(context, operand.resolved_type, operand.defined_type);
                     operand.resolved_type = ptr;
                     operand.defined_type = null;
                     
@@ -5746,7 +5730,7 @@ case NUMBER_KIND_##type:{ \
                     lit->type = ptr;
                 }else{
                     operand.ir = push_ir(context, IR_load_address); // Sets in op->operand in the next iteration.
-                    operand.resolved_type = parser_push_pointer_type(context, operand.resolved_type, operand.defined_type, operand.token);
+                    operand.resolved_type = parser_push_pointer_type(context, operand.resolved_type, operand.defined_type);
                     operand.defined_type = null;
                 }
                 
@@ -5758,7 +5742,7 @@ case NUMBER_KIND_##type:{ \
                 enum ast_kind *defined_type_to_cast_to = (enum ast_kind *)stack_entry->operand.ir;
                 
                 // @cleanup: is this correct?
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
                 
                 enum ast_kind kind_to_cast_to = type_to_cast_to->kind;
@@ -5877,8 +5861,8 @@ case NUMBER_KIND_##type:{ \
                 if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
                     perform_integer_operation(context, stack_entry->token, op_lhs, op_rhs);
                 }else{
-                    maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs, stack_entry->token);
-                    maybe_load_address_for_array_or_function(context, IR_load_address, op_rhs, operand.token);
+                    maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs);
+                    maybe_load_address_for_array_or_function(context, IR_load_address, op_rhs);
                     
                     maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs, stack_entry->token);
                     
@@ -6074,8 +6058,8 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs, stack_entry->token);
-                maybe_load_address_for_array_or_function(context, IR_load_address, op_rhs, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs);
+                maybe_load_address_for_array_or_function(context, IR_load_address, op_rhs);
                 
                 if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_basic)) return operand;
                 
@@ -6148,8 +6132,8 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs, stack_entry->token);
-                maybe_load_address_for_array_or_function(context, IR_load_address,     op_rhs, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs);
+                maybe_load_address_for_array_or_function(context, IR_load_address,     op_rhs);
                 
                 if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_basic)) return operand;
                 
@@ -6343,7 +6327,7 @@ case NUMBER_KIND_##type:{ \
             //    
             case AST_logical_and:{
                 maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 
                 if(!casts_implicitly_to_bool(operand.resolved_type)){
                     // :Error pick a way to say this an stick to it
@@ -6458,7 +6442,7 @@ case NUMBER_KIND_##type:{ \
                 // 
                 
                 maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 
                 if(!casts_implicitly_to_bool(operand.resolved_type)){
                     report_error(context, operand.token, "Right of '||' has to be convertible to _Bool.");
@@ -6582,7 +6566,7 @@ case NUMBER_KIND_##type:{ \
                 struct ir_jump_node *if_false_label = (struct ir_jump_node *)(end_jump + 1);
                 struct ir_identifier *temp2 = (struct ir_identifier *)(if_false_label + 1);
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address, if_false, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, if_false);
                 maybe_insert_cast_from_special_int_to_int(context, if_false, /*is_lhs*/0);
                 
                 // "one of the following shall hold":
@@ -6693,7 +6677,7 @@ case NUMBER_KIND_##type:{ \
             case AST_assignment:{
                 struct expr *lhs = &stack_entry->operand;
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, &operand, stack_entry->token);
                 
                 struct ast_type *lhs_type = lhs->resolved_type;
@@ -6756,7 +6740,7 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address, rhs, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, rhs);
                 
                 if(rhs->resolved_type->kind == AST_pointer_type){
                     // The rhs should never be a pointer.
@@ -6806,7 +6790,7 @@ case NUMBER_KIND_##type:{ \
             
             case AST_modulo_assignment:{
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand.resolved_type, operand.resolved_type, stack_entry->token, CHECK_integer)) return operand;
                 
@@ -6891,7 +6875,7 @@ case NUMBER_KIND_##type:{ \
             case AST_divide_assignment:
             case AST_times_assignment:{
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand.resolved_type, operand.resolved_type, stack_entry->token, CHECK_integer|CHECK_float)) return operand;
                 
@@ -6958,7 +6942,7 @@ case NUMBER_KIND_##type:{ \
             
             case AST_left_shift_assignment:
             case AST_right_shift_assignment:{
-                maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 
                 if(!check_binary_for_basic_types(context, stack_entry->operand.resolved_type, operand.resolved_type, stack_entry->token, CHECK_integer)) return operand;
                 
@@ -7040,7 +7024,7 @@ case NUMBER_KIND_##type:{ \
         // Precedence 11
         case TOKEN_logical_and:{
             maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
-            maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
             
             if(!casts_implicitly_to_bool(operand.resolved_type)){
                 report_error(context, next_token(context), "Left of '&&' has to be convertible to _Bool.");
@@ -7058,7 +7042,7 @@ case NUMBER_KIND_##type:{ \
         // Precedence 12
         case TOKEN_logical_or:{
             maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
-            maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
             
             if(!casts_implicitly_to_bool(operand.resolved_type)){
                 report_error(context, next_token(context), "Left of '||' has to be convertible to _Bool.");
@@ -7079,7 +7063,7 @@ case NUMBER_KIND_##type:{ \
             
             struct token *question_mark = binary_expression;
             
-            maybe_load_address_for_array_or_function(context, IR_load_address, &operand, operand.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
             maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
             if(!casts_implicitly_to_bool(operand.resolved_type)){
                 report_error(context, question_mark, "Left hand side of '?' has no implicit conversion to bool.");
@@ -7095,7 +7079,7 @@ case NUMBER_KIND_##type:{ \
             temp1->base.kind = IR_identifier;
             
             struct expr if_true = parse_expression(context, false);
-            maybe_load_address_for_array_or_function(context, IR_load_address, &if_true, if_true.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
             maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
             expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
             if(context->should_exit_statement) return operand;
@@ -7633,16 +7617,21 @@ case TOKEN_##type_name:{                                                 \
                     
                     struct ast_compound_type *compound;
                     if(is_union){
-                        compound = parser_compound_type_push(context, name ? name : token, union);
+                        compound = parser_compound_type_push(context, union);
                     }else{
-                        compound = parser_compound_type_push(context, name ? name : token, struct);
+                        compound = parser_compound_type_push(context, struct);
                     }
-                    
-                    if(name) compound->base.token = name;
                     
                     if(is_intrin_type) compound->base.flags |= TYPE_FLAG_is_intrin_type;
                     if(has_declspec_alignment) compound->base.flags |= TYPE_FLAG_is_user_aligned;
-                    compound->identifier = name ? name->atom : globals.unnamed_tag;
+                    if(name){
+                        compound->identifier = name;
+                    }else{
+                        struct token *hacky_token = push_struct(context->arena, struct token);
+                        *hacky_token = *token;
+                        hacky_token->atom = globals.unnamed_tag;
+                        compound->identifier = hacky_token;
+                    }   
                     
                     smm size = 0;
                     smm alignment = declspec_alignment;
@@ -7826,7 +7815,7 @@ case TOKEN_##type_name:{                                                 \
                                     break;
                                 }
                                 
-                                struct ast_bitfield_type *bitfield = parser_type_push(context, colon, bitfield_type);
+                                struct ast_bitfield_type *bitfield = parser_type_push(context, bitfield_type);
                                 bitfield->width      = to_u32(width);
                                 bitfield->bit_index  = to_u32(bitfield_base);
                                 bitfield->base_type  = declarator.type;
@@ -7952,7 +7941,7 @@ case TOKEN_##type_name:{                                                 \
                         compound->base.alignment = alignment;
                         if(name){
                             compound->compilation_unit = context->current_compilation_unit;
-                            register_compound_type(context, &compound->base, compound->base.token);
+                            register_compound_type(context, &compound->base, compound->identifier);
                         }
                     }
                     
@@ -7972,13 +7961,20 @@ case TOKEN_##type_name:{                                                 \
                 struct token *name = peek_token_eat(context, TOKEN_identifier);
                 
                 if(peek_token_eat(context, TOKEN_open_curly)){
-                    struct ast_compound_type *ast_enum = parser_compound_type_push(context, name ? name : token, enum);
+                    struct ast_compound_type *ast_enum = parser_compound_type_push(context, enum);
                     
                     // "each enumerated type should be compatible with a signed or unsinged integer type. Implementation
                     //  defined but should be able to hold all of the members" -> we are lazy: int
                     ast_enum->base.size = 4;
                     ast_enum->base.alignment = 4;
-                    ast_enum->identifier = name ? name->atom : globals.unnamed_enum;
+                    if(name){
+                        ast_enum->identifier = name;
+                    }else{
+                        struct token *hacky_token = push_struct(context->arena, struct token);
+                        *hacky_token = *token;
+                        hacky_token->atom = globals.unnamed_enum;
+                        ast_enum->identifier = hacky_token;
+                    }   
                     
                     if(!context->sleeping_ident && name) context->sleeping_ident = name;
                     
@@ -8038,7 +8034,7 @@ case TOKEN_##type_name:{                                                 \
                     
                     if(name){
                         ast_enum->compilation_unit = context->current_compilation_unit;
-                        register_compound_type(context, &ast_enum->base, ast_enum->base.token);
+                        register_compound_type(context, &ast_enum->base, ast_enum->identifier);
                     }
                     
                     specifiers.defined_type_specifier = &ast_enum->base.kind;
@@ -8731,7 +8727,7 @@ func void parse_statement(struct context *context){
             struct expr condition = parse_expression(context, false);
             
             maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
-            maybe_load_address_for_array_or_function(context, IR_load_address, &condition, condition.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &condition);
             maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
             if(!casts_implicitly_to_bool(condition.resolved_type)){
                 // :Error
@@ -8832,7 +8828,7 @@ func void parse_statement(struct context *context){
                     condition = parse_expression(context, false);
                     maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
                     
-                    maybe_load_address_for_array_or_function(context, IR_load_address, &condition, condition.token);
+                    maybe_load_address_for_array_or_function(context, IR_load_address, &condition);
                     maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
                     if(!casts_implicitly_to_bool(condition.resolved_type)){
                         // :Error
@@ -8912,7 +8908,7 @@ func void parse_statement(struct context *context){
             struct expr condition = parse_expression(context, false);
             maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
             
-            maybe_load_address_for_array_or_function(context, IR_load_address, &condition, condition.token);
+            maybe_load_address_for_array_or_function(context, IR_load_address, &condition);
             maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
             if(!casts_implicitly_to_bool(condition.resolved_type)){
                 report_error(context, condition.token, "'while' condition has to cast to bool.");
@@ -8982,7 +8978,7 @@ func void parse_statement(struct context *context){
             struct expr condition = parse_expression(context, false);
             maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
             
-            maybe_load_address_for_array_or_function(context, IR_load_address, &condition, condition.token);            
+            maybe_load_address_for_array_or_function(context, IR_load_address, &condition);            
             maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
             if(!casts_implicitly_to_bool(condition.resolved_type)){
                 report_error(context, condition.token, "'while' condition has to cast to bool.");
@@ -9196,7 +9192,7 @@ func void parse_statement(struct context *context){
                 //        Let's support it for now!
                 
                 struct expr return_expression = parse_expression(context, false);
-                maybe_load_address_for_array_or_function(context, IR_load_address, &return_expression, return_expression.token);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &return_expression);
                 maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_function_type->return_type, current_function_type->return_type_defined_type, &return_expression, initial_token);
             }
             
@@ -9446,10 +9442,9 @@ func struct declarator_return parse_declarator(struct context* context, struct a
     //     type-qualifier-list type-qualifier
     // 
     
-    while(peek_token(context, TOKEN_times)){
-        struct token *pointer = next_token(context);
+    while(peek_token_eat(context, TOKEN_times)){
         
-        ret.type = parser_push_pointer_type(context, ret.type, ret.defined_type, pointer);
+        ret.type = parser_push_pointer_type(context, ret.type, ret.defined_type);
         ret.defined_type = null;
         
         enum type_qualifiers type_qualifiers = 0;
@@ -9640,6 +9635,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         struct post_type_node *next;
         
         struct ast_type *type; // Either an array, or a function.
+        struct token *token;
     } *post_types = null;
     
     while(in_current_token_array(context)){
@@ -9655,7 +9651,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             // actually resolved.
             //                                                                 07.02.2023
             
-            struct ast_function_type *function = parser_type_push(context, open_paren, function_type);
+            struct ast_function_type *function = parser_type_push(context, function_type);
             
             // 
             // parameter-type-list:
@@ -9696,7 +9692,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                         // 'qualified pointer to type' [...]."
                         // 
                         struct ast_array_type *array = cast(struct ast_array_type *)declarator.type;
-                        declarator.type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type, declarator.ident);
+                        declarator.type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type);
                         if(!declarator.defined_type){
                             declarator.defined_type = &array->base.kind;
                         }
@@ -9705,7 +9701,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                         // "A declaration of a parameter as 'function returning type' shall be adjusted to
                         //  'pointer to function returning type'."
                         //  
-                        declarator.type = parser_push_pointer_type(context, declarator.type, null, declarator.ident);
+                        declarator.type = parser_push_pointer_type(context, declarator.type, null);
                     }
                     
                     struct ast_declaration *decl = push_declaration_for_declarator(context, declarator);
@@ -9740,6 +9736,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             
             post_type_node->type = &function->base;
             post_type_node->next = post_types;
+            post_type_node->token = open_paren;
             post_types = post_type_node;
             
         }else if(get_current_token(context)->type == TOKEN_open_index){
@@ -9756,7 +9753,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             
             struct token *open_index = next_token(context);
             
-            struct ast_array_type *array_type = parser_type_push(context, open_index, array_type);
+            struct ast_array_type *array_type = parser_type_push(context, array_type);
             
             if(peek_token_eat(context, TOKEN_closed_index)){ // u32 arr[];
                 array_size_zero_also_means_array_of_unknown_size:;
@@ -9777,7 +9774,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 }
                 
                 if(value <= 0){
-                    report_error(context, array_type->base.token, "Array size must be positive.");
+                    report_error(context, index_expression.token, "Array size must be positive.");
                     return ret;
                 }
                 
@@ -9790,6 +9787,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             
             post_type_node->type = &array_type->base;
             post_type_node->next = post_types;
+            post_type_node->token = open_index;
             post_types = post_type_node;
         }else{
             break;
@@ -9801,6 +9799,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
     // 
     for(struct post_type_node *post_type_node = post_types; post_type_node; post_type_node = post_type_node->next){
         struct ast_type *post_type = post_type_node->type;
+        struct token *token = post_type_node->token;
         
         if(post_type->kind == AST_function_type){
             struct ast_function_type *function_type = (struct ast_function_type *)post_type;
@@ -9810,11 +9809,11 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             
             if(ret.type->kind == AST_function_type){
                 // :Error
-                report_error(context, function_type->base.token, "Function returning function is illegal. Return a function pointer instead.");
+                report_error(context, token, "Function returning function is illegal. Return a function pointer instead.");
                 return ret;
             }else if(ret.type->kind == AST_array_type){
                 // :Error
-                report_error(context, function_type->base.token, "Function returning array is illegal. You can wrap the array inside of a struct.");
+                report_error(context, token, "Function returning array is illegal. You can wrap the array inside of a struct.");
                 return ret;
             }
             
@@ -9835,12 +9834,12 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             }
             
             if(ret.type == &globals.typedef_void){
-                report_error(context, array_type->base.token, "Array of type void is illegal.");
+                report_error(context, token, "Array of type void is illegal.");
                 return ret;
             }
             
             if(ret.type->kind == AST_function_type){
-                report_error(context, array_type->base.token, "Array of functions is illegal, please use function pointers.");
+                report_error(context, token, "Array of functions is illegal, please use function pointers.");
                 return ret;
             }
             
@@ -9849,7 +9848,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 //        Meaning 'char a[][2]' is legal, 'char a[2][]' is not.
                 
                 // :Error find a better word for 'outer'.
-                report_error(context, array_type->base.token, "Only the most outer array can be of unknown size. ('char a[][2]' is legal, 'char a[2][]' is not).");
+                report_error(context, token, "Only the most outer array can be of unknown size. ('char a[][2]' is legal, 'char a[2][]' is not).");
                 return ret;
             }
             
@@ -9857,7 +9856,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             array_type->element_type_defined_type = ret.defined_type;
             
             if(!array_type->is_of_unknown_size){
-                patch_array_size(context, array_type, array_type->amount_of_elements, array_type->base.token);
+                patch_array_size(context, array_type, array_type->amount_of_elements, token);
             }
             
             array_type->base.alignment = ret.type->alignment;
