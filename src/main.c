@@ -789,7 +789,7 @@ struct context{
         struct ast_goto *last;
     } goto_list;
     struct {
-    struct ast_label *first;
+        struct ast_label *first;
         struct ast_label *last;
     } label_list;
     
@@ -926,7 +926,7 @@ struct patch_node{
 };
 
 func void emit_patch(struct context *context, enum patch_kind kind, struct ir *source_decl, smm source_offset, struct ast_declaration *dest_declaration, smm dest_offset, smm rip_at){
-    struct patch_node *patch_node = push_struct(context->arena, struct patch_node);
+    struct patch_node *patch_node = push_uninitialized_struct(context->arena, struct patch_node); // @note: `arena` is pre-zeroed.
     patch_node->source = source_decl;
     patch_node->dest_declaration = dest_declaration;
     patch_node->location_offset_in_dest_declaration   = dest_offset;
@@ -1233,7 +1233,7 @@ func struct work_queue_entry *work_queue_get_work(struct work_queue *queue){
 func void work_queue_push_work(struct context *context, struct work_queue *queue, void *data){
     if(context->should_sleep) return;
     assert(context->arena->temp_count == 0);
-    struct work_queue_entry *work = push_struct(context->arena, struct work_queue_entry);
+    struct work_queue_entry *work = push_uninitialized_struct(context->arena, struct work_queue_entry); // @note: No need to zero, 'arena' never has any non-zero bytes.
     work->data = data;
     work_queue_add(queue, work);
 }
@@ -1498,7 +1498,7 @@ func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sl
 //_____________________________________________________________________________________________________________________
 
 func struct parse_work *push_parse_work(struct context *context, struct token_array tokens, struct compilation_unit *compilation_unit, struct ast_function *function){
-    struct parse_work *parse_work = push_struct(context->arena, struct parse_work);
+    struct parse_work *parse_work = push_uninitialized_struct(context->arena, struct parse_work); // @note: No need to zero, 'arena' never has any non-zero bytes.
     parse_work->tokens = tokens;
     parse_work->compilation_unit = compilation_unit;
     parse_work->function = function;
@@ -2948,31 +2948,39 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 //                                                                             - 03.10.2021
                 
                 u64 count = 1;
-                while(true){
-                    if(!in_current_token_array(context)){
-                        report_error(context, token, "Unmatched '{' at global scope.");
-                        break;
-                    }else if(peek_token(context, TOKEN_closed_curly)){
+                smm token_at = context->token_at;
+                struct token_array tokens = context->tokens;
+                
+                for(; token_at < tokens.amount; token_at++){
+                    token = tokens.data + token_at;
+                    
+                    if(token->type == TOKEN_closed_curly){
                         if (--count == 0) break;
-                    }else if(peek_token(context, TOKEN_open_curly)){
+                    }else if(token->type == TOKEN_open_curly){
                         count++;
-                    }else if(peek_token(context, TOKEN___func__)){
+                    }else if(token->type == TOKEN___func__){
                         if(got_identifier){
-                            struct token *function = get_current_token(context);
+                            struct token *function = token;
                             function->type   = TOKEN_string_literal;
                             struct string function_string = push_format_string(context->arena, "\"%.*s\"", got_identifier->size, got_identifier->data);
                             function->data = function_string.data;
                             function->size = (u32)function_string.size;
                         }else{
-                            report_syntax_error(context, get_current_token(context), "__FUNCTION__ outside of a function");
+                            report_syntax_error(context, token, "__FUNCTION__ outside of a function.");
                         }
-                    }else if(peek_token_eat(context, TOKEN_pragma_pack)){
+                    }else if(token->type == TOKEN_pragma_pack){
+                        context->token_at = token_at + 1;
                         parse_and_process_pragma_pack(context);
-                        continue;
+                        token_at = context->token_at - 1;
                     }
-                    next_token(context);
                 }
-                next_token(context);
+                
+                context->token_at = token_at + 1;
+                
+                if(count){
+                    report_error(context, token, "Unmatched '{' at global scope.");
+                }
+                
                 break;
             }else if(token->type == TOKEN_open_paren){
                 // @note: skip the parens for 'int a(int b);'
@@ -3023,7 +3031,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         
         struct parse_work *parse_work = push_parse_work(context, array, work_tokenize_file->compilation_unit, /*function = */ null);
         
-        struct work_queue_entry *entry = push_struct(context->arena, struct work_queue_entry);
+        struct work_queue_entry *entry = push_uninitialized_struct(context->arena, struct work_queue_entry); // @note: No need to zero, 'arena' never has any non-zero bytes.
         entry->data = parse_work;
         
         sll_push_back(work_queue_entries, entry);
@@ -3107,11 +3115,11 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
     // might not be the full type e.g. int (*a)
     struct ast_type *lhs_type = declaration_list.type_specifier;
     
-    if(sll_is_empty(declaration_list)){
+    if(!declaration_list.had_declaration){
         // for struct this might be a struct declaration, in which case  we are done.
         if(lhs_type->kind == AST_struct || lhs_type->kind == AST_union){
             struct ast_compound_type *compound = cast(struct ast_compound_type *)lhs_type;
-            if(compound->identifier->size == 0){
+            if(atoms_match(globals.unnamed_tag, compound->identifier->atom)){
                 // @cleanup: does this report the error in the wrong spot, if we have:
                 //     typedef struct {} asd;
                 //     asd;
@@ -3131,11 +3139,12 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
         return;
     }
     
-    if(declaration_list.last->decl->kind == IR_function && peek_token_eat(context, TOKEN_open_curly)){
-        struct ast_function *function = cast(struct ast_function *)declaration_list.last->decl;
+    if(declaration_list.is_function_definition && peek_token_eat(context, TOKEN_open_curly)){
+        struct ast_function *function = (struct ast_function *)declaration_list.had_declaration;
         parse_work->tokens.data += context->token_at;
         parse_work->tokens.size -= context->token_at;
         assert(parse_work->tokens.size > 0);
+        assert(function->scope);
         
         parse_work->function = function;
         
@@ -3412,7 +3421,7 @@ func struct token *push_dummy_token(struct memory_arena *arena, struct atom toke
 
 func void register_intrinsic_function_declaration(struct context *context, struct token *token, struct ast_function_type *type){
     
-    struct ast_function *declaration = push_struct(context->arena, struct ast_function);
+    struct ast_function *declaration = push_uninitialized_struct(context->arena, struct ast_function); // @note: No need to zero, 'arena' never has any non-zero bytes.
     declaration->kind = IR_function;
     declaration->identifier = token;
     declaration->type = type;
@@ -4079,7 +4088,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
         make_const_typedef(f32,  TOKEN_float,    AST_float_type,   "float",              4, 4);
         make_const_typedef(f64,  TOKEN_double,   AST_float_type,   "double",             8, 8);
         make_const_typedef(poison, TOKEN_void,   AST_void_type,    "poison",             8, 8);
-        
         
         globals.invalid_file.absolute_file_path = "*predefined token*";
         globals.invalid_file.file_index = -1;

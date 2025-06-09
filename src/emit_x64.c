@@ -753,6 +753,7 @@ enum emit_location_state{
 };
 
 
+// @WARNING: These are allocated using `push_uninitialized_struct`, hence If you add a field, you have to ensure it is zeroed.
 struct emit_location{
     enum emit_location_state state;
     smm size;
@@ -797,11 +798,15 @@ func struct emit_location *emit_location_loaded(struct context *context, enum re
     assert(reg != INVALID_REGISTER);
     assert(!context->register_allocators[kind].emit_location_map[reg]);
     
-    struct emit_location *ret = push_struct(&context->scratch, struct emit_location);
-    ret->register_kind = kind;
+    struct emit_location *ret = push_uninitialized_struct(&context->scratch, struct emit_location);
     ret->state = EMIT_LOCATION_loaded;
-    ret->loaded_register = reg;
     ret->size = size;
+    ret->prevent_spilling = 0;
+    ret->prevent_freeing = 0;
+    
+    ret->loaded_register = reg;
+    ret->register_kind = kind;
+    ret->inline_asm__was_used_by_user = 0;
     
     // :asm_block_use_allocate_specific_register_but_disable_the_register_allocator
     //
@@ -814,22 +819,30 @@ func struct emit_location *emit_location_loaded(struct context *context, enum re
 }
 
 func struct emit_location *emit_location_conditional(struct context *context, enum comp_condition condition){
-    struct emit_location *ret = push_struct(&context->scratch, struct emit_location);
+    struct emit_location *ret = push_uninitialized_struct(&context->scratch, struct emit_location);
     ret->state = EMIT_LOCATION_conditional;
-    ret->condition = condition;
     ret->size = 4;
+    ret->prevent_spilling = 0;
+    ret->prevent_freeing = 0;
+    
+    ret->condition = condition;
+    
     return ret;
 }
 
 func struct emit_location *emit_location_register_relative__internal(struct context *context, struct emit_location *base, struct emit_location *index_register, smm offset, smm size, struct ir *ir){
-    struct emit_location *ret = push_struct(&context->scratch, struct emit_location);
+    struct emit_location *ret = push_uninitialized_struct(&context->scratch, struct emit_location);
     ret->state = EMIT_LOCATION_register_relative;
+    ret->size = size;
+    ret->prevent_spilling = 0;
+    ret->prevent_freeing = 0;
+    
     ret->base = base;
     ret->index = index_register;
     ret->log_index_scale = 0; // @note: this is almost never used, thus we set it specifically if we need it...
     ret->offset = offset;
-    ret->size = size;
     ret->ir = ir;
+    
     return ret;
 }
 
@@ -848,10 +861,13 @@ func struct emit_location *emit_location_stack_relative(struct context *context,
 }
 
 func struct emit_location *emit_location_immediate(struct context *context, u64 value, smm size){
-    struct emit_location *ret = push_struct(&context->scratch, struct emit_location);
+    struct emit_location *ret = push_uninitialized_struct(&context->scratch, struct emit_location);
     ret->state = EMIT_LOCATION_immediate;
-    ret->value = value;
     ret->size  = size;
+    ret->prevent_spilling = 0;
+    ret->prevent_freeing = 0;
+    
+    ret->value = value;
     return ret;
 }
 

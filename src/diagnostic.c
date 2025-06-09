@@ -187,7 +187,7 @@ func void push_error_node_to_context(struct context *context, struct token *toke
     
     enum compile_stage stage = globals.compile_stage;
     
-    struct error_report_node *node = push_struct(context->arena, struct error_report_node);
+    struct error_report_node *node = push_uninitialized_struct(context->arena, struct error_report_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
     node->kind  = kind;
     node->warning_type = warning_type;
     node->compilation_unit_index = 0;
@@ -200,7 +200,7 @@ func void push_error_node_to_context(struct context *context, struct token *toke
         switch(stage){
             case COMPILE_STAGE_tokenize_files:{
                 // while tokenizing copy the tokens, as they might be tempoary
-                struct token *copied_token = push_struct(context->arena, struct token);
+                struct token *copied_token = push_uninitialized_struct(context->arena, struct token); // @note: No need to zero, 'arena' never has any non-zero bytes.
                 *copied_token = *token;
                 node->token = copied_token;
             }break;
@@ -343,10 +343,21 @@ PRINTLIKE __declspec(noinline) func void report_syntax_error(struct context *con
 }
 
 
-func b32 maybe_report_error_for_stack_exhaustion(struct context *context, struct token *token, char *error){
+// variant, that cannot return '&context->invalid_token'
+func struct token *get_current_token_for_error_report(struct context *context){
+    if(context->token_at < 0){
+        return context->tokens.data;
+    }else if(context->token_at >= context->tokens.amount){
+        return context->tokens.data + (context->tokens.amount - 1);
+    }else{
+        return context->tokens.data + context->token_at;
+    }
+}
+
+func b32 maybe_report_error_for_stack_exhaustion(struct context *context, char *error){
     u8 *stack_address = &(u8){0};
     if((context->low_stack_address - stack_address) > MAX_STACK_USAGE){
-        report_error(context, token, error);
+        report_error(context, get_current_token_for_error_report(context), error);
         return true;
     }
     return false;

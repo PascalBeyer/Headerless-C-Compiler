@@ -528,11 +528,6 @@ struct ast_list{
 #define DECLARATION_FLAGS_is_thread_local                          0x4000
 #define DECLARATION_FLAGS_is_intrinsic                             0x8000
 
-struct declaration_node{
-    struct declaration_node *next;
-    struct ast_declaration *decl;
-};
-
 struct ast_declaration{
     // @WARNING: This needs to match the part in ast_function.
     union{
@@ -578,8 +573,9 @@ struct ast_declaration{
 struct declaration_list{
     struct ast_type *type_specifier;
     enum ast_kind *defined_type_specifier;
-    struct declaration_node *first;
-    struct declaration_node *last;
+    
+    struct ast_scope *is_function_definition;
+    struct ast_declaration *had_declaration;
 };
 
 struct ast_pointer_type{

@@ -419,7 +419,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     }
     
     if(!dll_node){
-        dll_node = push_struct(context->arena, struct dll_node);
+        dll_node = push_uninitialized_struct(context->arena, struct dll_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
         dll_node->name = dll_name;
         
         sll_push_back(globals.dlls, dll_node);
@@ -430,7 +430,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     //        we should have already been here and set the 'import_node' member of the
     //        lookup table.
     
-    struct dll_import_node *import_node = push_struct(context->arena, struct dll_import_node);
+    struct dll_import_node *import_node = push_uninitialized_struct(context->arena, struct dll_import_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
     import_node->import_name  = identifier.string;
     import_node->ordinal_hint = ar_import_header->ordinal_hint;
     

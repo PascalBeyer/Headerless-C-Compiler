@@ -2355,17 +2355,6 @@ func struct token *get_current_token(struct context *context){
     return context->tokens.data + context->token_at;
 }
 
-// variant, that cannot return '&context->invalid_token'
-func struct token *get_current_token_for_error_report(struct context *context){
-    if(context->token_at < 0){
-        return context->tokens.data;
-    }else if(context->token_at >= context->tokens.amount){
-        return context->tokens.data + (context->tokens.amount - 1);
-    }else{
-        return context->tokens.data + context->token_at;
-    }
-}
-
 func struct token *next_token(struct context *context){
     struct token *ret = get_current_token(context);
     // :token_at_overshoot
@@ -2457,7 +2446,7 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
     
     struct temporary_memory temp = begin_temporary_memory(context->arena);
     
-    struct file *file = push_struct(context->arena, struct file);
+    struct file *file = push_uninitialized_struct(context->arena, struct file); // @note: No need to zero, 'arena' never has any non-zero bytes.
     file->absolute_file_path = absolute_file_path;
     file->is_system_include  = is_system_include;
     atomic_store(int, file->in_progress, true);
