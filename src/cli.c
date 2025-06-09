@@ -44,6 +44,8 @@ enum cli_option_kind{
     CLI_OPTION_MT,
     CLI_OPTION_MTd,
     CLI_OPTION_std,
+    CLI_OPTION_warning_limit,
+    CLI_OPTION_error_limit,
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
     CLI_OPTION_report_warnings_in_system_includes,
@@ -116,6 +118,8 @@ struct cli_option_hash_table_entry{
     [71] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
     [106] = {{3, (u8 *)"mtd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MTd, -1},
     [112] = {{3, (u8 *)"std"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_std, 0},
+    [59] = {{12, (u8 *)"warninglimit"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_warning_limit, -1},
+    [46] = {{10, (u8 *)"errorlimit"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_error_limit, -1},
     [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
@@ -223,7 +227,9 @@ struct cli_options{
     int MDd; // Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.
     int MT; // Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.
     int MTd; // Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.
-    enum std std; // The standardt to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
+    enum std std; // The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
+    int warning_limit; // A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.
+    int error_limit; // A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
@@ -778,7 +784,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "", 100);
                 }break;
                 case CLI_OPTION_std:{
-                    print("-std <standard> | The standardt to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n\n");
+                    print("-std <standard> | The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n\n");
                     if(option_argument){
                     }else{
                         os_print_string(
@@ -788,6 +794,12 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "c23 (4)                                 | Use c23 standard.\n"
                                 , 240);
                     }
+                }break;
+                case CLI_OPTION_warning_limit:{
+                    print("-warning_limit | A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.\n\n");
+                }break;
+                case CLI_OPTION_error_limit:{
+                    print("-error_limit | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n\n");
                 }break;
                 case CLI_OPTION_dont_print_the_files:{
                     print("-dont_print_the_files | Don't print the files because we are in a test suite.\n\n");
@@ -920,8 +932,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -MDd                        | Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.\n"
                             "  -MT                         | Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.\n"
                             "  -MTd                        | Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.\n"
-                            "  -std <standard>             | The standardt to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n"
-                    , 2807);
+                            "  -std <standard>             | The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n"
+                            "  -warning_limit              | A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.\n"
+                            "  -error_limit                | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
+                    , 3054);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1131,6 +1145,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                     return 0;
                 }
             }break;
+            case CLI_OPTION_warning_limit: cli_options->warning_limit = 1; break;
+            case CLI_OPTION_error_limit: cli_options->error_limit = 1; break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
             
             case CLI_OPTION_seed:{

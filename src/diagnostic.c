@@ -247,7 +247,7 @@ PRINTLIKE __declspec(noinline) func void report_warning(struct context *context,
     
     if(!should_report_warning_for_token(context, token)) return;
 
-    if(context->warnings_reported > 100) return;
+    if(context->warnings_reported > globals.cli_options.warning_limit) return;
     context->warnings_reported += 1;
     
     va_list va;
@@ -295,7 +295,7 @@ PRINTLIKE __declspec(noinline) func void report_error(struct context *context, s
     if(context->should_sleep) return;
     if(context->should_exit_statement) return;
     
-    if(context->errors_reported < 100){
+    if(context->errors_reported < globals.cli_options.error_limit){
         context->errors_reported += 1;
         
         va_list va;
@@ -401,9 +401,21 @@ void print_warning_or_error_reports(struct context *context){
         struct error_report_node *last;
     } error_list = zero_struct;
     
+    smm total_errors_reported = 0;
+    smm total_warnings_reported = 0;
+    
     for(u32 thread_index = 0; thread_index < globals.thread_count; thread_index++){
-        sll_push_back_list(error_list, globals.thread_infos[thread_index].context->error_list);
-        globals.thread_infos[thread_index].context->error_list.first = globals.thread_infos[thread_index].context->error_list.last = null;
+        
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        sll_push_back_list(error_list, thread_context->error_list);
+        thread_context->error_list.first = thread_context->error_list.last = null;
+        
+        total_errors_reported += thread_context->errors_reported;
+        total_warnings_reported += thread_context->warnings_reported;
+        
+        thread_context->warnings_reported = 0;
+        thread_context->errors_reported = 0;
     }
     
     sll_sort(error_list, &context->scratch, error_node_smaller_function);
@@ -438,4 +450,13 @@ void print_warning_or_error_reports(struct context *context){
     }
     
     end_counter(context, print_errors_to_the_console);
+    
+    if(total_errors_reported >= globals.cli_options.error_limit){
+        print("\n%lld errors reported. Error limit reached. Adjust using `--error_limit=<limit>`.\n", total_errors_reported);
+    }
+    
+    if(!globals.an_error_has_occurred && total_warnings_reported >= globals.cli_options.error_limit){
+        print("\n%lld warnings reported. Warning limit reached. Adjust using `--warning_limit=<limit>`.\n", total_warnings_reported);
+    }
+    
 }

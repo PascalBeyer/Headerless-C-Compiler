@@ -4475,6 +4475,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_intrinsic;
         globals.tls_index_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
         ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->kind, globals.tls_index_declaration->identifier);
+        
+        if(!globals.cli_options.warning_limit) globals.cli_options.warning_limit = 100;
+        if(!globals.cli_options.error_limit)   globals.cli_options.error_limit = 100;
     }
     
 #if PRINT_ADDITIONAL_INCLUDE_DIRECTORIES

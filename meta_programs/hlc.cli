@@ -212,7 +212,7 @@ https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-libr
  
 https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170
 
-/std <standard:enum> - The standardt to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
+/std <standard:enum> - The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
 
 -> c99 - Use c99 standard.
 
@@ -221,6 +221,10 @@ https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-libr
 -> c17 - Use c17 standard.
 
 -> c23 - Use c23 standard.
+
+/warning_limit - A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis. 
+
+/error_limit - A loose limit to the amount of errors reported. This limit is keept on a per-thread basis. 
 
 # Hidden
 
