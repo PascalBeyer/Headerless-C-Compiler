@@ -1430,7 +1430,7 @@ func void emit_pdb_line_info_for_function(struct pdb_write_context *context, str
         out_int(offset, u32);
         out_int(line.line | is_statement, u32);
     }
-    context->pdb_amount_of_lines = function->line_information.size;
+    context->pdb_amount_of_lines = function->line_information.size + 1;
     
 #endif
     
