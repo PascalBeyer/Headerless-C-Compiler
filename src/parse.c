@@ -8654,16 +8654,13 @@ func struct declaration_list parse_declaration_list(struct context *context, str
 
 #include "parse_asm_block.c"
 
-void maybe_report_warning_for_assignment_in_condition(struct context *context, struct ir *condition, struct token *token){
-    (void)context, (void)condition, (void)token;
-    #if 0 
-    if(condition->kind == AST_assignment){
-        report_warning(context, WARNING_assignment_in_condition, token, "Assignment withing condition, did you mean '=='?");
+void maybe_report_warning_for_assignment_in_condition(struct context *context, struct token *token){
+    if(TOKEN_equals <= token->type && token->type <= TOKEN_mod_equals){
+        report_warning(context, WARNING_assignment_in_condition, token, "Assignment within condition, did you mean '=='?");
     }
-    #endif
 }
 
-func struct ast *parse_imperative_scope(struct context *context);
+func void parse_imperative_scope(struct context *context);
 
 void parse_static_assert(struct context *context, struct token *static_assert_token){
     
@@ -8721,7 +8718,7 @@ func void parse_statement(struct context *context){
             
             struct expr condition = parse_expression(context, false);
             
-            maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
+            maybe_report_warning_for_assignment_in_condition(context, condition.token);
             maybe_load_address_for_array_or_function(context, IR_load_address, &condition);
             maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
             if(!casts_implicitly_to_bool(condition.resolved_type)){
@@ -8821,7 +8818,7 @@ func void parse_statement(struct context *context){
                     condition = ast_push_s32_literal(context, 1, next_token(context)); // desugars to true
                 }else{
                     condition = parse_expression(context, false);
-                    maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
+                    maybe_report_warning_for_assignment_in_condition(context, condition.token);
                     
                     maybe_load_address_for_array_or_function(context, IR_load_address, &condition);
                     maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
@@ -8853,6 +8850,8 @@ func void parse_statement(struct context *context){
                 if(increment_token_at != -1){
                     smm past_body = context->token_at;
                     context->token_at = increment_token_at;
+                    
+                    function_maybe_add_line_information(context, get_current_token_for_error_report(context));
                     
                     parse_expression(context, false);
                     
@@ -8901,7 +8900,7 @@ func void parse_statement(struct context *context){
             continue_label->label_number = continue_label_index;
             
             struct expr condition = parse_expression(context, false);
-            maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
+            maybe_report_warning_for_assignment_in_condition(context, condition.token);
             
             maybe_load_address_for_array_or_function(context, IR_load_address, &condition);
             maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
@@ -8965,13 +8964,15 @@ func void parse_statement(struct context *context){
             parser_scope_pop(context, scope);
             
             expect_token(context, TOKEN_while, "Missing 'while' in do-while statement.");
-            expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
+            struct token *while_open_paren = expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
+            function_maybe_add_line_information(context, while_open_paren);
+            
             
             struct ir_jump_node *continue_label = push_jump(context, IR_jump_label);
             continue_label->label_number = continue_label_index;
             
             struct expr condition = parse_expression(context, false);
-            maybe_report_warning_for_assignment_in_condition(context, condition.ir, condition.token);
+            maybe_report_warning_for_assignment_in_condition(context, condition.token);
             
             maybe_load_address_for_array_or_function(context, IR_load_address, &condition);            
             maybe_insert_cast_from_special_int_to_int(context, &condition, /*is_lhs*/0);
@@ -9339,7 +9340,7 @@ func void parse_statement(struct context *context){
 }
 
 // @note: We assume the TOKEN_open_curly was already consumed.
-func struct ast *parse_imperative_scope(struct context *context){
+func void parse_imperative_scope(struct context *context){
     
     struct ast_scope *scope = context->current_scope;
     assert(scope);
@@ -9388,8 +9389,6 @@ func struct ast *parse_imperative_scope(struct context *context){
     if(scope->start_line_index > scope->end_line_index){
         scope->start_line_index = scope->end_line_index;
     }
-    
-    return (struct ast *)scope;
 }
 
 func struct declarator_return parse_declarator(struct context* context, struct ast_type *_initial_type, enum ast_kind *_initial_defined_type, enum declarator_kind_flags declarator_kind_flags){
