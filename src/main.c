@@ -2241,9 +2241,6 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             case IR_compound_literal:{
                 struct ir_compound_literal *compound_literal = (struct ir_compound_literal *)ir_node;
                 
-                // Add this compound literal to the list of unnamed global declarations.
-                ast_list_append(&context->global_struct_and_array_literals, context->arena, &compound_literal->decl->kind);
-                
                 ir_offset += sizeof(struct ir_compound_literal);
                 ir_offset += compound_literal->initializer_size;
                 
