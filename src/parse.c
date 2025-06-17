@@ -2967,7 +2967,6 @@ func void get_pretty_print_string_for_type(struct context *context, struct strin
             
             string_list_postfix(format_list, &context->scratch, format_string);
         }break;
-        case AST_bitfield_type:
         case AST_integer_type:{
             
             // struct string field_width, struct string precision, struct string type_specifiers
@@ -3014,7 +3013,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
     
     struct ast_type *argument_type = argument->resolved_type;
     
-    if(argument_type->kind == AST_struct || argument_type->kind == AST_union){
+    if(argument_type->kind == AST_struct || argument_type->kind == AST_union || argument_type->kind == AST_array_type){
         //
         // Check if we should print in a multi line fashion.
         //
@@ -3026,11 +3025,18 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
             }
         }
         
-        struct ast_compound_type *root_compound = (struct ast_compound_type *)argument_type;
+        if(argument_type->kind == AST_array_type){
+            struct string type_string = push_type_string(&context->scratch, &context->scratch, argument_type);
+            string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("("));
+            string_list_postfix_no_copy(pretty_print_list, &context->scratch, type_string);
+        }else{
+            struct ast_compound_type *root_compound = (struct ast_compound_type *)argument_type;
+            
+            // @cleanup: Check the 'defined_type'?
+            string_list_postfix_no_copy(pretty_print_list, &context->scratch, argument_type->kind == AST_struct ? string("(struct ") : string("(union "));
+            string_list_postfix_no_copy(pretty_print_list, &context->scratch, root_compound->identifier->string);
+        }
         
-        // @cleanup: Check the 'defined_type'?
-        string_list_postfix_no_copy(pretty_print_list, &context->scratch, argument_type->kind == AST_struct ? string("(struct ") : string("(union "));
-        string_list_postfix_no_copy(pretty_print_list, &context->scratch, root_compound->identifier->string);
         string_list_postfix_no_copy(pretty_print_list, &context->scratch, (depth_or_minus_one == -1) ? string("){") : string("){\n"));
         
         struct stack_node{
@@ -3086,7 +3092,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
             // 
             // Duplicate the emit_location on the stack.
             // 
-            push_ir(context, IR_duplicate);
+            struct ir *ir = push_ir(context, IR_duplicate);
             
             if(depth_or_minus_one != -1){
                 string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("    "));
@@ -3095,6 +3101,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
             // 
             // Create expression.
             // 
+            
             for(struct stack_node *node = designator_stack.last; node; node = node->prev){
                 struct ast_type *type = node->lhs_type;
                 
@@ -3108,6 +3115,8 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
                     string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("."));
                     string_list_postfix_no_copy(pretty_print_list, &context->scratch, dot->member->name->string);
                     
+                    ir = &dot->base;
+                    
                 }else if(type->kind == AST_array_type){
                     struct ast_array_type *array_type = (struct ast_array_type *)type;
                     
@@ -3119,15 +3128,23 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
                     
                     struct string string = push_format_string(&context->scratch, "[%llu]", node->array_at);
                     string_list_postfix_no_copy(pretty_print_list, &context->scratch, string);
+                    
+                    ir = &subscript->base;
                 }
             }
+            
+            struct expr expr = {
+                .ir = ir,
+                .resolved_type = designator_stack.first->lhs_type,
+            };
+            maybe_insert_implicit_nodes_for_varargs_argument(context, &expr);
             
             string_list_postfix_no_copy(pretty_print_list, &context->scratch, string(" = "));
             
             //
             // Actually pretty print the argument to string.
             //
-            get_pretty_print_string_for_type(context, pretty_print_list, designator_stack.first->lhs_type, field_width, precision, type_specifiers);
+            get_pretty_print_string_for_type(context, pretty_print_list, expr.resolved_type, field_width, precision, type_specifiers);
             *call_arguments_count += 1;
             
             // 
@@ -3176,6 +3193,9 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
         push_ir(context, IR_pop_expression);
         
     }else{
+        
+        maybe_insert_implicit_nodes_for_varargs_argument(context, argument);
+        
         // No need to push a declaration for these, they are just read once anyway, 
         // also no need to specify a depth.
         get_pretty_print_string_for_type(context, pretty_print_list, argument->resolved_type, field_width, precision, type_specifiers);
@@ -3221,6 +3241,8 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
             
             expr = parse_expression(context, /*should_skip_comma_expression*/true);
         }
+        
+        string_list_postfix(&pretty_print_list, &context->scratch, string("\n"));
         
         format_string_literal->value = string_list_flatten(pretty_print_list, context->arena);
         return;
