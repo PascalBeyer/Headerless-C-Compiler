@@ -4750,7 +4750,27 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     
     // We have printed the preprocessed files in `worker_preprocess_file`
-    if(globals.preprocessed_file_handle) return 0;
+    if(globals.preprocessed_file_handle){
+        // 
+        // Add pragmas that were specified.
+        //   1) #pragma comment(linker, "/ALTERNATENAME:strdup=_strdup")
+        //   2) #pragma comment(lib, "dbghelp")
+        
+        char buffer[0x100];
+        for(struct alternate_name *name = globals.alternate_names.first; name; name = name->next){
+            int length = snprintf(buffer, sizeof(buffer), "#pragma comment(linker, \"/ALTERNATENAME:%.*s=%.*s\")\n", (int)name->source.size, name->source.data, (int)name->destination.size, name->destination.data);
+            DWORD chars_written;
+            WriteFile(globals.preprocessed_file_handle, buffer, (u32)length, &chars_written, 0);
+        }
+        
+        for(struct string_list_node *library = globals.specified_libraries.list.first; library; library = library->next){
+            int length = snprintf(buffer, sizeof(buffer), "#pragma comment(lib, \"%.*s\")\n", (int)library->string.size, library->string.data);
+            DWORD chars_written;
+            WriteFile(globals.preprocessed_file_handle, buffer, (u32)length, &chars_written, 0);
+        }
+        
+        return 0;
+    }
     
 #if 0
     for(smm compilation_unit_index = 0; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
