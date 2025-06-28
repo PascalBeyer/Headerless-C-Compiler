@@ -493,6 +493,7 @@ static struct{
     struct atom keyword_thread;
     struct atom keyword_align;
     struct atom keyword_noreturn;
+    struct atom keyword_Noreturn;
     struct atom keyword_noinline;
     struct atom keyword_selectany;
     struct atom keyword_intrin_type;
@@ -4192,6 +4193,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.keyword_thread      = atom_for_string(string("thread"));
         globals.keyword_align       = atom_for_string(string("align"));
         globals.keyword_noreturn    = atom_for_string(string("noreturn"));
+        globals.keyword_Noreturn    = atom_for_string(string("_Noreturn"));
         globals.keyword_noinline    = atom_for_string(string("noinline"));
         globals.keyword_selectany   = atom_for_string(string("selectany"));
         globals.keyword_intrin_type = atom_for_string(string("intrin_type"));

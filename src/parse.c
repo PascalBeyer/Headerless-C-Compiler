@@ -7425,7 +7425,11 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             //
             case TOKEN_declspec:{
                 struct token *open  = expect_token(context, TOKEN_open_paren, "Expected '(' after '__declspec'.");
-                struct token *directive = peek_token(context, TOKEN_restrict) ? next_token(context) : expect_token(context, TOKEN_identifier, "Expected a directive after '__declspec'.");
+                struct token *directive = next_token(context);
+                        
+                if(directive->type != TOKEN_identifier && !(TOKEN_first_keyword <= directive->type && directive->type <= TOKEN_one_past_last_keyword)){
+                    report_error(context, directive, "Expected a directive after '__declspec'.");
+                }
                 
                 b32 skip = false;
                 
@@ -7435,6 +7439,8 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                     check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_dllimport, directive, "__declspec(dllimport)");
                 }else if(atoms_match(directive_string, globals.keyword_dllexport)){
                     check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_dllexport, directive, "__declspec(dllexport)");
+                }else if(atoms_match(directive_string, globals.keyword_Noreturn)){
+                    check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_noreturn, directive, "__declspec(_Noreturn)");
                 }else if(atoms_match(directive_string, globals.keyword_noreturn)){
                     check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_noreturn, directive, "__declspec(noreturn)");
                 }else if(atoms_match(directive_string, globals.keyword_noinline)){
