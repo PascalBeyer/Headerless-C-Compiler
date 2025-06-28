@@ -3687,7 +3687,7 @@ int main(int argc, char *argv[]){
     f64 begin_time = os_get_time_in_seconds();
     
     f64 stage_one_tokenize_and_preprocess_time = 0.0;
-    f64 stage_two_parse_functions_time = 0.0;
+    f64 stage_two_parsing_time = 0.0;
     f64 stage_three_emit_code_time = 0.0;
     f64 stage_four_linking = 0.0;
     
@@ -4744,7 +4744,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
     // 
     print_warning_or_error_reports(context);
     
-    
+    stage_one_tokenize_and_preprocess_time = os_get_time_in_seconds() - stage_one_tokenize_and_preprocess_time;
     
     
     // We have printed the preprocessed files in `worker_preprocess_file`
@@ -4781,6 +4781,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
     // In the end of this phase all types and global declarations are known.
     
     globals.compile_stage = COMPILE_STAGE_parse_global_scope_entries;
+    
+    stage_two_parsing_time = os_get_time_in_seconds();
     
     while(globals.work_queue_parse_global_scope_entries.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_parse_global_scope_entries, worker_parse_global_scope_entry);
     
@@ -4978,10 +4980,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     end_counter(context, unresolved_sleepers);
     
-    log_print("Phase 1 completed.\n");
-    
-    stage_one_tokenize_and_preprocess_time = os_get_time_in_seconds() - stage_one_tokenize_and_preprocess_time;
-    
     //
     // COMPILE_STAGE_parse_function
     //
@@ -4997,8 +4995,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     log_print("start phase 2");
     
-    stage_two_parse_functions_time = os_get_time_in_seconds();
-    
     while(globals.work_queue_parse_functions.work_entries_in_flight > 0){
         worker_work(context, &globals.work_queue_parse_functions, worker_parse_function);
         assert(!context->should_sleep);
@@ -5009,7 +5005,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     // @cleanup: is there a good way here to assert that nothing is sleeping?
     
-    stage_two_parse_functions_time = os_get_time_in_seconds() - stage_two_parse_functions_time;
+    stage_two_parsing_time = os_get_time_in_seconds() - stage_two_parsing_time;
     
     log_print("end phase 2");
     
@@ -5481,10 +5477,10 @@ globals.typedef_##postfix = (struct ast_type){                                  
     f64 time_in_seconds = (end_time - begin_time);
     if(!globals.cli_options.quiet) print("\nTotal Lines: %lld | Total Lines Preprocessed %lld | Time: %.3fs\n", amount_of_lines, amount_of_lines_preprocessed, time_in_seconds);
     
-    f64 overhead = time_in_seconds - (stage_one_tokenize_and_preprocess_time + stage_two_parse_functions_time + stage_three_emit_code_time + stage_four_linking);
+    f64 overhead = time_in_seconds - (stage_one_tokenize_and_preprocess_time + stage_two_parsing_time + stage_three_emit_code_time + stage_four_linking);
     if(!globals.cli_options.quiet) print("preprocessing %.3fs (%.3f%%) | compiling %.3fs (%.3f%%) | code gen %.3fs (%.3f%%) | linking %.3fs (%.3f%%) | overhead %.3fs (%.3f%%)\n", 
             stage_one_tokenize_and_preprocess_time,  100.0 * stage_one_tokenize_and_preprocess_time/time_in_seconds,
-            stage_two_parse_functions_time,          100.0 * stage_two_parse_functions_time/time_in_seconds,
+            stage_two_parsing_time,                  100.0 * stage_two_parsing_time/time_in_seconds,
             stage_three_emit_code_time,              100.0 * stage_three_emit_code_time/time_in_seconds,
             stage_four_linking,                      100.0 * stage_four_linking/time_in_seconds,
             overhead,                                100.0 * overhead/time_in_seconds);
