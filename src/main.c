@@ -2943,7 +2943,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 //    skip_until_tokens_are_balanced(context, token, TOKEN_open_curly, TOKEN_closed_curly);
                 // But now we try patching __FUNCTION__ here, so we are doing it manually.
                 //                                                                             - 03.10.2021
-                
+                struct token *start_token = token;
                 u64 count = 1;
                 smm token_at = context->token_at;
                 struct token_array tokens = context->tokens;
@@ -2975,7 +2975,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 context->token_at = token_at + 1;
                 
                 if(count){
-                    report_error(context, token, "Unmatched '{' at global scope.");
+                    report_error(context, start_token, "Unmatched '{' at global scope.");
                 }
                 
                 break;
