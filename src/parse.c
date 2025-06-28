@@ -3239,6 +3239,8 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
             
             if(!peek_token_eat(context, TOKEN_comma)) break;
             
+            string_list_postfix(&pretty_print_list, &context->scratch, string(" "));
+            
             expr = parse_expression(context, /*should_skip_comma_expression*/true);
         }
         
