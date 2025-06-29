@@ -1571,6 +1571,18 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
     }
     
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for_ast_list(thread_context->local_dllimports){
+            struct ast_function *function = (struct ast_function *)it->value;
+            if(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry){
+                assert(function->dll_import_node);
+                ast_list_append(&symbol_context.dll_imports, scratch, &function->kind);
+            }
+        }
+    }
+    
     end_counter(&symbol_context, gather_symbols);
     
     

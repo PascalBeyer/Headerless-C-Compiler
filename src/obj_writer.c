@@ -893,6 +893,17 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         global_struct_and_array_literals.count += thread_context->global_struct_and_array_literals.count;
     }
     
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for_ast_list(thread_context->local_dllimports){
+            struct ast_function *function = (struct ast_function *)it->value;
+            if(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry){
+                ast_list_append(&external_functions, scratch, &function->kind);
+            }
+        }
+    }
+    
     if(tls_variables.count){
         // If there were tls variables, the index was referenced.
         ast_list_append(&external_variables, scratch, &globals.tls_index_declaration->kind);

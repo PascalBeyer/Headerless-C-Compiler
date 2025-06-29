@@ -8429,8 +8429,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 function->as_decl.flags |= DECLARATION_FLAGS_is_dllimport;
                 
                 if(context->current_scope){
-                    // @incomplete: For now disallow __declspec(dllimport) at local scope.
-                    report_error(context, function->identifier, "@incomplete: Currently, __declspec(dllimport) is not allowed inside a function.");
+                    ast_list_append(&context->local_dllimports, context->arena, &function->kind);
                 }
             }
             

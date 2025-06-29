@@ -2308,24 +2308,21 @@ struct emit_location *get_emit_location_for_identifier(struct context *context, 
         struct emit_location *tls_slot = emit_load_gpr(context, tls_slot_register_relative);
         
         ret = emit_location_register_relative(context, tls_slot, offset_reg, 0, decl_size);
-    }else if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)){
+    }else if(decl->flags & DECLARATION_FLAGS_is_dllimport){
+        // :dllimport_loading
+        // 
+        // for an dllimport the address out of the dllimport table. The 'memory_location' and 
+        // 'relative_virtual_address' describe the dllimport table address, thus we patch to load this 
+        // address.
+        // Once we have this address, we have a register relative location.
+        // Note that for functions calls similar code special cases dllimports as well, but we dont end
+        // up in here, because if we call an identifier we never recurse into emit_code_for_ast.
+        //                                                                              -08.08.2021
         
-        if(decl->flags & DECLARATION_FLAGS_is_dllimport){
-            // :dllimport_loading
-            // 
-            // for an dllimport the address out of the dllimport table. The 'memory_location' and 
-            // 'relative_virtual_address' describe the dllimport table address, thus we patch to load this 
-            // address.
-            // Once we have this address, we have a register relative location.
-            // Note that for functions calls similar code special cases dllimports as well, but we dont end
-            // up in here, because if we call an identifier we never recurse into emit_code_for_ast.
-            //                                                                              -08.08.2021
-            
-            struct emit_location *address = emit_location_rip_relative(context, &decl->base, 8);
-            ret = emit_location_register_relative(context, address, 0, 0, decl_size);
-        }else{
-            ret = emit_location_rip_relative(context, &decl->base, decl_size);
-        }
+        struct emit_location *address = emit_location_rip_relative(context, &decl->base, 8);
+        ret = emit_location_register_relative(context, address, 0, 0, decl_size);
+    }else if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)){
+        ret = emit_location_rip_relative(context, &decl->base, decl_size);
     }else{
         
         // :MemoryLocations 

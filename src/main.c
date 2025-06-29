@@ -887,6 +887,7 @@ struct context{
     struct ast_list global_struct_and_array_literals; // Used for struct and array literals at global (or local persist) scope.
     
     struct ast_list local_functions;
+    struct ast_list local_dllimports;
     
     struct{
         struct alloca_patch_node *first;
