@@ -98,8 +98,22 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
                         
                         if(operand->is_inline_asm_function_argument_that_needs_to_be_an_integer){
                             if(!integer_location){
+                                
+                                // 
+                                // Figure out the token of the function call in a stupid way.
+                                // 
+                                struct token *token = null;
+                                for(struct declaration_reference_node *node = context->current_function->referenced_declarations.first; node; node = node->next){
+                                    if(node->declaration == &context->current_inline_asm_function->as_decl){
+                                        token = node->token;
+                                        break;
+                                    }
+                                }
+                                
+                                assert(token);
+                                
                                 begin_error_report(context);
-                                report_error(context, context->in_inline_asm_function, "Argument '%.*s' of '__declspec(inline_asm)' function needs to be an integer literal, because it contains an instruction which only supports integer literals.", decl->identifier->size, decl->identifier->data);
+                                report_error(context, token, "Argument '%.*s' of '__declspec(inline_asm)' function needs to be an integer literal, because it contains an instruction which only supports integer literals.", decl->identifier->size, decl->identifier->data);
                                 report_error(context, instruction->token, "... Here is the instruction that only supports integer literals.");
                                 end_error_report(context);
                                 
