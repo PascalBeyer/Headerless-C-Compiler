@@ -8,7 +8,7 @@
 //     _rotl16
 //     _rotr8
 //     _rotr16
-//     _rotl
+//     _rotl   - This seems to not be an intrinsic (api-ms-win-crt-utility.dll)
 //     _rotl64
 //     _rotr
 //     _rotr64
@@ -2650,7 +2650,8 @@ __declspec(inline_asm) __m128i _mm_srli_epi32(__m128i a, int imm8){
 }
 
 __declspec(inline_asm) __m128i _mm_srli_epi64(__m128i a, int imm8){
-    psrlq a, imm8
+    movd xmm0, imm8
+    psrlq a, xmm0
     return a
 }
 
