@@ -2444,7 +2444,7 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
     
     smm file_name_hash = string_djb2_hash(string_from_cstring(absolute_file_path));
     
-    struct temporary_memory temp = begin_temporary_memory(context->arena);
+    struct temporary_memory temp = begin_temporary_memory(context->arena); // @cleanup: Is this really what we want to do?
     
     struct file *file = push_uninitialized_struct(context->arena, struct file); // @note: No need to zero, 'arena' never has any non-zero bytes.
     file->absolute_file_path = absolute_file_path;
@@ -2479,6 +2479,7 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
             // Wait for the file to be done.
             while(atomic_load(smm, other->in_progress) == true) _mm_pause();
             
+            memset(file, 0, sizeof(*file));
             end_temporary_memory(temp);
             return other;
         }
