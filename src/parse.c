@@ -2576,6 +2576,7 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
         struct ir_compound_literal *compound_literal = push_uninitialized_struct(&context->ir_arena, struct ir_compound_literal);
         compound_literal->base.kind = IR_compound_literal;
         compound_literal->decl = decl;
+        compound_literal->trailing_array_size = 0;
         
         parse_initializer_list(context, decl->type, 0, &compound_literal->trailing_array_size);
         
