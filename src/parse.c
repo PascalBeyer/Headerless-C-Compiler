@@ -773,15 +773,20 @@ func void maybe_insert_arithmetic_conversion_casts(struct context *context, stru
     }
 }
 
+// @cleanup: Should this only be allowed for actually literal 0?
 func void maybe_cast_literal_0_to_void_pointer(struct expr *lhs, struct expr *rhs){
     
     if(lhs->resolved_type->kind == AST_pointer_type && rhs->ir->kind == IR_integer_literal){
         
         if(integer_literal_as_u64(rhs) == 0){
             rhs->ir->kind = IR_pointer_literal;
+            
             rhs->resolved_type = lhs->resolved_type;
             rhs->defined_type  = lhs->defined_type;
-            ((struct ir_pointer_literal *)rhs->ir)->type = lhs->resolved_type;
+            
+            struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)rhs->ir;
+            pointer_lit->type = lhs->resolved_type;
+            pointer_lit->pointer = 0; // need to write the pointer to zero, because only s32 might have been zeroed.
         }
         return;
     }
@@ -789,9 +794,13 @@ func void maybe_cast_literal_0_to_void_pointer(struct expr *lhs, struct expr *rh
     if(rhs->resolved_type->kind == AST_pointer_type && lhs->ir->kind == IR_integer_literal){
         if(integer_literal_as_u64(lhs) == 0){
             lhs->ir->kind = IR_pointer_literal;
+            
             lhs->resolved_type = rhs->resolved_type;
             lhs->defined_type  = rhs->defined_type;
-            ((struct ir_pointer_literal *)lhs->ir)->type = rhs->resolved_type;
+            
+            struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)lhs->ir;
+            pointer_lit->type = rhs->resolved_type;
+            pointer_lit->pointer = 0; // need to write the pointer to zero, because only s32 might have been zeroed.
         }
     }
 }
