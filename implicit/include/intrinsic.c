@@ -808,8 +808,29 @@ __declspec(inline_asm) unsigned __int8 _addcarry_u64(unsigned __int8 carry_in, u
 }
 
 __declspec(inline_asm) long _InterlockedOr(long volatile *value, long mask){
-    lock or [value], mask
-    return mask // @cleanup: This is supposed to return the old value.
+    
+    // I think this would be the correct code, but we don't have jumps yet. @incomplete
+    // 
+    //     mov eax, [value]
+    // 
+    // loop:
+    //     mov ecx, eax
+    //     or  ecx, mask
+    //     
+    //     lock cmpxchg [value], ecx
+    //     jne loop
+    //     
+    //     return ecx
+    // 
+    
+    mov eax, [value]
+    
+    mov ecx, eax
+    or  ecx, mask
+    
+    lock cmpxchg [value], ecx
+    
+    return ecx
 }
 
 
