@@ -3667,8 +3667,6 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                         element_type = pointer->pointer_to;
                     }else if(promoted_type->kind == AST_array_type){
                         
-                        maybe_load_address_for_array_or_function(context, IR_load_address, &argument); // @cleanup: Where to insert this?
-                        
                         struct ast_array_type *array = (struct ast_array_type *)promoted_type;
                         element_type = array->element_type;
                     }
@@ -3692,6 +3690,8 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                     report_warning(context, WARNING_unknown_format_specifier, format_string_argument->token, "Unknown format specifier '%%%c'.", conversion_specifier);
                 }break;
             }
+            
+            maybe_insert_implicit_nodes_for_varargs_argument(context, &argument);
             
             continue;
         }
@@ -3867,8 +3867,6 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                 struct ir_identifier *ident = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
                 ident->base.kind = IR_identifier;
                 ident->decl = declaration;
-                
-                *call_arguments_count += 1;
                 
                 if(have_equals){
                     struct string identifier_equals = push_format_string(&context->scratch, "%.*s = ", identifier.size, identifier.data);
