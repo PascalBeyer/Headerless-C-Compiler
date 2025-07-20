@@ -1457,6 +1457,145 @@ void function_maybe_add_line_information(struct context *context, struct token *
 
 //_____________________________________________________________________________________________________________________
 
+struct pragma_pack_node{
+    struct pragma_pack_node *next;
+    
+    struct string identifier;
+    u64 value;
+    struct token *token;
+};
+
+void parse_and_process_pragma_pack(struct context *context){
+    
+    expect_token(context, TOKEN_open_paren, "Expected a '(' after 'pragma pack'.");
+    
+    if(peek_token_eat(context, TOKEN_closed_paren)){
+        context->pragma_alignment = 16; // Default on x64.
+        return;
+    }
+    
+    int have_value = 0;
+    u64 value = 0;
+    
+    struct token *show_token = 0;
+    
+    enum pragma_pack_operation{
+        PRAGMA_PACK_set,
+        PRAGMA_PACK_push,
+        PRAGMA_PACK_pop,
+        PRAGMA_PACK_show,
+    } operation = PRAGMA_PACK_set;
+    
+    struct string pack_identifier = zero_struct;
+    
+    int should_break = 0;
+    while(!should_break){
+        struct token *token = next_token(context);
+        
+        switch(token->type){
+            case TOKEN_identifier:{
+                struct string identifier = token->string;
+                if(string_match(identifier, string("push"))){
+                    operation = PRAGMA_PACK_push;
+                    show_token = token;
+                }else if(string_match(identifier, string("pop"))){
+                    operation = PRAGMA_PACK_pop;
+                }else if(string_match(identifier, string("show"))){
+                    operation = PRAGMA_PACK_show;
+                    show_token = token;
+                }else{
+                    pack_identifier = identifier;
+                }
+            }break;
+            
+            case TOKEN_binary_literal:
+            case TOKEN_hex_literal:
+            case TOKEN_base10_literal:{
+                struct parsed_integer parsed_integer;
+                if(token->type == TOKEN_base10_literal){
+                    parsed_integer = parse_base10_literal(context, token);
+                }else if(token->type == TOKEN_hex_literal) {
+                    parsed_integer = parse_hex_literal(context, token);
+                }else{
+                    parsed_integer = parse_binary_literal(context, token);
+                }
+                
+                have_value = 1;
+                value = parsed_integer.value;
+            }break;
+            
+            default: should_break = 1; break;
+        }
+        
+        if(!peek_token_eat(context, TOKEN_comma)) break;
+    }
+    
+    expect_token(context, TOKEN_closed_paren, "Expected a ')' at then end of '#pragma pack(<arguments>'.");
+    
+    switch(operation){
+        case PRAGMA_PACK_set:{
+            if(have_value){
+                context->pragma_alignment = value;
+            }else{
+                context->pragma_alignment = 16; // Default on x64.
+            }
+        }break;
+        case PRAGMA_PACK_push:{
+            struct pragma_pack_node *node = push_struct(&context->scratch, struct pragma_pack_node);
+            node->value = context->pragma_alignment;
+            node->identifier = pack_identifier;
+            node->token = show_token;
+            
+            sll_push_front(context->pragma_pack_stack, node);
+            
+            if(have_value) context->pragma_alignment = value;
+        }break;
+        case PRAGMA_PACK_pop:{
+            if(pack_identifier.size){
+                int found = 0;
+                for(struct pragma_pack_node *node = context->pragma_pack_stack.first; node; node = node->next){
+                    if(string_match(node->identifier, pack_identifier)){
+                        context->pragma_pack_stack.first = node->next;
+                        context->pragma_alignment = node->value;
+                        found = 1;
+                        break;
+                    }
+                }
+                
+                if(!found){
+                    // @cleanup: make this its own warning value.
+                    report_warning(context, WARNING_pragma_pack_show, show_token, "Identifier '%.*s' is not on the pragma pack stack.", pack_identifier.size, pack_identifier.data);
+                }
+            }else{
+                if(context->pragma_pack_stack.first){
+                    struct pragma_pack_node *pop = context->pragma_pack_stack.first;
+                    context->pragma_alignment = pop->value;
+                    
+                    sll_pop_front(context->pragma_pack_stack);
+                }
+            }
+            
+            if(have_value) context->pragma_alignment = value;
+        }break;
+        case PRAGMA_PACK_show:{
+            char *here_is_the_current_stack = "";
+            if(context->pragma_pack_stack.first) here_is_the_current_stack = " Here is the current stack:";
+            
+            begin_error_report(context);
+            report_warning(context, WARNING_pragma_pack_show, show_token, "Current \"pragma pack(show)\"-value is %llu.%s", context->pragma_alignment, here_is_the_current_stack);
+            int depth = 0;
+            for(struct pragma_pack_node *node = context->pragma_pack_stack.first; node; node = node->next){
+                char *identifier = "";
+                if(node->identifier.size) identifier = ", identifier: ";
+                report_warning(context, WARNING_pragma_pack_show, node->token, "[%d] Pack-alignment %llu%s%.*s.", depth++, node->value, identifier, node->identifier.size, node->identifier.data);
+            }
+            end_error_report(context);
+        }break;
+    }
+}
+
+//_____________________________________________________________________________________________________________________
+
 func struct expr parse_constant_integer_expression(struct context *context, int should_skip_comma_expression, char *message){
     
     struct expr constant_expression = parse_expression(context, should_skip_comma_expression);
@@ -5645,11 +5784,6 @@ case NUMBER_KIND_##type:{ \
                 
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_integer | CHECK_float, stack_entry->token)) return operand;
                 
-                // @cleanup: Why are we pushing this expresssion?
-                // struct ast *prefix = ast_push_unary_expression(context, ast_kind, operand);
-                // set_resolved_type(prefix, operand.resolved_type, operand.defined_type);
-                // operand.ast = prefix; // Sets in op->operand in the next iteration. Type does not change.
-                
                 context->in_lhs_expression = false;
             }break;
             
@@ -8747,6 +8881,12 @@ func void parse_statement(struct context *context){
         case TOKEN_semicolon:{
             needs_semicolon = false;
         }break;
+        
+        case TOKEN_pragma_pack:{
+            parse_and_process_pragma_pack(context);
+            needs_semicolon = false;
+        }break;
+        
         case TOKEN_if:{
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'if'.");
             
@@ -9924,142 +10064,5 @@ func struct declarator_return parse_declarator(struct context* context, struct a
     }
     
     return ret;
-}
-
-struct pragma_pack_node{
-    struct pragma_pack_node *next;
-    
-    struct string identifier;
-    u64 value;
-    struct token *token;
-};
-
-void parse_and_process_pragma_pack(struct context *context){
-    
-    expect_token(context, TOKEN_open_paren, "Expected a '(' after 'pragma pack'.");
-    
-    if(peek_token_eat(context, TOKEN_closed_paren)){
-        context->pragma_alignment = 16; // Default on x64.
-        return;
-    }
-    
-    int have_value = 0;
-    u64 value = 0;
-    
-    struct token *show_token = 0;
-    
-    enum pragma_pack_operation{
-        PRAGMA_PACK_set,
-        PRAGMA_PACK_push,
-        PRAGMA_PACK_pop,
-        PRAGMA_PACK_show,
-    } operation = PRAGMA_PACK_set;
-    
-    struct string pack_identifier = zero_struct;
-    
-    int should_break = 0;
-    while(!should_break){
-        struct token *token = next_token(context);
-        
-        switch(token->type){
-            case TOKEN_identifier:{
-                struct string identifier = token->string;
-                if(string_match(identifier, string("push"))){
-                    operation = PRAGMA_PACK_push;
-                    show_token = token;
-                }else if(string_match(identifier, string("pop"))){
-                    operation = PRAGMA_PACK_pop;
-                }else if(string_match(identifier, string("show"))){
-                    operation = PRAGMA_PACK_show;
-                    show_token = token;
-                }else{
-                    pack_identifier = identifier;
-                }
-            }break;
-            
-            case TOKEN_binary_literal:
-            case TOKEN_hex_literal:
-            case TOKEN_base10_literal:{
-                struct parsed_integer parsed_integer;
-                if(token->type == TOKEN_base10_literal){
-                    parsed_integer = parse_base10_literal(context, token);
-                }else if(token->type == TOKEN_hex_literal) {
-                    parsed_integer = parse_hex_literal(context, token);
-                }else{
-                    parsed_integer = parse_binary_literal(context, token);
-                }
-                
-                have_value = 1;
-                value = parsed_integer.value;
-            }break;
-            
-            default: should_break = 1; break;
-        }
-        
-        if(!peek_token_eat(context, TOKEN_comma)) break;
-    }
-    
-    expect_token(context, TOKEN_closed_paren, "Expected a ')' at then end of '#pragma pack(<arguments>'.");
-    
-    switch(operation){
-        case PRAGMA_PACK_set:{
-            if(have_value){
-                context->pragma_alignment = value;
-            }else{
-                context->pragma_alignment = 16; // Default on x64.
-            }
-        }break;
-        case PRAGMA_PACK_push:{
-            struct pragma_pack_node *node = push_struct(&context->scratch, struct pragma_pack_node);
-            node->value = context->pragma_alignment;
-            node->identifier = pack_identifier;
-            node->token = show_token;
-            
-            sll_push_front(context->pragma_pack_stack, node);
-            
-            if(have_value) context->pragma_alignment = value;
-        }break;
-        case PRAGMA_PACK_pop:{
-            if(pack_identifier.size){
-                int found = 0;
-                for(struct pragma_pack_node *node = context->pragma_pack_stack.first; node; node = node->next){
-                    if(string_match(node->identifier, pack_identifier)){
-                        context->pragma_pack_stack.first = node->next;
-                        context->pragma_alignment = node->value;
-                        found = 1;
-                        break;
-                    }
-                }
-                
-                if(!found){
-                    // @cleanup: make this its own warning value.
-                    report_warning(context, WARNING_pragma_pack_show, show_token, "Identifier '%.*s' is not on the pragma pack stack.", pack_identifier.size, pack_identifier.data);
-                }
-            }else{
-                if(context->pragma_pack_stack.first){
-                    struct pragma_pack_node *pop = context->pragma_pack_stack.first;
-                    context->pragma_alignment = pop->value;
-                    
-                    sll_pop_front(context->pragma_pack_stack);
-                }
-            }
-            
-            if(have_value) context->pragma_alignment = value;
-        }break;
-        case PRAGMA_PACK_show:{
-            char *here_is_the_current_stack = "";
-            if(context->pragma_pack_stack.first) here_is_the_current_stack = " Here is the current stack:";
-            
-            begin_error_report(context);
-            report_warning(context, WARNING_pragma_pack_show, show_token, "Current \"pragma pack(show)\"-value is %llu.%s", context->pragma_alignment, here_is_the_current_stack);
-            int depth = 0;
-            for(struct pragma_pack_node *node = context->pragma_pack_stack.first; node; node = node->next){
-                char *identifier = "";
-                if(node->identifier.size) identifier = ", identifier: ";
-                report_warning(context, WARNING_pragma_pack_show, node->token, "[%d] Pack-alignment %llu%s%.*s.", depth++, node->value, identifier, node->identifier.size, node->identifier.data);
-            }
-            end_error_report(context);
-        }break;
-    }
 }
 
