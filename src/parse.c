@@ -89,11 +89,11 @@ static struct ir_jump_node *push_jump(struct context *context, enum ir_kind ir_k
 }
 
 // Sometimes when we are constant propagating, we have to un-emit a literal.
-#define pop_from_ir_arena(context, ast) pop_from_ir_arena_(context, (u8 *)(ast), sizeof(*ast))
-func void pop_from_ir_arena_(struct context *context, u8 *ast_memory, smm size){
+#define pop_from_ir_arena(context, ir) pop_from_ir_arena_(context, (u8 *)(ir), sizeof(*ir))
+func void pop_from_ir_arena_(struct context *context, u8 *ir_memory, smm size){
     if(!context->should_exit_statement){ // This was causing issues I dunno.
-        assert(ast_memory + size == arena_current(&context->ir_arena));
-        context->ir_arena.current = ast_memory;
+        assert(ir_memory + size == arena_current(&context->ir_arena));
+        context->ir_arena.current = ir_memory;
     }
 }
 
@@ -6701,9 +6701,7 @@ case NUMBER_KIND_##type:{ \
             // 
             //    lhs ? true : false
             //    
-            case AST_conditional_expression:
-            case AST_conditional_expression_true:
-            case AST_conditional_expression_false:{
+            case AST_conditional_expression:{
                 
                 // @cleanup: this has a lot of code that any binary expression also has e.g.
                 //              'maybe_cast_literal_0_to_void_pointer'
@@ -6726,9 +6724,9 @@ case NUMBER_KIND_##type:{ \
                 
                 struct expr *if_true   = &stack_entry->operand;
                 struct expr *if_false  = &operand;
+                
                 struct conditional_expression_information *information = stack_entry->other;
                 
-                struct ir *condition = information->condition;
                 struct ir_identifier *temp1 = information->temp;
                 
                 struct ir_jump_node *end_jump = information->end_jump;
@@ -6772,68 +6770,108 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                int constant_propagated = 0;
-                if(ast_kind != AST_conditional_expression){
-                    
-                    // The condition is constant, we only turn this into a constant if the "true" path is also const.
-                    // @cleanup: Only do this if both paths are const?
-                    
-                    struct expr *expr = (ast_kind == AST_conditional_expression_true) ? if_true : if_false;
-                    struct ir *ir = expr->ir;
-                    
-                    if(ir->kind == IR_integer_literal || ir->kind == IR_pointer_literal || ir->kind == IR_float_literal){
-                        // 
-                        // We have to constant-propergate this.
-                        // Copy it into condition and delete everything afterwards.
-                        // 
-                        // This whole thing feels sort-of bad, but it is the best I could come up with.
-                        constant_propagated = 1;
-                        
-                        static_assert(sizeof(struct ir_integer_literal) == sizeof(struct ir_float_literal));
-                        static_assert(sizeof(struct ir_integer_literal) == sizeof(struct ir_pointer_literal));
-                        memcpy(condition, ir, sizeof(struct ir_integer_literal));
-                        
-                        u8 *past_const = (u8 *)condition + sizeof(struct ir_integer_literal);
-                        context->ir_arena.current = past_const;
-                        
-                        operand.ir = condition;
-                        operand.resolved_type = expr->resolved_type;
-                        operand.defined_type  = expr->defined_type;
-                    }
-                }
+                // @cleanup: how should these defined_types propagate in this case?
+                enum ast_kind *defined_type = if_true->defined_type ? if_true->defined_type : if_false->defined_type;
                 
-                if(!constant_propagated){
-                    // @cleanup: how should these defined_types propagate in this case?
-                    enum ast_kind *defined_type = if_true->defined_type ? if_true->defined_type : if_false->defined_type;
-                    
-                    // 
-                    // @cleanup: This is probably wrong.
-                    // 
-                    struct ast_type *bigger_type = if_true->resolved_type->size > if_false->resolved_type->size ? if_true->resolved_type : if_false->resolved_type;
-                    
-                    struct ast_declaration *temp_decl = push_unnamed_declaration(context, bigger_type, null, question_mark);
-                    
-                    temp1->decl = temp_decl;
-                    temp2->decl = temp_decl;
-                    
-                    push_ir(context, IR_store);
-                    push_ir(context, IR_pop_expression);
-                    
-                    struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
-                    end_label->label_number = end_jump->label_number;
-                    
-                    
-                    struct ir_identifier *lhs = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
-                    lhs->base.kind = IR_identifier;
-                    lhs->decl = temp_decl;
-                    operand.ir = &lhs->base;
-                    operand.resolved_type = if_true->resolved_type;
-                    operand.defined_type = defined_type;
-                }
+                // 
+                // @cleanup: This is probably wrong.
+                // 
+                struct ast_type *bigger_type = if_true->resolved_type->size > if_false->resolved_type->size ? if_true->resolved_type : if_false->resolved_type;
+                
+                struct ast_declaration *temp_decl = push_unnamed_declaration(context, bigger_type, null, question_mark);
+                
+                temp1->decl = temp_decl;
+                temp2->decl = temp_decl;
+                
+                push_ir(context, IR_store);
+                push_ir(context, IR_pop_expression);
+                
+                struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
+                end_label->label_number = end_jump->label_number;
+                
+                
+                struct ir_identifier *lhs = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
+                lhs->base.kind = IR_identifier;
+                lhs->decl = temp_decl;
+                operand.ir = &lhs->base;
+                operand.resolved_type = if_true->resolved_type;
+                operand.defined_type = defined_type;
                 
                 context->in_lhs_expression = false;
                 context->in_conditional_expression -= 1;
             }break;
+            
+            case AST_conditional_expression_true:
+            case AST_conditional_expression_false:{
+                
+                struct token *question_mark = stack_entry->token;
+                
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
+                maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
+                
+                struct expr *value = null;
+                struct expr *other = null; // Warning: other->ir is deleted.
+                
+                if(ast_kind == AST_conditional_expression_false){
+                    value = &operand;
+                    other = &stack_entry->operand;
+                }else{
+                    value = &stack_entry->operand;
+                    other = &operand;
+                    
+                    context->ir_arena.current = stack_entry->other;
+                }
+                
+                other->ir = null; // just to be _save_.
+                
+                // "- both are arithmetic types"
+                if(type_is_arithmetic(value->resolved_type) && type_is_arithmetic(other->resolved_type)){
+                    struct ast_type *arithmetic_type = perform_usual_arithmetic_conversions(value->resolved_type, other->resolved_type);
+                    
+                    if(value->resolved_type != arithmetic_type){
+                        push_cast(context, AST_cast, arithmetic_type, defined_type_for_promotion(value), value);
+                    }
+                    
+                }else{
+                    
+                    // "- one is a pointer to an object and the other is a pointer to void"
+                    maybe_insert_cast_from_void_pointer(value, other);
+                    
+                    // "- one operand is a pointer and the other is a null pointer constant"
+                    if(value->resolved_type->kind == AST_integer_type && other->resolved_type->kind == AST_pointer_type){
+                        if(integer_literal_as_u64(value) == 0){
+                            value->resolved_type = other->resolved_type;
+                            value->defined_type = other->defined_type;
+                            
+                            struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)value->ir;
+                            pointer_lit->base.kind = IR_pointer_literal;
+                            pointer_lit->type = other->resolved_type;
+                            pointer_lit->pointer = 0; // need to write the pointer to zero, because only s32 might have been zeroed.
+                        }
+                    }
+                    
+                    if(other->resolved_type->kind == AST_integer_type && value->resolved_type->kind == AST_pointer_type){
+                        if(other->token->size == 1 && other->token->data[0] == '0'){ // @hmm: I think I should use this check everywhere instead of checking for value 0.
+                            other->resolved_type = value->resolved_type;
+                            other->defined_type = value->defined_type;
+                        }
+                    }
+                    
+                    
+                    // "- both operands have the same union or structure type"
+                    // "- both operands have void type"
+                    // "- both operands are pointers to compatible types"
+                    if(!types_are_equal(value->resolved_type, other->resolved_type)){
+                        report_type_mismatch_error(context, value->resolved_type, value->defined_type, other->resolved_type, other->defined_type, question_mark);
+                    }
+                }
+                
+                operand = *value;
+                
+                context->in_lhs_expression = false;
+                context->in_conditional_expression -= 1;
+            }break;
+            
             
             // :assign_expression parse_assign_expression :assignment_expression parse_assignment_expression
             // :compound_assignment
@@ -7233,19 +7271,8 @@ case NUMBER_KIND_##type:{ \
                 return operand;
             }
             
+            
             context->in_conditional_expression += 1; // :tracking_conditional_expression_depth_for_noreturn_functions
-            
-            struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_false);
-            conditional_jump->label_number = context->jump_label_index++;
-            
-            struct ir_identifier *temp1 = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
-            temp1->base.kind = IR_identifier;
-            
-            struct expr if_true = parse_expression(context, false);
-            maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
-            maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
-            expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
-            if(context->should_exit_statement) return operand;
             
             enum ast_kind conditional_expression_kind = AST_conditional_expression;
             
@@ -7265,37 +7292,74 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 conditional_expression_kind = is_true ? AST_conditional_expression_true : AST_conditional_expression_false;
+                
+                pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
+                
+                struct expr if_true = parse_expression(context, false);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
+                maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
+                expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
+                if(context->should_exit_statement) return operand;
+                
+                struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, &if_true);
+                
+                if(!is_true){
+                    // We should take the _is_false_ expression.
+                    // Hence, nuke the if_true condition.
+                    context->ir_arena.current = (u8 *)operand.ir;
+                }else{
+                    // We should take the _if_true_ expression.
+                    // Hence, we have to remember where to nuke to.
+                    entry->other = arena_current(&context->ir_arena);
+                }
+                
+                goto restart;
+            }else{
+                // 
+                // Non-constant conditional. We have to insert jumps and such.
+                // 
+                
+                struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_false);
+                conditional_jump->label_number = context->jump_label_index++;
+                
+                struct ir_identifier *temp1 = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
+                temp1->base.kind = IR_identifier;
+                
+                struct expr if_true = parse_expression(context, false);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
+                maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
+                expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
+                if(context->should_exit_statement) return operand;
+                
+                struct ir *cast = null;
+                if(type_is_arithmetic(if_true.resolved_type)){
+                    cast = push_ir(context, IR_nop);
+                }
+                push_ir(context, IR_store);
+                push_ir(context, IR_pop_expression);
+                
+                // 
+                // @WARINING: We assume we know the order of these nodes to get temp2 from end_jump.
+                // 
+                
+                struct ir_jump_node *end_jump = push_jump(context, IR_jump);
+                end_jump->label_number = context->jump_label_index++;
+                
+                struct ir_jump_node *if_false_label = push_jump(context, IR_jump_label);
+                if_false_label->label_number = conditional_jump->label_number;
+                
+                struct ir_identifier *temp2 = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
+                temp2->base.kind = IR_identifier;
+                
+                struct conditional_expression_information *conditional_expression_information = push_struct(&context->scratch, struct conditional_expression_information);
+                conditional_expression_information->temp = temp1;
+                conditional_expression_information->end_jump = end_jump;
+                conditional_expression_information->cast = cast;
+                
+                struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, &if_true);
+                entry->other = conditional_expression_information;
+                goto restart;
             }
-            
-            struct ir *cast = null;
-            if(type_is_arithmetic(if_true.resolved_type)){
-                cast = push_ir(context, IR_nop);
-            }
-            push_ir(context, IR_store);
-            push_ir(context, IR_pop_expression);
-            
-            // 
-            // @WARINING: We assume we know the order of these nodes to get temp2 from end_jump.
-            // 
-            
-            struct ir_jump_node *end_jump = push_jump(context, IR_jump);
-            end_jump->label_number = context->jump_label_index++;
-            
-            struct ir_jump_node *if_false_label = push_jump(context, IR_jump_label);
-            if_false_label->label_number = conditional_jump->label_number;
-            
-            struct ir_identifier *temp2 = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
-            temp2->base.kind = IR_identifier;
-            
-            struct conditional_expression_information *conditional_expression_information = push_struct(&context->scratch, struct conditional_expression_information);
-            conditional_expression_information->condition = operand.ir;
-            conditional_expression_information->temp = temp1;
-            conditional_expression_information->end_jump = end_jump;
-            conditional_expression_information->cast = cast;
-            
-            struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, &if_true);
-            entry->other = conditional_expression_information;
-            goto restart;
         }break;
         
         // Precedence 14

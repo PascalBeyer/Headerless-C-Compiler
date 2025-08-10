@@ -826,7 +826,6 @@ struct ast_goto{
 };
 
 struct conditional_expression_information{
-    struct ir *condition;
     struct ir *cast;
     struct ir_identifier *temp;
     struct ir_jump_node *end_jump;
