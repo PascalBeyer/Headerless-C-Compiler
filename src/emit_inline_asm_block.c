@@ -755,6 +755,11 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             
             case MEMONIC_mul: case MEMONIC_div: case MEMONIC_neg:{
                 struct opcode opcode = (operand->size == 1) ? one_byte_opcode(0xf6) : one_byte_opcode(0xf7);
+                
+                // @note: All of this sucks!
+                struct emit_location *rdx = null;
+                if(operand->size != 1 && inst->memonic != MEMONIC_neg) rdx = asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_D, operand->size);
+                
                 u8 reg_extension = memonic_to_opcode[inst->memonic];
                 if(operand->state == EMIT_LOCATION_register_relative){
                     emit_register_relative_extended(context, user_prefixes, opcode, reg_extension, operand);
