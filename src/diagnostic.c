@@ -200,7 +200,7 @@ func void push_error_node_to_context(struct context *context, struct token *toke
         switch(stage){
             case COMPILE_STAGE_tokenize_files:{
                 // while tokenizing copy the tokens, as they might be tempoary
-                struct token *copied_token = push_uninitialized_struct(context->arena, struct token); // @note: No need to zero, 'arena' never has any non-zero bytes.
+                struct token *copied_token = push_uninitialized_struct(context->arena, struct token);
                 *copied_token = *token;
                 node->token = copied_token;
             }break;

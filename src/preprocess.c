@@ -180,7 +180,7 @@ func struct token *peek_token_eat_raw(struct context *context, enum token_type t
     return null;
 }
 
-func b32 skip_until_tokens_are_balanced_raw(struct context *context, struct token *initial_token, enum token_type open, enum token_type closed){
+func b32 skip_until_tokens_are_balanced_raw(struct context *context, struct token *initial_token, enum token_type open, enum token_type closed, char *error){
     if(!initial_token){
         initial_token = next_token_raw(context);
     }
@@ -191,7 +191,7 @@ func b32 skip_until_tokens_are_balanced_raw(struct context *context, struct toke
         
         if(token->type == TOKEN_invalid){
             // :Error this should report the beginning and the end
-            report_error(context, initial_token, "Scope not ended.");
+            report_error(context, initial_token, error);
             return false;
         }else if(token->type == closed){
             if (--count == 0) break;
@@ -1721,11 +1721,51 @@ func struct token *expand_define(struct context *context, struct token *token_to
             case BUILTIN_DEFINE__pragma:{
                 // :microsoft_extension
                 // for now unsupported, just skip all the tokens, such that they do not get emitted
+                eat_whitespace_and_comments(context);
+                struct token *open_paren = expect_token_raw(context, token_to_expand, TOKEN_open_paren, "Expected a '(' after builtin macro '__pragma'.");
+                if(!open_paren) return null;
                 
-                if(peek_token_raw(context, TOKEN_open_paren)){
-                    // @incomplete: handle pragmas
-                    skip_until_tokens_are_balanced_raw(context, null, TOKEN_open_paren, TOKEN_closed_paren);
+                eat_whitespace_and_comments(context);
+                struct token *pragma_directive = expect_token_raw(context, token_to_expand, TOKEN_identifier, "Expected a directive after '__pragma('.");
+                
+                if(atoms_match(pragma_directive->atom, globals.pragma_pack)){
+                    
+                    struct token *base = push_uninitialized_data(&context->scratch, struct token, 0);
+                    
+                    struct token *pragma_pack_token = push_struct(&context->scratch, struct token); // I think we need to copy here because the 'pragma_directive' could be in a define or something, not sure.
+                    *pragma_pack_token = *pragma_directive;
+                    pragma_pack_token->type = TOKEN_pragma_pack;
+                    
+                    u64 count = 1;
+                    while(true){
+                        struct token *token = next_token_raw(context);
+                        
+                        if(token->type == TOKEN_invalid){
+                            // :Error this should report the beginning and the end
+                            report_error(context, open_paren, "Unmatched '(' after '__pragma('.");
+                            return false;
+                        }else if(token->type == TOKEN_closed_paren){
+                            if (--count == 0) break;
+                        }else if(token->type == TOKEN_open_paren){
+                            count++;
+                        }
+                        
+                        *push_uninitialized_struct(&context->scratch, struct token) = *token;
+                    }
+                    
+                    u64 size = push_uninitialized_data(&context->scratch, struct token, 0) - base;
+                    
+                    struct token_array token_array = {.data = base, .size = size };
+                    
+                    struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
+                    node->tokens = token_array;
+                    
+                    sll_push_front(context->token_stack, node);
+                }else{
+                    skip_until_tokens_are_balanced_raw(context, open_paren, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' after '__pragma('.");
+                    report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsuported __pragma '%.s'.", pragma_directive->size, pragma_directive->data);
                 }
+                
                 
                 return null;
             }break;
