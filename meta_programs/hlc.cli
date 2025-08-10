@@ -226,6 +226,10 @@ https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-libr
 
 /error_limit - A loose limit to the amount of errors reported. This limit is keept on a per-thread basis. 
 
+/syntax_check | /Zs - Only check syntax. No compilation after type-checking.
+
+Mostly implemented for MSVC-compatibility.
+
 # Hidden
 
 /dont_print_the_files - Don't print the files because we are in a test suite.

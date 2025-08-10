@@ -4812,6 +4812,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
     assert(globals.work_queue_parse_global_scope_entries.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
     
+    // If /Zs was specified, we have succeeded when we get here!
+    if(globals.cli_options.syntax_check) return 0;
+    
     // #pragma comment(linker, "/ALTERNATENAME:strdup=_strdup").
     for(struct alternate_name *alternate_name = globals.alternate_names.first; alternate_name; alternate_name = alternate_name->next){
         struct ast_declaration *source = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->source);

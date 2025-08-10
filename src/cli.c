@@ -46,6 +46,7 @@ enum cli_option_kind{
     CLI_OPTION_std,
     CLI_OPTION_warning_limit,
     CLI_OPTION_error_limit,
+    CLI_OPTION_syntax_check,
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
     CLI_OPTION_report_warnings_in_system_includes,
@@ -120,6 +121,8 @@ struct cli_option_hash_table_entry{
     [112] = {{3, (u8 *)"std"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_std, 0},
     [59] = {{12, (u8 *)"warninglimit"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_warning_limit, -1},
     [46] = {{10, (u8 *)"errorlimit"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_error_limit, -1},
+    [74] = {{11, (u8 *)"syntaxcheck"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
+    [114] = {{2, (u8 *)"zs"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
     [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
@@ -230,6 +233,7 @@ struct cli_options{
     enum std std; // The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
     int warning_limit; // A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.
     int error_limit; // A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.
+    int syntax_check; // Only check syntax. No compilation after type-checking.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
@@ -801,6 +805,12 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 case CLI_OPTION_error_limit:{
                     print("-error_limit | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n\n");
                 }break;
+                case CLI_OPTION_syntax_check:{
+                    print("-syntax_check | Only check syntax. No compilation after type-checking.\n\n");
+                    os_print_string(
+                            "Mostly implemented for MSVC-compatibility.\n"
+                            "", 43);
+                }break;
                 case CLI_OPTION_dont_print_the_files:{
                     print("-dont_print_the_files | Don't print the files because we are in a test suite.\n\n");
                     os_print_string(
@@ -935,7 +945,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -std <standard>             | The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n"
                             "  -warning_limit              | A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.\n"
                             "  -error_limit                | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
-                    , 3054);
+                            "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
+                    , 3141);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1147,6 +1158,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             case CLI_OPTION_warning_limit: cli_options->warning_limit = 1; break;
             case CLI_OPTION_error_limit: cli_options->error_limit = 1; break;
+            case CLI_OPTION_syntax_check: cli_options->syntax_check = 1; break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
             
             case CLI_OPTION_seed:{
