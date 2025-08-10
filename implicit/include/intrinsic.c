@@ -694,6 +694,50 @@ __declspec(inline_asm) void __addgsqword(unsigned __int32 offset, unsigned __int
 }
 
 
+__declspec(inline_asm) unsigned char __readgsbyte(unsigned __int32 offset){
+    mov eax, offset
+    movzx eax, byte ptr gs:[eax]
+    return al
+}
+
+__declspec(inline_asm) unsigned short __readgsword(unsigned __int32 offset){
+    mov eax, offset
+    movzx eax, word ptr gs:[eax]
+    return ax
+}
+
+__declspec(inline_asm) unsigned __int32 __readgsdword(unsigned __int32 offset){
+    mov eax, offset
+    mov eax, dword ptr gs:[eax]
+    return eax
+}
+
+__declspec(inline_asm) unsigned __int64 __readgsqword(unsigned __int32 offset){
+    mov eax, offset
+    mov rax, qword ptr gs:[eax]
+    return rax
+}
+
+__declspec(inline_asm) void __writegsbyte(unsigned __int32 offset, unsigned char data){
+    mov eax, offset
+    mov byte ptr gs:[eax], data
+}
+
+__declspec(inline_asm) void __writegsword(unsigned __int32 offset, unsigned short data){
+    mov eax, offset
+    mov word ptr gs:[eax], data
+}
+
+__declspec(inline_asm) void __writegsdword(unsigned __int32 offset, unsigned __int32 data){
+    mov eax, offset
+    mov dword ptr gs:[eax], data
+}
+
+__declspec(inline_asm) void __writegsqword(unsigned __int32 offset, unsigned __int64 data){
+    mov eax, offset
+    mov qword ptr gs:[eax], data
+}
+
 __declspec(inline_asm) void _ReadWriteBarrier(){}
 
 __declspec(inline_asm) __declspec(noreturn) void __fastfail(unsigned int __exit_code){
