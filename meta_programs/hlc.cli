@@ -574,3 +574,6 @@ Example:
 Example:
 > #pragma pack(show) // Current "pragma pack(show)"-value is 16.
 
+-> octal_constant_used - Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.
+
+For the longest time this compiler did not support octal constants, but sadly some people use them :(

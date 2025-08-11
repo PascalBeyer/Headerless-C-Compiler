@@ -47,6 +47,7 @@ static u8 warning_enabled[WARNING_count] = {
     [WARNING_reference_to_dllimport_inserts_stub] = 1,
     
     [WARNING_pragma_pack_show] = 1,
+    [WARNING_octal_constant_used] = 1,
 };
 
 struct error_report_node{

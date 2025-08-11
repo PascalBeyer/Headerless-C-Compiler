@@ -4530,6 +4530,7 @@ case NUMBER_KIND_##type:{ \
             context->in_lhs_expression = false;
         }break;
         
+        case TOKEN_octal_literal:
         case TOKEN_binary_literal:
         case TOKEN_hex_literal:{
             struct token *lit_token = next_token(context);
@@ -4539,8 +4540,10 @@ case NUMBER_KIND_##type:{ \
             struct parsed_integer parsed_integer;
             if(lit_token->type == TOKEN_hex_literal){
                 parsed_integer = parse_hex_literal(context, lit_token);
-            }else{
+            }else if(lit_token->type == TOKEN_binary_literal){
                 parsed_integer = parse_binary_literal(context, lit_token);
+            }else{
+                parsed_integer = parse_octal_literal(context, lit_token);
             }
             
             u64 val = parsed_integer.value;

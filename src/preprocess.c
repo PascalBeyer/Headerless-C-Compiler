@@ -1067,6 +1067,59 @@ func struct parsed_integer parse_binary_literal(struct context *context, struct 
     return ret;
 }
 
+func struct parsed_integer parse_octal_literal(struct context *context, struct token *lit_token){
+    struct parsed_integer ret = zero_struct;
+    
+    b32 report_overflow = false;
+    smm suffix_start = lit_token->size;
+    assert(lit_token->data[0] == '0');
+    
+    smm start = 1;
+    if(lit_token->data[1] == 'o' || lit_token->data[1] == 'O'){
+        start = 2;
+    }
+    
+    if(lit_token->size == start){
+        report_error(context, lit_token, "Incomplete octal literal.");
+    }
+    
+    u64 val = 0;
+    for(smm i = start; i < lit_token->size; i++){
+        if(lit_token->data[i] == '\'') continue;
+        
+        u32 oct = lit_token->data[i] - '0';
+        if(oct > 7) {
+            if(oct == 8 || oct == 9){
+                if(start == 1){
+                    report_error(context, lit_token, "Because of the leading 0, this is an octal constant. The '%d' is not valid in base 8.", oct);
+                }else{
+                    report_error(context, lit_token, "This is an octal constant. The '%d' is not valid in base 8.", oct);
+                }
+            }
+            
+            suffix_start = i;
+            break; // only allow '0 to 7'
+        }
+        
+        if(val & 0x7000000000000000ull) report_overflow = true;
+        val = (val * 8) + oct;
+    }
+    
+    if(report_overflow){
+        report_warning(context, WARNING_compile_time_overflow, lit_token, "Compile time overflow.");
+    }
+    
+    struct string suffix = create_string(lit_token->data + suffix_start, lit_token->size - suffix_start);
+    ret.number_kind = parse_integer_suffix(suffix);
+    ret.value = val;
+    
+    if(ret.number_kind == NUMBER_KIND_invalid){
+        report_error(context, lit_token, "Invalid suffix '%.*s' on hex literal.", suffix.size, suffix.data);
+    }
+    
+    return ret;
+}
+
 func struct parsed_integer parse_hex_literal(struct context *context, struct token *lit_token){
     struct parsed_integer ret = zero_struct;
     
@@ -1620,9 +1673,32 @@ at     += size;
                     while(u8_is_valid_in_c_ident(*at)) at++; // suffix
                     
                     next_token__internal(TOKEN_binary_literal, at - start);
+                }else if((at[1]|32) == 'o'){
+                    at += 2;
+                    goto octal;
                 }else{
-                    // @cleanup: octal?
-                    goto handle_numbers;
+                    
+                    if('0' <= at[1] && at[1] <= '9'){
+                        at++;
+                        
+                        next_token__internal(TOKEN_octal_literal, 0);
+                        {
+                            cur->data = start;
+                            cur->size = 1;
+                            report_warning(context, WARNING_octal_constant_used, cur, "Octal constant used, use 0o<octal> to squelch this warning.");
+                        }
+                        
+                        octal:
+                        
+                        while(('0' <= *at && *at <= '7') || *at == '\'') at++;
+                        
+                        while(u8_is_valid_in_c_ident(*at)) at++; // suffix
+                        
+                        next_token__internal(TOKEN_octal_literal, at - start);
+                    }else{
+                        // This could be either a base10 literal or a float number.
+                        goto handle_numbers;
+                    }
                 }
             }break;
             case '1':case '2':case '3':case '4':case '5':case '6':case '7':case '8':case '9':{
@@ -2845,6 +2921,7 @@ func s64 static_if_evaluate(struct context *context){
         }break;
         
         case TOKEN_binary_literal:
+        case TOKEN_octal_literal:
         case TOKEN_hex_literal:
         case TOKEN_base10_literal:{
             struct parsed_integer parsed_integer;
@@ -2852,8 +2929,10 @@ func s64 static_if_evaluate(struct context *context){
                 parsed_integer = parse_base10_literal(context, test);
             }else if(test->type == TOKEN_hex_literal) {
                 parsed_integer = parse_hex_literal(context, test);
-            }else{
+            }else if(test->type == TOKEN_binary_literal){
                 parsed_integer = parse_binary_literal(context, test);
+            }else{
+                parsed_integer = parse_octal_literal(context, test);
             }
             
             value = parsed_integer.value;

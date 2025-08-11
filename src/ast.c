@@ -23,6 +23,7 @@ enum token_type{
     TOKEN_base10_literal,
     TOKEN_hex_literal,
     TOKEN_binary_literal,
+    TOKEN_octal_literal,
     TOKEN_string_literal, // has ""
     
     TOKEN_identifier,
