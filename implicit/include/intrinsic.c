@@ -878,6 +878,62 @@ __declspec(inline_asm) long _InterlockedOr(long volatile *value, long mask){
 }
 
 
+__declspec(inline_asm) __int64 _InterlockedOr64(__int64 volatile *value, __int64 mask){
+    
+    // See above for @incomplete
+    
+    mov rax, [value]
+    
+    mov rcx, rax
+    or  rcx, mask
+    
+    lock cmpxchg [value], rcx
+    
+    return rcx
+}
+
+
+__declspec(inline_asm) long _InterlockedAnd(long volatile *value, long mask){
+    
+    // I think this would be the correct code, but we don't have jumps yet. @incomplete
+    // 
+    //     mov eax, [value]
+    // 
+    // loop:
+    //     mov ecx, eax
+    //     and ecx, mask
+    //     
+    //     lock cmpxchg [value], ecx
+    //     jne loop
+    //     
+    //     return ecx
+    // 
+    
+    mov eax, [value]
+    
+    mov ecx, eax
+    and ecx, mask
+    
+    lock cmpxchg [value], ecx
+    
+    return ecx
+}
+
+
+__declspec(inline_asm) __int64 _InterlockedAnd64(__int64 volatile *value, __int64 mask){
+    
+    // See above for @incomplete
+    
+    mov rax, [value]
+    
+    mov rcx, rax
+    and rcx, mask
+    
+    lock cmpxchg [value], rcx
+    
+    return rcx
+}
+
 
 __declspec(inline_asm) unsigned short _byteswap_ushort(unsigned short val){
     ror val, 8
