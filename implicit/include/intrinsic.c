@@ -1546,7 +1546,8 @@ __declspec(inline_asm) __m128 _mm_set_ps(float e3, float e2, float e1, float e0)
 }
 
 __declspec(inline_asm) __m128 _mm_set_ps1(float a){
-    shufps xmm0, a, 0
+    movss xmm0, a
+    shufps xmm0, xmm0, 0
     return xmm0
 }
 
@@ -1557,7 +1558,8 @@ __declspec(inline_asm) __m128 _mm_set_ss(float a){
 }
 
 __declspec(inline_asm) __m128 _mm_set1_ps(float a){
-    shufps xmm0, a, 0
+    movss xmm0, a
+    shufps xmm0, xmm0, 0
     return xmm0
 }
 
@@ -1618,21 +1620,21 @@ __declspec(inline_asm) void _mm_store_ps(float *mem_addr, __m128 a){
 }
 
 __declspec(inline_asm) void _mm_store_ps1(float* mem_addr, __m128 a){
-    shufps xmm0, a, 0
-    movups xmmword ptr[mem_addr], xmm0
+    shufps a, a, 0
+    movups xmmword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_store_ss(float* mem_addr, __m128 a){
     movss dword ptr [mem_addr], a
 }
 __declspec(inline_asm) void _mm_store1_ps(float* mem_addr, __m128 a){
-    shufps xmm0, a, 0
-    movups xmmword ptr[mem_addr], xmm0
+    shufps a, a, 0
+    movups xmmword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_storer_ps(float* mem_addr, __m128 a){
-    shufps xmm0, a, 27
-    movups xmmword ptr[mem_addr], xmm0
+    shufps a, a, 27
+    movups xmmword ptr[mem_addr], a
 }
 
 __declspec(inline_asm) void _mm_storeu_ps(float *mem_addr, __m128 a){

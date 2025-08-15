@@ -2,6 +2,8 @@
 
 #include <intrin.h>
 
+#define assert(a) if(!(a)) return 1
+
 int main(){
     __int8  s8  = -8;
     __int16 s16 = -16;
@@ -94,6 +96,9 @@ int main(){
     _mm_pause();
     
     _InterlockedExchange(&u32, u32);
+    
+    __m128 mask = _mm_set1_ps( 10.0f );
+    assert(mask.m128_f32[0] == 10.0f && mask.m128_f32[1] == 10.0f && mask.m128_f32[2] == 10.0f && mask.m128_f32[3] == 10.0f);
     
     return 0;
 }
