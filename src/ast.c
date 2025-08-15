@@ -183,6 +183,7 @@ static struct{
     {const_string("sizeof"),        TOKEN_sizeof},
     {const_string("_Alignof"),      TOKEN_alignof},
     {const_string("__alignof"),     TOKEN_alignof},
+    {const_string("__builtin_alignof"),     TOKEN_alignof}, // Apperantly, this is supported by MSVC.
     {const_string("return"),        TOKEN_return},
     {const_string("__unaligned"),   TOKEN_unaligned},
     {const_string("__restrict"),    TOKEN_restrict},
