@@ -2431,15 +2431,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                         
                         case IR_float_literal:{
                             struct ir_float_literal *f = (struct ir_float_literal *)rhs;
-                            f64 big_value = f->value;
-                            f32 small_value = (f32)f->value;
-                            void *copy_from;
-                            if(f->type == &globals.typedef_f32){
-                                copy_from = &small_value;
-                            }else{
-                                assert(f->type == &globals.typedef_f64);
-                                copy_from = &big_value;
-                            }
+                            void *copy_from = &f->_f64;
                             memcpy(data + offset, copy_from, lhs_type->size);
                         }break;
                         

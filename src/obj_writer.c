@@ -1345,7 +1345,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             for(struct ir_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; ){
                 struct ir_emitted_float_literal *next = lit->next;
                 
-                int is_double = (lit->type == &globals.typedef_f64);
+                int is_double = (lit->literal.type == &globals.typedef_f64);
                 
                 lit->next = float_literals_by_type[is_double].literals;
                 float_literals_by_type[is_double].literals = lit;
@@ -1373,7 +1373,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
             for(struct ir_emitted_float_literal *lit = float_literals_by_type[is_double].literals; lit; lit = lit->next){
                 
-                u64 hash = xor_shift64(*(u64 *)&lit->value);
+                f64 as_f64 = float_literal_as_f64(&lit->literal);
+                
+                u64 hash = xor_shift64(*(u64 *)&as_f64);
                 
                 for(smm table_index = 0; table_index < capacity; table_index++){
                     smm index = (hash + table_index) & (capacity - 1);
@@ -1383,21 +1385,22 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         
                         if(is_double){
                             double *out = push_struct(arena, double);
-                            *out = lit->value;
+                            *out = lit->literal._f64;
                             
                             table[index] = out;
                         }else{
                             float *out = push_struct(arena, float);
-                            *out = (float)lit->value;
+                            *out = lit->literal._f32;
                             
                             table[index] = out;
                         }
                     }
                     
+                    // @note: We compare these as _integers_ so we can differentiate between 0.0f and -0.0f and such.
                     if(is_double){
-                        if(*(double *)table[index] != lit->value) continue;
+                        if(*(u64 *)table[index] != *(u64 *)&lit->literal._f64) continue;
                     }else{
-                        if(*(float *)table[index] != (float)lit->value) continue;
+                        if(*(u32 *)table[index] != *(u32 *)&lit->literal._f32) continue;
                     }
                     
                     lit->relative_virtual_address = (u32)((u8 *)table[index] - rdata_base);
@@ -2748,7 +2751,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 struct ir_emitted_float_literal *source = (struct ir_emitted_float_literal *)patch->source;
                 
                 u32 symbol_table_index;
-                if(source->type == &globals.typedef_f64){
+                if(source->literal.type == &globals.typedef_f64){
                     symbol_table_index = (u32)(double_symbol_base + (source->relative_virtual_address - double_start_offset) / 8);
                 }else{
                     symbol_table_index = (u32)(float_symbol_base + (source->relative_virtual_address - float_start_offset) / 4);

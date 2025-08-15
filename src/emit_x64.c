@@ -2650,9 +2650,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 // @note: This sucks!
                 struct ir_emitted_float_literal *emitted = push_struct(context->arena, struct ir_emitted_float_literal);
+                emitted->literal = *f;
                 emitted->base.kind = IR_emitted_float_literal;
-                emitted->value = f->value;
-                emitted->type = f->type;
                 
                 sll_push_back(context->emitted_float_literals, emitted);
                 context->emitted_float_literals.amount_of_float_literals += 1;
@@ -3998,8 +3997,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         
                         struct ir_emitted_float_literal *emitted = push_struct(context->arena, struct ir_emitted_float_literal);
                         emitted->base.kind = IR_emitted_float_literal;
-                        emitted->value = 1.0;
-                        emitted->type = &globals.typedef_f32;
+                        emitted->literal._f32 = 1.0f;
+                        emitted->literal.type = &globals.typedef_f32;
                         
                         sll_push_back(context->emitted_float_literals, emitted);
                         context->emitted_float_literals.amount_of_float_literals += 1;
@@ -4026,8 +4025,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         
                         struct ir_emitted_float_literal *emitted = push_struct(context->arena, struct ir_emitted_float_literal);
                         emitted->base.kind = IR_emitted_float_literal;
-                        emitted->value = 1.0;
-                        emitted->type = &globals.typedef_f64;
+                        emitted->literal._f64 = 1.0;
+                        emitted->literal.type = &globals.typedef_f64;
                         
                         sll_push_back(context->emitted_float_literals, emitted);
                         context->emitted_float_literals.amount_of_float_literals += 1;

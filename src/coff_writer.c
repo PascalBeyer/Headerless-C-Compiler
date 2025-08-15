@@ -2068,14 +2068,14 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct context *thread_context = globals.thread_infos[thread_index].context;
             
             for(struct ir_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; lit = lit->next){
-                if(lit->type == &globals.typedef_f32){
+                if(lit->literal.type == &globals.typedef_f32){
                     f32 *_float = push_struct(arena, f32);
-                    *_float = (f32)lit->value;
+                    *_float = (f32)lit->literal._f32;
                     lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
                 }else{
-                    assert(lit->type == &globals.typedef_f64);
+                    assert(lit->literal.type == &globals.typedef_f64);
                     f64 *_float = push_struct(arena, f64);
-                    *_float = lit->value;
+                    *_float = lit->literal._f64;
                     lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
                 }
             }

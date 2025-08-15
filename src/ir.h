@@ -657,14 +657,18 @@ struct ir_pointer_literal{
 struct ir_float_literal{
     struct ir base;
     struct ast_type *type;
-    f64 value;
+    union {
+        f32 _f32;
+        f64 _f64;
+    };
 };
 
 // These get allocated in `emit_x64`.
 struct ir_emitted_float_literal{
-    struct ir base;
-    struct ast_type *type;
-    f64 value;
+    union{
+        struct ir base;
+        struct ir_float_literal literal;
+    };
     
     struct ir_emitted_float_literal *next;
     u32 relative_virtual_address; // @note: float  literals get loaded rip relative, so this is here to patch

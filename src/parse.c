@@ -261,6 +261,10 @@ func u64 integer_literal_as_u64(struct expr *lit){
     return value;
 }
 
+func f64 float_literal_as_f64(struct ir_float_literal *float_literal){
+    return (float_literal->type == &globals.typedef_f64) ? float_literal->_f64 : (f64)float_literal->_f32;
+}
+
 static struct ast_type *defined_type_to_type(enum ast_kind *defined_type){
     if(*defined_type == IR_typedef){
         return ((struct ast_declaration *)defined_type)->type;
@@ -323,7 +327,7 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
             // @cleanup: warn?
             
             i->base.kind = IR_integer_literal;
-            double f_value = f->value;
+            f64 f_value = float_literal_as_f64(f);
             
             i->type = cast_to;
             should_skip_cast = 1;
@@ -355,9 +359,9 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
             }
         }else if(cast_to->kind == AST_float_type){
             if(cast_to == &globals.typedef_f32){
-                struct ir_float_literal *lit = (struct ir_float_literal *)cast_what->ir;
-                // :we_always_keep_double
-                lit->value = (f32)lit->value; // cast it to f32 and then back up
+                f->_f32 = (f32)f->_f64;
+            }else{
+                f->_f64 = (f32)f->_f32;
             }
             
             f->type = cast_to;
@@ -385,13 +389,18 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
         }else if(cast_to->kind == AST_float_type){
             struct ir_float_literal *f = (struct ir_float_literal *)cast_what->ir;
             
-            // :we_always_keep_double
-            // @cleanup: this does not really work: I don't think casting to f64 and then to f32 is the same
-            //                                      as casting to f32 to begin with, but not sure...
             if(type_is_signed(cast_what->resolved_type)){
-                f->value = (f64)integer_literal_as_s64(cast_what);
+                if(cast_to == &globals.typedef_f32){
+                    f->_f32 = (f32)integer_literal_as_s64(cast_what);
+                }else{
+                    f->_f64 = (f64)integer_literal_as_s64(cast_what);
+                }
             }else{
-                f->value = (f64)integer_literal_as_u64(cast_what);
+                if(cast_to == &globals.typedef_f32){
+                    f->_f32 = (f32)integer_literal_as_u64(cast_what);
+                }else{
+                    f->_f64 = (f64)integer_literal_as_u64(cast_what);
+                }
             }
             
             f->base.kind = IR_float_literal;
@@ -2889,22 +2898,38 @@ func void perform_float_operation(struct context *context, enum ast_kind binary_
     struct ir_float_literal *rhs = (struct ir_float_literal *)op_rhs->ir;
     
     assert(lhs->base.kind == IR_float_literal && rhs->base.kind == IR_float_literal);
-    // @cleanup: how to deal with float vs double
+    assert(lhs->type == rhs->type);
     
     s32 compare_value = -1;
     
-    switch(binary_op){
-        case AST_binary_times:            lhs->value *= rhs->value; break;
-        case AST_binary_divide:           lhs->value /= rhs->value; break;
-        case AST_binary_plus:             lhs->value += rhs->value; break;
-        case AST_binary_minus:            lhs->value -= rhs->value; break;
-        case AST_binary_logical_equals:   compare_value = (lhs->value == rhs->value); break;
-        case AST_binary_logical_unequals: compare_value = (lhs->value != rhs->value); break;
-        case AST_binary_bigger_equals:    compare_value = (lhs->value >= rhs->value); break;
-        case AST_binary_smaller_equals:   compare_value = (lhs->value <= rhs->value); break;
-        case AST_binary_bigger:           compare_value = (lhs->value >  rhs->value); break;
-        case AST_binary_smaller:          compare_value = (lhs->value <  rhs->value); break;
-        invalid_default_case();
+    if(lhs->type == &globals.typedef_f32){
+        switch(binary_op){
+            case AST_binary_times:            lhs->_f32 *= rhs->_f32; break;
+            case AST_binary_divide:           lhs->_f32 /= rhs->_f32; break;
+            case AST_binary_plus:             lhs->_f32 += rhs->_f32; break;
+            case AST_binary_minus:            lhs->_f32 -= rhs->_f32; break;
+            case AST_binary_logical_equals:   compare_value = (lhs->_f32 == rhs->_f32); break;
+            case AST_binary_logical_unequals: compare_value = (lhs->_f32 != rhs->_f32); break;
+            case AST_binary_bigger_equals:    compare_value = (lhs->_f32 >= rhs->_f32); break;
+            case AST_binary_smaller_equals:   compare_value = (lhs->_f32 <= rhs->_f32); break;
+            case AST_binary_bigger:           compare_value = (lhs->_f32 >  rhs->_f32); break;
+            case AST_binary_smaller:          compare_value = (lhs->_f32 <  rhs->_f32); break;
+            invalid_default_case();
+        }
+    }else{
+        switch(binary_op){
+            case AST_binary_times:            lhs->_f64 *= rhs->_f64; break;
+            case AST_binary_divide:           lhs->_f64 /= rhs->_f64; break;
+            case AST_binary_plus:             lhs->_f64 += rhs->_f64; break;
+            case AST_binary_minus:            lhs->_f64 -= rhs->_f64; break;
+            case AST_binary_logical_equals:   compare_value = (lhs->_f64 == rhs->_f64); break;
+            case AST_binary_logical_unequals: compare_value = (lhs->_f64 != rhs->_f64); break;
+            case AST_binary_bigger_equals:    compare_value = (lhs->_f64 >= rhs->_f64); break;
+            case AST_binary_smaller_equals:   compare_value = (lhs->_f64 <= rhs->_f64); break;
+            case AST_binary_bigger:           compare_value = (lhs->_f64 >  rhs->_f64); break;
+            case AST_binary_smaller:          compare_value = (lhs->_f64 <  rhs->_f64); break;
+            invalid_default_case();
+        }
     }
     
     pop_from_ir_arena(context, rhs);
@@ -4777,7 +4802,11 @@ case NUMBER_KIND_##type:{ \
             struct ast_type *type = is_32_bit ? &globals.typedef_f32 : &globals.typedef_f64;
             
             f->type = type;
-            f->value = val;
+            if(is_32_bit){
+                f->_f32 = (f32)val;
+            }else{
+                f->_f64 = val;
+            }
             
             operand.ir = &f->base;
             operand.token = float_token;
@@ -5816,7 +5845,12 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }else if(operand.ir->kind == IR_float_literal){
                     struct ir_float_literal *lit = (struct ir_float_literal *)operand.ir;
-                    lit->value = -lit->value;
+                    
+                    if(lit->type == &globals.typedef_f32){
+                        lit->_f32 = -lit->_f32;
+                    }else{
+                        lit->_f64 = -lit->_f64;
+                    }
                     
                     // We are done here, 'operand' is in the contant propagated value.
                     break;
@@ -7290,7 +7324,7 @@ case NUMBER_KIND_##type:{ \
                 switch(operand.ir->kind){
                     case IR_integer_literal: is_true = integer_literal_as_u64(&operand) ? 1 : 0;                  break;
                     case IR_pointer_literal: is_true = ((struct ir_pointer_literal *)operand.ir)->pointer ? 1 : 0; break;
-                    case IR_float_literal:   is_true = ((struct ir_float_literal *)operand.ir)->value ? 1 : 0;     break;
+                    case IR_float_literal:   is_true = float_literal_as_f64((struct ir_float_literal *)operand.ir) ? 1 : 0; break;
                     invalid_default_case(is_true = false);
                 }
                 

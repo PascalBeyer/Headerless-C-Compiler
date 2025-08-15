@@ -474,13 +474,20 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
         switch(option_argument_type){
             case CLI_ARGUMENT_TYPE_none: break;
             
+            
+            case CLI_ARGUMENT_TYPE_directory_list:{
+                if(!path_is_directory(option_argument)){
+                    print("Warning: Argument '%s' of command line option '%s' must be a directory, but it is not.\n", option_argument, option_cstring);
+                    continue;
+                }
+            }break;
+            
             case CLI_ARGUMENT_TYPE_string: break;
             case CLI_ARGUMENT_TYPE_string_list: break;
             case CLI_ARGUMENT_TYPE_enum: break;
             case CLI_ARGUMENT_TYPE_option: break;
             case CLI_ARGUMENT_TYPE_warning: break;
-            case CLI_ARGUMENT_TYPE_directory:
-            case CLI_ARGUMENT_TYPE_directory_list:{
+            case CLI_ARGUMENT_TYPE_directory:{
                 if(!path_is_directory(option_argument)){
                     print("Error: Argument '%s' of command line option '%s' must be a directory, but it is not.\n", option_argument, option_cstring);
                     return 0;
