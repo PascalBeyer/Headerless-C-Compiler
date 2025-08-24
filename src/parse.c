@@ -6942,6 +6942,18 @@ case NUMBER_KIND_##type:{ \
             case AST_assignment:{
                 struct expr *lhs = &stack_entry->operand;
                 
+                if(lhs->ir->kind == IR_identifier){
+                    // 
+                    // @cleanup: This used to also increment _times_written for `structure.member = 1;`
+                    //           Also, should we also do this for compound assignments?
+                    // 
+                    struct ir_identifier *written_identifier = (struct ir_identifier *)lhs->ir;
+                    struct ast_declaration *written_decl = written_identifier->decl;
+                    if(!(written_decl->flags & DECLARATION_FLAGS_is_global)){
+                        written_decl->_times_written += 1;
+                    }
+                }
+                
                 maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
                 maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, &operand, stack_entry->token);
                 
