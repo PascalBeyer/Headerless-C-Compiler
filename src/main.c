@@ -2144,12 +2144,14 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
     // 
     //     1 + (1 + (1 + (1 + (1 + a))))
     // 
-    struct{
+    smm ir_stack_size = 0x10;
+    struct evaluate_static_initializer_ir_stack_node{
         struct ir *ir;
         smm offset;
         int is_address;
-    } ir_stack[0x100];
+    } *ir_stack = push_uninitialized_data(&context->scratch, struct evaluate_static_initializer_ir_stack_node, ir_stack_size);
     smm ir_stack_at = 0;
+    
     
     u8 *base = (u8 *)initializer;
     smm ir_offset = 0;
@@ -2516,7 +2518,18 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
         }
         
         assert(start_ir_offset != ir_offset);
-        assert(ir_stack_at <= array_count(ir_stack)); // @incomplete: We should grow the stack.
+        
+        if(ir_stack_at >= ir_stack_size){
+            assert(ir_stack_at == ir_stack_size);
+            
+            smm new_ir_stack_size = 2 * ir_stack_size;
+            
+            struct evaluate_static_initializer_ir_stack_node *new_ir_stack = push_uninitialized_data(&context->scratch, struct evaluate_static_initializer_ir_stack_node, new_ir_stack_size);
+            memcpy(new_ir_stack, ir_stack, sizeof(*ir_stack) * ir_stack_size);
+            
+            ir_stack = new_ir_stack;
+            ir_stack_size = new_ir_stack_size;
+        }
     }
 }
 

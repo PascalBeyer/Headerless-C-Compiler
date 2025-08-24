@@ -2599,9 +2599,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
     
     context->jump_labels = push_data(&context->scratch, struct jump_label_information, current_function->amount_of_jump_labels);
     
-    struct emit_location *emit_location_stack[0x100];
-    smm emit_location_stack_at = 0;
-    
+    smm emit_location_stack_size = 0x100;
+    smm emit_location_stack_at   = 0;
+    struct emit_location **emit_location_stack = push_uninitialized_data(&context->scratch, struct emit_location *, emit_location_stack_size);
     
     struct function_line_information *line_information = current_function->line_information.data;
     smm line_information_size = current_function->line_information.size;
@@ -4653,7 +4653,17 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
         }
         
         assert(ir_arena_at != (u8 *)ir); // We should increment ir_arena_at.
-        assert(emit_location_stack_at < array_count(emit_location_stack)); // @incomplete: We should grow the stack.
+        if(emit_location_stack_at >= emit_location_stack_size){
+            assert(emit_location_stack_at == emit_location_stack_size);
+            
+            smm new_emit_location_stack_size = 2 * emit_location_stack_size;
+            
+            struct emit_location **new_emit_location_stack = push_uninitialized_data(&context->scratch, struct emit_location *, new_emit_location_stack_size);
+            memcpy(new_emit_location_stack, emit_location_stack, sizeof(*emit_location_stack) * emit_location_stack_size);
+            
+            emit_location_stack = new_emit_location_stack;
+            emit_location_stack_size = new_emit_location_stack_size;
+        }
     }
     
     for(u32 jump_label_index = 0; jump_label_index < current_function->amount_of_jump_labels; jump_label_index++){
