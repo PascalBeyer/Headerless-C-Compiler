@@ -3180,17 +3180,33 @@ func void get_pretty_print_string_for_type(struct context *context, struct strin
     }
 }
 
-// 
-// @cleanup: This function is sort of useless now.
-// 
 void printlike__infer_format_string_and_arguments_for_argument(struct context *context, struct expr *argument, struct string_list *pretty_print_list, struct string flags, struct string field_width, struct string precision, struct string type_specifiers, smm *call_arguments_count){
     
     struct ast_type *argument_type = argument->resolved_type;
+    
+    if(argument_type->kind == AST_array_type){
+        // 
+        // For print("{:s}", "hello"), we want to print "hello" not an array literal.
+        // Similarly, for 
+        //    struct {u8 arr[0x100]} s = {"hello"};
+        //    print("{:s}", s.arr);
+        // we also want to print "hello".
+        // 
+        
+        for(smm type_specifier_index = 0; type_specifier_index < type_specifiers.size; type_specifier_index++){
+            if(type_specifiers.data[type_specifier_index] == 's'){
+                maybe_load_address_for_array_or_function(context, IR_load_address, argument);
+                argument_type = argument->resolved_type;
+                break;
+            }
+        }
+    }
     
     if(argument_type->kind == AST_struct || argument_type->kind == AST_union || argument_type->kind == AST_array_type){
         //
         // Check if we should print in a multi line fashion.
         //
+        
         s32 depth_or_minus_one = -1;
         for(smm flag_index = 0; flag_index < flags.size; flag_index++){
             if(flags.data[flag_index] == '#'){
@@ -3618,7 +3634,6 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
             if(peek_token(context, TOKEN_closed_paren)) goto too_few_args_for_print;
             
             struct expr argument = parse_expression(context, /*should_skip_comma_expression*/true);
-            *call_arguments_count += 1;
             
             if(!peek_token_eat(context, TOKEN_comma) && !peek_token(context, TOKEN_closed_paren)) break;
             
@@ -3634,6 +3649,8 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                 printlike__infer_format_string_and_arguments_for_argument(context, &argument, &pretty_print_list, flags, field_width, precision, type_specifiers, call_arguments_count);
                 continue;
             }
+            
+            *call_arguments_count += 1;
             
             //
             // Classic C format specifiers. Append the format specifier to the pretty print list as the user put it there.

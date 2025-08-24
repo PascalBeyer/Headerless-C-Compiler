@@ -2449,7 +2449,6 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                                 goto initializer_not_constant;
                             }
                             
-                            // If the left hand side is not an array, we should be in the 'AST_implicit_address_conversion' case.
                             struct ast_array_type *lhs_array = (struct ast_array_type *)lhs_type;
                             
                             smm array_size;
