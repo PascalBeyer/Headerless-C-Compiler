@@ -1472,9 +1472,12 @@ struct pragma_pack_node{
     struct string identifier;
     u64 value;
     struct token *token;
+    struct token *pack_token;
 };
 
 void parse_and_process_pragma_pack(struct context *context){
+    
+    struct token *pack_token = get_current_token(context) - 1; // Hacky, but whatever.
     
     expect_token(context, TOKEN_open_paren, "Expected a '(' after 'pragma pack'.");
     
@@ -1554,6 +1557,7 @@ void parse_and_process_pragma_pack(struct context *context){
             node->value = context->pragma_alignment;
             node->identifier = pack_identifier;
             node->token = show_token;
+            node->pack_token = pack_token;
             
             sll_push_front(context->pragma_pack_stack, node);
             
@@ -7596,6 +7600,10 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             }break;
             case TOKEN_thread_local:{
                 check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_thread_local, token, "thread_local");
+            }break;
+            
+            case TOKEN_pragma_pack:{
+                parse_and_process_pragma_pack(context);
             }break;
             
             //

@@ -160,7 +160,7 @@ enum token_type{
     
     TOKEN_asm,
     TOKEN_embed, // Synthetic token coming from #embed.
-    TOKEN_pragma_pack, // Synthetic token coming from '#pragma pack(<...>)' or '__pragma(pack(<...>))'
+    TOKEN_pragma_pack, // Synthetic token coming from '#pragma pack(<...>)' or '__pragma(pack(<...>))'.
     
     TOKEN_generic, // C11 _Generic
     TOKEN_thread_local, // C11 _Thread_local

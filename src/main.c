@@ -2783,6 +2783,8 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
     begin_counter(context, chunking);
     while(in_current_token_array(context)){
         
+        smm pre_pragma_marker = context->token_at;
+        
         // Handle top-level pragma pack
         while(peek_token_eat(context, TOKEN_pragma_pack)){
             parse_and_process_pragma_pack(context);
@@ -2943,6 +2945,9 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
             }else if(token->type == TOKEN_open_curly){
                 // this is a declaration like 'u32 asd(){}'
                 
+                // Keep track of the pragma stack to report un-ballanced usage.
+                struct pragma_pack_node *function_start_pragma_pack_node = context->pragma_pack_stack.first;
+                
                 // :__FUNCTION__is_resolved_during_chunking
                 // 
                 // This used to be:
@@ -2980,6 +2985,18 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 
                 context->token_at = token_at + 1;
                 
+                if(function_start_pragma_pack_node != context->pragma_pack_stack.first){
+                    struct token *error_token = got_identifier;
+                    if(!error_token) error_token = tokenized_file.data + start_marker;
+                    
+                    // @cleanup: It feels like we are missing the token that we actually want? (at least if we poped too much).
+                    begin_error_report(context);
+                    report_error(context, error_token, "Top of pragma pack stack changed within this function. This is not supported. E.g.: int main(){ __pragma(pack(pop)) }");
+                    if(function_start_pragma_pack_node) report_error(context, function_start_pragma_pack_node->token, "... This was the pragma responsible for the previous top.");
+                    if(context->pragma_pack_stack.first) report_error(context, context->pragma_pack_stack.first->token, "... This is the pragma responsible for the new top.");
+                    end_error_report(context);
+                }
+                    
                 if(count){
                     report_error(context, start_token, "Unmatched '{' at global scope.");
                 }
@@ -2998,18 +3015,41 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 if(peek_token(context, TOKEN_open_paren)){
                     skip_until_tokens_are_balanced(context, 0, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' at global scope.");
                 }
+            }else if(token->type == TOKEN_pragma_pack){
+                parse_and_process_pragma_pack(context);
             }
         }
         
         if(start_pragma_pack_node != context->pragma_pack_stack.first){
-            struct token *token = got_identifier;
-            if(!token) token = tokenized_file.data + start_marker;
             
-            begin_error_report(context);
-            report_error(context, token, "Top of pragma pack stack changed within this global scope entry. This is not supported. E.g.: int main(){ __pragma(pack(pop)) }");
-            if(start_pragma_pack_node) report_error(context, start_pragma_pack_node->token, "... This was the pragma responsible for the previous top.");
-            if(context->pragma_pack_stack.first) report_error(context, context->pragma_pack_stack.first->token, "... This is the pragma responsible for the new top.");
-            end_error_report(context);
+            int handled = false;
+            if(start_pragma_pack_node->next == context->pragma_pack_stack.first){
+                // 
+                // Stupid hack for stuff like:
+                //    
+                //    __pragma(pack(push, 1)) struct{int a; int b;} __pragma(pack(pop)) packed_declaration;
+                //    
+                // Here, for normal splitting, we would have the `__pragma(pack(push, 1))` be handled at gloabal scope, 
+                // while the `__pragma(pack(pop))` is included in the global scope entry.
+                // Therefore, to even it out, we hack it so that the __pragma(pack(push, 1)) is also included in the declaration.
+                // 
+                smm pragma_index = start_pragma_pack_node->pack_token - context->tokens.data;
+                if(pragma_index >= pre_pragma_marker){
+                    start_marker = pragma_index;
+                    handled = true;
+                }
+            }
+            
+            if(!handled){
+                struct token *token = got_identifier;
+                if(!token) token = tokenized_file.data + start_marker;
+                
+                begin_error_report(context);
+                report_error(context, token, "Top of pragma pack stack changed within this global scope entry. This is not supported. E.g.: static __pragma(pack(push, 1)) struct{ int a; };");
+                if(start_pragma_pack_node) report_error(context, start_pragma_pack_node->token, "... This was the pragma responsible for the previous top.");
+                if(context->pragma_pack_stack.first) report_error(context, context->pragma_pack_stack.first->token, "... This is the pragma responsible for the new top.");
+                end_error_report(context);
+            }
         }
         
         if(context->error) return;
