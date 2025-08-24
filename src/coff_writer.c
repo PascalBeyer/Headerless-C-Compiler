@@ -2340,7 +2340,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     struct ir_string_literal *lit = cast(struct ir_string_literal *)patch->source;
                     
                     smm dest_location = patch->dest_declaration->relative_virtual_address;
-                    smm source_location = lit->relative_virtual_address;
+                    smm source_location = lit->relative_virtual_address + patch->location_offset_in_source_declaration;
                     
                     smm rip_at = dest_location + patch->rip_at;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
