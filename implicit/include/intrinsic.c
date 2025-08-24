@@ -1531,10 +1531,10 @@ __declspec(inline_asm) __m128 _mm_rsqrt_ss(__m128 a){
 }
 
 __declspec(inline_asm) __m128 _mm_set_ps(float e3, float e2, float e1, float e0){
-    movss xmm0, e0
-    movss xmm1, e1
-    movss xmm2, e2
-    movss xmm3, e3
+    movss xmm0, e3
+    movss xmm1, e2
+    movss xmm2, e1
+    movss xmm3, e0
     
     unpcklps xmm1, xmm0
     unpcklps xmm3, xmm2
@@ -1573,10 +1573,10 @@ void _mm_setcsr(unsigned int a){
 #endif
 
 __declspec(inline_asm) __m128 _mm_setr_ps(float e3, float e2, float e1, float e0){
-    movss xmm0, e3
-    movss xmm1, e2
-    movss xmm2, e1
-    movss xmm3, e0
+    movss xmm0, e0
+    movss xmm1, e1
+    movss xmm2, e2
+    movss xmm3, e3
     
     unpcklps xmm1, xmm0
     unpcklps xmm3, xmm2

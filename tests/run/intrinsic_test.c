@@ -100,5 +100,33 @@ int main(){
     __m128 mask = _mm_set1_ps( 10.0f );
     assert(mask.m128_f32[0] == 10.0f && mask.m128_f32[1] == 10.0f && mask.m128_f32[2] == 10.0f && mask.m128_f32[3] == 10.0f);
     
+    
+    {
+        __m128 r = _mm_setr_ps(1, 2, 3, 4);
+        if(r.m128_f32[0] != 1.000000) return 1;
+        if(r.m128_f32[1] != 2.000000) return 1;
+        if(r.m128_f32[2] != 3.000000) return 1;
+        if(r.m128_f32[3] != 4.000000) return 1;
+        
+        float a = 1, b = 2, c = 3, d = 4;
+        r = _mm_setr_ps(a, b, c, d);
+        if(r.m128_f32[0] != 1.000000) return 1;
+        if(r.m128_f32[1] != 2.000000) return 1;
+        if(r.m128_f32[2] != 3.000000) return 1;
+        if(r.m128_f32[3] != 4.000000) return 1;
+        
+        r = _mm_set_ps(1, 2, 3, 4);
+        if(r.m128_f32[0] != 4.000000) return 1;
+        if(r.m128_f32[1] != 3.000000) return 1;
+        if(r.m128_f32[2] != 2.000000) return 1;
+        if(r.m128_f32[3] != 1.000000) return 1;
+        
+        r = _mm_set_ps(a, b, c, d);
+        if(r.m128_f32[0] != 4.000000) return 1;
+        if(r.m128_f32[1] != 3.000000) return 1;
+        if(r.m128_f32[2] != 2.000000) return 1;
+        if(r.m128_f32[3] != 1.000000) return 1;
+    }
+    
     return 0;
 }
