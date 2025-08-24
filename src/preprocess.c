@@ -3900,6 +3900,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     node->argument_index = arguments.count;
                                     arguments.count += 1;
                                     
+                                    eat_whitespace_and_comments(context); // allow #define UNUSED( ... )
                                     break;
                                 }else if(!peek_token_raw(context, TOKEN_identifier)){
                                     report_error(context, defined_identifier, "Expected a parameter in function-like macro definition.");
