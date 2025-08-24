@@ -9663,7 +9663,7 @@ func void parse_imperative_scope(struct context *context){
         }
     }
     
-    scope->end_line_index = (u32)(context->current_function->line_information.size-1);
+    scope->end_line_index = (u32)context->current_function->line_information.size;
     if(scope->start_line_index > scope->end_line_index){
         scope->start_line_index = scope->end_line_index;
     }

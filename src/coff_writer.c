@@ -1330,14 +1330,14 @@ func struct pdb_location pdb_begin_scope(struct pdb_write_context *context, stru
     smm scope_size = 0;
     smm offset_in_text_section = function->offset_in_text_section;
     
-    if(scope->start_line_index != -1){ // Only -1 for empty functions.
+    if(scope->start_line_index < function->line_information.size){ // Only false for empty functions.
         
-        struct function_line_information start = function->line_information.data[scope->start_line_index];
-        struct function_line_information end   = function->line_information.data[scope->end_line_index];
+        u32 start_offset = function->line_information.data[scope->start_line_index].offset;
+        u32 end_offset   = scope->end_line_index < function->line_information.size ? function->line_information.data[scope->end_line_index].offset : (u32)function->byte_size_without_prolog;
         
         // @cleanup: Does this correctly include function->size_of_prologue?
-        scope_size = end.offset - start.offset;
-        offset_in_text_section = function->offset_in_text_section + function->size_of_prolog + start.offset; // relocated by relocation.
+        scope_size = end_offset - start_offset;
+        offset_in_text_section = function->offset_in_text_section + function->size_of_prolog + start_offset; // relocated by relocation.
     }
     
     smm scope_offset_in_symbol_stream = pdb_current_offset_from_location(context, context->module_stream_begin);

@@ -616,12 +616,14 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
                 block->scope_size = 0;
                 block->offset_in_section = 0; // ?
             }else{
-                struct function_line_information start = function->line_information.data[scope->start_line_index];
-                struct function_line_information end   = function->line_information.data[scope->end_line_index];
+                
+                u32 start_offset = function->line_information.data[scope->start_line_index].offset;
+                u32 end_offset   = scope->end_line_index < function->line_information.size ? function->line_information.data[scope->end_line_index].offset : (u32)function->byte_size_without_prolog;
+                
                 
                 // @cleanup: Does this correctly include function->size_of_prologue?
-                block->scope_size = end.offset - start.offset;
-                block->offset_in_section = start.offset; // relocated by relocation.
+                block->scope_size = end_offset - start_offset;
+                block->offset_in_section = start_offset; // relocated by relocation.
             }
             
             block->section = 0; // filled in by relocation.
