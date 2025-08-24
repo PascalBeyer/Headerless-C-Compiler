@@ -1675,26 +1675,50 @@ at     += size;
                     next_token__internal(TOKEN_binary_literal, at - start);
                 }else if((at[1]|32) == 'o'){
                     at += 2;
-                    goto octal;
+                    
+                    while(('0' <= *at && *at <= '7') || *at == '\'') at++;
+                    
+                    while(u8_is_valid_in_c_ident(*at)) at++; // suffix
+                    
+                    next_token__internal(TOKEN_octal_literal, at - start);
                 }else{
                     
                     if('0' <= at[1] && at[1] <= '9'){
                         at++;
                         
-                        next_token__internal(TOKEN_octal_literal, 0);
-                        {
-                            cur->data = start;
-                            cur->size = 1;
-                            report_warning(context, WARNING_octal_constant_used, cur, "Octal constant used, use 0o<octal> to squelch this warning.");
+                        enum token_type token_type = TOKEN_octal_literal;
+                        
+                        // handle all numbers before the dot
+                        while(u8_is_number(*at) || *at == '\'') at++;
+                        
+                        if(*at == '.'){
+                            token_type = TOKEN_float_literal;
+                            at++;
+                            
+                            // eat all the numbers after the dot
+                            while(u8_is_number(*at) || *at == '\'') at++;
                         }
                         
-                        octal:
-                        
-                        while(('0' <= *at && *at <= '7') || *at == '\'') at++;
+                        if((*at | 32) == 'e'){
+                            token_type = TOKEN_float_literal;
+                            at++;
+                            
+                            if(*at == '-' || *at == '+'){   
+                                at++;
+                            }
+                            
+                            while(u8_is_number(*at) || *at == '\'') at++;
+                        }
                         
                         while(u8_is_valid_in_c_ident(*at)) at++; // suffix
                         
-                        next_token__internal(TOKEN_octal_literal, at - start);
+                        next_token__internal(token_type, at - start);
+                        
+                        if(token_type == TOKEN_octal_literal){
+                            cur->data = start;
+                            cur->size = (at - start);
+                            report_warning(context, WARNING_octal_constant_used, cur, "Octal constant used, use 0o<octal> to squelch this warning.");
+                        }
                     }else{
                         // This could be either a base10 literal or a float number.
                         goto handle_numbers;

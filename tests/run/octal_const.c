@@ -1,4 +1,4 @@
-// check "(8,13): Warning 43 at '0': Octal constant used, use 0o<octal> to squelch this warning."
+// check "(8,13): Warning 43 at '0123': Octal constant used, use 0o<octal> to squelch this warning."
 // run
 
 #define assert(a) if(!(a)) return 1;
@@ -11,6 +11,8 @@ int _start(){
     int o2 = 0o123;
     assert(0o123 == 83 && o2 == 83);
     
+    float not_an_octal = 0123.f;
+    assert(not_an_octal == 123.f);
     
     return 0;
 }
