@@ -8618,10 +8618,21 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
             
             if(!types_are_equal(decl->type, declarator.type)){
-                begin_error_report(context);
-                report_error(context, declarator.ident, "'extern' declaration inside function has different type from original definition.");
-                report_error(context, decl->identifier, "... Here is the original definition.");
-                end_error_report(context);
+                if(type_is_array_of_unknown_size(declarator.type) && decl->type->kind == AST_array_type && types_are_equal(((struct ast_array_type *)declarator.type)->element_type, ((struct ast_array_type *)decl->type)->element_type)){
+                    // This is fine, something like:
+                    // 
+                    // char buffer[0x200];
+                    // 
+                    // int main(){
+                    //     extern char buffer[];
+                    // }
+                    // 
+                }else{
+                    begin_error_report(context);
+                    report_error(context, declarator.ident, "'extern' declaration inside function has different type from original definition.");
+                    report_error(context, decl->identifier, "... Here is the original definition.");
+                    end_error_report(context);
+                }
             }
             
             // @cleanup: Declaration specifiers.
