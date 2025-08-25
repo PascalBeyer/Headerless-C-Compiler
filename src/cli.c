@@ -327,8 +327,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }
             if(command_file.size > 2 && command_file.data[0] == 0xff && command_file.data[1] == 0xfe){
                 // UTF16-LE BOM (Byte Order Mark).
-                print("Error: @incomplete command file '%s' is utf-16 currently unsupported.\n", option_cstring + 1);
-                return 0;
+                struct string as_utf8 = utf16le_to_utf8(arena, (u16 *)(command_file.data + 2), (command_file.size - 2)/2);
+                command_file.size = as_utf8.size;
+                command_file.data = as_utf8.data;
             }
             struct parsed_command_line parsed_command_line = windows_parse_command_line((char *)command_file.data);
             int cli_parse_options_success = cli_parse_options(cli_options, arena, parsed_command_line.argc, parsed_command_line.argv);
@@ -473,7 +474,6 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
         
         switch(option_argument_type){
             case CLI_ARGUMENT_TYPE_none: break;
-            
             
             case CLI_ARGUMENT_TYPE_directory_list:{
                 if(!path_is_directory(option_argument)){

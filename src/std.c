@@ -2232,5 +2232,54 @@ func b32 write_txt_to_file(struct txt_context *txt, char *file_name){
     return os_write_file(file_name, buf.data, buf.size);
 }
 
+// @cleanup: Fairly untested.
+func struct string utf16le_to_utf8(struct memory_arena *arena, u16 *data, smm length) {
+    
+    u8 *string_start = push_data(arena, u8, 0);
+    
+    while(length > 0){
+        u32 code_point = data[0];
+        
+        {   //
+            // Decode the utf16-character.
+            // 
+            
+            u32 inc = 1;
+            if(length > 1 && 0xD800 <= data[0] && data[0] <= 0xDC00 && 0xDC00 <= data[1] && data[1] < 0xE000){
+                code_point = ((data[0] - 0xD800) << 10) | ((data[1] - 0xDC00) + 0x10000);
+                inc = 2;
+            }
+            data += inc;
+            length -= inc;
+        }
+        
+        // 
+        // Encode it as utf8.
+        // 
+        
+        if (code_point <= 0x7F){
+            *push_struct(arena, u8) = (u8)code_point;
+        }else if (code_point <= 0x7FF){
+            *push_struct(arena, u8) = (0b11 << 6) | ((code_point >> 6) &  0b11111);
+            *push_struct(arena, u8) =    (1 << 7) | ((code_point >> 0) & 0b111111);
+        }else if (code_point <= 0xFFFF){
+            *push_struct(arena, u8) = (0b111 << 5) | ((code_point >> 12) &   0b1111);
+            *push_struct(arena, u8) =     (1 << 7) | ((code_point >>  6) & 0b111111);
+            *push_struct(arena, u8) =     (1 << 7) | ((code_point >>  0) & 0b111111);
+        }else if (code_point <= 0x10FFFF){
+            *push_struct(arena, u8) = (0b1111 << 4) | ((code_point >> 18) &    0b111);
+            *push_struct(arena, u8) =      (1 << 7) | ((code_point >> 12) & 0b111111);
+            *push_struct(arena, u8) =      (1 << 7) | ((code_point >>  6) & 0b111111);
+            *push_struct(arena, u8) =      (1 << 7) | ((code_point >>  0) & 0b111111);
+        }
+    }
+    
+    *push_struct(arena, u8) = 0;
+    
+    u8 *string_end = push_data(arena, u8, 0);
+    
+    struct string string = {.data = string_start, .size = string_end - string_start };
+    return string;
+}
 
 
