@@ -9072,7 +9072,10 @@ func void parse_statement(struct context *context){
             int if_statement_returns_a_value = context->current_statement_returns_a_value;
             context->current_statement_returns_a_value = statement_returns_a_value;
             
-            if(peek_token_eat(context, TOKEN_else)){
+            struct token *else_token = peek_token_eat(context, TOKEN_else);
+            if(else_token){
+                
+                function_maybe_add_line_information(context, else_token);
                 
                 struct ir_jump_node *jump_over_else = push_jump(context, IR_jump);
                 jump_over_else->label_number = context->jump_label_index++;
