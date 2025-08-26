@@ -3469,6 +3469,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 struct define_node *define = lookup_define(context, token->atom);
                 if(define && !define->is_disabled){
                     
+                    if(context->define_depth == 0) macro_expansion_site = token; // This has to happen before the `eat_whitespace_comments_and_newlines` because it might change the `define_depth`.
+                    
                     int skip = 0;
                     if(define->is_function_like){
                         eat_whitespace_comments_and_newlines(context); 
@@ -3478,7 +3480,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     }
                     
                     if(!skip){
-                        if(context->define_depth == 0) macro_expansion_site = token;
                         token = expand_define(context, token, define, macro_expansion_site);
                         
                         // We will only ever return a token for predefined identifiers.
