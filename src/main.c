@@ -4235,7 +4235,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         [STD_c99] = const_string("#define __STDC_VERSION__ 199901L\n"),
                         [STD_c11] = const_string("#define __STDC_VERSION__ 201112L\n"),
                         [STD_c17] = const_string("#define __STDC_VERSION__ 201710L\n"),
-                        [STD_c17] = const_string("#define __STDC_VERSION__ 202311L\n"),
+                        [STD_c23] = const_string("#define __STDC_VERSION__ 202311L\n"),
+                        [STD_clatest] = const_string("#define __STDC_VERSION__ 202311L\n"),
                     };
                     // string_list_postfix_no_copy(&predefines, arena, string("#define __STDC__ 1\n")); This is only included with /Zc:__STDC__ @cleanup:
                     string_list_postfix_no_copy(&predefines, arena, version_strings[globals.cli_options.std]);
