@@ -153,8 +153,12 @@ enum token_type{
     TOKEN_static_assert,
     TOKEN_declspec,
     
+    // @note: These are only ignored not really implemented.
+    TOKEN_sptr,
+    TOKEN_uptr,
     TOKEN_ptr32,
     TOKEN_ptr64,
+    
     TOKEN_stdcall,
     TOKEN_cdecl,
     
@@ -212,6 +216,8 @@ static struct{
     {const_string("switch"),        TOKEN_switch},
     {const_string("goto"),          TOKEN_goto},
     {const_string("__declspec"),    TOKEN_declspec},
+    {const_string("__sptr"),        TOKEN_sptr},
+    {const_string("__uptr"),        TOKEN_uptr},
     {const_string("__ptr32"),       TOKEN_ptr32},
     {const_string("__ptr64"),       TOKEN_ptr64},
     {const_string("__stdcall"),     TOKEN_stdcall},

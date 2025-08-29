@@ -1148,6 +1148,8 @@ enum type_qualifiers{
     QUALIFIER_unaligned = 0x10,
     QUALIFIER_ptr32     = 0x20,
     QUALIFIER_ptr64     = 0x40,
+    QUALIFIER_sptr      = 0x80,
+    QUALIFIER_uptr      = 0x100,
 };
 
 struct declarator_return{
@@ -9779,6 +9781,8 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             // 
             // @cleanup: these are flags which should probably be modifiers on the pointer type.
             // 
+            if(peek_token_eat(context, TOKEN_sptr))     type_qualifiers |= QUALIFIER_sptr;
+            if(peek_token_eat(context, TOKEN_uptr))     type_qualifiers |= QUALIFIER_uptr;
             if(peek_token_eat(context, TOKEN_ptr32))     type_qualifiers |= QUALIFIER_ptr32;
             if(peek_token_eat(context, TOKEN_ptr64))     type_qualifiers |= QUALIFIER_ptr64;
             if(peek_token_eat(context, TOKEN_unaligned)) type_qualifiers |= QUALIFIER_unaligned;
