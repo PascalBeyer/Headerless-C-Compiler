@@ -1,4 +1,4 @@
-// fail "Redeclaration of type."
+// fail "Mismatching redeclaration of type."
 
 struct structure{
     void *a;

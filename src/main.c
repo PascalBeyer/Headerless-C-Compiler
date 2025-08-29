@@ -2081,9 +2081,47 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         // 
         if(types_are_equal((struct ast_type *)redecl, type)) return;
         
+        struct token *new_identifier = new->identifier;
+        struct token *old_identifier = old->identifier;
+        
         begin_error_report(context);
-        report_error(context, new->identifier, "[%lld] Redeclaration of type.", new->compilation_unit->index);
-        report_error(context, old->identifier, "[%lld] ... Here was the previous declaration.", old->compilation_unit->index);
+        report_error(context, new_identifier, "[%lld] Mismatching redeclaration of type.", new->compilation_unit->index);
+        report_error(context, old_identifier, "[%lld] ... Here was the previous declaration.", old->compilation_unit->index);
+        
+        if(new_identifier->file_index == old_identifier->file_index && new_identifier->line == old_identifier->line && new_identifier->column == old_identifier->column){
+            // 
+            // This is the same token in two different compilation units.
+            // Print the types.
+            // 
+            
+            if(old->amount_of_members != new->amount_of_members){
+                report_error(context, new_identifier, "> Member count mismatch %lld vs %lld\n", new->amount_of_members, old->amount_of_members);
+            }
+            
+            u32 amount_of_members = old->amount_of_members < new->amount_of_members ? old->amount_of_members : new->amount_of_members;
+            
+            for(u32 member_index = 0; member_index < amount_of_members; member_index++){
+                struct compound_member *old_member = &old->members[member_index];
+                struct compound_member *new_member = &new->members[member_index];
+                
+                if(!atoms_match(old_member->name->atom, new_member->name->atom)){
+                    char *postfix = "th";
+                    if(member_index == 1) postfix = "st";
+                    if(member_index == 2) postfix = "nd";
+                    if(member_index == 3) postfix = "rd";
+                    
+                    report_error(context, old_member->name, "> Name of the %lld%s member mismatches: [%lld] %.*s vs. [%lld] %.*s\n", member_index, postfix, new->compilation_unit->index, new_member->name->size, new_member->name->data, old->compilation_unit->index, old_member->name->size, old_member->name->data);
+                    break;
+                }
+                
+                if(!types_are_equal(old_member->type, new_member->type)){
+                    struct string new_member_type_string = push_type_string(&context->scratch, &context->scratch, new_member->type);
+                    struct string old_member_type_string = push_type_string(&context->scratch, &context->scratch, old_member->type);
+                    report_error(context, old_member->name, "> Type mismatch of member %.*s: [%lld] %.*s [%lld] %.*s\n", new_member->name->size, new_member->name->data, new->compilation_unit->index, new_member_type_string.size, new_member_type_string.data, old->compilation_unit->index, old_member_type_string.size, old_member_type_string.data);
+                }
+            }
+        }
+        
         end_error_report(context);
         return;
     }
