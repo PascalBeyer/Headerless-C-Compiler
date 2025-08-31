@@ -3802,7 +3802,7 @@ int main(int argc, char *argv[]){
     // Parse the command line arguments.
     // 
     
-    int cli_parse_options_success = cli_parse_options(&globals.cli_options, arena, argc, argv);
+    int cli_parse_options_success = cli_parse_options(&globals.cli_options, arena, argc-1, argv+1);
     if(!cli_parse_options_success) return 1;
     
 #if PRINT_COMMAND_LINE

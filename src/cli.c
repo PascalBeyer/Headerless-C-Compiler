@@ -303,7 +303,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
     
     int should_print_help = 0;
     
-    for(int option_index = 1; option_index < argc; option_index++){
+    for(int option_index = 0; option_index < argc; option_index++){
         char *option_cstring = argv[option_index];
         
         //

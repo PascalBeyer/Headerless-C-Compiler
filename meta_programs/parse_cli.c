@@ -901,7 +901,7 @@ int main(int argc, char *argv[]){
             "    \n"
             "    int should_print_help = 0;\n"
             "    \n"
-            "    for(int option_index = 1; option_index < argc; option_index++){\n"
+            "    for(int option_index = 0; option_index < argc; option_index++){\n"
             "        char *option_cstring = argv[option_index];\n"
             "        \n"
             "        //\n"
