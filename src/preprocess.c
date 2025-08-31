@@ -1863,7 +1863,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     sll_push_front(context->token_stack, node);
                 }else{
                     skip_until_tokens_are_balanced_raw(context, open_paren, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' after '__pragma('.");
-                    report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsuported __pragma '%.s'.", pragma_directive->size, pragma_directive->data);
+                    report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsuported __pragma ignored.");
                 }
                 
                 
