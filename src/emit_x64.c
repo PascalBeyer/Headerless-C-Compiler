@@ -4398,6 +4398,12 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 if(lhs->size != 0){
                     assert(lhs->state == EMIT_LOCATION_register_relative);
+                    
+                    // 
+                    // @cleanup: This is a bad solution... We would really like to just have `emit_store` change the rhs if it needs to and then have the result loaded.
+                    // 
+                    if(rhs->state != EMIT_LOCATION_immediate && !size_is_big_or_oddly_sized(rhs->size)) rhs = emit_load_gpr(context, rhs);
+                    
                     emit_location_prevent_freeing(context, rhs);
                     emit_store(context, lhs, rhs);
                     emit_location_allow_freeing(context, rhs);
