@@ -8782,6 +8782,12 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 ret.is_function_definition = scope;
                 
                 if(context->current_scope){
+                    // 
+                    // This is a local function. Set the scope and flag before registering it.
+                    // 
+                    function->as_decl.flags |= DECLARATION_FLAGS_is_local_persist;
+                    function->scope = scope;
+                    
                     struct token *open = next_token(context);
                     
                     // @cleanup: disallow some declaration specifiers.
@@ -8801,8 +8807,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     struct parse_work *parse_work = push_parse_work(context, array, context->current_compilation_unit, function);
                     work_queue_push_work(context, &globals.work_queue_parse_functions, parse_work);
                     
-                    function->as_decl.flags |= DECLARATION_FLAGS_is_local_persist;
-                    function->scope = scope;
                     ast_list_append(&context->local_functions, context->arena, &function->kind);
                 }
                 
