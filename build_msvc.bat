@@ -1,13 +1,12 @@
-
 @echo off
 
 echo Compiling with msvc
 IF NOT EXIST build mkdir build
 
-rem *******************************************WARNINGS*****************************************************
-rem set warning_options= /w
-set warning_options= -Wall -wd4201 -wd4820  -wd4711 -wd4200 -wd4204 -wd4214 -wd4324 -wd5045 -wd4061 -wd4221
-rem ********************************************************************************************************
+:: *******************************************WARNINGS*****************************************************
+:: set warning_options= /w
+set warning_options= -Wall -wd4201 -wd4820  -wd4711 -wd4200 -wd4204 -wd4214 -wd4324 -wd5045 -wd4061 -wd4221 -wd4366
+:: ********************************************************************************************************
 
 set compiler_flags= -Od -nologo -fp:fast -GR- -EHa- -Zo -Oi -D_Debug  %warning_options% -FC -Z7 -GS- -Gs9999999 /diagnostics:column /TC
 
