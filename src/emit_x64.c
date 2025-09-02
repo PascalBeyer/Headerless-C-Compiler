@@ -2251,9 +2251,7 @@ func void emit_inline_asm_binary_op(struct context *context, struct prefixes pre
     }
 }
 
-struct emit_location *get_emit_location_for_identifier(struct context *context, struct ir *ir){
-    struct ir_identifier *ident = cast(struct ir_identifier *)ir;
-    struct ast_declaration *decl = ident->decl;
+struct emit_location *get_emit_location_for_declaration(struct context *context, struct ast_declaration *decl){
     
     // There are some cases:
     //    1) Enum Member  -> immediate
@@ -2627,7 +2625,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             
             case IR_identifier:{
                 ir_arena_at += sizeof(struct ir_identifier);
-                emit_location_stack[emit_location_stack_at++] = get_emit_location_for_identifier(context, ir);
+                struct ir_identifier *identifier = (struct ir_identifier *)ir;
+                emit_location_stack[emit_location_stack_at++] = get_emit_location_for_declaration(context, identifier->decl);
             }break;
             
             case IR_string_literal:{

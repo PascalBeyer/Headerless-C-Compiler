@@ -83,16 +83,15 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
             //        'spilled' or 'immediate'.
             
             struct emit_location *ret = null;
-            struct ir *expression = operand->expr.ir;
             
-            if(context->in_inline_asm_function && expression->kind == IR_identifier){
-                struct ir_identifier *ident = (struct ir_identifier *)expression;
+            struct ast_declaration *decl = operand->declaration;
+            
+            if(context->in_inline_asm_function && operand->is_inline_asm_function_argument){
                 
-                for(struct inline_asm_function_argument *argument = context->inline_asm_function_arguments.first;
-                        argument; argument = argument->next){
-                    if(argument->declaration == ident->decl){
+                for(struct inline_asm_function_argument *argument = context->inline_asm_function_arguments.first; argument; argument = argument->next){
+                    
+                    if(argument->declaration == decl){
                         
-                        struct ast_declaration *decl = ident->decl;
                         struct emit_location *loaded_location  = argument->loaded_location;
                         struct emit_location *integer_location = argument->integer_location;
                         
@@ -147,7 +146,8 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
                 // Evaluate the expression, which should only be members and one identifier.
                 //
                 smm bytes_emitted_for_assert = get_bytes_emitted(context);
-                ret = get_emit_location_for_identifier(context, expression); // :ir_refactor - This should also handle . and []
+                ret = get_emit_location_for_declaration(context, decl);
+                ret->offset += operand->declaration_offset;
                 assert(bytes_emitted_for_assert == get_bytes_emitted(context));
                 assert(ret->state == EMIT_LOCATION_register_relative);
             }

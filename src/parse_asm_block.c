@@ -110,7 +110,8 @@ struct asm_operand{
             smm offset;
         };
         struct{ // ASM_ARG_declaration_reference
-            struct expr expr;
+            struct ast_declaration *declaration;
+            u64 declaration_offset;
             b32 is_inline_asm_function_argument;
             b32 is_inline_asm_function_argument_that_needs_to_be_an_integer;
             b32 is_inline_asm_function_argument_that_can_be_integer;
@@ -1287,6 +1288,8 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     
     struct asm_operand operand = {0};
     
+    u8 *expression_at = arena_current(&context->ir_arena);
+    
     // @cleanup: ASM_ARG_declaration_dereference for '*decl' and 'decl[10]'.
     struct expr expr = parse_expression(context, /*skip_comma = */true);
     if(context->should_exit_statement) return operand;
@@ -1302,10 +1305,9 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     }
     
     operand.kind = ASM_ARG_declaration_reference;
-    operand.expr = expr;
     operand.size = expr.resolved_type->size;
     
-    if(context->in_inline_asm_function && operand.expr.ir->kind == IR_identifier){
+    if(context->in_inline_asm_function && expr.ir->kind == IR_identifier){
         struct ir_identifier *ident = (struct ir_identifier *)expr.ir;
         
         //
@@ -1324,29 +1326,58 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     //
     // Check that the expression does not allocate any registers!
     //
-    while(true){
+    
+    int expression_okay = 1;
+    
+    if(((struct ir *)expression_at)->kind != IR_identifier){
+        expression_okay = 0;    
+    }else{
+        struct ir_identifier *identifier = (struct ir_identifier *)expression_at;
+        operand.declaration = identifier->decl;
+        expression_at += sizeof(struct ir_identifier);
         
-        // We should end with an identifier, if everything goes well!
-        if(expr.ir->kind == IR_identifier) break;
+        struct ast_type *type = operand.declaration->type;
+        u64 offset = 0;
         
-        if(expr.ir->kind == AST_member){
-            not_implemented;
-            // struct ast_dot_or_arrow *dot = (struct ast_dot_or_arrow *)expr;
-            // expr = dot->lhs;
-            continue;
+        u8 *expression_end = arena_current(&context->ir_arena);
+        
+        while(expression_at < expression_end){
+            
+            if(((struct ir *)expression_at)->kind == IR_member){
+                struct ir_dot_or_arrow *dot = (struct ir_dot_or_arrow *)expression_at;
+                expression_at += sizeof(struct ir_dot_or_arrow);
+                
+                offset += dot->member->offset_in_type;
+                type = dot->member->type;
+            }else if(((struct ir *)expression_at)->kind == IR_integer_literal){
+                struct ir_integer_literal *integer = (struct ir_integer_literal *)expression_at;
+                expression_at += sizeof(struct ir_integer_literal);
+                struct expr integer_expr = {
+                    .ir = &integer->base,
+                    .resolved_type = integer->type,
+                };
+                
+                if(((struct ir *)expression_at)->kind == IR_array_subscript){
+                    struct ir_subscript *subscript = (struct ir_subscript *)expression_at;
+                    expression_at += sizeof(struct ir_subscript);
+                    
+                    type = subscript->type;
+                    offset += type->size * integer_literal_as_u64(&integer_expr);
+                }else{
+                    expression_okay = 0;
+                    break;
+                }
+            }else{
+                expression_okay = 0;
+                break;
+            }
         }
         
-        if(expr.ir->kind == IR_array_subscript){
-            not_implemented;
-            // struct ast_subscript *subscript = (struct ast_subscript *)expr;
-            // if(subscript->index->kind == AST_integer_literal){
-                // expr = subscript->lhs;
-                // continue;
-            // }
-        }
-        
+        operand.declaration_offset = offset;
+    }
+    
+    if(!expression_okay){
         report_error(context, expr.token, "Currently, only expressions of the form 'a.b.c' or 'array[<const>]' are allowed as inline asm operands.");
-        break;
     }
     
     struct ast_type *type = expr.resolved_type;
@@ -1472,11 +1503,11 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
         }else if(operand.kind == ASM_ARG_declaration_reference){
             
             smm pointer_to_size = 0;
-            if(operand.expr.resolved_type->kind != AST_pointer_type){
+            if(operand.declaration->type->kind != AST_pointer_type){
                 // @note: The token is sort of a hack.
                 report_error(context, start_token, "Expression inside memory operand must be a pointer.");
             }else{
-                pointer_to_size = ((struct ast_pointer_type *)operand.expr.resolved_type)->pointer_to->size;
+                pointer_to_size = ((struct ast_pointer_type *)operand.declaration->type)->pointer_to->size;
             }
             
             operand.kind = ASM_ARG_declaration_dereference;
@@ -1737,7 +1768,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             case ASM_ARG_declaration_reference:{
                 b32 should_error = false;
                 
-                struct ast_type *type = operand.expr.resolved_type;
+                struct ast_type *type = operand.declaration->type;
                 if(operand.is_inline_asm_function_argument && type->kind == AST_integer_type){
                     
                     if((desired_operand_flags & ASM_OP_KIND_any_imm) == (desired_operand_flags & (ASM_OP_KIND_any_regm | ASM_OP_KIND_any_imm))){
