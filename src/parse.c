@@ -3431,6 +3431,12 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
         struct string flags = zero_struct, field_width = zero_struct, precision = zero_struct, type_specifiers = zero_struct;
         
         while(true){
+            if(expr.ir->kind == IR_identifier){
+                struct ir_identifier *ident = (struct ir_identifier *)expr.ir;
+                string_list_postfix(&pretty_print_list, &context->scratch, ident->decl->identifier->string);
+                string_list_postfix(&pretty_print_list, &context->scratch, string(" = "));
+            }
+            
             printlike__infer_format_string_and_arguments_for_argument(context, &expr, &pretty_print_list, flags, field_width, precision, type_specifiers, call_arguments_count);
             
             if(!peek_token_eat(context, TOKEN_comma)) break;
