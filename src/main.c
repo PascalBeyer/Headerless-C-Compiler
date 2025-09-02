@@ -1007,6 +1007,8 @@ static enum ir_type ir_type_from_type(struct ast_type *type){
     
     if(type->kind == AST_pointer_type) return IR_TYPE_pointer;
     
+    if(type == &globals.typedef_poison) return IR_TYPE_void;
+    
     invalid_code_path;
 }
 
