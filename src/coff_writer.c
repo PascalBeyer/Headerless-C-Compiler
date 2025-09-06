@@ -1913,11 +1913,17 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 
                 u32 import_address_table_index = 0;
                 for(struct dll_import_node *import_node = dll_node->import_list.first; import_node; import_node = import_node->next){
-                    u16 *hint = push_struct(arena, u16);
-                    *hint = import_node->ordinal_hint;
-                    push_cstring_from_string(arena, import_node->import_name);
                     
-                    import_address_table[import_address_table_index] = make_relative_virtual_address(section_writer, hint);
+                    if(import_node->import_by_ordinal){
+                        import_address_table[import_address_table_index] = /*import by ordinal*/0x8000000000000000 | import_node->ordinal_hint;
+                    }else{
+                        u16 *hint = push_struct(arena, u16);
+                        *hint = import_node->ordinal_hint;
+                        push_cstring_from_string(arena, import_node->import_name);
+                        
+                        import_address_table[import_address_table_index] = make_relative_virtual_address(section_writer, hint);
+                    }
+                    
                     import_node->memory_location = (u8*)&import_address_table[import_address_table_index];
                     
                     import_address_table_index++;

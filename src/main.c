@@ -284,6 +284,7 @@ struct dll_import_node{
     struct string import_name;
     u8 *memory_location;
     u16 ordinal_hint;
+    u8 import_by_ordinal;
     
     // If the declaration has the DECLARATION_FLAGS_need_dllimport_stub_function flag set, we have to emit a stub as well.
     u32 stub_relative_virtual_address;

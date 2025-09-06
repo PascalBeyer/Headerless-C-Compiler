@@ -433,6 +433,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     struct dll_import_node *import_node = push_uninitialized_struct(context->arena, struct dll_import_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
     import_node->import_name  = identifier.string;
     import_node->ordinal_hint = ar_import_header->ordinal_hint;
+    if(ar_import_header->name_type == /*IMPORT_OBJECT_ORDINAL*/0) import_node->import_by_ordinal = 1;
     
     sll_push_back(dll_node->import_list, import_node);
     dll_node->import_list.count += 1;
