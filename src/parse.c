@@ -4037,7 +4037,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
         
         struct string format_specifier = {
             .data = start.data + start.size,
-            .size = (format_string.data + format_string.size) - start.data + start.size,
+            .size = format_string.data - (start.data + start.size),
         };
         
         if(identifier.size){
@@ -4053,7 +4053,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                 type_specifiers = identifier;
             }else{
                 if(!declaration){
-                    report_error(context, format_string_argument->token, "Identifier in format specifier '%.*s', is undeclared.", format_specifier.size, format_specifier.data);
+                    report_error(context, format_string_argument->token, "Identifier '%.*s' in format specifier '%.*s', is undeclared.", identifier.size, identifier.data, format_specifier.size, format_specifier.data);
                     return;
                 }
                 
