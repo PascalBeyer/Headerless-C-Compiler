@@ -4160,7 +4160,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     u32 j = 0;
                                     
                                     struct token_array tokens = decl_list->tokens;
-                                    struct token_array redecl_tokens = decl_list->tokens;
+                                    struct token_array redecl_tokens = redecl_list->tokens;
                                     
                                     while(true){
                                         while(i < tokens.amount &&
@@ -4241,6 +4241,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 assert(redecl->arguments.count == arguments.count);
                             }
                         }
+                        
+                        defines_are_equivalent = defines_are_equivalent && (redecl->is_function_like == (u32)is_function_like);
                         
                         if(!defines_are_equivalent){
                             begin_error_report(context);
