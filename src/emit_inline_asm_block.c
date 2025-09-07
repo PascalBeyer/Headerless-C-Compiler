@@ -506,6 +506,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 // These are acutually the /reg-extension
                 [MEMONIC_neg] = 3,
                 [MEMONIC_mul] = 4,
+                [MEMONIC_imul] = 5,
                 [MEMONIC_div] = 6,
             };
             
@@ -753,7 +754,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 }
             }break;
             
-            case MEMONIC_mul: case MEMONIC_div: case MEMONIC_neg:{
+            case MEMONIC_imul: case MEMONIC_mul: case MEMONIC_div: case MEMONIC_neg:{
                 struct opcode opcode = (operand->size == 1) ? one_byte_opcode(0xf6) : one_byte_opcode(0xf7);
                 
                 // @note: All of this sucks!

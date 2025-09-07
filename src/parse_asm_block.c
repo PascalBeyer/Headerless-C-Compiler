@@ -163,6 +163,7 @@ enum memonic{
     MEMONIC_neg,
     
     MEMONIC_mul,
+    MEMONIC_imul,
     MEMONIC_div,
     
     MEMONIC_bt, MEMONIC_bts, MEMONIC_btr, MEMONIC_btc,
@@ -508,6 +509,7 @@ static struct{
     [MEMONIC_neg] = {.memonic = const_string("neg"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
     
     [MEMONIC_div] = {.memonic = const_string("div"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
+    [MEMONIC_imul] = {.memonic = const_string("imul"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
     [MEMONIC_mul] = {.memonic = const_string("mul"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm },
     
     [MEMONIC_bswap] = { .memonic = const_string("bswap"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_reg32 | ASM_OP_KIND_reg64 },

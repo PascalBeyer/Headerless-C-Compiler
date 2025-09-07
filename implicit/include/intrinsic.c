@@ -589,6 +589,13 @@ __declspec(inline_asm) unsigned __int64 _umul128(unsigned __int64 Multiplier, un
     return rax
 }
 
+__declspec(inline_asm) __int64 _mul128(__int64 Multiplier, __int64 Multiplicand, __int64 *HighProduct){
+    mov rax, Multiplicand
+    imul Multiplier
+    mov [HighProduct], rdx
+    return rax
+}
+
 __declspec(inline_asm) unsigned __int64 _udiv128(unsigned __int64 highDividend, unsigned __int64 lowDividend, unsigned __int64 divisor, unsigned __int64 *remainder){
     mov rdx, highDividend
     mov rax, lowDividend
@@ -847,6 +854,32 @@ __declspec(inline_asm) unsigned __int8 _addcarry_u64(unsigned __int8 carry_in, u
     // store the result
     mov rdx, out
     mov [rdx], rax
+    
+    return cl
+}
+
+__declspec(inline_asm) char _InterlockedOr8(char volatile *value, char mask){
+    
+    // I think this would be the correct code, but we don't have jumps yet. @incomplete
+    // 
+    //     mov al, [value]
+    // 
+    // loop:
+    //     mov cl, al
+    //     or  cl, mask
+    //     
+    //     lock cmpxchg [value], cl
+    //     jne loop
+    //     
+    //     return cl
+    // 
+    
+    mov al, [value]
+    
+    mov cl, al
+    or  cl, mask
+    
+    lock cmpxchg [value], cl
     
     return cl
 }
