@@ -2214,7 +2214,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     }
     
     if(data){ // .data
-        // @note: the data section cannot be empty apparently
         begin_section(section_writer, data);
         
         for_ast_list(*initialized_declarations){
@@ -2232,6 +2231,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             decl->memory_location = mem;
             decl->relative_virtual_address = make_relative_virtual_address(section_writer, mem);
+        }
+        
+        if(arena_current(section_writer->arena) == section_writer->section_memory_location){
+            // @note: The .data section cannot be empty apparently.
+            push_data(section_writer->arena, u8, 1);
         }
         
         end_section(section_writer);
