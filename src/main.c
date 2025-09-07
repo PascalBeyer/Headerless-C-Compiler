@@ -4,14 +4,6 @@
 
 #include "options.h"
 
-#if 0
-#define log_print(format, ...)  print(format  " (thread %u)\n", __VA_ARGS__, GetCurrentThreadId());
-#elif 0
-#define log_print(format, ...)  print(format "\n", __VA_ARGS__);
-#else
-#define log_print(formal, ...)
-#endif
-
 #include "timing.c"
 #include "ast.c"
 #include "cli.c"
@@ -130,8 +122,6 @@ func void maybe_grow_ast_table__internal(struct ast_table *table){
         // Lets wait until there are not threads in flight.
         while(atomic_load(s64, table->threads_in_flight));
         
-        // print_ast_table(table);
-        log_print("GROWING AST TABLE! %d\n", table->amount_of_nodes);
         u64 old_capacity = table->capacity;
         struct ast_node *old_nodes = table->nodes;
         table->capacity <<= 1;
@@ -205,8 +195,6 @@ func enum ast_kind *ast_table_add_or_return_previous_entry(struct ast_table *tab
         
         if(ast){
             if(node->token == token || atoms_match(node->token->atom, token->atom)){
-                log_print("   allready inserted");
-                
                 atomic_predecrement(&table->threads_in_flight);
                 return ast;
             }
@@ -1207,7 +1195,6 @@ func void work_queue_append_list(struct work_queue *queue, struct work_queue_ent
     end:;
     
     if(queue_was_empty && globals.wake_event){
-        //log_print("wake up!");
         SetEvent(globals.wake_event);
         ResetEvent(globals.wake_event);
     }
@@ -1331,8 +1318,6 @@ func void sleeper_table_maybe_grow(struct sleeper_table *table){
                 // Lets wait until there are not threads in flight
                 while(atomic_load(s64, table->threads_in_flight));
                 
-                log_print("GROWING SLEEPER TABLE! %d\n", table->amount_of_nodes);
-                
                 u64 old_capacity = table->capacity;
                 struct sleeper_node *old_nodes = table->nodes;
                 table->capacity <<= 1;
@@ -1401,7 +1386,6 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
                         // if we deleted the entry within the time it took to go to sleep, we requeue it
                         assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
                         work_queue_add(&globals.work_queue_parse_global_scope_entries, entry);
-                        log_print("         allready woke: adding it globally");
                         
                         atomic_predecrement(&table->threads_in_flight);
                         return;
@@ -1410,7 +1394,6 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
                     entry->next = list;
                 }while(atomic_compare_and_swap(&node->first_sleeper, entry, list) != list);
                 
-                log_print("         added to existing!");
                 atomic_predecrement(&table->threads_in_flight);
                 return;
             }else{
@@ -1421,8 +1404,6 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
             b32 success = atomic_compare_and_swap_128(&node->mem, to_insert.mem, &(m128)zero_struct);
             if(success){
                 atomic_add((s64 *)&table->amount_of_nodes, 1);
-                log_print("         added new!");
-                
                 atomic_predecrement(&table->threads_in_flight);
                 return;
             }
@@ -1451,8 +1432,6 @@ func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, 
             b32 success = atomic_compare_and_swap_128(&node->mem, to_insert.mem, &(m128)zero_struct);
             if(success) {
                 atomic_add((s64 *)&table->amount_of_nodes, 1);
-                log_print("         added dummy!");
-                
                 atomic_predecrement(&table->threads_in_flight);
                 return null;
             }
@@ -1488,8 +1467,6 @@ func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, 
 
 func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sleep_on){
     
-    log_print("   waking sleepers for: %.*s", sleep_on->amount, sleep_on->data);
-    
     assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
     
     struct work_queue_entry *first = sleeper_table_delete(sleeper_table, sleep_on);
@@ -1498,13 +1475,7 @@ func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sl
         smm amount = 1;
         for(; last->next; last = last->next) amount++;
         
-        log_print("   %d sleepers found", amount);
         work_queue_append_list(&globals.work_queue_parse_global_scope_entries, first, last, amount);
-        for(struct work_queue_entry *it = first; it; it = it->next){
-            log_print("      sleeper: %p", it);
-        }
-    }else{
-        log_print("      no sleepers found.");
     }
 }
 
@@ -3163,7 +3134,6 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
 }
 
 func void worker_parse_global_scope_entry(struct context *context, struct work_queue_entry *work){
-    log_print("parsing a global scope entry");
     
     struct parse_work *parse_work = (struct parse_work *)work->data;
     context->current_compilation_unit = parse_work->compilation_unit;
@@ -3263,8 +3233,6 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     struct ast_function *function = parse_work->function;
     assert(function->kind == IR_function);
     context->current_function = function;
-    
-    log_print("parsing: %.*s", function->identifier->amount, function->identifier->data);
     
     begin_token_array(context, parse_work->tokens);
     
@@ -3460,8 +3428,6 @@ func int worker_work(struct context *context, struct work_queue *queue, void (*w
 
 func u32 work_thread_proc(void *param){
     struct thread_info *info = param;
-    
-    log_print("starting thread %d", info->thread_index);
     
     struct memory_arena main_arena = create_memory_arena(giga_bytes(8), 2.0f, mega_bytes(1));
     
@@ -5115,8 +5081,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
     SetEvent(globals.wake_event);
     ResetEvent(globals.wake_event);
     
-    log_print("start phase 2");
-    
     while(globals.work_queue_parse_functions.work_entries_in_flight > 0){
         worker_work(context, &globals.work_queue_parse_functions, worker_parse_function);
         assert(!context->should_sleep);
@@ -5129,8 +5093,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     stage_two_parsing_time = os_get_time_in_seconds() - stage_two_parsing_time;
     
-    log_print("end phase 2");
-    
     //
     // COMPILE_STAGE_emit_code
     //
@@ -5140,8 +5102,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
     // into the 'work_queue_stage_three'.
     // We then emit all of the code for these functions. At any point we could encounter a global identifier
     // which we have not yet emitted. In this case we emit a 'patch' which then gets filled in during  'print_coff'.
-    
-    log_print("start phase 3");
     
     stage_three_emit_code_time = os_get_time_in_seconds();
     
