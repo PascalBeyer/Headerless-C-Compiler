@@ -6,6 +6,8 @@
 #define stringify2(_, a) #a
 #define stringify_va(...) #__VA_ARGS__
 
+#define expand(a) a
+
 int main(){
     //
     // normal tests
@@ -63,7 +65,42 @@ int main(){
     
     assert(stringify_va("hello" "hello") == "\"hello\" \"hello\"");
     
+    //
+    // expand tests... this was already tested because of the assert I guess.
+    //
 
+    assert(expand(stringify(a)) == "a");
+    assert(expand(stringify(a + b)) == "a + b");
+    assert(expand(stringify(a
+    +
+    b)) == "a + b");
+    assert(expand(stringify(a/*comment*/b)) == "a b");
+    assert(expand(stringify(a  /*comment*/
+    /*comment*/
+    b)) == "a b");
+    
+    assert(expand(stringify("hello")) == "\"hello\"");
+    assert(expand(stringify("hello" "hello")) == "\"hello\" \"hello\"");
+
+    // 
+    // No assert tests:
+    // 
+    
+    
+    if(stringify(a) == "a"); else return 1;
+    if(stringify(a + b) == "a + b"); else return 1;
+    if(stringify(a
+            +
+            b) == "a + b"); else return 1;
+    if(stringify(a/*comment*/b) == "a b"); else return 1;
+    if(stringify(a  /*comment*/
+            /*comment*/
+            b) == "a b"); else return 1;
+    
+    if(stringify("hello") == "\"hello\""); else return 1;
+    if(stringify("hello" "hello") == "\"hello\" \"hello\""); else return 1;
+    
+    
     return 0;
 }
 

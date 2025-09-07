@@ -346,16 +346,6 @@ struct token_array{
     };
 };
 
-struct token_stack_node{
-    // WARNING: We explicitly initialize all of the members of this struct in some places instead of zero initializing it.
-    struct token_stack_node *next;
-    struct token_array tokens;
-    smm at;
-    
-    struct define_node *define_to_reenable_on_exit;
-};
-
-
 //////////////////////////
 
 enum ast_kind{

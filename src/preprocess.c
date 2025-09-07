@@ -116,13 +116,32 @@ struct define_node{
         struct define_replacement_node *first;
         struct define_replacement_node *last;
     } replacement_list;
+    smm token_stack_node_count;
 };
+
+
+func void push_to_token_stack(struct context *context, struct token_array tokens, smm at, struct define_node *define_to_reenable_on_exit){
+    if(context->token_stack.size == context->token_stack.capacity){
+        smm new_capacity = 2 * context->token_stack.capacity;
+        struct token_stack_node *new_nodes = push_uninitialized_data(&context->scratch, struct token_stack_node, new_capacity);
+        memcpy(new_nodes, context->token_stack.nodes, sizeof(*new_nodes) * context->token_stack.capacity);
+        context->token_stack.nodes = new_nodes;
+        context->token_stack.capacity = new_capacity;
+    }
+    
+    
+    u64 index = context->token_stack.size++;
+    struct token_stack_node *new_node = &context->token_stack.nodes[index];
+    new_node->tokens = tokens;
+    new_node->at = at;
+    new_node->define_to_reenable_on_exit = define_to_reenable_on_exit;
+}
 
 func struct token *get_current_token_raw(struct context *context){
     
     while(true){
-        if(!context->token_stack.first) return &globals.invalid_token;
-        struct token_stack_node *node = context->token_stack.first;
+        if(context->token_stack.size == context->token_stack.blocked_size) return &globals.invalid_token;
+        struct token_stack_node *node = &context->token_stack.nodes[context->token_stack.size-1];
         
         if(node->at >= node->tokens.amount){
             if(node->define_to_reenable_on_exit){
@@ -134,7 +153,7 @@ func struct token *get_current_token_raw(struct context *context){
                 assert(context->define_depth >= 0);
             }
             
-            sll_pop_front(context->token_stack);
+            context->token_stack.size -= 1;
             continue;
         }
         
@@ -145,8 +164,8 @@ func struct token *get_current_token_raw(struct context *context){
 func struct token *next_token_raw(struct context *context){
     struct token *ret = get_current_token_raw(context);
     
-    struct token_stack_node *node = context->token_stack.first;
-    if(node){
+    if(context->token_stack.size != context->token_stack.blocked_size){
+        struct token_stack_node *node = &context->token_stack.nodes[context->token_stack.size-1];
         // get_current_token just made sure this is true!
         assert(node->at < node->tokens.amount);
         node->at++;    
@@ -1856,16 +1875,11 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     u64 size = push_uninitialized_data(&context->scratch, struct token, 0) - base;
                     
                     struct token_array token_array = {.data = base, .size = size };
-                    
-                    struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-                    node->tokens = token_array;
-                    
-                    sll_push_front(context->token_stack, node);
+                    push_to_token_stack(context, token_array, 0, null);
                 }else{
                     skip_until_tokens_are_balanced_raw(context, open_paren, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' after '__pragma('.");
                     report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsuported __pragma ignored.");
                 }
-                
                 
                 return null;
             }break;
@@ -1922,12 +1936,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 }
                 
                 struct token_array token_array = {.data = tokens, .size = amount_of_tokens };
-                
-                struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-                node->define_to_reenable_on_exit = define_to_disable;
-                node->tokens = token_array;
-                
-                sll_push_front(context->token_stack, node);
+                push_to_token_stack(context, token_array, 0, define_to_disable);
                 
                 return token_to_expand;
             }break;
@@ -1979,6 +1988,32 @@ func struct token *expand_define(struct context *context, struct token *token_to
             }
             
             goto skip_define_argument_parsing_because_the_define_has_no_arguments;
+        }
+        
+        if(sll_is_empty(define->replacement_list)){
+            // 
+            // Fast-path for empty replacement lists.
+            // Simply skip the tokens that make up the define.
+            // Apperantly, this makes up 34% off all defines when compiling the raddebugger.
+            // 
+            
+            
+            smm paren_depth = 1;
+            
+            while(true){
+                struct token *token = next_token_raw(context);
+                
+                if(token->type == TOKEN_open_paren){
+                    paren_depth += 1;
+                }else if(token->type == TOKEN_closed_paren){
+                    paren_depth -= 1;
+                    if(paren_depth == 0) break;
+                }else if(token->type == TOKEN_invalid){
+                    tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Expected a ')' while collecting arguments for macro expansion.");
+                    return token_to_expand;
+                }
+            }
+            goto skip_define_argument_parsing_because_the_define_has_no_replacement_list;
         }
         
         
@@ -2177,17 +2212,16 @@ func struct token *expand_define(struct context *context, struct token *token_to
             }
         }
         
-        
-        // @note: fast_path for empty replacement lists
-        if(!sll_is_empty(define->replacement_list)){
+        {
             //
             // Expand the 'argument_token_array' to 'expanded_argument_token_arrays'
             //
             
             // save the tokenizer state so we can expand the arguments in isolation
             // @cleanup: put the cspec quote here 
-            struct token_stack_node *saved_first = context->token_stack.first;
-            struct token_stack_node *saved_last  = context->token_stack.last;
+            
+            smm saved_token_stack_blocked_size = context->token_stack.blocked_size;
+            context->token_stack.blocked_size = context->token_stack.size;
             
             //
             // expand the arguments of the define.
@@ -2200,10 +2234,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 
                 if(argument_token_arrays[arg->argument_index].amount){
                     
-                    struct token_stack_node *arg_node = push_struct(&context->scratch, struct token_stack_node);
-                    arg_node->tokens = argument_token_arrays[arg->argument_index];
-                    
-                    context->token_stack.first = context->token_stack.last = arg_node;
+                    push_to_token_stack(context, argument_token_arrays[arg->argument_index], 0, null);
                     
                     //
                     // @note: these cannot be daisy chained, as there is a recursive call
@@ -2279,34 +2310,42 @@ func struct token *expand_define(struct context *context, struct token *token_to
             }
             
             // reset the tokenizer state
-            context->token_stack.first = saved_first;
-            context->token_stack.last  = saved_last;
+            context->token_stack.blocked_size = saved_token_stack_blocked_size;
         }
     }
-    skip_define_argument_parsing_because_the_define_has_no_arguments:;
     
-    // we queue into these new nodes by appending with sll_push_back, then we can just append these to the front of 
-    // context->token_stack.
-    struct{
-        struct token_stack_node *first;
-        struct token_stack_node *last;
-    } new_nodes = zero_struct;
+    skip_define_argument_parsing_because_the_define_has_no_arguments:;
+    skip_define_argument_parsing_because_the_define_has_no_replacement_list:;
+    
+    smm define_token_stack_start = context->token_stack.size;
+    smm define_token_stack_count = define->token_stack_node_count;
+    
+    if(context->token_stack.size + define_token_stack_count > context->token_stack.capacity){
+        smm new_capacity = max_of(2 * context->token_stack.capacity, context->token_stack.size + define_token_stack_count);
+        struct token_stack_node *new_nodes = push_uninitialized_data(&context->scratch, struct token_stack_node, new_capacity);
+        memcpy(new_nodes, context->token_stack.nodes, sizeof(*new_nodes) * context->token_stack.capacity);
+        context->token_stack.nodes = new_nodes;
+        context->token_stack.capacity = new_capacity;
+    }
+    context->token_stack.size += define_token_stack_count;
+    
+    struct token_stack_node *define_token_stack_at = context->token_stack.nodes + (define_token_stack_start + define_token_stack_count - 1);
     
     for(struct define_replacement_node *replacement = define->replacement_list.first; replacement; replacement = replacement->next){
         
         // @note: we copy all (relevant) tokens outside the tokenizer, thus all allocations can be on 'scratch'
         switch(replacement->kind){
             case DEFINE_REPLACEMENT_tokens:{
-                struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-                node->tokens = replacement->tokens;
-                
-                sll_push_back(new_nodes, node);
+                define_token_stack_at->tokens = replacement->tokens;
+                define_token_stack_at->at = 0;
+                define_token_stack_at->define_to_reenable_on_exit = 0;
+                define_token_stack_at -= 1;
             }break;
             case DEFINE_REPLACEMENT_argument:{
-                struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-                node->tokens = expanded_argument_tokens[replacement->argument_index];
-                
-                sll_push_back(new_nodes, node);
+                define_token_stack_at->tokens = expanded_argument_tokens[replacement->argument_index];
+                define_token_stack_at->at = 0;
+                define_token_stack_at->define_to_reenable_on_exit = 0;
+                define_token_stack_at -= 1;
             }break;
             case DEFINE_REPLACEMENT_hash:{
                 struct token *string_token = push_uninitialized_struct(&context->scratch, struct token);
@@ -2321,11 +2360,11 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 string_token->size = stringified_arguments[replacement->stringify_index].size;                
                 string_token->string_hash = 0;
                 
-                struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-                node->tokens.data   = string_token;
-                node->tokens.amount = 1;
-                
-                sll_push_back(new_nodes, node);
+                struct token_array token_array = {.data = string_token, .size = 1};
+                define_token_stack_at->tokens = token_array;
+                define_token_stack_at->at = 0;
+                define_token_stack_at->define_to_reenable_on_exit = 0;
+                define_token_stack_at -= 1;
             }break;
             case DEFINE_REPLACEMENT_hashhash:{
                 
@@ -2344,10 +2383,11 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     }else if(arg_tokens.amount == 1){
                         prefix_token = arg_tokens.data;
                     }else{
-                        struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-                        node->tokens.data   = arg_tokens.data;
-                        node->tokens.amount = arg_tokens.amount - 1;
-                        sll_push_back(new_nodes, node);
+                        struct token_array token_array = {.data = arg_tokens.data, .size = arg_tokens.amount - 1};
+                        define_token_stack_at->tokens = token_array;
+                        define_token_stack_at->at = 0;
+                        define_token_stack_at->define_to_reenable_on_exit = 0;
+                        define_token_stack_at -= 1;
                         
                         prefix_token = arg_tokens.data + arg_tokens.amount - 1;
                     }
@@ -2357,8 +2397,8 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     // thus we have to lookup the _prefix_token_ here, from the previous tokens.
                     
                     while(true){
-                        struct token_stack_node *last = new_nodes.last;
-                        assert(last);
+                        assert(context->token_stack.size > (define_token_stack_at + 1) - context->token_stack.nodes);
+                        struct token_stack_node *last = define_token_stack_at + 1;
                         
                         for(smm i = last->tokens.amount - 1; i >= 0; i--){
                             struct token *token = last->tokens.data + i;
@@ -2374,23 +2414,11 @@ func struct token *expand_define(struct context *context, struct token *token_to
                         
                         if(prefix_token) break;
                         
-                        struct token_stack_node *prev_node = null;
-                        
-                        // yikes, we could additionally keep these in an array, to make this O(1).
-                        for(struct token_stack_node *it = new_nodes.first; it; it = it->next){
-                            if(it->next == last){
-                                prev_node = it;
-                                break;
-                            }
-                        }
-                        assert(prev_node);
-                        
-                        new_nodes.last = prev_node;
-                        prev_node->next = null;
+                        define_token_stack_at += 1;
                     }
                 }
                 
-                struct token_stack_node *postfix_node = null;
+                struct token_array postfix_array = zero_struct;
                 
                 if(replacement->postfix_argument != -1){
                     struct token_array arg_tokens = argument_token_arrays[replacement->postfix_argument];
@@ -2402,9 +2430,8 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     }else{
                         postfix_token = arg_tokens.data;
                         
-                        postfix_node = push_struct(&context->scratch, struct token_stack_node);
-                        postfix_node->tokens.data   = arg_tokens.data   + 1;
-                        postfix_node->tokens.amount = arg_tokens.amount - 1;
+                        postfix_array.data   = arg_tokens.data   + 1;
+                        postfix_array.amount = arg_tokens.amount - 1;
                     }
                 }else{
                     postfix_token = replacement->postfix_token;
@@ -2427,17 +2454,28 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     // @note: amount can be 0 for 
                     //            #define C(a,b) a##b
                     //            C(,)
-                    struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-                    node->tokens = tokens;
-                    
-                    sll_push_back(new_nodes, node);
+                    define_token_stack_at->tokens = tokens;
+                    define_token_stack_at->at = 0;
+                    define_token_stack_at->define_to_reenable_on_exit = 0;
+                    define_token_stack_at -= 1;
                 }
                 
-                if(postfix_node){
-                    sll_push_back(new_nodes, postfix_node);
+                if(postfix_array.data){
+                    define_token_stack_at->tokens = postfix_array;
+                    define_token_stack_at->at = 0;
+                    define_token_stack_at->define_to_reenable_on_exit = 0;
+                    define_token_stack_at -= 1;
                 }
             }break;
+            invalid_default_case();
         }
+    }
+    
+    while(define_token_stack_at >= context->token_stack.nodes + define_token_stack_start){
+        define_token_stack_at->tokens.size = 0;
+        define_token_stack_at->at = 0;
+        define_token_stack_at->define_to_reenable_on_exit = 0;
+        define_token_stack_at -= 1;
     }
     
     // 
@@ -2448,7 +2486,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
     //  The resulting token sequence is rescanned along with all subsequent preprocessing
     //  tokens of the source file, for more macro names to replace."
     
-    if(!sll_is_empty(new_nodes)){
+    if(define_token_stack_count){
         
         // Disable the define during the rescan.
         // 
@@ -2459,18 +2497,14 @@ func struct token *expand_define(struct context *context, struct token *token_to
         //  
         
         define->is_disabled = true;
-        new_nodes.last->define_to_reenable_on_exit = define;
+        
+        context->token_stack.nodes[define_token_stack_start].define_to_reenable_on_exit = define;
         
         if(context->define_depth == 0){
             assert(!context->macro_expansion_token);
             context->macro_expansion_token = macro_expansion_site;
         }
         context->define_depth++;
-        
-        // 
-        // Push the new_nodes to the front of the token_stack so we will re-scan them.
-        // 
-        sll_push_front_list(context->token_stack, new_nodes);
     }
     
     return null;
@@ -3369,9 +3403,7 @@ func void maybe_push_file_to_include_stack(struct context *context, struct file 
         atomic_preincrement(&file->amount_of_times_included);
         
         if(tokens.amount){
-            struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-            node->tokens = tokens;
-            sll_push_front(context->token_stack, node);
+            push_to_token_stack(context, tokens, 0, null);
         }
     }
 }
@@ -3400,17 +3432,20 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
         struct token_array array = main_file->tokens;
         if(context->error || array.size == 0) return (struct token_array)zero_struct;
         
-        sll_clear(context->token_stack);
-        struct token_stack_node *node = push_struct(&context->scratch, struct token_stack_node);
-        node->tokens = array;
-        sll_push_front(context->token_stack, node);
+        // 
+        // Initialize the token stack.
+        // 
+        context->token_stack.capacity = 0x100;
+        context->token_stack.size = 0;
+        context->token_stack.blocked_size = 0;
+        context->token_stack.nodes = push_uninitialized_data(&context->scratch, struct token_stack_node, 0x100);
+        
+        push_to_token_stack(context, array, 0, null);
         
         // 
         // Push the predefined tokens as the first thing to be parsed!.
         // 
-        struct token_stack_node *predefines_node = push_struct(&context->scratch, struct token_stack_node);
-        predefines_node->tokens = globals.predefined_tokens;
-        sll_push_front(context->token_stack, predefines_node);
+        push_to_token_stack(context, globals.predefined_tokens, 0, null);
     }
     
     struct memory_arena *scratch = &context->scratch;
@@ -3963,9 +3998,10 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     }
                     
                     struct replacement_list replacement_list = zero_struct;
-                    u32 define_amount   = 0;
+                    smm define_amount   = 0;
                     smm stringify_count = 0;
                     struct token *define_tokens = null;
+                    smm token_stack_node_count = 0;
                     
                     // :newline_at_the_end_of_the_file
                     // 
@@ -3994,6 +4030,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     replacement->prefix_argument  = arg->argument_index;
                                     replacement->postfix_argument = -1;
                                     
+                                    token_stack_node_count += 3; // Prefix, merged, postfix.
+                                    
                                     if(peek_token_raw(context, TOKEN_newline)){
                                         report_error(context, hashhash, "'##' at the end of a macro replacement list is illegal.");
                                         goto end;
@@ -4016,6 +4054,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     replacement->argument_index = arg->argument_index;
                                     replacement->argument       = arg;
                                     replacement->needs_to_be_expanded_counter = arg->needs_to_be_expanded_count;
+                                    
+                                    token_stack_node_count += 1;
                                 }
                                 sll_push_back(replacement_list, replacement);
                             }
@@ -4040,6 +4080,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             replacement->kind = DEFINE_REPLACEMENT_hash;
                             replacement->stringify_index = arg->stringify_index;
                             
+                            token_stack_node_count += 1;
+                            
                             sll_push_back(replacement_list, replacement);
                         }else if(peek_token_raw(context, TOKEN_hashhash)){
                             handled = true;
@@ -4054,6 +4096,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             replacement->kind = DEFINE_REPLACEMENT_hashhash;
                             replacement->prefix_argument  = -1;
                             replacement->postfix_argument = -1;
+                            
+                            token_stack_node_count += 3; // Prefix, merged, postfix.
                             
                             replacement->postfix_token = next_token_raw(context);
                             
@@ -4092,6 +4136,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 replacement->kind = DEFINE_REPLACEMENT_tokens;
                                 sll_push_back(replacement_list, replacement);
                                 
+                                token_stack_node_count += 1;
+                                
                                 //
                                 // Then fill out the token array!
                                 //
@@ -4125,6 +4171,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         new_node->stringify_count    = stringify_count;
                         new_node->is_function_like   = is_function_like;
                         new_node->is_varargs         = is_varargs;
+                        new_node->token_stack_node_count = token_stack_node_count;
                         
                         register_define(context, new_node);
                     }else{
@@ -4262,6 +4309,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             redecl->stringify_count    = stringify_count;
                             redecl->is_function_like   = is_function_like;
                             redecl->is_varargs         = is_varargs;
+                            redecl->token_stack_node_count = token_stack_node_count;
                         }
                     }
                     

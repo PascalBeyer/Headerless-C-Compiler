@@ -708,8 +708,18 @@ struct context{
     } pragma_once_file_list;
     
     struct{
-        struct token_stack_node *first;
-        struct token_stack_node *last;
+        struct token_stack_node{
+            // WARNING: We explicitly initialize all of the members of this struct in some places instead of zero initializing it. Initialize with `push_to_token_stack`.
+            struct token_array tokens;
+            smm at;
+            
+            struct define_node *define_to_reenable_on_exit;
+        } *nodes;
+        
+        smm size;
+        smm blocked_size; // For argument expansion, we want to use the same stack, but "block" the previous tokens from being accessed.
+        smm capacity;
+        
     } token_stack;
     
     struct static_if_evaluate_stack_node{
