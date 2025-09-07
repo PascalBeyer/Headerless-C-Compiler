@@ -54,15 +54,18 @@ struct sleeper_node{
     union{
         struct{
             struct token *token;
-            struct work_queue_entry *first_sleeper;
+            u64 first_sleeper_and_sleep_purpose; // work_queue_entry * | sleep_purpose
         };
         m128 mem;
     };
 };
 
-enum {
+enum sleep_purpose{
     SLEEP_on_decl,
+    SLEEP_on_array_size,
     SLEEP_on_struct,
+    
+    SLEEP_PURPOSE_mask = 0x3,
 };
 
 struct sleeper_table{
@@ -1335,7 +1338,9 @@ func void sleeper_table_maybe_grow(struct sleeper_table *table){
                     
                     struct token *token = node->token;
                     
-                    u64 slot = token->string_hash & table->mask;
+                    enum sleep_purpose sleep_purpose = node->first_sleeper_and_sleep_purpose & SLEEP_PURPOSE_mask;
+                    
+                    u64 slot = (token->string_hash + 0x1337 * sleep_purpose) & table->mask;
                     for(u64 slot_offset = 0; slot_offset < table->capacity; slot_offset++){
                         struct sleeper_node *new_node = table->nodes + ((slot + slot_offset) & table->mask);
                         if(new_node->token) continue;
@@ -1354,7 +1359,7 @@ func void sleeper_table_maybe_grow(struct sleeper_table *table){
     }
 }
 
-func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry *entry, struct token *token){
+func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry *entry, struct token *token, enum sleep_purpose sleep_purpose){
     sleeper_table_maybe_grow(table);
     
     atomic_preincrement(&table->threads_in_flight);
@@ -1362,12 +1367,12 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
     assert(token);
     assert(entry);
     
-    u64 index = token->string_hash & table->mask;
+    u64 index = (token->string_hash + 0x1337 * sleep_purpose) & table->mask;
     assert(index < table->capacity);
     
     struct sleeper_node to_insert;
     to_insert.token = token;
-    to_insert.first_sleeper = entry;
+    to_insert.first_sleeper_and_sleep_purpose = (u64)entry | sleep_purpose;
     entry->next = null;
     
     for(u32 i = 0; i < table->capacity; i++){
@@ -1376,23 +1381,25 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
             
             struct token *test_token = node->token;
             
-            if(atoms_match(test_token->atom, token->atom)){
-                // add entry to the list 'node->first_sleeper' atomically
-                struct work_queue_entry *list;
+            if(atoms_match(test_token->atom, token->atom) && (node->first_sleeper_and_sleep_purpose & SLEEP_PURPOSE_mask) == sleep_purpose){
+                // Add entry to the list 'node->first_sleeper_and_sleep_purpose' atomically.
+                u64 entry_and_sleep_purpose = (u64)entry | sleep_purpose;
+                
+                u64 first_sleeper_and_sleep_purpose;
                 do{
-                    list = atomic_load(struct work_queue_entry*, node->first_sleeper);
-                    if(!list){
+                    first_sleeper_and_sleep_purpose = atomic_load(u64, node->first_sleeper_and_sleep_purpose);
+                    if(!(first_sleeper_and_sleep_purpose & ~SLEEP_PURPOSE_mask)){
                         // @note: first_sleeper == null means that the node has been "deleted".
                         // if we deleted the entry within the time it took to go to sleep, we requeue it
                         assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
                         work_queue_add(&globals.work_queue_parse_global_scope_entries, entry);
-                        
                         atomic_predecrement(&table->threads_in_flight);
                         return;
                     }
                     
+                    struct work_queue_entry *list = (struct work_queue_entry*)(first_sleeper_and_sleep_purpose & ~SLEEP_PURPOSE_mask);
                     entry->next = list;
-                }while(atomic_compare_and_swap(&node->first_sleeper, entry, list) != list);
+                }while(atomic_compare_and_swap_u64(&node->first_sleeper_and_sleep_purpose, entry_and_sleep_purpose, first_sleeper_and_sleep_purpose) != first_sleeper_and_sleep_purpose);
                 
                 atomic_predecrement(&table->threads_in_flight);
                 return;
@@ -1413,44 +1420,43 @@ func void sleeper_table_add(struct sleeper_table *table, struct work_queue_entry
     invalid_code_path;
 }
 
-func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, struct token *token){
+func u64 sleeper_table_delete(struct sleeper_table *table, struct token *token, enum sleep_purpose sleep_purpose){
     sleeper_table_maybe_grow(table);
     atomic_preincrement(&table->threads_in_flight);
     
     assert(token);
     
-    u64 index = token->string_hash & table->mask;
+    u64 index = (token->string_hash + 0x1337 * sleep_purpose) & table->mask;
     assert(index < table->capacity);
     
     struct sleeper_node to_insert;
     to_insert.token = token;
-    to_insert.first_sleeper = 0;
+    to_insert.first_sleeper_and_sleep_purpose = sleep_purpose;
     
     for(u64 i = 0; i < table->capacity; i++){
         struct sleeper_node *node = table->nodes + index;
         if(!node->token){
             b32 success = atomic_compare_and_swap_128(&node->mem, to_insert.mem, &(m128)zero_struct);
-            if(success) {
+            if(success){
                 atomic_add((s64 *)&table->amount_of_nodes, 1);
                 atomic_predecrement(&table->threads_in_flight);
-                return null;
+                return 0;
             }
             else continue;
         }
         
         struct token *test_token = node->token;
         
-        if(atoms_match(test_token->atom, token->atom)){
-            // @cleanup: do we actually have to do this?
-            // @cleanup: can we just put node->queue = 0?
+        if(atoms_match(test_token->atom, token->atom) && (node->first_sleeper_and_sleep_purpose & SLEEP_PURPOSE_mask) == sleep_purpose){
+            
             struct sleeper_node compare = to_insert;
             b32 already_done = atomic_compare_and_swap_128(&node->mem, to_insert.mem, &compare.mem);
             if(already_done) {
                 atomic_predecrement(&table->threads_in_flight);
-                return null; // someone beat us to the delete
+                return 0; // someone beat us to the delete
             }
             
-            struct work_queue_entry *ret = compare.first_sleeper;
+            u64 ret = compare.first_sleeper_and_sleep_purpose;
             b32 success = atomic_compare_and_swap_128(&node->mem, to_insert.mem, &compare.mem);
             if(success){
                 atomic_predecrement(&table->threads_in_flight);
@@ -1465,12 +1471,13 @@ func struct work_queue_entry *sleeper_table_delete(struct sleeper_table *table, 
     invalid_code_path;
 }
 
-func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sleep_on){
+func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sleep_on, enum sleep_purpose sleep_purpose){
     
     assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
     
-    struct work_queue_entry *first = sleeper_table_delete(sleeper_table, sleep_on);
-    if(first){
+    u64 first_sleeper_and_sleep_purpose = sleeper_table_delete(sleeper_table, sleep_on, sleep_purpose);
+    if(first_sleeper_and_sleep_purpose & ~SLEEP_PURPOSE_mask){
+        struct work_queue_entry *first = (struct work_queue_entry *)(first_sleeper_and_sleep_purpose & ~SLEEP_PURPOSE_mask);
         struct work_queue_entry *last = first;
         smm amount = 1;
         for(; last->next; last = last->next) amount++;
@@ -1964,7 +1971,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
         
         struct sleeper_table *sleeper_table = declaration_is_static ? &compilation_unit->static_sleeper_table : &globals.declaration_sleeper_table;
         
-        wake_up_sleepers(sleeper_table, decl->identifier);
+        wake_up_sleepers(sleeper_table, decl->identifier, SLEEP_on_decl);
     }
     return decl;
 }
@@ -2110,7 +2117,7 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         return;
     }
     
-    wake_up_sleepers(&globals.compound_sleeper_table, ident);
+    wake_up_sleepers(&globals.compound_sleeper_table, ident, SLEEP_on_struct);
 }
 
 func void parser_emit_memory_location(struct context *context, struct ast_declaration *decl){
@@ -3165,14 +3172,14 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
         assert(!parse_work->sleeping_ident || parse_work->sleeping_ident->type == TOKEN_identifier);
         
         // @note: this logic needs to match wake_up_sleepers
-        struct sleeper_table *sleeper_table = (context->sleep_purpose == SLEEP_on_decl) ? &globals.declaration_sleeper_table : &globals.compound_sleeper_table;
+        struct sleeper_table *sleeper_table = (context->sleep_purpose == SLEEP_on_struct) ? &globals.compound_sleeper_table : &globals.declaration_sleeper_table;
         
-        if(context->sleep_purpose == SLEEP_on_decl){
+        if(context->sleep_purpose != SLEEP_on_struct){
             b32 is_static = compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(context->current_compilation_unit, sleep_on->atom) == IDENTIFIER_is_static;
             if(is_static) sleeper_table = &context->current_compilation_unit->static_sleeper_table;
         }
         
-        sleeper_table_add(sleeper_table, work, sleep_on);
+        sleeper_table_add(sleeper_table, work, sleep_on, context->sleep_purpose);
         return;
     }
     
@@ -4692,7 +4699,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     smm thread_count = 1;
     if(globals.cli_options.thread_count_specified && globals.cli_options.MP){
-        print("Error: Found both a /MT and a /thread_count %llu option.\n", globals.cli_options.thread_count);
+        print("Error: Found both a /MP and a /thread_count %llu option.\n", globals.cli_options.thread_count);
         return 1;
     }
     

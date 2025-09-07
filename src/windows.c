@@ -599,6 +599,11 @@ func smm atomic_compare_and_swap_smm(smm *dest, smm source, smm comparand){
     return _InterlockedCompareExchange64((s64 *)dest, (s64)source, (s64)comparand);
 }
 
+func u64 atomic_compare_and_swap_u64(u64 *dest, u64 source, u64 comparand){
+    return _InterlockedCompareExchange64((s64 *)dest, (s64)source, (s64)comparand);
+}
+
+
 // returns 1 on success
 // returns 0 on fail and overrides *comparand with *dest
 func b32 atomic_compare_and_swap_128(m128 *dest, m128 source, m128 *comparand){

@@ -2763,6 +2763,13 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
             
             // Reset the trailing array size, to not overallocate later on.
             compound_literal->trailing_array_size = 0;
+            
+            if(decl->flags & DECLARATION_FLAGS_is_global){
+                struct sleeper_table *sleeper_table = &globals.declaration_sleeper_table;
+                if(decl->flags & DECLARATION_FLAGS_is_static) sleeper_table = &decl->compilation_unit->static_sleeper_table;
+                
+                wake_up_sleepers(sleeper_table, decl->identifier, SLEEP_on_array_size);
+            }
         }
         
     }else{
@@ -5727,7 +5734,11 @@ case NUMBER_KIND_##type:{ \
                     //           and the parsing of the initializer, resulting in this error.
                     //           
                     // :Error
-                    report_error(context, stack_entry->token, "'sizeof' cannot be applied to array of unknown size.");
+                    if(!context->current_function && operand.ir->kind == IR_identifier){
+                        parser_sleep(context, operand.token, SLEEP_on_array_size);
+                    }else{
+                        report_error(context, stack_entry->token, "'sizeof' cannot be applied to array of unknown size.");
+                    }
                     return operand;
                 }
                 

@@ -63,11 +63,13 @@ func void report_errors_for_unresolved_sleepers(struct context *context){
         
         for(u32 sleeper_table_index = 0; sleeper_table_index < sleeper_table->capacity; sleeper_table_index++){
             struct sleeper_node *sleeper_node = sleeper_table->nodes + sleeper_table_index;
-            if(!sleeper_node->first_sleeper) continue;
+            struct work_queue_entry *first_sleeper = (struct work_queue_entry *)(sleeper_node->first_sleeper_and_sleep_purpose & ~SLEEP_PURPOSE_mask);
+            enum sleep_purpose sleep_purpose = sleeper_node->first_sleeper_and_sleep_purpose & SLEEP_PURPOSE_mask;
+            if(!first_sleeper) continue;
             
             struct token *sleeping_on = sleeper_node->token;
             
-            for(struct work_queue_entry *work = sleeper_node->first_sleeper; work; work = work->next){
+            for(struct work_queue_entry *work = first_sleeper; work; work = work->next){
                 // 
                 // Find out who is sleeping. This can be null meaning that we don't know yet. E.g.:
                 //      imt foo(){}
