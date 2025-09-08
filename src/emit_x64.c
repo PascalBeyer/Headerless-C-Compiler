@@ -3688,8 +3688,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     }
                 }
                 
-                // @cleanup: We can detect this here ourselves.
-                if(!context->should_not_emit_ret_jump){
+                
+                if(ir_arena_at != current_function->end_in_ir_arena){
                     // :function_epilog
                     // jump to the function epilog, this does not have to happen, when we are already at the end of a function
                     jump_context_emit(context, context->jump_to_function_epilog, JUMP_CONTEXT_jump_always, COMP_none);
