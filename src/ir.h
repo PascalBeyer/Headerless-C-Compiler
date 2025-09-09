@@ -70,6 +70,9 @@ enum ir_kind{
     IR_jump_if_true,
     IR_jump_if_false,
     
+    IR_start_exception_block,
+    IR_end_exception_block,
+    
     IR_switch,
     IR_case,
     
@@ -683,6 +686,12 @@ struct ir_string_literal{
     enum string_kind string_kind;
     u32 relative_virtual_address;
     u32 symbol_table_index; // needed for .obj (this should maybe be named unique_string_index as that is what it realy is)
+};
+
+
+struct ir_exception_marker{
+    struct ir base;
+    struct seh_exception_handler *handler;
 };
 
 #pragma pack(pop)

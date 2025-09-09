@@ -525,6 +525,7 @@ static struct{
         struct token *token;
     } *globally_referenced_declarations;
     
+    
     // 
     // Basic types:
     // @WARNING: The non-atomic version need to stay in the same order as the atomic versions, 
@@ -571,6 +572,8 @@ static struct{
     struct ast_type *typedef_u8_pointer;
     struct ast_type *typedef_s8_pointer;
     
+    struct ast_function_type *seh_filter_funtion_type;
+    
     //
     // Invalid/Default values
     //
@@ -583,6 +586,8 @@ static struct{
     
     struct ast_declaration *tls_index_declaration;
     
+    struct token *seh_used;
+    struct ast_function *C_specific_handler_declaration;
 } globals;
 
 //_____________________________________________________________________________________________________________________
@@ -758,6 +763,10 @@ struct context{
     // hence we don't care. But it means we have to reset this value in 'reset_context'.
     smm in_conditional_expression;
     int current_statement_returns_a_value;
+    
+    smm in_exception_filter;
+    smm in_finally_block;
+    smm filter_function_index;
     
     struct ast_stack_entry{
         enum ast_kind ast_kind;
@@ -956,7 +965,7 @@ func void emit_patch(struct context *context, enum patch_kind kind, struct ir *s
 // Reference graph.
 
 func void add_global_reference_for_declaration(struct memory_arena *arena, struct ast_declaration *declaration){
-    assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries);
+    // assert(globals.compile_stage == COMPILE_STAGE_parse_global_scope_entries); This is not true anymore because of __C_specific_handler.
     
     struct declaration_reference_node *node = push_struct(arena, struct declaration_reference_node);
     node->declaration = declaration;
@@ -1492,6 +1501,18 @@ func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sl
 //_____________________________________________________________________________________________________________________
 #include "preprocess.c"
 //_____________________________________________________________________________________________________________________
+
+func struct token *push_dummy_token(struct memory_arena *arena, struct atom token_atom, enum token_type token_type){
+    
+    struct token *token = push_struct(arena, struct token);
+    token->type   = token_type;
+    token->atom   = token_atom;
+    token->file_index = -1; // invalid file index.
+    token->line   = 1;
+    token->column = 1;
+    
+    return token;
+}
 
 func struct parse_work *push_parse_work(struct context *context, struct token_array tokens, struct compilation_unit *compilation_unit, struct ast_function *function){
     struct parse_work *parse_work = push_uninitialized_struct(context->arena, struct parse_work); // @note: No need to zero, 'arena' never has any non-zero bytes.
@@ -2640,6 +2661,8 @@ func void reset_context(struct context *context){
     context->goto_list.first = context->goto_list.last = 0;
     context->label_list.first = context->label_list.last = 0;
     
+    context->filter_function_index = 0;
+    
     context->pragma_pack_stack.first = context->pragma_pack_stack.last = null;
 }
 
@@ -3477,19 +3500,7 @@ func u32 work_thread_proc(void *param){
 //_____________________________________________________________________________________________________________________
 // Setup code needed by main
 
-func struct token *push_dummy_token(struct memory_arena *arena, struct atom token_atom, enum token_type token_type){
-    
-    struct token *token = push_struct(arena, struct token);
-    token->type   = token_type;
-    token->atom   = token_atom;
-    token->file_index = -1; // invalid file index.
-    token->line   = 1;
-    token->column = 1;
-    
-    return token;
-}
-
-func void register_intrinsic_function_declaration(struct context *context, struct token *token, struct ast_function_type *type){
+func struct ast_declaration *register_intrinsic_function_declaration(struct context *context, struct token *token, struct ast_function_type *type){
     
     struct ast_function *declaration = push_uninitialized_struct(context->arena, struct ast_function); // @note: No need to zero, 'arena' never has any non-zero bytes.
     declaration->kind = IR_function;
@@ -3499,7 +3510,10 @@ func void register_intrinsic_function_declaration(struct context *context, struc
     declaration->compilation_unit = &globals.hacky_global_compilation_unit;
     declaration->as_decl.flags |= DECLARATION_FLAGS_is_intrinsic | DECLARATION_FLAGS_is_global;
     
-    ast_table_add_or_return_previous_entry(&globals.global_declarations, &declaration->kind, token);
+    struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(&globals.global_declarations, &declaration->kind, token);
+    if(redecl) return redecl;
+    
+    return &declaration->as_decl;
 }
 
 
@@ -4464,6 +4478,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
         void_pointer->base.alignment = 8;
         globals.typedef_void_pointer = &void_pointer->base;
         
+        struct ast_function_type *seh_filter_function_type = parser_type_push(context, function_type);
+        seh_filter_function_type->return_type = &globals.typedef_s32;
+        seh_filter_function_type->flags |= FUNCTION_TYPE_FLAGS_is_seh_filter;
+        globals.seh_filter_funtion_type = seh_filter_function_type;
+        
         globals.wake_event = CreateEventA(0, true, 0, 0);
         
         globals.declaration_sleeper_table = sleeper_table_create(1 << 8);
@@ -4537,6 +4556,44 @@ globals.typedef_##postfix = (struct ast_type){                                  
             register_intrinsic_function_declaration(context, token, type);
         }
         
+        {   // 
+            // void *_exception_info(void)
+            // 
+            
+            struct token *token = push_dummy_token(arena, atom_for_string(string("_exception_info")), TOKEN_identifier);
+            
+            struct ast_function_type *type = parser_type_push(context, function_type);
+            type->return_type = &void_pointer->base;
+            type->flags |= FUNCTION_TYPE_FLAGS_is_seh_intrinsic;
+            
+            register_intrinsic_function_declaration(context, token, type);
+        }
+        
+        {   // 
+            // unsigned __int32 _exception_code(void)
+            // 
+            
+            struct token *token = push_dummy_token(arena, atom_for_string(string("_exception_code")), TOKEN_identifier);
+            
+            struct ast_function_type *type = parser_type_push(context, function_type);
+            type->return_type = &globals.typedef_u32;
+            type->flags |= FUNCTION_TYPE_FLAGS_is_seh_intrinsic;
+            
+            register_intrinsic_function_declaration(context, token, type);
+        }
+        
+        {   // 
+            // int _abnormal_termination(void)
+            // 
+            
+            struct token *token = push_dummy_token(arena, atom_for_string(string("_abnormal_termination")), TOKEN_identifier);
+            
+            struct ast_function_type *type = parser_type_push(context, function_type);
+            type->return_type = &globals.typedef_s32;
+            type->flags |= FUNCTION_TYPE_FLAGS_is_seh_intrinsic;
+            
+            register_intrinsic_function_declaration(context, token, type);
+        }
         
         globals.invalid_identifier_token = push_dummy_token(arena, globals.invalid_identifier, TOKEN_identifier);
         
@@ -5065,7 +5122,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
         }
     }
     
-    
     //
     // At this point no more sleepers will get filled in.
     // So _if_ there are any, report them.
@@ -5100,7 +5156,71 @@ globals.typedef_##postfix = (struct ast_type){                                  
     assert(globals.work_queue_parse_functions.work_entries_in_flight == 0);
     if(globals.an_error_has_occurred) goto end;
     
+    
     // @cleanup: is there a good way here to assert that nothing is sleeping?
+    
+    
+    if(globals.seh_used){
+        
+        struct atom atom = atom_for_string(string("__C_specific_handler"));
+        
+        struct ast_declaration *decl = (struct ast_declaration *)ast_table_get(&globals.global_declarations, atom);
+        
+        if(decl && decl->assign_expr){
+            // We found a user-defined version, add a global reference to it!
+            add_global_reference_for_declaration(arena, decl);
+        }else{
+            
+            if(decl){
+                // It is not defined, but we already have it.
+            }else{
+                struct token *token = push_dummy_token(arena, atom, TOKEN_identifier);
+                
+                struct ast_function_type *type = parser_type_push(context, function_type);
+                type->return_type = &globals.typedef_s32;
+                
+                decl = register_intrinsic_function_declaration(context, token, type);
+                decl->flags &= ~DECLARATION_FLAGS_is_intrinsic;
+            }
+            
+            decl->flags |= DECLARATION_FLAGS_is_dllimport;
+            decl->flags |= DECLARATION_FLAGS_need_dllimport_stub_function;
+            decl->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
+            
+            struct dll_node *vcruntime = null;
+            
+            for(struct dll_node *dll = globals.dlls.first; dll; dll = dll->next){
+                if(string_match_case_insensitive(dll->name, string("ntdll.dll"))){
+                    vcruntime = dll;
+                    break;
+                }
+            }
+            
+            if(!vcruntime){
+                vcruntime = push_struct(arena, struct dll_node);
+                vcruntime->name = string("ntdll.dll");
+                sll_push_back(globals.dlls, vcruntime);
+                globals.dlls.amount += 1;
+            }
+            
+            struct dll_import_node *import_node = push_struct(arena, struct dll_import_node);
+            import_node->import_name = atom.string;
+            sll_push_back(vcruntime->import_list, import_node);
+            vcruntime->import_list.count += 1;
+            
+            if(decl->kind == AST_function){
+                ((struct ast_function *)decl)->dll_import_node = import_node;
+            }
+        }
+        
+        if(decl->kind != AST_function){
+            // :Error
+            report_error(context, decl->identifier, "__C_specific_handler defined as non-function. It is needed for Structured Exception Handling (SEH) (__try/__except).");
+        }else{
+            globals.C_specific_handler_declaration = (struct ast_function *)decl;
+        } 
+    }
+    
     
     stage_two_parsing_time = os_get_time_in_seconds() - stage_two_parsing_time;
     
@@ -5470,8 +5590,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
         }
         #endif
     }
-    
-    end_counter(context, report_error_for_undefined_functions_and_types);
     
     end:; 
     

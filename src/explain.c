@@ -65,6 +65,7 @@ func void report_errors_for_unresolved_sleepers(struct context *context){
             struct sleeper_node *sleeper_node = sleeper_table->nodes + sleeper_table_index;
             struct work_queue_entry *first_sleeper = (struct work_queue_entry *)(sleeper_node->first_sleeper_and_sleep_purpose & ~SLEEP_PURPOSE_mask);
             enum sleep_purpose sleep_purpose = sleeper_node->first_sleeper_and_sleep_purpose & SLEEP_PURPOSE_mask;
+            (void)sleep_purpose; // @cleanup: Probably use this for better errors?
             if(!first_sleeper) continue;
             
             struct token *sleeping_on = sleeper_node->token;

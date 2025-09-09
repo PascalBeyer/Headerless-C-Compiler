@@ -169,6 +169,10 @@ enum token_type{
     TOKEN_generic, // C11 _Generic
     TOKEN_thread_local, // C11 _Thread_local
     
+    TOKEN_seh_try,
+    TOKEN_seh_except,
+    TOKEN_seh_finally,
+    
     TOKEN_count,
     TOKEN_one_past_last_keyword = TOKEN_count,
 };
@@ -251,6 +255,11 @@ static struct{
     
     {const_string("_Generic"), TOKEN_generic},
     {const_string("_Thread_local"), TOKEN_thread_local},
+    
+    {const_string("__try"), TOKEN_seh_try},
+    {const_string("__except"), TOKEN_seh_except},
+    {const_string("__finally"), TOKEN_seh_finally},
+    
 };
 
 enum preprocessor_directive{
@@ -722,6 +731,8 @@ struct ast_compound_type{
 #define FUNCTION_TYPE_FLAGS_is_printlike  0x4
 #define FUNCTION_TYPE_FLAGS_is_inline_asm 0x8 // @cleanup: This should not be on the type.
 #define FUNCTION_TYPE_FLAGS_is_noreturn   0x10
+#define FUNCTION_TYPE_FLAGS_is_seh_intrinsic  0x20
+#define FUNCTION_TYPE_FLAGS_is_seh_filter  0x40
 struct ast_function_type{
     struct ast_type base;
     struct ast_type *return_type;
@@ -730,6 +741,13 @@ struct ast_function_type{
     b64 flags;
     
     struct ast_list argument_list;
+};
+
+struct seh_exception_handler{
+    struct seh_exception_handler *next;
+    u32 start_offset_in_function;
+    u32 end_offset_in_function;
+    struct ast_function *filter_function;
 };
 
 struct ast_function{
@@ -800,6 +818,7 @@ struct ast_function{
     u32 pushed_register_mask; // (1 << REGISTER_XXX) is set if we pushed that register in the prolog
     
     struct dll_import_node *dll_import_node;
+    struct seh_exception_handler *seh_exception_handler;
 };
 
 struct ast_label{

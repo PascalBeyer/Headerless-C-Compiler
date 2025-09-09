@@ -4647,6 +4647,20 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ir_arena_at += sizeof(struct ir);
             }break;
             
+            case IR_start_exception_block:{
+                struct ir_exception_marker *marker = (struct ir_exception_marker *)ir;
+                ir_arena_at += sizeof(*marker);
+                
+                marker->handler->start_offset_in_function = (u32)get_bytes_emitted(context);
+            }break;
+            
+            case IR_end_exception_block:{
+                struct ir_exception_marker *marker = (struct ir_exception_marker *)ir;
+                ir_arena_at += sizeof(*marker);
+                
+                marker->handler->end_offset_in_function = (u32)get_bytes_emitted(context);
+            }break;
+            
             default:{
                 
 #ifdef FUZZING

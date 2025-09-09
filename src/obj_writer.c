@@ -638,6 +638,9 @@ u32 register_all_types(struct memory_arena *arena, struct memory_arena *scratch,
             }
         }
     }
+    
+    register_type(&type_index_allocator, arena, scratch, &globals.seh_filter_funtion_type->base);
+    
     for(struct ast_list_node *function_node = defined_functions.first; function_node; function_node = function_node->next){
         struct ast_function *function = (struct ast_function *)function_node->value;
         
@@ -822,7 +825,7 @@ func void *push_unwind_information_for_function(struct memory_arena *arena, stru
     } *unwind_info = push_struct(arena, struct unwind_info);
     
     unwind_info->version = 1;
-    unwind_info->flags   = 0;
+    unwind_info->flags   = function->seh_exception_handler ? /*UNW_FLAG_EHANDLER*/1 : 0;
     unwind_info->size_of_prolog = (u8)(function->size_of_prolog);
     unwind_info->count_of_codes = 0;
     unwind_info->frame_register = REGISTER_BP;
@@ -880,6 +883,25 @@ func void *push_unwind_information_for_function(struct memory_arena *arena, stru
         // "The UNWIND_INFO structure must be DWORD aligned in memory."
         push_struct(arena, u16);
     }
+    
+    if(function->seh_exception_handler){
+        smm C_specific_handler_rva = globals.C_specific_handler_declaration->dll_import_node ? globals.C_specific_handler_declaration->dll_import_node->stub_relative_virtual_address : globals.C_specific_handler_declaration->relative_virtual_address;
+        
+        *push_struct(arena, u32) = (u32)C_specific_handler_rva; // Address of exception handler (__C_specific_handler)
+        u32 *count_dest = push_struct(arena, u32);
+        
+        u32 count = 0;
+        for(struct seh_exception_handler *handler = function->seh_exception_handler; handler; handler = handler->next, count++){
+            *push_struct(arena, u32) = (u32)(handler->start_offset_in_function + function->relative_virtual_address + function->size_of_prolog); // BeginAddress
+            *push_struct(arena, u32) = (u32)(handler->end_offset_in_function + function->relative_virtual_address + function->size_of_prolog);   // EndAddress
+            *push_struct(arena, u32) = (u32)handler->filter_function->relative_virtual_address;                       // HandlerAddress
+            *push_struct(arena, u32) = (u32)(handler->end_offset_in_function + function->relative_virtual_address + function->size_of_prolog);   // JumpTarget (assumed to be the same as EndAddress for now)
+        }
+        
+        *count_dest = count;
+    }
+    
+    
     
     return unwind_info;
 }

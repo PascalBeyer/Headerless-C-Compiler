@@ -5410,6 +5410,16 @@ case NUMBER_KIND_##type:{ \
                     context->current_statement_returns_a_value = 1;
                 }
                 
+                if(function_type->flags & FUNCTION_TYPE_FLAGS_is_seh_intrinsic){
+                    if(!context->in_exception_filter && (string_match(operand.token->string, string("_exception_info")) || string_match(operand.token->string, string("_exception_code")))){
+                        report_error(context, operand.token, "Cannot use '%.*s' outside of an exception filter.", operand.token->string.size, operand.token->string.data);
+                    }
+                    
+                    if(!context->in_finally_block && string_match(operand.token->string, string("_abnormal_termination"))){
+                        report_error(context, operand.token, "Cannot use '%.*s' outside of a __finally-block.", operand.token->string.size, operand.token->string.data);    
+                    }
+                }
+                
                 struct ir_function_call *call = push_uninitialized_struct(&context->ir_arena, struct ir_function_call);
                 call->base.kind = IR_function_call;
                 call->function_type = function_type;
@@ -9658,6 +9668,120 @@ func void parse_statement(struct context *context){
         
         case TOKEN_static_assert:{
             parse_static_assert(context, initial_token);
+        }break;
+        
+        case TOKEN_seh_try:{
+            
+            if(!globals.seh_used) globals.seh_used = initial_token;
+            
+            struct seh_exception_handler *seh_exception_handler = push_struct(context->arena, struct seh_exception_handler);
+            seh_exception_handler->next = context->current_function->seh_exception_handler;
+            context->current_function->seh_exception_handler = seh_exception_handler;
+            
+            struct ir_exception_marker *start_marker = push_struct(&context->ir_arena, struct ir_exception_marker);
+            start_marker->base.kind = IR_start_exception_block;
+            start_marker->handler = seh_exception_handler;
+            
+            struct ast_scope *try_scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_none);
+            parse_statement(context);
+            parser_scope_pop(context, try_scope);
+            
+            if(peek_token(context, TOKEN_seh_except)){
+                
+                struct token *seh_except = next_token(context);
+                
+                expect_token(context, TOKEN_open_paren, "Expected '(' after '__except'.");
+                
+                struct ir_skip *ir_skip = push_uninitialized_struct(&context->ir_arena, struct ir_skip);
+                ir_skip->base.kind = IR_skip;
+                
+                {
+                    context->in_exception_filter += 1;
+                    struct ast_scope *filter_scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_none);
+                    
+                    struct ast_function *filter_function = push_uninitialized_struct(context->arena, struct ast_function);
+                    filter_function->kind = IR_function;
+                    filter_function->type = globals.seh_filter_funtion_type;
+                    filter_function->identifier = push_dummy_token(context->arena, atom_for_string(push_format_string(context->arena, "%.*s$filt$%d", context->current_function->identifier->size, context->current_function->identifier->data, context->filter_function_index)), TOKEN_identifier);
+                    filter_function->offset_in_text_section = -1;
+                    filter_function->compilation_unit = context->current_compilation_unit;
+                    filter_function->scope = filter_scope;
+                    
+                    filter_function->start_in_ir_arena = arena_current(&context->ir_arena);
+                    
+                    struct expr filter_expression = parse_expression(context, /*skip_comma_expression*/false);
+                    
+                    if(filter_expression.resolved_type != &globals.typedef_s32){
+                        // They apperantly allow any integer type...
+                        struct string type_string = push_type_string(&context->scratch, &context->scratch, filter_expression.resolved_type);
+                        report_error(context, filter_expression.token, "'__expect' filter expression must be of type 'int', but is of type '%.*s'.", type_string.size, type_string.data);
+                    }
+                    
+                    push_ir(context, IR_return);
+                    
+                    filter_function->end_in_ir_arena = arena_current(&context->ir_arena);
+                    
+                    {
+                        // 
+                        // Push a new reference to the filter function on the function.
+                        // 
+                        struct declaration_reference_node *new_reference = push_uninitialized_struct(context->arena, struct declaration_reference_node);
+                        new_reference->declaration = &filter_function->as_decl;
+                        new_reference->token = seh_except;
+                        
+                        sll_push_back(context->current_function->referenced_declarations, new_reference);
+                    }
+                    
+                    parser_scope_pop(context, filter_scope);
+                    ast_list_append(&context->local_functions, context->arena, &filter_function->kind);
+                    
+                    seh_exception_handler->filter_function = filter_function;
+                    
+                    context->in_exception_filter -= 1;
+                }
+                
+                ir_skip->size_to_skip = (u32)(arena_current(&context->ir_arena) - (u8*)ir_skip);
+                
+                expect_token(context, TOKEN_closed_paren, "Expected ')' after '__except'-expression.");
+                
+                smm label_index = context->jump_label_index++;
+                
+                struct ir_jump_node *end_jump = push_jump(context, IR_jump);
+                end_jump->label_number = label_index;
+                
+                struct ir_exception_marker *end_marker = push_struct(&context->ir_arena, struct ir_exception_marker);
+                end_marker->base.kind = IR_end_exception_block;
+                end_marker->handler = seh_exception_handler;
+                
+                struct ast_scope *except_scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_none);
+                parse_statement(context);
+                parser_scope_pop(context, except_scope);
+                
+                struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
+                end_label->label_number = label_index;
+                
+            }else if(peek_token_eat(context, TOKEN_seh_finally)){
+                
+                struct ir_exception_marker *end_marker = push_struct(&context->ir_arena, struct ir_exception_marker);
+                end_marker->base.kind = IR_end_exception_block;
+                end_marker->handler = seh_exception_handler;
+                
+                
+                // @cleanup: There is some fucked up things in here regarding goto.
+                
+                context->in_finally_block += 1;
+                
+                struct ast_scope *finally_scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_none);
+                parse_statement(context);
+                parser_scope_pop(context, finally_scope);
+                
+                context->in_finally_block -= 1;
+                
+            }else{
+                report_error(context, get_current_token_for_error_report(context), "Expected either __except or __finally at the end of __try-block.");
+            }
+            
+            needs_semicolon = false;
         }break;
         
         default:{
