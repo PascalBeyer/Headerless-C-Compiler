@@ -6,12 +6,14 @@
 // process when it returns from `wmain`.
 // 
 
-#pragma comment(lib, "kernel32")
-__declspec(dllimport) __declspec(noreturn) void ExitProcess(unsigned int uExitCode);
+
+#include "pre_main_common.c"
 
 int wmain(void);
 
 int _start(void){
+    
+    pre_main_common();
     
     int exit_code = wmain();
     ExitProcess((unsigned int)exit_code);

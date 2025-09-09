@@ -1,4 +1,6 @@
 
+#include "pre_main_common.c"
+
 #pragma comment(lib, "kernel32")
 
 static typedef unsigned short wchar_t;
@@ -39,6 +41,9 @@ __declspec(dllimport) void GetStartupInfoW(struct _STARTUPINFOW *lpStartupInfo);
 int wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd);
 
 void _start(void){
+    
+    pre_main_common();
+    
     struct _STARTUPINFOW StartupInfo;
     GetStartupInfoW(&StartupInfo);
     

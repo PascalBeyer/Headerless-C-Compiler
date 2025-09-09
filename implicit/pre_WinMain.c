@@ -1,5 +1,5 @@
 
-#pragma comment(lib, "kernel32")
+#include "pre_main_common.c"
 
 static typedef void * HANDLE;
 static typedef struct HINSTANCE__ *HINSTANCE;
@@ -38,6 +38,9 @@ __declspec(dllimport) void GetStartupInfoA(struct _STARTUPINFOA *lpStartupInfo);
 int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd);
 
 void _start(void){
+    
+    pre_main_common();
+    
     struct _STARTUPINFOA StartupInfo;
     GetStartupInfoA(&StartupInfo);
     

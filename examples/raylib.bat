@@ -11,5 +11,5 @@ cd build
 cmake .. -G Ninja -D CMAKE_C_COMPILER="C:\Projects\Headerless-C-Compiler\hlc.exe" || exit /b 1
 ninja || exit /b 1
 
-:: cd ..\..
+cd ..\..
 
