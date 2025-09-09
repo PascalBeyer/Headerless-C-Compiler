@@ -8,6 +8,30 @@ static void read_pdb(struct memory_arena *scratch, struct os_file pdb_file);
 //_____________________________________________________________________________________________________________________
 // PDB helpers
 
+// For reference see `HashPbCb` in `microsoft-pdb/PDB/include/misc.h`.
+u32 pdb_hash_index(u8 *bytes, size_t size, u32 modulus){
+    u32 hash = 0;
+    
+    // Xor the bytes by dword lanes.
+    for(u32 index = 0; index < size/sizeof(u32); index++){
+        hash ^= ((u32 *)bytes)[index];
+    }
+    
+    // Xor remaining bytes in.
+    if(size & 2) hash ^= *(u16 *)(bytes + (size & ~3));
+    if(size & 1) hash ^= *(u8 *) (bytes + (size -  1));
+    
+    // Make sure the hash is case insensitive.
+    hash |= 0x20202020;
+    
+    // Mix the lanes.
+    hash ^= (hash >> 11);
+    hash ^= (hash >> 16);
+    
+    // Take the modulus and return the hash.
+    return (hash % modulus);
+}
+
 
 // based on hashStringV1 in llvm, which is based on Hasher::lhashPbCb
 func u32 pdb_string_hash(struct string string){
@@ -39,6 +63,184 @@ func u32 pdb_string_hash(struct string string){
     ret ^= (ret >> 16);
     
     return ret;
+}
+
+struct codeview_type_record_header{
+    u16 length;
+    u16 kind;
+};
+
+// returns -1 on failiure.
+int pdb_numeric_leaf_size_or_error(u16 numeric_leaf){
+    
+    if(!(numeric_leaf & 0x8000)) return 2;
+    
+    //
+    // @cleanup: implement this more correctly
+    //
+    
+    switch(numeric_leaf){
+        case 0x8000:{ // LF_CHAR
+            return 2 + 1;
+        }break;
+        case 0x8001:  // LF_SHORT
+        case 0x8002:{ // LF_USHORT
+            return 2 + 2;
+        }break;
+        case 0x8005: // LF_REAL32
+        case 0x8003: // LF_LONG
+        case 0x8004:{ // LF_ULONG
+            return 2 + 4;
+        }break;
+        
+        case 0x8009: // LF_QUADWORD
+        case 0x800a: // LF_UQUADWORD
+        case 0x8006:{ // LF_REAL64
+            return 2 + 8;
+        }break;
+        
+        case 0x8008: // LF_REAL128
+        
+        // case 0x8007: // LF_REAL80
+        // case 0x800b: // LF_REAL48
+        // case 0x800c: // LF_COMPLEX32
+        // case 0x800d: // LF_COMPLEX64
+        // case 0x800e: // LF_COMPLEX80
+        // case 0x800f: // LF_COMPLEX128
+        // case 0x8010: // LF_VARSTRING
+        
+        case 0x8017: // LF_OCTWORD
+        case 0x8018:{ // LF_UOCTWORD
+            return 2 + 16;
+        }break;
+        
+        // case 0x8019: // LF_DECIMAL
+        // case 0x801a: // LF_DATE
+        // case 0x801b: // LF_UTF8STRING
+        // case 0x801c: // LF_REAL16
+        default:{
+            return -1;
+        }break;
+    }
+    
+    // unreachable!
+    // return -1;
+}
+
+char *pdb_type_record__get_name(u8 *type_record){
+    
+    struct codeview_type_header{
+        u16 length;
+        u16 kind;
+    } *type_header = (void *)type_record;
+    
+    char *type_data = (char *)(type_header + 1);
+    switch(type_header->kind){
+        
+        case /*LF_CLASS2*/0x1608:
+        case /*LF_INTERFACE2*/0x160b:
+        case /*LF_STRUCTURE2*/0x1609:{
+            type_data += 0x10;
+            type_data += pdb_numeric_leaf_size_or_error(*(u16 *)type_data); // count
+            type_data += pdb_numeric_leaf_size_or_error(*(u16 *)type_data); // size
+            return type_data;
+        }break;
+        
+        case /*LF_STRUCTURE*/0x1505:
+        case /*LF_CLASS*/0x1504:
+        case /*LF_INTERFACE*/0x1519:{
+            return type_data + 0x10 + pdb_numeric_leaf_size_or_error(*(u16 *)(type_data + 0x10));
+        }break;
+        
+        case /*LF_UNION2*/0x160a:{
+            type_data += 8;
+            type_data += pdb_numeric_leaf_size_or_error(*(u16 *)type_data); // count
+            type_data += pdb_numeric_leaf_size_or_error(*(u16 *)type_data); // size
+            return type_data;
+        }break;
+        
+        case /*LF_UNION*/0x1506:{
+            return type_data + 8 + pdb_numeric_leaf_size_or_error(*(u16 *)(type_data + 8));
+        }break;
+        
+        case /*LF_ENUM*/0x1507:{
+            return type_data + 12;
+        }break;
+        
+        case /*LF_ALIAS*/0x150a:{
+            return type_data + 4;
+        }break;
+        
+        default: return "";
+    }
+}
+
+u32 tpi_hash_table_index_for_record(struct codeview_type_record_header *type_record_header, u32 number_of_hash_buckets){
+    
+    u8 *type_data = (u8 *)(type_record_header + 1);
+    
+    char *name = 0;
+    size_t length = 0;
+    
+    switch(type_record_header->kind){
+        case /*LF_ALIAS*/0x150a:{
+            name = (char *)(type_data + 4);
+        }break;
+        
+        case /*LF_CLASS2*/0x1608:
+        case /*LF_INTERFACE2*/0x160b:
+        case /*LF_STRUCTURE2*/0x1609: // @note: These get rid of the 'count' member to get 32-bits of 'properties' but stay the same size.
+        case /*LF_UNION2*/0x160a: // @note: These get rid of the 'count' member to get 32-bits of 'properties' but stay the same size.
+        
+        case /*LF_UNION*/0x1506:
+        case /*LF_ENUM*/0x1507:
+        case /*LF_CLASS*/0x1504:
+        case /*LF_STRUCTURE*/0x1505:
+        case /*LF_INTERFACE*/0x1519:{
+            
+            u32 properties;
+            if(type_record_header->kind < 0x1600){
+                // @note: All of these have the 'properies' field at the same offset.
+                properties = *(u16 *)(type_data + 2);
+            }else{
+                // @note: These dropped the 'count' for 32-bits more of properties.
+                properties = *(u32 *)type_data;
+            }
+            
+            u16 forward_ref = (properties & (1 << 7));
+            u16 scoped      = (properties & (1 << 8));
+            u16 has_unique_name = (properties & (1 << 9));
+            
+            char *tag_name = pdb_type_record__get_name((u8 *)type_record_header);
+            
+            // @note: This only works for c. for c++ they also search for 'foo::<unnamed-tag>' stuff.
+            int anonymous = cstring_match(tag_name, "<unnamed-tag>") || cstring_match(tag_name, "__unnamed");
+            
+            if(!forward_ref && !anonymous){
+                if(!scoped){
+                    name = tag_name;
+                }else if(has_unique_name){
+                    name = tag_name + cstring_length(tag_name) + 1;
+                }
+            }
+        }break;
+        
+        case /*LF_UDT_SRC_LINE*/0x1606:
+        case /*LF_UDT_MOD_SRC_LINE*/0x1607:{
+            name   = (char *)type_data;
+            length = sizeof(u32);
+        }break;
+    }
+    
+    u32 hash_index;
+    if(name){
+        if(!length) length = cstring_length(name);
+        hash_index = pdb_hash_index((u8 *)name, length, number_of_hash_buckets);
+    }else{
+        hash_index = crc32(/*initial_crc*/0, (u8 *)type_record_header, type_record_header->length + sizeof(type_record_header->length)) % number_of_hash_buckets;
+    }
+    
+    return hash_index;
 }
 
 
@@ -619,63 +821,7 @@ func b32 global_symbol_stream_hash_table_add(struct gsi_hash_bucket **hash_table
     }
 }
 
-func void tpi_push_to_type_stack(struct pdb_write_context *context, struct ast_type *type){
-    
-    dynarray_maybe_grow(struct ast_type *, context->scratch, context->type_stack, context->type_stack_at, context->type_stack_size);
-    assert(context->type_stack_at < context->type_stack_size);
-    context->type_stack[context->type_stack_at++] = type;
-}
-
-func struct pdb_type_info *get_type_info_for_type_index(struct pdb_write_context *context, smm type_index){
-    if(type_index >= context->maximal_amount_of_type_indices){
-        smm new_max = context->maximal_amount_of_type_indices << 1;
-        struct pdb_type_info *new_mem = push_data(context->scratch, struct pdb_type_info, new_max);
-        memcpy(new_mem, context->type_index_to_type_info, context->maximal_amount_of_type_indices * sizeof(new_mem[0]));
-        context->type_index_to_type_info = new_mem;
-        context->maximal_amount_of_type_indices = new_max;
-    }
-    
-    assert(type_index < context->maximal_amount_of_type_indices);
-    return &context->type_index_to_type_info[type_index];
-}
-
-func u32 tpi_emit_predecl(struct pdb_write_context *context, struct ast_type *type){
-    assert(type->kind == AST_struct || type->kind == AST_union);
-    struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
-    
-    u16 lf_kind = type->kind == AST_struct ? 0x1505 : 0x1506;
-    u32 ret = begin_symbol(lf_kind);{
-        out_int(0, u16);        // count (0 for forward ref)
-        out_int((1 << 7) /*| (1 << 9) */, u16); // properties: forward_ref flag, has unique name
-        out_int(0, u32);        // the LF_FIELDLIST (0 for forward ref)
-        if(type->kind == AST_struct){
-            out_int(0, u32);    // derived
-            out_int(0, u32);    // vshape
-        }
-        stream_emit_size_and_name(context, 0, false, compound->identifier->string);
-    }end_symbol();
-    
-    struct pdb_type_info *info = get_type_info_for_type_index(context, ret);
-    info->type = type;
-    
-    return ret;
-}
-
-func u32 tpi_maybe_emit_predecl(struct pdb_write_context *context, struct ast_type *type){
-    u32 type_index;
-    if(type->flags & TYPE_FLAG_pdb_permanent){
-        assert(type->pdb_type_index);
-        type_index = type->pdb_type_index;
-    }else{
-        assert(type->flags & TYPE_FLAG_pdb_temporary);
-        assert(!type->pdb_type_index);
-        if(!type->pdb_predecl_type_index){
-            type->pdb_predecl_type_index = tpi_emit_predecl(context, type);
-        }
-        type_index = type->pdb_predecl_type_index;
-    }
-    return type_index;
-}
+//_____________________________________________________________________________________________________________________
 
 func void tpi_emit_type_index_or_predecl_type_index(struct pdb_write_context *context, struct ast_type *type, enum ast_kind *defined_type){
     if(defined_type && *defined_type == AST_enum){
@@ -694,331 +840,6 @@ func void tpi_emit_type_index_or_predecl_type_index(struct pdb_write_context *co
     }
 }
 
-func b32 tpi_maybe_recurse_again_into_type(struct pdb_write_context *context, struct ast_type *type){
-    if(type->kind != AST_struct && type->kind != AST_union && !(type->flags & TYPE_FLAG_pdb_permanent)){
-        tpi_push_to_type_stack(context, type);
-        return true;
-    }
-    return false;
-}
-
-
-func void tpi_register_type(struct pdb_write_context *context, struct ast_type *initial_type){
-    
-    if(initial_type->flags & TYPE_FLAG_pdb_permanent){
-        assert(initial_type->pdb_type_index);
-        return; // already emitted this type
-    }
-    
-    // reset the type_stack
-    context->type_stack_at = 0;
-    tpi_push_to_type_stack(context, initial_type);
-    
-    u32 type_index;
-    while(context->type_stack_at > 0){
-        struct ast_type *type = context->type_stack[context->type_stack_at - 1];
-        
-        type->flags |= TYPE_FLAG_pdb_temporary;
-        
-        // General algorithm:
-        //     1) if we are a compound type (struct or union) recurse into any members that have not yet
-        //        been assigned type indicies.
-        //     2) at this point we either have non-struct-non-union, or every member is already emitted.
-        //
-        
-        if(type->kind == AST_struct || type->kind == AST_union){
-            struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
-            b32 should_recurse = false;
-            for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
-                struct ast_type *member_type = compound->members[member_index].type;
-                
-                // @cleanup: defined type for typedefs
-                
-                if(member_type->flags & (TYPE_FLAG_pdb_temporary | TYPE_FLAG_pdb_permanent)){
-                    // these are fine, either we emit a predecl below, or we have already emitted it
-                }else{
-                    tpi_push_to_type_stack(context, member_type);
-                    should_recurse = true;
-                    break;
-                }
-            }
-            
-            if(should_recurse) continue;
-        }
-        
-        switch(type->kind){
-            case AST_enum:{
-                struct ast_compound_type *ast_enum = cast(struct ast_compound_type *)type;
-                
-                // :long_field_lists
-                //
-                // An enum (or any fieldlist for that matter), can have to many entries to fit into a single
-                // symbol, as symbols can only have a size that fits into 16 bit.
-                // If this is the case the last entry of the fieldlist is an LF_INDEX which references a 
-                // fieldlist which continues the enum. 
-                // The LF_enum then references the first LF_FIELDLIST. 
-                //
-                s32 previous_fieldlist = -1;
-                
-                u32 fieldlist = begin_symbol(0x1203); // LF_FIELDLIST
-                
-                for(u32 member_index = 0; member_index < ast_enum->amount_of_members; member_index++){
-                    struct compound_member *member = &ast_enum->members[member_index];
-                    
-                    s32 value = (s32)member->enum_value;
-                    
-                    out_int(0x1502, u16); // LF_ENUMERATE
-                    out_int(3, u16);      // @cleanup: attributes?
-                    stream_emit_size_and_name(context, value, true, member->name->string);
-                    
-                    {
-                        // 
-                        // yikes, this does not really fix the problem, does it?
-                        // it only makes it less likely...
-                        //
-                        struct pdb_location current_loc = get_current_pdb_location(context);
-                        smm size = pdb_location_diff(current_loc, context->active_symbol) - 2;
-                        if(size + 0x100 > 65536){
-                            if(previous_fieldlist != -1){
-                                out_int(0x1404, u16); // LF_INDEX
-                                out_int(0, u16); // pad
-                                out_int(previous_fieldlist, u32);
-                            }
-                            end_symbol();
-                            
-                            previous_fieldlist = fieldlist;
-                            fieldlist = begin_symbol(0x1203);
-                        }
-                    }
-                }
-                
-                if(previous_fieldlist != -1){
-                    out_int(0x1404, u16); // LF_INDEX
-                    out_int(0, u16); // pad
-                    out_int(previous_fieldlist, u32);
-                }
-                end_symbol();
-                
-                type_index = begin_symbol(0x1507);{ // LF_ENUM
-                    out_int(ast_enum->amount_of_members, u16);
-                    out_int(0, u16);    // @incomplete: properties
-                    out_int(CV_s32, u32); // underlying type
-                    out_int(fieldlist, u32);
-                    out_string(ast_enum->identifier->string); // no size for enums
-                }end_symbol();
-            }break;
-            case AST_struct: case AST_union:{
-                struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
-                
-                b32 should_recurse_into_type = false;
-                // emit predeclarations if we need to
-                
-                for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
-                    struct ast_type *member_type = compound->members[member_index].type;
-                    if(tpi_maybe_recurse_again_into_type(context, member_type)){
-                        should_recurse_into_type = true;
-                        break;
-                    }
-                    tpi_maybe_emit_predecl(context, member_type);
-                }
-                if(should_recurse_into_type) continue;
-                
-                u32 fieldlist = begin_symbol(0x1203); // LF_FIELDLIST
-                
-                for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
-                    struct compound_member *member = &compound->members[member_index];
-                    if(member->name == globals.invalid_identifier_token) continue;
-                    
-                    assert(member->type->flags & (TYPE_FLAG_pdb_temporary | TYPE_FLAG_pdb_permanent));
-                    // @note: right now we are not doing LF_NESTTYPE... is that one necessary?
-                    //        it seems to be used when we have a unnamed type with no ident
-                    out_int(0x150d, u16); // LF_MEMBER
-                    out_int(3, u16); // attributes: @cleanup: this did not seem to matter but this means 'ref'
-                    tpi_emit_type_index_or_predecl_type_index(context, member->type, member->defined_type);
-                    stream_emit_size_and_name(context, member->offset_in_type, false, member->name->string);
-                } end_symbol();
-                
-                // LF_STRUCTURE or LF_UNION
-                u16 lf_kind = type->kind == AST_struct ? 0x1505 : 0x1506;
-                type_index = begin_symbol(lf_kind);{
-                    out_int(compound->amount_of_members, u16);
-                    out_int(0  /*| (1 << 9) */, u16); // properties: has unique name
-                    out_int(fieldlist, u32);
-                    if(type->kind == AST_struct){
-                        out_int(0, u32);         // derived (c++)
-                        out_int(0, u32);         // vshape (c++)
-                    }
-                    stream_emit_size_and_name(context, type->size, false, compound->identifier->string);
-                }end_symbol();
-                
-            }break;
-            case AST_pointer_type:{
-                struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)type;
-                
-                // 
-                // In the case of:
-                //     struct unresolved *pointer;
-                // Where we did not dereference 'pointer', but 'unresolved' gets defined _later_
-                // this pointer is still pointing to an unresolved type.
-                // If this is the case we try to patch it here.
-                // 
-                maybe_resolve_unresolved_type(&pointer->pointer_to);
-                
-                struct ast_type *pointer_to = pointer->pointer_to;
-                
-                if(!(pointer_to->flags & (TYPE_FLAG_pdb_permanent|TYPE_FLAG_pdb_temporary))){
-                    tpi_push_to_type_stack(context, pointer_to);
-                    continue;
-                }
-                
-                if(tpi_maybe_recurse_again_into_type(context, pointer_to)) continue;
-                
-                u32 pointer_to_type_index = tpi_maybe_emit_predecl(context, pointer_to);
-                
-                // check if we already have this pointer
-                
-                struct pdb_type_info *info = get_type_info_for_type_index(context, pointer_to_type_index);
-                if(info->pointer_type_index){
-                    type_index = info->pointer_type_index;
-                }else{
-                    type_index = begin_symbol(0x1002);{ // LF_POINTER
-                        tpi_emit_type_index_or_predecl_type_index(context, pointer_to, pointer->pointer_to_defined_type); // underlying_type
-                        out_int(0x1000c, u32); // modifiers (size = 8 + kind = __ptr64)
-                    }end_symbol();
-                    info->pointer_type_index = type_index;
-                }
-                
-            }break;
-            case AST_array_type:{
-                struct ast_array_type *array = (struct ast_array_type *)type;
-                struct ast_type *element_type = array->element_type;
-                
-                if(element_type->flags & (TYPE_FLAG_pdb_permanent|TYPE_FLAG_pdb_temporary)){
-                    if(tpi_maybe_recurse_again_into_type(context, element_type)) continue;
-                    tpi_maybe_emit_predecl(context, element_type);
-                }else{
-                    tpi_push_to_type_stack(context, element_type);
-                    continue;
-                }
-                
-                type_index = begin_symbol(0x1503);{ // LF_ARRAY
-                    tpi_emit_type_index_or_predecl_type_index(context, element_type, array->element_type_defined_type); // underlying_type
-                    out_int(CV_s64, u32); // index type
-                    stream_emit_size_and_name(context, array->base.size, false, string("")); // I think this always has an empty name.
-                }end_symbol();
-                
-            }break;
-            case AST_function_type:{
-                struct ast_function_type *function_type = cast(struct ast_function_type *)type;
-                
-                if(function_type->return_type->flags & (TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary)){
-                    // @cleanup: I think these can be 'self_referantial' if you have
-                    //     struct comp { struct comp *(*asd)(); }
-                    // that should make a predecl for struct comp @cleanup: maybe test this
-                    if(tpi_maybe_recurse_again_into_type(context, function_type->return_type)) continue;
-                    tpi_maybe_emit_predecl(context, function_type->return_type);
-                }else{
-                    tpi_push_to_type_stack(context, function_type->return_type);
-                    continue;
-                }
-                
-                b32 should_recurse = false;
-                for_ast_list(function_type->argument_list){
-                    struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                    
-                    if(decl->type->flags & (TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary)){
-                        if(tpi_maybe_recurse_again_into_type(context, decl->type)){
-                            should_recurse = true;
-                            break;
-                        }
-                        tpi_maybe_emit_predecl(context, decl->type);
-                    }else{
-                        tpi_push_to_type_stack(context, decl->type);
-                        should_recurse = true;
-                        break;
-                    }
-                }
-                if(should_recurse) continue;
-                
-                u32 arglist = begin_symbol(0x1201);{ // LF_ARGLIST
-                    out_int(to_u32(function_type->argument_list.count), u32);
-                    for_ast_list(function_type->argument_list){
-                        struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                        tpi_emit_type_index_or_predecl_type_index(context, decl->type, decl->defined_type);
-                    }
-                }end_symbol();
-                
-                type_index = begin_symbol(0x1008);{ // LF_PROCEDURE
-                    tpi_emit_type_index_or_predecl_type_index(context, function_type->return_type, function_type->return_type_defined_type);
-                    out_int(0, u8); // calling convention (always zero ?)
-                    out_int(0, u8); // function attributes, c++ crazyness
-                    out_int(to_u16(function_type->argument_list.count), u16);
-                    out_int(arglist, u32);
-                }end_symbol();
-                
-            }break;
-            case AST_bitfield_type:{
-                struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)type;
-                type_index = begin_symbol(0x1205);{ // LF_BITFIELD
-                    out_int(bitfield->base_type->pdb_type_index, u32);
-                    out_int(bitfield->width, s8);
-                    out_int(bitfield->bit_index, s8);
-                }end_symbol();
-            }break;
-            
-            case AST_atomic_integer_type:{
-                
-                struct ast_type *non_atomic_type = type - (&globals.typedef_atomic_bool - &globals.typedef_Bool);
-                
-                type_index = begin_symbol(0x1001);{ // LF_MODIFIER
-                    out_int(non_atomic_type->pdb_type_index, u32);
-                    out_int(8, u16); // @cleanup: is 8 correct?
-                }end_symbol();
-            }break;
-            
-            case AST_unresolved_type:{
-                // struct ast_unresolved_type *unresolved = (struct ast_unresolved_type *)type;
-                
-                // @ugh, we would want to put T_NOTYPE here probably but that is '0' and we use 0 as an invalid
-                //       value. @cleanup:
-                type_index = CV_void;
-                
-                // print("**** unresolved!\n"); @cleanup: This goes away, when we finish our new CodeView/PDB backend.
-            }break;
-            invalid_default_case(type_index = 0);
-        }
-        
-        type->flags |= TYPE_FLAG_pdb_permanent;
-        type->flags &= ~TYPE_FLAG_pdb_temporary;
-        type->pdb_type_index = type_index;
-        
-        get_type_info_for_type_index(context, type->pdb_type_index)->type = type;
-        
-        context->type_stack_at -= 1;
-        context->amount_of_type_indices = max_of(context->amount_of_type_indices, type_index);
-    }
-}
-
-func void tpi_register_all_types_in_scope__recursive(struct pdb_write_context *context, struct ast_scope *scope){
-    
-    for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
-        struct ast_declaration *decl = scope->declarations[declaration_index];
-        if(!decl) continue;
-        tpi_register_type(context, decl->type);
-    }
-    
-    for(smm compound_index = 0; compound_index < scope->current_max_amount_of_compound_types; compound_index++){
-        struct ast_compound_type *compound = scope->compound_types[compound_index];
-        if(!compound) continue;
-        tpi_register_type(context, &compound->base);
-    }
-    
-    for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
-        tpi_register_all_types_in_scope__recursive(context, subscope);
-    }
-}
-
-//_____________________________________________________________________________________________________________________
 
 func void pdb_emit_regrels_for_scope(struct pdb_write_context *context, struct ast_scope *scope){
     // @note: it seems, that all declarations need to be at the beginning of the scope.
@@ -1183,12 +1004,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     struct ast_list uninitialized_declarations = zero_struct;
     struct ast_list tls_declarations = zero_struct;
     
-    struct compilation_unit dummy_global_compilation_unit = {
-        .next = globals.compilation_units.first, 
-        .static_declaration_table = globals.global_declarations,
-    };
     
-    for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+    for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
         
         struct ast_table *table = &compilation_unit->static_declaration_table;
         
@@ -2586,80 +2403,107 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     push_align(arena, page_size);
     
-    // @note: free page_maps get pushed automatically by the system.
-    // but here would be the free page map 1 and 2 :free_page_maps
-    
-    
-    // From this point on we use the macros instead of working on arena directly
-    
-    // stream 0: Previous stream directory
-    // we have to figure out of we can leave this out....
-    
-    begin_counter(timing, pdb_stream);
-    // stream 1: PDB stream
-    { // :pdb_stream
-        set_current_stream(context, STREAM_PDB);
-        struct pdb_stream{
+    struct memory_arena pdb_information_stream = create_memory_arena(mega_bytes(1), 2.0f, 0);
+    {   // 
+        // stream 1: PDB stream :pdb_stream
+        // 
+        
+        struct pdb_information_stream_header{
             u32 version;
-            u32 time_in_seconds_since_1970;
-            u32 amount_of_times_the_pdb_has_been_written;
-            u8 guid[16];
-            u32 length_of_the_string_buffer;
-            //char buffer_of_named_stream_names[];
+            u32 time_date_stamp;
+            u32 age;
+            u8 pdb_guid[16];
+        } *pdb_information_stream_header = push_struct(&pdb_information_stream, struct pdb_information_stream_header);
+        pdb_information_stream_header->version = 20000404;
+        pdb_information_stream_header->time_date_stamp = coff_file_header->time_date_stamp;
+        pdb_information_stream_header->age = 1;
+        memcpy(pdb_information_stream_header->pdb_guid, pdb_guid, sizeof(pdb_guid));
+        
+        static struct {
+            struct string stream_name;
+            u32   stream_index;
+        } named_streams[] = {
+            { const_string("/names"), STREAM_names },
         };
         
-        struct pdb_stream pdb = zero_struct;
         
-        pdb.version = 20000404;
-        pdb.time_in_seconds_since_1970 = 0x5DA82834; // @cleanup: this is 17.10.19
-        pdb.amount_of_times_the_pdb_has_been_written = 1;
+        u32 named_stream_table_capacity = 2 * array_count(named_streams);
+        struct named_stream_table_entry{
+            u32 key;
+            u32 value;
+        } *named_stream_table_entries = push_data(scratch, struct named_stream_table_entry, named_stream_table_capacity);
         
-        memcpy(pdb.guid, pdb_guid, sizeof(pdb_guid));
+        u32 *string_buffer_size = push_struct(&pdb_information_stream, u32);
+        u8 *string_buffer = push_data(&pdb_information_stream, u8, 0);
         
-        char string_table[] = "/LinkInfo\0/names";
+        for(u32 named_stream_index = 0; named_stream_index < array_count(named_streams); named_stream_index++){
+            
+            struct string stream_name  = named_streams[named_stream_index].stream_name;
+            u32   stream_index = named_streams[named_stream_index].stream_index;
+            
+            u16 hash = (u16)pdb_hash_index(stream_name.data, stream_name.size, (u32)-1);
+            
+            for(u32 hash_index = 0; hash_index < named_stream_table_capacity; hash_index++){
+                
+                u32 index = (hash_index + hash) % named_stream_table_capacity;
+                
+                // @note: Currently there are no deleted named steams. 
+                //        So we don't have to care about tombstones!
+                if(named_stream_table_entries[index].value == /*empty_slot*/0){
+                    // We have found an empty slot.
+                    
+                    // Allocate the `stream_name` into the `string_buffer`.
+                    u8 *stream_name_in_string_buffer = push_data(&pdb_information_stream, u8, stream_name.size + 1);
+                    memcpy(stream_name_in_string_buffer, stream_name.data, stream_name.size + 1);
+                    
+                    named_stream_table_entries[index].key   = (u32)(stream_name_in_string_buffer - string_buffer);
+                    named_stream_table_entries[index].value = stream_index;
+                    break;
+                }
+            }
+        }
         
-        pdb.length_of_the_string_buffer = sizeof(string_table);
+        *string_buffer_size = (u32)(push_data(&pdb_information_stream, u8, 0) - string_buffer);
         
-        out_struct(pdb);
-        out_struct(string_table);
+        // 
+        // @WARNING: "Importantly, after the string table, the rest of the stream
+        //            does not have any defined alignment anymore."
+        // 
         
-        // following the pdb_stream_header there is a serialized hash table, that maps
-        // offsets of strings in the string_table above to stream_indices or in other words
-        // stream names to named streams
-        // for us it seems that the only named streams are a "/LinkInfo" and "/names", but "/LinkInfo" is empty
-        out_int(2, u32); // size
-        out_int(4, u32); // capacity
+        /*amount_of_entries*/*push_struct_unaligned(&pdb_information_stream, u32) = array_count(named_streams);
+        /*capacity         */*push_struct_unaligned(&pdb_information_stream, u32) = named_stream_table_capacity;
         
-        // now come two bit vectors one for the present_hash_buckets and then a subset of which are deleted
-        // struct bit_vector{ u32 word_count; u32 words[]; };
+        u32 present_bits_word_count = ((named_stream_table_capacity + 31) & ~31)/32;
         
-        out_int(1, u32); // one word present
-        out_int(6, u32); // second and third hash bucket present
+        /*present_bits.word_count*/*push_struct_unaligned(&pdb_information_stream, u32) = present_bits_word_count;
         
-        out_int(0, u32); // no deleted buckets
+        u32 *present_bits_words = push_data_unaligned(&pdb_information_stream, u32, present_bits_word_count);
+        for(u32 named_stream_table_index = 0; named_stream_table_index < named_stream_table_capacity; named_stream_table_index++){
+            u32 word_index = named_stream_table_index / (sizeof(u32) * 8);
+            u32 bit_index  = named_stream_table_index % (sizeof(u32) * 8);
+            
+            if(named_stream_table_entries[named_stream_table_index].value != 0){
+                present_bits_words[word_index] |= (1u << bit_index);
+            }
+        }
         
-        // no comes an array of all _present_ hash buckets so in our case 2 buckets.
-        // these hash buckets are key value pairs, the key is the offset in the string_table and the
-        // value is the stream_index
+        /*deleted_bits.word_count*/*push_struct_unaligned(&pdb_information_stream, u32) = 0;
         
-        // @note: @cleanup: I do not actually know the hash algorithm, tho llvm has it implemented.
-        //                  But it seems that we never have to extend this table... so its fine
+        // struct { u32 key; u32 value; } entries[amount_of_entries];
+        for(u32 named_stream_table_index = 0; named_stream_table_index < named_stream_table_capacity; named_stream_table_index++){
+            if(named_stream_table_entries[named_stream_table_index].value != 0){
+                *push_struct_unaligned(&pdb_information_stream, struct named_stream_table_entry) = named_stream_table_entries[named_stream_table_index];
+            }
+        }
         
-        // key value pair 1
-        out_int(sizeof("/LinkInfo"), u32); // offset
-        out_int(STREAM_names, u32);        // stream_index
+        /*unused*/*push_struct_unaligned(&pdb_information_stream, u32) = 0;
         
-        // key value pair 2
-        out_int(0, u32);                   // offset
-        out_int(STREAM_link_info, u32);    // stream_index
+        // Feature code: 
+        *push_struct_unaligned(&pdb_information_stream, u32) = /*impvVC140*/20140508;
         
-        // for some reason they put a 0 here
-        // @cleanup: find the referance fot that
-        out_int(0, u32);
-        // the flags, or version or something
-        out_int(20140508, u32);
+        set_current_stream(context, STREAM_PDB);
+        stream_emit_struct(context, pdb_information_stream.base, arena_current(&pdb_information_stream) - pdb_information_stream.base);
     }
-    end_counter(timing, pdb_stream);
     
     context->maximal_amount_of_type_indices = max_of(0x1000, globals.compound_types.capacity);
     context->amount_of_type_indices = 0;
@@ -2706,114 +2550,141 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     context->index_offset_buffer_boundary = -1; // initialized to -1 so we always allocate one immediately
     
     begin_counter(timing, tpi_stream);
-    // stream 2: TPI stream
-    struct tpi_stream tpi = zero_struct;
-    { // :tpi_stream
-        // the TPI stream describes type information
+    
+    struct index_stream_header{
+        // We expect the version to be '20040203'.
+        u32 version;
+        
+        // The size of this header.
+        u32 header_size;
+        
+        //
+        // The range of type indices present in this stream.
+        //
+        u32 minimal_type_index;
+        u32 one_past_last_type_index;
+        
+        u32 byte_count_of_type_record_data_following_the_header;
+        
+        //
+        // The stream index for the TPI/IPI hash stream.
+        // The auxiliary stream seems to be unused.
+        //
+        u16 stream_index_of_hash_stream;
+        u16 stream_index_of_auxiliary_hash_stream;
+        
+        //
+        // The hash key size and the number of buckets used for the incremental linking table below.
+        //
+        u32 hash_key_size;
+        u32 number_of_hash_buckets;
+        
+        //
+        // The 'hash key buffer' is contained within the TPI/IPI hash stream.
+        // The size of the buffer should be '(maximal_type_index - minimal_type_index) * hash_key_size'.
+        // These hash keys are used in the incremental linking hash table below.
+        //
+        u32 hash_table_index_buffer_offset;
+        u32 hash_table_index_buffer_length;
+        
+        //
+        // The 'index offset buffer' is an array of 'struct { u32 type_index; u32 offset_in_stream; }'.
+        // The offset of each entry increases by about 8 kb each entry.
+        // This buffer is intended for binary searching by type index, to get a rough (8kb accurate) offset
+        // to the type, and from there one can search linearly to find the type record.
+        //
+        u32 index_offset_buffer_offset;
+        u32 index_offset_buffer_length;
+        
+        // 
+        // The 'udt_order_adjust_table' is used to adjust the order of entries inside 
+        // of a collision chain of the hash table above. This is useful for types
+        // which have been altered, but then the change was reverted.
+        // 
+        u32 udt_order_adjust_table_offset;
+        u32 udt_order_adjust_table_length;
+    } *tpi_stream_header = null/*, *ipi_stream_header = null*/;
+    
+    
+#define TPI_NUMBER_OF_HASH_BUCKETS (0x40000 - 1)
+    
+    struct memory_arena stack_arena = create_memory_arena(giga_bytes(8), 2.0f, kilo_bytes(10));
+    
+    struct memory_arena tpi_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
+    struct memory_arena tpi_hash_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
+    {   // 
+        // stream 2: TPI stream - The TPI stream describes type information.  :tpi_stream
+        // 
+        
+        tpi_stream_header = push_struct(&tpi_stream, struct index_stream_header);
+        tpi_stream_header->version = 20040203;
+        tpi_stream_header->header_size = sizeof(*tpi_stream_header);
+        tpi_stream_header->minimal_type_index = 0x1000;
+        tpi_stream_header->one_past_last_type_index = register_all_types(&tpi_stream, scratch, &stack_arena, defined_functions);
+        tpi_stream_header->byte_count_of_type_record_data_following_the_header = (u32)(arena_current(&tpi_stream) - (u8 *)(tpi_stream_header + 1));
+        
+        tpi_stream_header->stream_index_of_hash_stream = (u16)-1;
+        tpi_stream_header->stream_index_of_hash_stream = STREAM_TPI_hash;
+        
+        tpi_stream_header->hash_key_size = sizeof(u32);
+        tpi_stream_header->number_of_hash_buckets = TPI_NUMBER_OF_HASH_BUCKETS;
+        
+        {   //
+            // stream 7: TPI hash   :tpi_hash_stream
+            // 
+            
+            u8 *type_record_start = (u8 *)(tpi_stream_header + 1);
+            
+            u32 amount_of_type_indices = tpi_stream_header->one_past_last_type_index - tpi_stream_header->minimal_type_index;
+            u32 *type_index_buffer = push_uninitialized_data(&tpi_hash_stream, u32, amount_of_type_indices);
+            
+            tpi_stream_header->hash_table_index_buffer_offset = 0;
+            tpi_stream_header->hash_table_index_buffer_length = amount_of_type_indices * sizeof(u32);
+            
+            struct index_offset_buffer_entry{
+                u32 type_index;
+                u32 offset_in_record_data;
+            } *index_offset_buffer = push_struct(&tpi_hash_stream, struct index_offset_buffer_entry);
+            index_offset_buffer->type_index = tpi_stream_header->minimal_type_index;
+            
+            struct index_offset_buffer_entry *last_entry = index_offset_buffer;
+            
+            for(u32 unbiased_type_index = 0, type_record_offset = 0; unbiased_type_index < amount_of_type_indices; unbiased_type_index += 1){
+                
+                // hashing a type_record: (LF_STRUCTURE, LF_UNION, LF_ENUM):
+                // if(!forward_ref && !is_anonymous){
+                //    if(!scoped || has_unique_name){
+                //        return pdb_string_hash(name);
+                //    }
+                // }
+                // return string CRC32(serialized);
+                
+                assert((type_record_offset & 3) == 0);
+                struct codeview_type_record_header *tpi_record_header = (void *)(type_record_start + type_record_offset);
+                u32 type_record_size = tpi_record_header->length + sizeof(tpi_record_header->length);
+                type_record_offset += type_record_size;
+                
+                type_index_buffer[unbiased_type_index] = tpi_hash_table_index_for_record(tpi_record_header, tpi_stream_header->number_of_hash_buckets);
+                
+                if(type_record_offset + type_record_size >= last_entry->offset_in_record_data + 8 * 0x1000){
+                    last_entry = push_struct(&tpi_hash_stream, struct index_offset_buffer_entry);
+                    last_entry->offset_in_record_data = type_record_offset;
+                    last_entry->type_index = unbiased_type_index + tpi_stream_header->minimal_type_index;
+                }
+            }
+            
+            tpi_stream_header->index_offset_buffer_offset = tpi_stream_header->hash_table_index_buffer_length;
+            tpi_stream_header->index_offset_buffer_length = (u32)((u8 *)(last_entry + 1) - (u8 *)index_offset_buffer);
+            
+            set_current_stream(context, STREAM_TPI_hash);
+            stream_emit_struct(context, tpi_hash_stream.base, arena_current(&tpi_hash_stream) - tpi_hash_stream.base);
+        }
+        
+        tpi_stream_header->udt_order_adjust_table_offset = tpi_stream_header->index_offset_buffer_offset + tpi_stream_header->index_offset_buffer_length;
+        tpi_stream_header->udt_order_adjust_table_length = 0;
         
         set_current_stream(context, STREAM_TPI);
-        
-        tpi.version = 20040203;
-        tpi.header_size = sizeof(struct tpi_stream);
-        tpi.minimal_type_index = 0x1000;
-        
-        tpi.hash_aux_stream_index = -1;
-        tpi.hash_stream_index = STREAM_TPI_hash;
-        tpi.hash_key_size = sizeof(u32);
-        
-        struct pdb_location header_location = stream_allocate_bytes(context, sizeof(tpi));
-        struct pdb_location type_record_data_begin = get_current_pdb_location(context);
-        context->type_record_data_begin = type_record_data_begin;
-        
-        // after the header comes a list of variable sized type records
-        {   // write in all the type records, this has to be done in a topological order.
-            
-            //
-            // Register all compounds first! This avoids emitting a lot of unnecessary tpi-predeclarations.
-            // @cleanup: maybe we should fold the type-indices via the hash.
-            //                                                                                12.04.2022
-            
-            // register all named compound_types
-            for(u64 i = 0; i < globals.compound_types.capacity; i++){
-                struct ast_node *node = globals.compound_types.nodes + i;
-                if(!node->token) continue;
-                struct ast_type *initial_type = cast(struct ast_type *)node->ast;
-                tpi_register_type(context, initial_type);
-            }
-            
-            // register types for all declaration, this has to be done, as they might be anonymous types...
-            for_ast_list(initialized_declarations){
-                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                
-                tpi_register_type(context, decl->type);
-            }
-            
-            // register types for all declaration, this has to be done, as they might be anonymous types...
-            for_ast_list(uninitialized_declarations){
-                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                tpi_register_type(context, decl->type);
-            }
-            
-            // register types for all typedefs, this has to be done, as they might be anonymous types...
-            for_ast_list(typedefs){
-                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                tpi_register_type(context, decl->type);
-            }
-            
-            // register all function types
-            for_ast_list(defined_functions){
-                struct ast_function *function = cast(struct ast_function *)it->value;
-                tpi_register_type(context, &function->type->base);
-            }
-            
-            
-            for_ast_list(dll_imports){
-                struct ast_function *function = (struct ast_function *)it->value;
-                tpi_register_type(context, &function->type->base);
-            }
-            
-            
-            // register types for all declarations in functions... these should probably be 'scoped'?
-            // @incomplete:
-            for_ast_list(defined_functions){
-                struct ast_function *function = cast(struct ast_function *)it->value;
-                tpi_register_all_types_in_scope__recursive(context, function->scope);
-            }
-            
-            
-            
-        } // end of emitting all the types
-        
-        struct pdb_location end_location = get_current_pdb_location(context);
-        tpi.amount_of_bytes_of_type_record_data_following_the_header = (u32)pdb_location_diff(end_location, type_record_data_begin);
-        
-        tpi.maximal_type_index = context->active_page_list->symbol_at;
-        
-        tpi.hash_value_buffer_offset = 0;
-#define IMPLEMENT_HASH_VALUE_BUFFER 1
-#if IMPLEMENT_HASH_VALUE_BUFFER
-        tpi.hash_value_buffer_length = (tpi.maximal_type_index - tpi.minimal_type_index) * tpi.hash_key_size;
-#else
-        tpi.hash_value_buffer_length = 0;
-#endif
-        
-#define TPI_NUMBER_OF_HASH_BUCKETS (0x40000 - 1)
-        tpi.number_of_hash_buckets = TPI_NUMBER_OF_HASH_BUCKETS;
-        
-        tpi.index_offset_buffer_offset = tpi.hash_value_buffer_length;
-        
-        // @note: This is not correct because a symbol could span the next 8kb boundary, but no symbol would
-        // begin after that boundary.
-        //    u32 entries = 1 + (tpi.amount_of_bytes_of_type_record_data_following_the_header / kilo_bytes(8));
-        // but we have the actual number, wo why not use that.
-        tpi.index_offset_buffer_length = context->index_offset_buffer_at * sizeof(context->index_offset_buffer[0]);
-        
-        // incremental linking not supported
-        tpi.incremental_linking_hash_table_offset = tpi.index_offset_buffer_offset + tpi.index_offset_buffer_length;
-        tpi.incremental_linking_hash_table_length = 0;
-        
-        
-        stream_write_bytes(context, &header_location, &tpi, sizeof(tpi));
+        stream_emit_struct(context, tpi_stream.base, arena_current(&tpi_stream) - tpi_stream.base);
     }
     end_counter(timing, tpi_stream);
     
@@ -2881,79 +2752,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     }
     end_counter(timing, names_stream);
     
-    begin_counter(timing, tpi_hash_stream);
-    // stream 7: TPI hash
-    { // :tpi_hash_stream
-        set_current_stream(context, STREAM_TPI_hash);
-        // tpi_hash_stream layout: (this depends on how we choose it in the tpi stream)
-        // u32 tpi_type_hashes[amount_of_type_indices];
-        // struct {u32 type_index; u32 offset;} index_offsets[amount_of_type_indices/kilo_bytes(8) + 1];
-        // incremental hash table (size 0);
-        
-        
-#if IMPLEMENT_HASH_VALUE_BUFFER
-        // a map 'type_index' -> type_hash
-        
-        struct page_list_node *current_page = context->page_list[STREAM_TPI].first;
-        smm offset_at = sizeof(struct tpi_stream);
-        for(u32 type_index = tpi.minimal_type_index; type_index < tpi.maximal_type_index; type_index += 1){
-            // hashing a type_record: (LF_STRUCTURE, LF_UNION, LF_ENUM):
-            // if(!forward_ref && !is_anonymous){
-            //    if(!scoped || has_unique_name){
-            //        return pdb_string_hash(name);
-            //    }
-            // }
-            // return string CRC32(serialized);
-            
-            assert((offset_at & 3) == 0);
-            struct{
-                u16 length;
-                u16 kind;
-            } tpi_record_header;
-            memcpy(&tpi_record_header, pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream), sizeof(tpi_record_header));
-            
-            assert(type_index < context->maximal_amount_of_type_indices);
-            struct pdb_type_info *info = get_type_info_for_type_index(context, type_index);
-            
-            if(info->type && /*skip predecls*/type_index == info->type->pdb_type_index && (info->type->kind == AST_struct || info->type->kind == AST_union || info->type->kind == AST_enum) && !atoms_match(((struct ast_compound_type *)info->type)->identifier->atom, globals.unnamed_tag)){
-                struct ast_compound_type *compound = cast(struct ast_compound_type *)info->type;
-                u32 hash = pdb_string_hash(compound->identifier->string);
-                
-                out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32); // could make this tpi.hash_key_size
-                
-                offset_at += tpi_record_header.length + sizeof(tpi_record_header.length);
-                while(current_page->offset_in_stream + 0x1000 < offset_at) current_page = current_page->next;
-            }else{
-                
-                u32 length = tpi_record_header.length + sizeof(tpi_record_header.length);
-                smm end_offset = offset_at + length;
-                
-                u32 hash = 0;
-                while(offset_at != end_offset){
-                    smm page_end = 0x1000 - (offset_at - current_page->offset_in_stream);
-                    
-                    u8 *at   = pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream);
-                    smm size = length < page_end ? length : page_end;
-                    
-                    hash = crc32(hash, at, size);
-                    
-                    offset_at += size;
-                    length -= (u32)size;
-                    if(offset_at == current_page->offset_in_stream + 0x1000) current_page = current_page->next;
-                }
-                
-                out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32);
-            }
-            
-        }
-#endif
-        
-        // index_offset_buffer:
-        // An array of type_index offset pairs, which are used _chunk_ the type_records into 8KB chunks.
-        // This gives O(log(n)) acccess time. (binary search over this buffer + linear search of 8KB).
-        stream_emit_struct(context, context->index_offset_buffer, tpi.index_offset_buffer_length);
-    }
-    end_counter(timing, tpi_hash_stream);
     
     begin_counter(timing, ipi_stream);
     
@@ -3109,11 +2907,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         ipi.maximal_type_index = context->active_page_list->symbol_at;
         
         ipi.hash_value_buffer_offset = 0;
-#if IMPLEMENT_HASH_VALUE_BUFFER
+
         ipi.hash_value_buffer_length = (ipi.maximal_type_index - ipi.minimal_type_index) * ipi.hash_key_size;
-#else
-        ipi.hash_value_buffer_length = 0;
-#endif
         
         ipi.index_offset_buffer_offset = ipi.hash_value_buffer_length + ipi.hash_value_buffer_offset;
         ipi.index_offset_buffer_length = context->index_offset_buffer_at * sizeof(context->index_offset_buffer[0]);
@@ -3138,7 +2933,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // the hashes are computed via a CRC. Do we actually have to use their hash algorithm?
         // and crc32.h
         
-#if IMPLEMENT_HASH_VALUE_BUFFER
         // a map 'type_index' -> type_hash
         
         struct page_list_node *current_page = context->page_list[STREAM_IPI].first;
@@ -3194,8 +2988,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }
             
         }
-#endif
-        
         // index_offset_buffer:
         // An array of type_index offset pairs, which are used _chunk_ the type_records into 8KB chunks.
         // This gives O(log(n)) access time. (binary search over this buffer + linear search of 8KB).

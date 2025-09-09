@@ -311,26 +311,6 @@ struct library_node{
     } *import_symbol_string_table;
 };
 
-struct compilation_unit{
-    struct compilation_unit *next;
-    
-    smm index;
-    struct ast_table static_declaration_table;
-    
-    struct sleeper_table static_sleeper_table;
-    
-    struct file *main_file;
-    
-    struct{
-        struct is_token_static{
-            struct token *token;
-            b32 is_static;
-        } *data;
-        smm size;
-        smm capacity;
-    } is_token_static_table;
-    
-};
 
 // for #pragma comment(linker, "/ALTERNATENAME:strdup=_strdup")
 struct alternate_name{
@@ -389,8 +369,39 @@ static struct{
     
     struct string_list system_include_directories;     // full paths
     
+    union{
+        struct compilation_unit{
+            struct compilation_unit *next;
+            
+            smm index;
+            struct ast_table static_declaration_table;
+            
+            struct sleeper_table static_sleeper_table;
+            
+            struct file *main_file;
+            
+            struct{
+                struct is_token_static{
+                    struct token *token;
+                    b32 is_static;
+                } *data;
+                smm size;
+                smm capacity;
+            } is_token_static_table;
+            
+        }  hacky_global_compilation_unit;
+        
+        struct{
+            struct compilation_unit *first_compilation_unit;
+            smm hacky_global_compilation_unit_index;
+            struct ast_table global_declarations;
+            struct sleeper_table declaration_sleeper_table;
+        };
+    };
     
-    struct compilation_unit hacky_global_compilation_unit;
+    struct ast_table external_declarations_at_function_scope; // This is only used when compiling to an object file, where it is valid to have an unresolved exernal symbol at function scope.
+    struct ast_table compound_types;
+    struct sleeper_table compound_sleeper_table;
     
     struct{
         struct compilation_unit *first;
@@ -467,14 +478,6 @@ static struct{
     struct work_queue work_queue_parse_functions;
     struct work_queue work_queue_emit_code;
     HANDLE wake_event;
-    
-    struct sleeper_table compound_sleeper_table;
-    struct sleeper_table declaration_sleeper_table;
-    
-    struct ast_table global_declarations;
-    struct ast_table external_declarations_at_function_scope; // This is only used when compiling to an object file, where it is valid to have an unresolved exernal symbol at function scope.
-    struct ast_table compound_types;
-    // struct ast_table type_defs; this has to be the same as global_declarations because '(asd)expr' would sleep on (asd) as an expression
     
     // constant global stuff
     struct file invalid_file;
@@ -4761,6 +4764,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
     struct compilation_unit *compilation_units = push_data(arena, struct compilation_unit, files_to_parse.amount);
     globals.compilation_units.first = compilation_units;
     globals.compilation_units.last  = compilation_units + files_to_parse.amount - 1;
+    globals.first_compilation_unit = globals.compilation_units.first;
     {
         smm index = 0;
         for(struct work_queue_entry *entry = files_to_parse.first; entry; entry = entry->next){

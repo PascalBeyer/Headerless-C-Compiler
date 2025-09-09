@@ -758,9 +758,11 @@ func struct memory_arena create_memory_arena(smm size, f32 exp_grow, u32 constan
 
 #define push_uninitialized_struct(arena, type) ((type *)push_struct_(arena, sizeof(type), alignof(type)))
 #define push_struct(arena, type) ((type*)memset(push_uninitialized_struct(arena, type), 0, sizeof(type)))
+#define push_struct_unaligned(arena, type) ((type *)memset(push_struct_(arena, sizeof(type), 1), 0, sizeof(type)))
 
 #define push_uninitialized_data(arena, type, amount)   ((type *)push_struct_(arena, (amount) * sizeof(type), alignof(type)))
 #define push_data(arena, type, amount) ((type *)memset(push_uninitialized_data(arena, type, amount), 0, sizeof(type) * (amount)))
+#define push_data_unaligned(arena, type, amount) ((type *)memset(push_struct_(arena, (amount) * sizeof(type), 1), 0, sizeof(type) * (amount)))
 
 #define push_array_copy(arena, type, array, amount) ((type *)memcpy(push_uninitialized_data(arena, type, sizeof(type) * (amount)), array, (amount) * sizeof(type)))
 

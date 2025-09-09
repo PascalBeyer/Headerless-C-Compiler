@@ -587,6 +587,117 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
     end_temporary_memory(temp);
 }
 
+u32 register_all_types(struct memory_arena *arena, struct memory_arena *scratch, struct memory_arena *stack_arena, struct ast_list defined_functions){
+    
+    u32 type_index_allocator = 0x1000;
+    
+    for(u64 index = 0; index < globals.compound_types.capacity; index++){
+        struct ast_node *node = globals.compound_types.nodes + index;
+        if(!node->token) continue;
+        
+        struct ast_type *initial_type = (struct ast_type *)node->ast;
+        register_type(&type_index_allocator, arena, scratch, initial_type);
+    }
+    
+    // 
+    // We have to register types for every global variable, 
+    // as they might be pointer types or anonymous.
+    // 
+    for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+        struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
+        
+        for(u64 table_index = 0; table_index < table->capacity; table_index++){
+            enum ast_kind *ast = table->nodes[table_index].ast;
+            if(!ast) continue;
+            
+            struct ast_declaration *decl = (struct ast_declaration *)ast;
+            if(decl->type->pdb_type_index) continue;
+            
+            if(decl->flags & DECLARATION_FLAGS_is_enum_member){
+                register_type(&type_index_allocator, arena, scratch, decl->type);
+                continue;
+            }
+            
+            if(decl->kind == IR_typedef){
+                register_type(&type_index_allocator, arena, scratch, decl->type);
+                continue;
+            }
+            
+            if(*ast == IR_declaration || *ast == IR_function){
+                
+                // For dllimports, the defining dll has the declaration and type information.
+                if(decl->flags & DECLARATION_FLAGS_is_dllimport) continue;
+                
+                if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)){
+                    if(decl->flags & DECLARATION_FLAGS_is_static) continue;
+                    if(decl->flags & DECLARATION_FLAGS_is_extern) continue; // @cleanup: Don't we care about defined externs?
+                }
+                
+                register_type(&type_index_allocator, arena, scratch, decl->type);
+                continue;
+            }
+        }
+    }
+    for(struct ast_list_node *function_node = defined_functions.first; function_node; function_node = function_node->next){
+        struct ast_function *function = (struct ast_function *)function_node->value;
+        
+        // 
+        // Iterate down all statements registering the types of all declarations.
+        // 
+        smm ast_stack_capacity = 32;
+        struct ast_stack_node{
+            struct ast_scope *scope;
+        } *stack = push_uninitialized_data(stack_arena, struct ast_stack_node, ast_stack_capacity);
+        stack[0].scope = function->scope;
+        
+#define push_to_stack(scope_to_push) {\
+    if(ast_stack_size == ast_stack_capacity){\
+        push_uninitialized_data(stack_arena, struct ast_stack_node, ast_stack_capacity);\
+        ast_stack_capacity *= 2;\
+    }\
+    stack[ast_stack_size++].scope = (scope_to_push);\
+}
+        
+        for(smm ast_stack_size = 1; ast_stack_size > 0; ){
+            
+            struct ast_scope *scope = stack[--ast_stack_size].scope;
+            
+            for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
+                struct ast_declaration *decl = scope->declarations[declaration_index];
+                if(!decl) continue;
+                register_type(&type_index_allocator, arena, scratch, decl->type);
+            }
+            
+            for(smm compound_index = 0; compound_index < scope->current_max_amount_of_compound_types; compound_index++){
+                struct ast_compound_type *compound = scope->compound_types[compound_index];
+                if(!compound) continue;
+                register_type(&type_index_allocator, arena, scratch, &compound->base);
+            }
+            
+            // 
+            // Push all the statements to the ast stack in reverse order.
+            // 
+            
+            smm subscope_count = scope->subscopes.count;
+            
+            if(ast_stack_size + subscope_count > ast_stack_capacity){
+                push_uninitialized_data(stack_arena, struct ast_stack_node, subscope_count);
+            }
+            
+            ast_stack_size += subscope_count;
+            
+            smm subscope_index = 0;
+            for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+                stack[ast_stack_size - (subscope_index++ + 1)].scope = subscope;
+            }
+            
+            assert(subscope_index == subscope_count);
+        }
+    }
+    
+    return type_index_allocator;
+}
+
 struct debug_symbols_relocation_info{
     u32 destination_offset;
     struct ast_declaration *source_declaration;
@@ -831,19 +942,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         string_list_postfix_no_copy(&directives, scratch, string(" "));
     }
     
-    // :DeclarationTableLoop
-    // 
-    // @note: This declaration only exist to facilitate loops that want to iterate all declaration tables.
-    //        Both the global one (in this `dummy_global_declaration_unit`) and the local ones in
-    //        compilation_unit->static_declaration_table.
-    struct compilation_unit dummy_global_compilation_unit = {
-        .next = globals.compilation_units.first, 
-        .static_declaration_table = globals.global_declarations,
-    };
-    
     u64 selectany_sections = 0;
     
-    for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+    for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
         
         struct ast_table *table = &compilation_unit->static_declaration_table;
         
@@ -1572,7 +1673,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         // We have to register types for every global variable, 
         // as they might be pointer types or anonymous.
         // 
-        for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+        for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
             struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
             
             for(u64 table_index = 0; table_index < table->capacity; table_index++){
@@ -1608,31 +1709,12 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             }
         }
         
-        // 
-        // Register types for functions.
-        // 
-        
-        for_ast_list(external_functions){
-            struct ast_declaration *decl = (struct ast_declaration *)it->value;
-            register_type(&type_index_allocator, arena, scratch, decl->type);
-        }
-        
-        for_ast_list(defined_functions){
-            struct ast_declaration *decl = (struct ast_declaration *)it->value;
-            register_type(&type_index_allocator, arena, scratch, decl->type);
-        }
-        
         for(struct ast_list_node *function_node = defined_functions.first; function_node; function_node = function_node->next){
             struct ast_function *function = (struct ast_function *)function_node->value;
             
             // 
             // Iterate down all statements registering the types of all declarations.
-            // @cleanup: This should only really care about scopes and also register types
-            //           which are not referenced by declarations.
-            // @cleanup: How does this work with compound literals?
-            // @note: Because of pointer types, we have to register the types of all declarations.
             // 
-            
             smm ast_stack_capacity = 32;
             struct ast_stack_node{
                 struct ast_scope *scope;
@@ -1641,7 +1723,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
 #define push_to_stack(scope_to_push) {\
     if(ast_stack_size == ast_stack_capacity){\
-        push_uninitialized_data(&stack_arena, struct ast_stack_node, ast_stack_capacity);\
+        push_uninitialized_data(stack_arena, struct ast_stack_node, ast_stack_capacity);\
         ast_stack_capacity *= 2;\
     }\
     stack[ast_stack_size++].scope = (scope_to_push);\
@@ -2060,7 +2142,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             u32 *subsection_size = push_struct(arena, u32);
             
             // :DeclarationTableLoop
-            for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+            for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
                 
                 struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
                 
