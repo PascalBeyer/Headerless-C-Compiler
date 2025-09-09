@@ -692,6 +692,87 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
     }
 }
 
+func void *push_unwind_information_for_function(struct memory_arena *arena, struct ast_function *function){
+    
+    struct unwind_info{
+        u8 version : 3;
+        u8 flags   : 5;
+        u8 size_of_prolog;
+        u8 count_of_codes;
+        u8 frame_register : 4;
+        u8 frame_offset   : 4;
+        
+        struct unwind_code{
+            u8 offset_in_prolog;
+            u8 operation_code : 4;
+            u8 operation_info : 4;
+        } codes[];
+        
+    } *unwind_info = push_struct(arena, struct unwind_info);
+    
+    unwind_info->version = 1;
+    unwind_info->flags   = 0;
+    unwind_info->size_of_prolog = (u8)(function->size_of_prolog);
+    unwind_info->count_of_codes = 0;
+    unwind_info->frame_register = REGISTER_BP;
+    
+    smm stack_space_needed = function->stack_space_needed;
+    
+    struct unwind_code *stack_allocation_code = push_struct(arena, struct unwind_code);
+    stack_allocation_code->offset_in_prolog = (u8)function->rsp_subtract_offset;
+    
+    if(8 <= stack_space_needed && stack_space_needed <= 128){
+        // "Allocate a small-sized area on the stack. The size of the allocation 
+        //  is the operation info field times eight plus eight allowing allocations
+        //  from 8 to 128 bytes."
+        
+        stack_allocation_code->operation_code = /*UWOP_ALLOC_SMALL*/2;
+        stack_allocation_code->operation_info = (u8)((stack_space_needed - 8)/8);
+    }else if(stack_space_needed <= 512 * 1024 - 8){
+        // "Allocate a large-sized area on the stack. There are two forms.
+        //  If the operation info equals 0, then the size of the allocation 
+        //  divided by 8 is recorded in the next slot, allowing allocation 
+        //  up to 512k - 8."
+        
+        stack_allocation_code->operation_code = /*UWOP_ALLOC_LARGE*/1;
+        stack_allocation_code->operation_info = 0;
+        *push_struct(arena, u16) = (u16)(stack_space_needed/8);
+    }else{
+        // "If the operation info equals 1, then the unscaled size of the alloation
+        //  is recorded in the next two slots in little-endian format, allowing
+        //  allocations up to 4GiB - 8."
+        assert(stack_space_needed < giga_bytes(4) - 8);
+        
+        stack_allocation_code->operation_code = /*UWOP_ALLOC_LARGE*/1;
+        stack_allocation_code->operation_info = 1;
+        *push_struct(arena, u32) = (u32)stack_space_needed;
+    }
+    
+    u8 amount_of_pushed_registers = (u8)__popcnt(function->pushed_register_mask);
+    
+    struct unwind_code *frame_pointer_code = push_struct(arena, struct unwind_code);
+    frame_pointer_code->offset_in_prolog = (u8)(amount_of_pushed_registers + /*mov rbp, rsp*/3);
+    frame_pointer_code->operation_code   = /*UWOP_SET_FPREG*/3;
+    
+    for(u8 register_index = 0, offset_in_prolog = amount_of_pushed_registers; register_index < 16; register_index++){
+        if(!(function->pushed_register_mask & (1u << register_index))) continue;
+        
+        struct unwind_code *pushed_register_code = push_struct(arena, struct unwind_code);
+        pushed_register_code->offset_in_prolog = offset_in_prolog--;
+        pushed_register_code->operation_code = /*UWOP_PUSH_NONVOL*/0;
+        pushed_register_code->operation_info = register_index;
+    }
+    
+    unwind_info->count_of_codes = (u8)((struct unwind_code *)arena_current(arena) - unwind_info->codes);
+    
+    if(unwind_info->count_of_codes & 1){
+        // "The UNWIND_INFO structure must be DWORD aligned in memory."
+        push_struct(arena, u16);
+    }
+    
+    return unwind_info;
+}
+
 void print_obj(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
     
     struct memory_arena stack_arena = create_memory_arena(giga_bytes(8), 2.0f, kilo_bytes(10));
@@ -1123,81 +1204,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         for_ast_list(defined_functions){
             struct ast_function *function = (struct ast_function *)it->value;
             
-            struct unwind_info{
-                u8 version : 3;
-                u8 flags   : 5;
-                u8 size_of_prolog;
-                u8 count_of_codes;
-                u8 frame_register : 4;
-                u8 frame_offset   : 4;
-                
-                struct unwind_code{
-                    u8 offset_in_prolog;
-                    u8 operation_code : 4;
-                    u8 operation_info : 4;
-                } codes[];
-                
-            } *unwind_info = push_struct(arena, struct unwind_info);
-            
-            unwind_info->version = 1;
-            unwind_info->flags   = 0;
-            unwind_info->size_of_prolog = (u8)(function->size_of_prolog);
-            unwind_info->count_of_codes = 0;
-            unwind_info->frame_register = REGISTER_BP;
-            
-            smm stack_space_needed = function->stack_space_needed;
-            
-            struct unwind_code *stack_allocation_code = push_struct(arena, struct unwind_code);
-            stack_allocation_code->offset_in_prolog = (u8)function->rsp_subtract_offset;
-            
-            if(8 <= stack_space_needed && stack_space_needed <= 128){
-                // "Allocate a small-sized area on the stack. The size of the allocation 
-                //  is the operation info field times eight plus eight allowing allocations
-                //  from 8 to 128 bytes."
-                
-                stack_allocation_code->operation_code = /*UWOP_ALLOC_SMALL*/2;
-                stack_allocation_code->operation_info = (u8)((stack_space_needed - 8)/8);
-            }else if(stack_space_needed <= 512 * 1024 - 8){
-                // "Allocate a large-sized area on the stack. There are two forms.
-                //  If the operation info equals 0, then the size of the allocation 
-                //  divided by 8 is recorded in the next slot, allowing allocation 
-                //  up to 512k - 8."
-                
-                stack_allocation_code->operation_code = /*UWOP_ALLOC_LARGE*/1;
-                stack_allocation_code->operation_info = 0;
-                *push_struct(arena, u16) = (u16)(stack_space_needed/8);
-            }else{
-                // "If the operation info equals 1, then the unscaled size of the alloation
-                //  is recorded in the next two slots in little-endian format, allowing
-                //  allocations up to 4GiB - 8."
-                assert(stack_space_needed < giga_bytes(4) - 8);
-                
-                stack_allocation_code->operation_code = /*UWOP_ALLOC_LARGE*/1;
-                stack_allocation_code->operation_info = 1;
-                *push_struct(arena, u32) = (u32)stack_space_needed;
-            }
-            
-            u8 amount_of_pushed_registers = (u8)__popcnt(function->pushed_register_mask);
-            
-            struct unwind_code *frame_pointer_code = push_struct(arena, struct unwind_code);
-            frame_pointer_code->offset_in_prolog = (u8)(amount_of_pushed_registers + /*mov rbp, rsp*/3);
-            frame_pointer_code->operation_code   = /*UWOP_SET_FPREG*/3;
-            
-            for(u8 register_index = 0, offset_in_prolog = amount_of_pushed_registers; register_index < 16; register_index++){
-                if(!(function->pushed_register_mask & (1u << register_index))) continue;
-                
-                struct unwind_code *pushed_register_code = push_struct(arena, struct unwind_code);
-                pushed_register_code->offset_in_prolog = offset_in_prolog--;
-                pushed_register_code->operation_code = /*UWOP_PUSH_NONVOL*/0;
-                pushed_register_code->operation_info = register_index;
-            }
-            
-            unwind_info->count_of_codes = (u8)((struct unwind_code *)arena_current(arena) - unwind_info->codes);
-            
-            if(unwind_info->count_of_codes & 1){
-                // "The UNWIND_INFO structure must be DWORD aligned in memory."
-                push_struct(arena, u16);
-            }
+            push_unwind_information_for_function(arena, function);
         }
         
         memcpy(xdata->name, ".xdata", sizeof(".xdata"));

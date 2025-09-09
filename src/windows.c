@@ -695,6 +695,23 @@ u64 file_time_to_percise_unix_time(FILETIME *ft){
     return ull.QuadPart - 116444736000000000ULL;
 }
 
+__declspec(dllimport) BOOL SystemTimeToFileTime(SYSTEMTIME *lpSystemTime, FILETIME *lpFileTime);
+u32 get_unix_time(void){
+    SYSTEMTIME st;
+    GetSystemTime(&st);
+    
+    FILETIME ft;
+    SystemTimeToFileTime(&st, &ft);
+    
+    ULARGE_INTEGER ull;
+    ull.LowPart = ft.dwLowDateTime;
+    ull.HighPart = ft.dwHighDateTime;
+    
+    // Convert to seconds since epoch.
+    __int64 epochOffset = 11644473600LL; // Offset for Windows file time.
+    return (u32)((ull.QuadPart / 10000000ULL) - epochOffset);
+}
+
 static struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size){
     struct os_file result = zero_struct;
     

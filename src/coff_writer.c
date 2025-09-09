@@ -4,281 +4,6 @@ static void read_pdb(struct memory_arena *scratch, struct os_file pdb_file);
 //////////////////////////////////////////////////////
 // PE helpers                                       //
 //////////////////////////////////////////////////////
-static const u8 DOS_STUB[] = {
-    0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
-    0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd0, 0x00, 0x00, 0x00,
-    0x0e, 0x1f, 0xba, 0x0e, 0x00, 0xb4, 0x09, 0xcd, 0x21, 0xb8, 0x01, 0x4c, 0xcd, 0x21, 0x54, 0x68,
-    0x69, 0x73, 0x20, 0x70, 0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x20, 0x63, 0x61, 0x6e, 0x6e, 0x6f,
-    0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6e, 0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20,
-    0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0xfd, 0xa2, 0x09, 0x47, 0xb9, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x67, 0x14,
-    0x9b, 0xa3, 0x66, 0x15, 0xba, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x66, 0x14, 0xb6, 0xc3, 0x67, 0x14,
-    0x1b, 0xa0, 0x63, 0x15, 0xb8, 0xc3, 0x67, 0x14, 0x1b, 0xa0, 0x65, 0x15, 0xb8, 0xc3, 0x67, 0x14,
-    0x52, 0x69, 0x63, 0x68, 0xb9, 0xc3, 0x67, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4e, 0x44, 0x47,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-};
-
-static_assert(sizeof(DOS_STUB) >= 0x3c);
-
-typedef struct _IMAGE_FILE_HEADER {
-    WORD Machine;
-    WORD NumberOfSections;
-    DWORD TimeDateStamp;
-    DWORD PointerToSymbolTable;
-    DWORD NumberOfSymbols;
-    WORD SizeOfOptionalHeader;
-    WORD Characteristics;
-} IMAGE_FILE_HEADER, *PIMAGE_FILE_HEADER;
-
-typedef struct _IMAGE_DATA_DIRECTORY {
-    DWORD VirtualAddress;
-    DWORD Size;
-} IMAGE_DATA_DIRECTORY, *PIMAGE_DATA_DIRECTORY;
-
-typedef struct _IMAGE_SECTION_HEADER {
-    BYTE Name[8];
-    union {
-        DWORD PhysicalAddress;
-        DWORD VirtualSize;
-    } Misc;
-    DWORD VirtualAddress;
-    DWORD SizeOfRawData;
-    DWORD PointerToRawData;
-    DWORD PointerToRelocations;
-    DWORD PointerToLinenumbers;
-    WORD NumberOfRelocations;
-    WORD NumberOfLinenumbers;
-    DWORD Characteristics;
-} IMAGE_SECTION_HEADER, *PIMAGE_SECTION_HEADER;
-
-typedef struct _IMAGE_OPTIONAL_HEADER64 {
-    WORD Magic;
-    BYTE MajorLinkerVersion;
-    BYTE MinorLinkerVersion;
-    DWORD SizeOfCode;
-    DWORD SizeOfInitializedData;
-    DWORD SizeOfUninitializedData;
-    DWORD AddressOfEntryPoint;
-    DWORD BaseOfCode;
-    ULONGLONG ImageBase;
-    DWORD SectionAlignment;
-    DWORD FileAlignment;
-    WORD MajorOperatingSystemVersion;
-    WORD MinorOperatingSystemVersion;
-    WORD MajorImageVersion;
-    WORD MinorImageVersion;
-    WORD MajorSubsystemVersion;
-    WORD MinorSubsystemVersion;
-    DWORD Win32VersionValue;
-    DWORD SizeOfImage;
-    DWORD SizeOfHeaders;
-    DWORD CheckSum;
-    WORD Subsystem;
-    WORD DllCharacteristics;
-    ULONGLONG SizeOfStackReserve;
-    ULONGLONG SizeOfStackCommit;
-    ULONGLONG SizeOfHeapReserve;
-    ULONGLONG SizeOfHeapCommit;
-    DWORD LoaderFlags;
-    DWORD NumberOfRvaAndSizes;
-    IMAGE_DATA_DIRECTORY DataDirectory[16];
-} IMAGE_OPTIONAL_HEADER64, *PIMAGE_OPTIONAL_HEADER64;
-
-typedef struct _IMAGE_NT_HEADERS64 {
-    DWORD Signature;
-    IMAGE_FILE_HEADER FileHeader;
-    IMAGE_OPTIONAL_HEADER64 OptionalHeader;
-} IMAGE_NT_HEADERS64, *PIMAGE_NT_HEADERS64;
-typedef PIMAGE_NT_HEADERS64 PIMAGE_NT_HEADERS;
-
-typedef struct _IMAGE_DEBUG_DIRECTORY {
-    DWORD Characteristics;
-    DWORD TimeDateStamp;
-    WORD MajorVersion;
-    WORD MinorVersion;
-    DWORD Type;
-    DWORD SizeOfData;
-    DWORD AddressOfRawData;
-    DWORD PointerToRawData;
-} IMAGE_DEBUG_DIRECTORY, *PIMAGE_DEBUG_DIRECTORY;
-
-typedef struct _IMAGE_IMPORT_DESCRIPTOR {
-    DWORD ImportLookupRVA;
-    DWORD TimeDateStamp;
-    
-    DWORD ForwarderChain;
-    DWORD Name;
-    DWORD ImportAddressRVA;
-} IMAGE_IMPORT_DESCRIPTOR;
-typedef IMAGE_IMPORT_DESCRIPTOR __unaligned *PIMAGE_IMPORT_DESCRIPTOR;
-
-typedef enum _UNWIND_OP_CODES {
-    UWOP_PUSH_NONVOL = 0, /* info == register number */
-    UWOP_ALLOC_LARGE = 1,     /* no info, alloc size in next 2 slots */
-    UWOP_ALLOC_SMALL = 2,     /* info == size of allocation / 8 - 1 */
-    UWOP_SET_FPREG   = 3,       /* no info, FP = RSP + UNWIND_INFO.FPRegOffset*16 */
-    UWOP_SAVE_NONVOL = 4,     /* info == register number, offset in next slot */
-    UWOP_SAVE_NONVOL_FAR = 5, /* info == register number, offset in next 2 slots */
-    UWOP_SAVE_XMM128 = 8, /* info == XMM reg number, offset in next slot */
-    UWOP_SAVE_XMM128_FAR = 9, /* info == XMM reg number, offset in next 2 slots */
-    UWOP_PUSH_MACHFRAME   /* info == 0: no error-code, 1: error-code */
-} UNWIND_CODE_OPS;
-typedef union _UNWIND_CODE {
-    struct{
-        UBYTE CodeOffset;
-        UBYTE UnwindOp; // UBYTE UnwindOp : 4; UBYTE OpInfo : 4;
-    };
-    USHORT FrameOffset;
-} UNWIND_CODE, *PUNWIND_CODE;
-
-typedef struct _UNWIND_INFO {
-    UBYTE VersionAndFlags;   //UBYTE Version: 3; UBYTE Flags: 5;
-    UBYTE SizeOfProlog;
-    UBYTE CountOfCodes;
-    UBYTE FrameInfo;    //UBYTE FrameRegister : 4;    UBYTE FrameOffset   : 4;
-    //UNWIND_CODE UnwindCode[1];
-    /*  UNWIND_CODE MoreUnwindCode[((CountOfCodes + 1) & ~1) - 1];
-    *   union {
-    *       OPTIONAL ULONG ExceptionHandler;
-    *       OPTIONAL ULONG FunctionEntry;
-    *   };
-    *   OPTIONAL ULONG ExceptionData[]; */
-} UNWIND_INFO, *PUNWIND_INFO;
-
-func UNWIND_INFO *function_fill_in_unwind_info(struct memory_arena *emit_arena, struct ast_function *ast_function){
-    UNWIND_INFO *unwind = push_struct(emit_arena, UNWIND_INFO);
-    //unwind->Version = 1;
-    unwind->VersionAndFlags = 1;
-    unwind->SizeOfProlog = save_truncate_smm_to_u8(ast_function->size_of_prolog);
-    unwind->CountOfCodes = 0; // this gets incrementally increased below
-    unwind->FrameInfo = 5; // RBP
-    //unwind->FrameOffset = 0;
-    
-    // @note: the order on these seems to be reversed for some stupid reason
-    // "The array is sorted by descending order of offset in the prolog."
-    
-    assert(ast_function->stack_space_needed >= 0);
-    assert(ast_function->stack_space_needed < giga_bytes(4));
-    
-    smm memory = (ast_function->stack_space_needed) / 8 - 1;
-    if(memory < (1 << 4)){
-        unwind->CountOfCodes += 1;
-        UNWIND_CODE *code = push_struct(emit_arena, UNWIND_CODE);
-        code->CodeOffset  = save_truncate_smm_to_u8(ast_function->rsp_subtract_offset);
-        code->UnwindOp    = UWOP_ALLOC_SMALL | to_u8(memory << 4);
-    }else if(memory < (1 << 16)){
-        unwind->CountOfCodes += 2;
-        UNWIND_CODE *code = push_struct(emit_arena, UNWIND_CODE);
-        code->CodeOffset  = save_truncate_smm_to_u8(ast_function->rsp_subtract_offset);
-        code->UnwindOp = UWOP_ALLOC_LARGE;
-        *cast(u16 *)push_struct_(emit_arena, sizeof(u16), 1) = save_truncate_smm_to_u16(memory);
-    }else{
-        unwind->CountOfCodes += 3;
-        assert(ast_function->stack_space_needed <= 0xFFFFFFF8);
-        UNWIND_CODE *code = push_struct(emit_arena, UNWIND_CODE);
-        code->CodeOffset  = save_truncate_smm_to_u8(ast_function->rsp_subtract_offset);
-        code->UnwindOp = UWOP_ALLOC_LARGE | (1 << 4);
-        *cast(u32 *)push_struct_(emit_arena, sizeof(u32), 1) = save_truncate_smm_to_u32(ast_function->stack_space_needed);
-    }
-    
-    { // code for establishing the Frame Pointer
-        unwind->CountOfCodes += 1;
-        UNWIND_CODE *code = push_struct(emit_arena, UNWIND_CODE);
-        code->CodeOffset = 4; // after push rbp and mov rbp, rsp
-        code->UnwindOp = UWOP_SET_FPREG;
-    }
-    
-    for(u32 i = 0; i < 16; i++){
-        
-        if(ast_function->pushed_register_mask & (1 << i)){
-            unwind->CountOfCodes += 1;
-            UNWIND_CODE *code = push_struct(emit_arena, UNWIND_CODE);
-            code->CodeOffset = 1; // after push rbp, which is '55'
-            code->UnwindOp = UWOP_PUSH_NONVOL | (UBYTE)(i << 4);
-            //code->OpInfo   = 5; // RBP
-        }
-    }
-    
-    if(unwind->CountOfCodes & 1){
-        *cast(u16 *)push_struct_(emit_arena, sizeof(u16), 1) = 0; // pad need to be aligned to 32
-    }
-    
-    // not sure if this has to be here?
-    *push_struct(emit_arena, u32) = 0;
-    //*cast(u32 *)push_struct_(emit_arena, sizeof(u32), 1) = 0;
-    
-    
-    return unwind;
-}
-
-struct exe_write_context{
-    u8 *base_address;
-    u8 *end_address;
-    u8 *begin_of_text_section;
-    
-    IMAGE_FILE_HEADER *coff;
-    IMAGE_OPTIONAL_HEADER64 *header;
-    
-    u32 amount_of_sections;
-    IMAGE_SECTION_HEADER *section_headers[0x10];
-};
-
-func IMAGE_SECTION_HEADER *write_section_header(struct exe_write_context *context, struct memory_arena *arena, char *name, u32 characteristics){
-    
-    IMAGE_SECTION_HEADER *section = push_struct(arena, IMAGE_SECTION_HEADER);
-    
-    for(u32 i = 0; i < 8; i++){
-        section->Name[i] = *name++;
-        if(!*name)break;
-    }
-    
-    section->Characteristics = characteristics;
-    context->coff->NumberOfSections++;
-    
-    
-    context->section_headers[context->amount_of_sections++] = section;
-    
-    return section;
-}
-
-s16 section_id_for_section(struct exe_write_context *context, IMAGE_SECTION_HEADER *section){
-    assert(context->section_headers[0] <= section && section <= context->section_headers[context->amount_of_sections - 1]);
-    return (s16)(section - context->section_headers[0]) + 1;
-}
-
-struct section_write_context{
-    u8 *base_address;
-    struct memory_arena *arena;
-    u32 virtual_address;
-    
-    // per section data
-    u8 *section_memory_location;
-    IMAGE_SECTION_HEADER *section;
-};
-
-func u32 make_relative_virtual_address(struct section_write_context *context, void *pointer){
-    return save_truncate_smm_to_u32(cast(u8 *)pointer - context->section_memory_location + context->section->VirtualAddress);
-}
-
-func void begin_section(struct section_write_context *context, IMAGE_SECTION_HEADER *section){
-    push_zero_align(context->arena, 0x200); // file alignment
-    context->section = section;
-    
-    section->VirtualAddress = context->virtual_address;
-    section->PointerToRawData = save_truncate_smm_to_u32(arena_current(context->arena) - context->base_address);
-    
-    context->section_memory_location = arena_current(context->arena);
-}
-
-func void end_section(struct section_write_context *context){
-    u32 actual_size = save_truncate_smm_to_u32(arena_current(context->arena)
-                                               - context->section_memory_location);
-    context->section->SizeOfRawData = align_up(actual_size, 0x200); // file_alignment
-    context->section->Misc.VirtualSize = actual_size;
-    context->virtual_address = align_up(context->virtual_address + actual_size, 0x1000);
-}
 
 //_____________________________________________________________________________________________________________________
 // PDB helpers
@@ -1439,123 +1164,121 @@ func void emit_pdb_line_info_for_function(struct pdb_write_context *context, str
 //_____________________________________________________________________________________________________________________
 
 
-struct symbol_context{
-    struct ast_list initialized_declarations;
-    struct ast_list uninitialized_declarations;
-    struct ast_list tls_declarations;
-    
-    struct ast_list functions_with_a_body;
-    struct ast_list typedefs;
-    struct ast_list dllexports;
-    struct ast_list dll_function_stubs;
-    struct ast_list dll_imports;
-    
-    struct timing_events timing_events;
-};
-
-func void insert_function_into_the_right_list(struct symbol_context *symbol_context, struct ast_function *function, struct memory_arena *scratch){
-    
-    // If the function is not reachable, we don't emit it.
-    if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)){
-        assert(!function->memory_location); // Make sure we did not emit code for the function.
-        return;
-    }
-    
-    if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic)  return;
-    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) return;
-    
-    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
-        assert(function->dll_import_node);
-        ast_list_append(&symbol_context->dll_imports, scratch, &function->kind);
-        if(function->as_decl.flags & DECLARATION_FLAGS_need_dllimport_stub_function) ast_list_append(&symbol_context->dll_function_stubs, scratch, &function->kind);
-        return;
-    }
-    
-    // Once, we got through the dllimports, we can be sure that all functions are defined.
-    assert(function->scope);
-    
-    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
-        ast_list_append(&symbol_context->dllexports, scratch, &function->kind);
-    }
-    
-    ast_list_append(&symbol_context->functions_with_a_body, scratch, &function->kind);
-    assert(function->scope);
-    
-    for_ast_list(function->static_variables){
-        struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-        if(decl->assign_expr){
-            ast_list_append(&symbol_context->initialized_declarations, scratch, &decl->kind);
-        }else{
-            ast_list_append(&symbol_context->uninitialized_declarations, scratch, &decl->kind);
-        }
-    }
-}
-
-func void add_declarations_for_ast_table(struct symbol_context *symbol_context, struct memory_arena *arena, struct ast_table *table){
-    for(u64 i = 0; i < table->capacity; i++){
-        struct ast_node *node = table->nodes + i;
-        if(!node->ast) continue;
-        
-        if(*node->ast == IR_declaration || *node->ast == IR_typedef){
-            struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
-            
-            // Skip unreachable declarations.
-            if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
-        }
-        
-        if(*node->ast == IR_typedef){
-            ast_list_append(&symbol_context->typedefs, arena, node->ast);
-            continue;
-        }
-        
-        if(table != &globals.global_declarations){
-            struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
-            //
-            // This is one of the local declaration tables, all members in here should be static.
-            //
-            assert(decl->flags & DECLARATION_FLAGS_is_static);
-        }
-        
-        if(*node->ast == IR_function){
-            struct ast_function *function = (struct ast_function *)node->ast;
-            insert_function_into_the_right_list(symbol_context, function, arena);
-        }else{
-            assert(*node->ast == IR_declaration);
-            struct ast_declaration *decl = cast(struct ast_declaration *)node->ast;
-            if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
-            
-            // @cleanup: dllimports?
-            
-            if(decl->flags & DECLARATION_FLAGS_is_thread_local){
-                ast_list_append(&symbol_context->tls_declarations, arena, node->ast);
-                continue;
-            }
-            
-            if(decl->assign_expr){
-                ast_list_append(&symbol_context->initialized_declarations, arena, node->ast);
-            }else{
-                ast_list_append(&symbol_context->uninitialized_declarations, arena, node->ast);
-            }
-        }
-    }
-}
-
 func void print_coff(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
     
-    begin_counter(&symbol_context, gather_symbols);
-    struct symbol_context symbol_context = zero_struct;
     
-    add_declarations_for_ast_table(&symbol_context, arena, &globals.global_declarations);
+    // 
+    // Gather Symbols.
+    // 
     
-    for(struct compilation_unit *compilation_unit = globals.compilation_units.first; compilation_unit; compilation_unit = compilation_unit->next){
-        add_declarations_for_ast_table(&symbol_context, arena, &compilation_unit->static_declaration_table);
+    struct ast_list typedefs = zero_struct;
+    
+    struct ast_list dllexports = zero_struct;
+    struct ast_list dll_function_stubs = zero_struct;
+    struct ast_list dll_imports = zero_struct;
+    
+    struct ast_list defined_functions = zero_struct;
+    
+    struct ast_list initialized_declarations = zero_struct;
+    struct ast_list uninitialized_declarations = zero_struct;
+    struct ast_list tls_declarations = zero_struct;
+    
+    struct compilation_unit dummy_global_compilation_unit = {
+        .next = globals.compilation_units.first, 
+        .static_declaration_table = globals.global_declarations,
+    };
+    
+    for(struct compilation_unit *compilation_unit = &dummy_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+        
+        struct ast_table *table = &compilation_unit->static_declaration_table;
+        
+        for(u64 table_index = 0; table_index < table->capacity; table_index++){
+            enum ast_kind *ast = table->nodes[table_index].ast;
+            if(!ast) continue;
+            
+            struct ast_declaration *decl = (struct ast_declaration *)ast;
+            
+            // If this is one of the local declaration tables, all members in here should be static.
+            if(table->nodes != globals.global_declarations.nodes) assert(decl->flags & DECLARATION_FLAGS_is_static);
+            
+            switch(*ast){
+                case IR_declaration:{
+                    if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                    
+                    if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                        ast_list_append(&tls_declarations, arena, ast);
+                        continue;
+                    }
+                    
+                    if(decl->assign_expr){
+                        ast_list_append(&initialized_declarations, arena, ast);
+                    }else{
+                        ast_list_append(&uninitialized_declarations, arena, ast);
+                    }
+                }break;
+                
+                case IR_typedef:{
+                    if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                    
+                    ast_list_append(&typedefs, arena, ast);
+                }break;
+                
+                case IR_function:{
+                    struct ast_function *function = (struct ast_function *)ast;
+                    
+                    if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                    if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic)  continue;
+                    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
+                    
+                    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
+                        assert(function->dll_import_node);
+                        ast_list_append(&dll_imports, scratch, &function->kind);
+                        if(function->as_decl.flags & DECLARATION_FLAGS_need_dllimport_stub_function) ast_list_append(&dll_function_stubs, scratch, &function->kind);
+                        continue;
+                    }
+                    
+                    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
+                        ast_list_append(&dllexports, scratch, &function->kind);
+                    }
+                    
+                    ast_list_append(&defined_functions, scratch, &function->kind);
+                    
+                    for_ast_list(function->static_variables){
+                        struct ast_declaration *static_decl = (struct ast_declaration *)it->value;
+                        if(static_decl->assign_expr){
+                            ast_list_append(&initialized_declarations, scratch, &static_decl->kind);
+                        }else{
+                            ast_list_append(&uninitialized_declarations, scratch, &static_decl->kind);
+                        }
+                    }
+                }break;
+                
+                invalid_default_case();
+            }
+        }
     }
     
+    // 
+    // Add local functions, these are by definition defined.
+    // 
     for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
         struct context *thread_context = globals.thread_infos[thread_index].context;
-        for_ast_list(thread_context->local_functions){
-            struct ast_function *function = cast(struct ast_function *)it->value;
-            insert_function_into_the_right_list(&symbol_context, function, arena);
+        
+        for(struct ast_list_node *local_function_node = thread_context->local_functions.first; local_function_node; local_function_node = local_function_node->next){
+            struct ast_function *function = (struct ast_function *)local_function_node->value;
+            
+            if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
+            
+            ast_list_append(&defined_functions, scratch, &function->kind);
+            
+            for_ast_list(function->static_variables){
+                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+                if(decl->assign_expr){
+                    ast_list_append(&initialized_declarations, scratch, &decl->kind);
+                }else{
+                    ast_list_append(&uninitialized_declarations, scratch, &decl->kind);
+                }
+            }
         }
     }
     
@@ -1567,7 +1290,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // 
         
         for_ast_list(thread_context->global_struct_and_array_literals){
-            ast_list_append(&symbol_context.initialized_declarations, arena, it->value);
+            ast_list_append(&initialized_declarations, arena, it->value);
         }
     }
     
@@ -1578,32 +1301,22 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct ast_function *function = (struct ast_function *)it->value;
             if(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry){
                 assert(function->dll_import_node);
-                ast_list_append(&symbol_context.dll_imports, scratch, &function->kind);
+                ast_list_append(&dll_imports, scratch, &function->kind);
             }
         }
     }
     
-    end_counter(&symbol_context, gather_symbols);
+    if(tls_declarations.count){
+        // 
+        // If we have a tls_declaration, we need to reference the tls_index_declaration.
+        // 
+        ast_list_append(&uninitialized_declarations, scratch, &globals.tls_index_declaration->kind);
+    }
     
-    
-    begin_counter(&symbol_context, print_exe);
     
     assert(globals.output_file_type == OUTPUT_FILE_exe || globals.output_file_type == OUTPUT_FILE_dll);
     
     struct temporary_memory temporary_memory = begin_temporary_memory(scratch);
-    
-    struct ast_list *initialized_declarations   = &symbol_context.initialized_declarations;
-    struct ast_list *uninitialized_declarations = &symbol_context.uninitialized_declarations;
-    struct ast_list *tls_declarations           = &symbol_context.tls_declarations;
-    struct ast_list *functions_with_a_body = &symbol_context.functions_with_a_body;
-    struct ast_list *dll_function_stubs    = &symbol_context.dll_function_stubs;
-    struct ast_list *typedefs   = &symbol_context.typedefs;
-    struct ast_list *dllexports = &symbol_context.dllexports;
-    
-    if(tls_declarations->count){
-        ast_list_append(uninitialized_declarations, arena, &globals.tls_index_declaration->kind);
-    }
-    
     
     struct string root_file_name = strip_file_extension(output_file_path);
     struct string exe_full_path = push_format_string(arena, "%.*s",  output_file_path.size, output_file_path.data);
@@ -1629,108 +1342,253 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     // data of section n (0x200 aligned)                   //
     /////////////////////////////////////////////////////////
     
-    struct exe_write_context *exe = &(struct exe_write_context)zero_struct;
-    
     push_align(arena, 0x1000);
     
-    u8 *base_address = push_uninitialized_data(arena, u8, sizeof(DOS_STUB));
-    memcpy(base_address, DOS_STUB, sizeof(DOS_STUB));
+    static const u8 DOS_STUB[] = {
+        0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
+        0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd0, 0x00, 0x00, 0x00,
+        0x0e, 0x1f, 0xba, 0x0e, 0x00, 0xb4, 0x09, 0xcd, 0x21, 0xb8, 0x01, 0x4c, 0xcd, 0x21, 0x54, 0x68,
+        0x69, 0x73, 0x20, 0x70, 0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x20, 0x63, 0x61, 0x6e, 0x6e, 0x6f,
+        0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6e, 0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20,
+        0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xfd, 0xa2, 0x09, 0x47, 0xb9, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x67, 0x14,
+        0x9b, 0xa3, 0x66, 0x15, 0xba, 0xc3, 0x67, 0x14, 0xb9, 0xc3, 0x66, 0x14, 0xb6, 0xc3, 0x67, 0x14,
+        0x1b, 0xa0, 0x63, 0x15, 0xb8, 0xc3, 0x67, 0x14, 0x1b, 0xa0, 0x65, 0x15, 0xb8, 0xc3, 0x67, 0x14,
+        0x52, 0x69, 0x63, 0x68, 0xb9, 0xc3, 0x67, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4e, 0x44, 0x47,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    static_assert(sizeof(DOS_STUB) >= 0x3c);
+    
+    u8 *exe_base_address = push_uninitialized_data(arena, u8, sizeof(DOS_STUB));
+    memcpy(exe_base_address, DOS_STUB, sizeof(DOS_STUB));
     
     // @note: this is just hardcoded in the dos stub
     //*(u32 *)(base_address + 0x3c) = sizeof(DOS_STUB);
-    exe->base_address = base_address;
     
-    //u8 *pe32_start = arena->current;
-    // @cleanup: this should be aligned?
     *push_struct(arena, u8) = 'P';
     *push_struct(arena, u8) = 'E';
     *push_struct(arena, u8) = '\0';
     *push_struct(arena, u8) = '\0';
-    { // coff header
-        IMAGE_FILE_HEADER *coff = push_struct(arena, IMAGE_FILE_HEADER);
-        coff->Machine = 0x8664; // x64
-        coff->NumberOfSections = 0; // filled dynamically in write_section_header
-        coff->TimeDateStamp = 0x5DA82834; // @cleanup: this is 17.10.19
-        coff->SizeOfOptionalHeader = sizeof(IMAGE_OPTIONAL_HEADER64);
-        
-        WORD RELOCATIONS_STRIPPED = 0x1;
-        WORD EXECUTABLE_IMAGE     = 0x2;
-        WORD LARGE_ADDRESS_AWARE  = 0x20;
-        WORD IS_DLL               = 0x2000;
-        
-        coff->Characteristics = EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE;
-        if(globals.cli_options.no_dynamic_base){
-            coff->Characteristics |= RELOCATIONS_STRIPPED;
-        }
-        
-        if(globals.output_file_type == OUTPUT_FILE_dll){
-            coff->Characteristics |= IS_DLL;
-        }
-        
-        exe->coff = coff;
-    }
     
-    { // "optional" header
-        IMAGE_OPTIONAL_HEADER64 *header = push_struct(arena, IMAGE_OPTIONAL_HEADER64);
-        header->Magic = 0x20b;
-        header->MajorLinkerVersion = 14; // @note: copied from lld
-        header->MinorLinkerVersion = 11;
+    struct coff_file_header{
+        // 
+        // The type of machine this object is intended for. In our case 0x8664.
+        // 
+        u16 machine;
         
-        // header->SizeOfCode = ???;
-        // header->SizeOfInitializedData = ????;
-        // header->SizeOfUninitializedData = 0; // filled in bss
-        // header->AddressOfEntryPoint = ???;
-        // header->BaseOfCode = ???;
+        // 
+        // The number of sections contained in the object file.
+        // 
+        u16 amount_of_sections;
         
-        // copied from a dumpbin
-        header->ImageBase = 0x140000000;
-        if(globals.output_file_type == OUTPUT_FILE_dll){
-            header->ImageBase = 0x180000000;
-        }
+        // 
+        // The number of sections since 00:00 January 1st 1970,
+        // when the object file was created.
+        // 
+        u32 time_date_stamp;
         
-        // @cleanup: Allow specifying a 0 image base?
-        if(globals.cli_options.image_base_specified) header->ImageBase = globals.cli_options.image_base;
+        // 
+        // The file offset of the COFF symbol table if present.
+        // 
+        u32 pointer_to_symbol_table;
         
-        header->SectionAlignment = 0x1000;
-        header->FileAlignment    = 0x200;
-        header->MajorOperatingSystemVersion = 6;
-        header->MinorOperatingSystemVersion = 0;
-        header->MajorImageVersion = 0;
-        header->MinorImageVersion = 0;
-        header->Win32VersionValue = 0;
+        // 
+        // The amount of symbols in the COFF symbol table.
+        // 
+        u32 amount_of_symbols;
         
-        // header->SizeOfImage = ???;
-        // header->SizeOfHeaders = ???;
-        // header->CheckSum = ???; // this is left 0 by msvc
+        // 
+        // Size of the optional header, should be zero for object files.
+        // As they don't have an optional header.
+        // 
+        u16 size_of_optional_header;
         
-        header->Subsystem = (WORD)globals.subsystem;
-        
-        // @cleanup: This should be able to be set specifically, as well as default initialized based on the subsystem.
-        //    https://learn.microsoft.com/en-us/cpp/build/reference/subsystem-specify-subsystem?view=msvc-170
-        //    
-        header->MajorSubsystemVersion = 6;
-        header->MinorSubsystemVersion = 0;
-        
-        WORD DLL_HIGH_ENTROPY_VA       = 0x0020;
-        WORD DLL_DYNAMIC_BASE          = 0x0040;
-        WORD DLL_NX                    = 0x0100;
-        WORD DLL_TERMINAL_SERVER_AWARE = 0x8000;
-        
-        header->DllCharacteristics = DLL_HIGH_ENTROPY_VA | DLL_NX;
-        
-        if(!(globals.output_file_type == OUTPUT_FILE_dll))    header->DllCharacteristics |= DLL_TERMINAL_SERVER_AWARE; // not sure what this field means
-        if(!globals.cli_options.no_dynamic_base) header->DllCharacteristics |= DLL_DYNAMIC_BASE;
-        
-        header->SizeOfStackReserve = mega_bytes(1);
-        header->SizeOfStackCommit  = mega_bytes(1);
-        header->SizeOfHeapReserve  = 0;
-        header->SizeOfHeapCommit   = 0;
-        header->LoaderFlags = 0;
-        header->NumberOfRvaAndSizes = array_count(header->DataDirectory);
-        
-        exe->header = header;
-    }
+        // 
+        // Characteristics of the file.
+        // Seems to be zero for object files.
+        // 
+        u16 file_characteristics;
+    } *coff_file_header = push_struct(arena, struct coff_file_header);
     
+    // Everything else is zero for now and will be filled in incrementally.
+    coff_file_header->machine = 0x8664; // x64
+    coff_file_header->time_date_stamp = get_unix_time();
+    coff_file_header->file_characteristics = /*EXECUTABLE_IMAGE*/2 | /*LARGE_ADDRESS_AWARE*/0x20;
+    
+    if(globals.cli_options.no_dynamic_base) coff_file_header->file_characteristics |= /*RELOCATIONS_STRIPPED*/1;
+    if(globals.output_file_type == OUTPUT_FILE_dll) coff_file_header->file_characteristics |= /*IS_DLL*/0x2000;
+    
+    struct image_optional_header64{
+        // 
+        // The type of image file, for us 0x20B = PE32+.
+        // 
+        u16 magic;
+        
+        // 
+        // Major and minor linker version, these usually get filled in by link.exe.
+        // 
+        u8 major_linker_version;
+        u8 minor_linker_version;
+        
+        // 
+        // The sum of the sizes of all code sections.
+        // 
+        u32 size_of_code;
+        
+        // 
+        // The sum of the sizes of all initialized data sections.
+        // 
+        u32 size_of_initialized_data;
+        
+        // 
+        // The sum of the sizes of all .bss-type sections.
+        // 
+        u32 size_of_uninitialized_data;
+        
+        // 
+        // A relative virtual address to the entry point of the program.
+        // 
+        u32 address_of_entry_point;
+        
+        // 
+        // A relative virtual address to the start of the code section.
+        // 
+        u32 base_of_code;
+        
+        // From here on out are the "Windows-Specific Fields"
+        
+        // 
+        // The base address of the executable. If the image is not relocatable, this is used as the base.
+        // Must be 64k aligned.
+        // 
+        u64 image_base;
+        
+        // 
+        // The alignment (in bytes) of sections when they are loaded.
+        // Must be bigger than the file alignment.
+        // 
+        u32 section_alignment;
+        
+        // 
+        // The alignment of sections in the file.
+        // Must be smaller than the section aligment and between 512 and 64k.
+        // 
+        u32 file_alignment;
+        
+        // 
+        // Operating system version. Not sure why this is 6.
+        // 
+        u16 major_operating_system_version;
+        u16 minor_operating_system_version;
+        
+        // 
+        // Version number for the image file format.
+        // 
+        u16 major_image_version;
+        u16 minor_image_version;
+        
+        // 
+        // Version number for the subsystem.
+        // 
+        u16 major_subsystem_version;
+        u16 minor_subsystem_version;
+        
+        // 
+        // Win32 version. Must be zero.
+        // 
+        u32 Win32_version_value;
+        
+        // 
+        // The size of the image after it was loaded into memory.
+        // 
+        u32 size_of_image;
+        
+        // 
+        // The size of everything up to and including the section headers rounded up to the file alignment.
+        // 
+        u32 size_of_headers;
+        
+        // 
+        // Usually 0. Only checked for critical windows components.
+        // 
+        u32 checksum;
+        
+        // 
+        // The subsystem used to run this image, like "console", "windows" or "kernel".
+        // 
+        u16 subsystem;
+        
+        // 
+        // Characteristics of the dll/executable.
+        // 
+        u16 dll_characteristics;
+        
+        // 
+        // The commit and reserve size for stack and heap.
+        // 
+        u64 size_of_stack_reserve;
+        u64 size_of_stack_commit;
+        u64 size_of_heap_reserve;
+        u64 size_of_heap_commit;
+        
+        // 
+        // Reserved must be 0.
+        // 
+        u32 loader_flags;
+        
+        // 
+        // The amount of data-directory entries that make up the rest of the optional header.
+        // 
+        u32 number_of_rva_and_sizes;
+        
+        struct image_data_directory{
+            u32 rva;
+            u32 size;
+        } data_directory[16];
+    } *image_optional_header = push_struct(arena, struct image_optional_header64);
+    
+    coff_file_header->size_of_optional_header = sizeof(struct image_optional_header64);
+    
+    image_optional_header->magic = 0x20b;
+    image_optional_header->major_linker_version = 14;
+    image_optional_header->minor_linker_version = 11;
+    
+    image_optional_header->image_base = 0x140000000;
+    if(globals.output_file_type == OUTPUT_FILE_dll) image_optional_header->image_base = 0x180000000;
+    if(globals.cli_options.image_base_specified) image_optional_header->image_base = globals.cli_options.image_base;
+    
+#define SECTION_ALIGNMENT 0x1000
+#define FILE_ALIGNMENT 0x200
+    
+    image_optional_header->section_alignment = SECTION_ALIGNMENT;
+    image_optional_header->file_alignment = FILE_ALIGNMENT;
+    
+    image_optional_header->major_operating_system_version = 6;
+    image_optional_header->major_subsystem_version = 6;    
+    image_optional_header->subsystem = globals.subsystem;
+    
+    image_optional_header->dll_characteristics = /*DLL_HIGH_ENTROPY_VA*/0x20 | /*DLL_NX*/0x0100;
+    if(globals.output_file_type != OUTPUT_FILE_dll) image_optional_header->dll_characteristics |= /*DLL_TERMINAL_SERVER_AWARE*/0x8000; // Not sure what this field means.
+    if(!globals.cli_options.no_dynamic_base) image_optional_header->dll_characteristics |= /*DLL_DYNAMIC_BASE*/0x0040;
+    
+    image_optional_header->size_of_stack_reserve = mega_bytes(1);
+    image_optional_header->size_of_stack_commit  = mega_bytes(1);
+    image_optional_header->number_of_rva_and_sizes = array_count(image_optional_header->data_directory);
+    
+    // We currently have at most 6 sections. In the future, when we allow user sections this needs to be variable sized.
+    struct coff_section_header *image_sections = push_data(arena, struct coff_section_header, 8);
+    u32 image_section_at = 0;
+    
+    push_align(arena, FILE_ALIGNMENT);
+    image_optional_header->size_of_headers = save_truncate_smm_to_u32(arena_current(arena) - exe_base_address);
+    
+    u64 section_virtual_address_at = align_up(image_optional_header->size_of_headers, SECTION_ALIGNMENT);
+    
+    // 
+    // Warning: The order in which we allocate the section headers should match the order of the sections in the file.
+    // 
     
     // section table:
 #define SECTION_read                  0x40000000
@@ -1741,43 +1599,20 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
 #define SECTION_write                 0x80000000
 #define SECTION_discardable           0x02000000
     
-    // @note: apparently the order of these and the order of the sections below must match
-    // @note: @Warning: we also use this as the order for 'enum section_id'
+#define fill_section_header(section, section_name, permissions) {                                            \
+    section = image_sections + image_section_at++;                                                           \
+    u32 actual_size = save_truncate_smm_to_u32(arena_current(arena) - section ## _section_start);            \
+    memcpy(section->name, section_name "\0\0\0\0\0\0\0", 8);                                                 \
+    section->virtual_address = (u32)section_virtual_address_at;                                              \
+    section->virtual_size = actual_size;                                                                     \
+    push_align(arena, FILE_ALIGNMENT);                                                                       \
+    section->pointer_to_raw_data = (u32)(section ## _section_start - exe_base_address);                      \
+    section->size_of_raw_data = (u32)(arena_current(arena) - section ## _section_start);                     \
+    section->characteristics = (permissions);                                                                \
+    section_virtual_address_at = (u32)align_up(section_virtual_address_at + actual_size, SECTION_ALIGNMENT); \
+}
     
-    IMAGE_SECTION_HEADER *text = null;
-    if(functions_with_a_body->count){
-        text = write_section_header(exe, arena, ".text", SECTION_read | SECTION_execute | SECTION_code);
-    }
-    
-    IMAGE_SECTION_HEADER *bss = null;
-    if(uninitialized_declarations->count){
-        bss = write_section_header(exe, arena, ".bss", SECTION_read | SECTION_write | SECTION_uninitialized_data);
-    }
-    
-    // @note: for now we allways have rdata, what happens if this is empty?
-    IMAGE_SECTION_HEADER *rdata = write_section_header(exe, arena, ".rdata", SECTION_read | SECTION_initialized_data);
-    
-    IMAGE_SECTION_HEADER *data = null;
-    if(initialized_declarations->count){
-        data = write_section_header(exe, arena, ".data", SECTION_read | SECTION_write | SECTION_initialized_data);
-    }
-    
-    IMAGE_SECTION_HEADER *reloc = null;
-    if(!globals.cli_options.no_dynamic_base && (globals.have_absolute_patch || tls_declarations->count)){ 
-        reloc = write_section_header(exe, arena, ".reloc", SECTION_read | SECTION_initialized_data | SECTION_discardable);
-    }
-    
-    IMAGE_SECTION_HEADER *pdata = null;
-    if(text) pdata = write_section_header(exe, arena, ".pdata", SECTION_read | SECTION_initialized_data);
-    
-    // :End of section table
-    u32 actual_header_size = save_truncate_smm_to_u32(arena_current(arena) - base_address);
-    exe->header->SizeOfHeaders = align_up(actual_header_size, 0x200);
-    
-    struct section_write_context *section_writer = &(struct section_write_context)zero_struct;
-    section_writer->virtual_address = align_up(actual_header_size, 0x1000);
-    section_writer->base_address = exe->base_address;
-    section_writer->arena = arena;
+#define make_relative_virtual_address(section_start, address) (u32)(section_virtual_address_at + ((u8 *)(address) - (section_start)))
     
     // Crappy guid
     u8 pdb_guid[16];{
@@ -1790,16 +1625,15 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         ((u64 *)pdb_guid)[1] ^= GetTickCount64();
     }
     
-    if(text){   
+    
+    //
+    // Write out the '.text' section
+    //
+    struct coff_section_header *text = null;
+    {
+        u8 *text_section_start = arena_current(arena);
         
-        //
-        // Write out the '.text' section
-        //
-        
-        begin_section(section_writer, text);
-        
-        
-        for_ast_list(*functions_with_a_body){
+        for_ast_list(defined_functions){
             struct ast_function *function = cast(struct ast_function *)it->value;
             
             smm function_size = function->size_of_prolog + function->byte_size_without_prolog;
@@ -1816,12 +1650,12 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             push_align_initialized_to_specific_value(arena, 16, 0xcc);
             
-            function->offset_in_text_section   = memory_for_function - section_writer->section_memory_location;
+            function->offset_in_text_section   = memory_for_function - text_section_start;
             function->memory_location          = memory_for_function;
-            function->relative_virtual_address = make_relative_virtual_address(section_writer, memory_for_function);
+            function->relative_virtual_address = make_relative_virtual_address(text_section_start, memory_for_function);
         }
         
-        for_ast_list(*dll_function_stubs){
+        for_ast_list(dll_function_stubs){
             
             // Emit a stub for every dllimport that needs it.
             struct ast_function *function = cast(struct ast_function *)it->value;
@@ -1831,84 +1665,128 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             memory_for_stub[0] = 0xff;
             memory_for_stub[1] = 0x25; // jmp [rip + offset_32bit]
-            dll_import_node->stub_relative_virtual_address = make_relative_virtual_address(section_writer, memory_for_stub);
+            dll_import_node->stub_relative_virtual_address = make_relative_virtual_address(text_section_start, memory_for_stub);
             dll_import_node->stub_memory_location = memory_for_stub;
         }
         
-        end_section(section_writer);
-        
-        exe->header->SizeOfCode = text->SizeOfRawData;
-        exe->header->BaseOfCode = text->VirtualAddress;
-        
-        if(globals.entry_point){
-            exe->header->AddressOfEntryPoint = (DWORD)globals.entry_point->relative_virtual_address;
+        if(arena_current(arena) != text_section_start){
+            fill_section_header(text, ".text", SECTION_read | SECTION_execute | SECTION_code);
+            
+            // @cleanup: If we have more than one code section (which we currently not support), this could be in another code section.
+            //           We should just move this to the end.
+            if(globals.entry_point){
+                image_optional_header->address_of_entry_point = (u32)globals.entry_point->relative_virtual_address;
+            }
         }
     }
     
-    if(bss){
-        
-        //
+    
+    struct coff_section_header *bss = null;
+    {   //
         // Write out the '.bss' section
         //
-        
-        begin_section(section_writer, bss);
-        end_section(section_writer);
+        u8 *bss_section_start = arena_current(arena);
         
         smm size = 0;
-        for_ast_list(*uninitialized_declarations){
+        for_ast_list(uninitialized_declarations){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
             
             smm alignment = get_declaration_alignment(decl);
             smm decl_size = get_declaration_size(decl);
             
+            if(decl_size == 0) decl_size = 1; // Ensure even zero-sized declarations have unique addresses.
+            
             size = align_up(size, alignment);
-            decl->relative_virtual_address = bss->VirtualAddress + size;
+            decl->relative_virtual_address = section_virtual_address_at + size;
             size += decl_size;
         }
         
         // @incomplete: what to do when this gets bigger than 0xFFFFFFFF
         u32 bss_size = to_u32(align_up(size, 0x1000));
-        section_writer->virtual_address += bss_size;
-        bss->Misc.VirtualSize = bss_size;
-        bss->PointerToRawData = 0;
-        exe->header->SizeOfUninitializedData += bss_size;
+        
+        if(bss_size){
+            fill_section_header(bss, ".bss", SECTION_read | SECTION_write | SECTION_uninitialized_data);
+            
+            bss->virtual_size = bss_size;
+            bss->pointer_to_raw_data = 0;
+            
+            section_virtual_address_at += bss_size;
+            image_optional_header->size_of_uninitialized_data += bss_size;
+        }
     }
     
     u32 tls_data_rva = 0;
     
-    if(rdata){
-        
-        //
+    struct coff_section_header *rdata = null;
+    {   //
         // Write out the '.rdata' section
         //
+        u8 *rdata_section_start = arena_current(arena);
         
-        begin_section(section_writer, rdata);
         if(!sll_is_empty(globals.dlls)){ // import directory table
             u8 *import_begin = arena_current(arena);
             
-            // First an array of 'IMAGE_IMPORT_DESCRIPTOR' one for every dll.
-            // @note: +1 as zero_terminated
-            IMAGE_IMPORT_DESCRIPTOR *import_descriptors = push_data(arena, IMAGE_IMPORT_DESCRIPTOR, globals.dlls.amount + 1);
+            // Layout:
+            //    import directory tables
+            //    null import directory table
+            //    
+            //    for each dll:
+            //        name rva ("kernel32.dll")
+            //        import lookup table
+            //        import address table
+            //        name hint table
+            //    
+            //    There is only supposed to be one name hint table maybe...
+            // 
+            
+            
+            struct image_import_descriptor{
+                
+                // 
+                // The relative virtual address of the import lookup table.
+                // This table contains the address or ordinal of each import.
+                // 
+                u32 import_lookup_table_rva;
+                
+                // 
+                // Time date stamp is zero until the image is bound.
+                // 
+                u32 time_date_stamp;
+                
+                // 
+                // The index of the first forwarder reference. (Not sure what that is.)
+                // 
+                u32 forwarder_chain;
+                
+                // 
+                // The relative virtual address to the name of the dll we are importing from.
+                // 
+                u32 name_rva;
+                
+                // 
+                // The relative virtual address of the import address table.
+                // Until the image is bound, this table is identically to the import lookup table.
+                // 
+                u32 import_address_table_rva;
+            } *import_descriptors = push_data(arena, struct image_import_descriptor, globals.dlls.amount + 1);
+            
             u8 *import_end = arena_current(arena);
             
             // Import data directory
-            exe->header->DataDirectory[1].VirtualAddress = make_relative_virtual_address(section_writer, import_begin);
-            exe->header->DataDirectory[1].Size = save_truncate_smm_to_u32(import_end - import_begin);
+            image_optional_header->data_directory[1].rva  = make_relative_virtual_address(rdata_section_start, import_begin);
+            image_optional_header->data_directory[1].size = save_truncate_smm_to_u32(import_end - import_begin);
             
             u32 dll_import_index = 0;
             for(struct dll_node *dll_node = globals.dlls.first; dll_node; dll_node = dll_node->next, dll_import_index++){
-                IMAGE_IMPORT_DESCRIPTOR *import = import_descriptors + dll_import_index;
-                import->TimeDateStamp = 0;
-                import->ForwarderChain = 0;
-                //import->ImportLookupRVA = ???;
-                //import->name = ????;
-                //import->ImportAddressRVA = ???;
+                struct image_import_descriptor *import = import_descriptors + dll_import_index;
                 
                 char *string = push_cstring_from_string(arena, dll_node->name);
-                import->Name = make_relative_virtual_address(section_writer, string);
-                
-                u64 *import_address_table = push_uninitialized_data(arena, u64, dll_node->import_list.count + 1);
+                import->name_rva = make_relative_virtual_address(rdata_section_start, string);
+               
+                // 
                 // "The last entry is set to zero (NULL) to indicate the end of the table"
+                // 
+                u64 *import_address_table = push_uninitialized_data(arena, u64, dll_node->import_list.count + 1);
                 import_address_table[dll_node->import_list.count] = 0;
                 
                 u32 import_address_table_index = 0;
@@ -1921,11 +1799,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                         *hint = import_node->ordinal_hint;
                         push_cstring_from_string(arena, import_node->import_name);
                         
-                        import_address_table[import_address_table_index] = make_relative_virtual_address(section_writer, hint);
+                        import_address_table[import_address_table_index] = make_relative_virtual_address(rdata_section_start, hint);
                     }
                     
                     import_node->memory_location = (u8*)&import_address_table[import_address_table_index];
-                    
                     import_address_table_index++;
                 }
                 assert(import_address_table_index == dll_node->import_list.count);
@@ -1933,24 +1810,24 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 // "The RVA of the import address table. The contents of this table are identical to the contents of the import lookup table until the image is bound"
                 u64 *import_lookup_table = push_array_copy(arena, u64, import_address_table, dll_node->import_list.count + 1);
                 
-                import->ImportAddressRVA = make_relative_virtual_address(section_writer, import_address_table);
-                import->ImportLookupRVA  = make_relative_virtual_address(section_writer, import_lookup_table);
+                import->import_address_table_rva = make_relative_virtual_address(rdata_section_start, import_address_table);
+                import->import_lookup_table_rva  = make_relative_virtual_address(rdata_section_start, import_lookup_table);
             }
             assert(dll_import_index == globals.dlls.amount);
             
-            for_ast_list(symbol_context.dll_imports){
+            for_ast_list(dll_imports){
                 struct ast_function *function = cast(struct ast_function *)it->value;
                 struct dll_import_node *dll_import_node = function->dll_import_node;
                 
                 u8 *memory_location = dll_import_node->memory_location;
-                smm relative_virtual_address = make_relative_virtual_address(section_writer, memory_location);
+                smm relative_virtual_address = make_relative_virtual_address(rdata_section_start, memory_location);
                 
                 // the other functions are relative to
                 function->memory_location = memory_location;
                 function->relative_virtual_address = relative_virtual_address;
             }
             
-            for_ast_list(*dll_function_stubs){
+            for_ast_list(dll_function_stubs){
                 struct ast_function *function = cast(struct ast_function *)it->value;
                 struct dll_import_node *dll_import_node = function->dll_import_node;
                 
@@ -1988,20 +1865,58 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             push_align(arena, 4);
             
-            IMAGE_DEBUG_DIRECTORY *debug = push_struct(arena, IMAGE_DEBUG_DIRECTORY);
-            debug->Characteristics = 0; // "reserved and must be zero"
-            debug->TimeDateStamp = 0;
-            debug->MajorVersion = 0; // @note: version seems to be 0.0
-            debug->MinorVersion = 0;
-#define IMAGE_DEBUG_TYPE_CODEVIEW 2
-            debug->Type = IMAGE_DEBUG_TYPE_CODEVIEW;
-            debug->SizeOfData = to_u32(debug_info_end - debug_info_begin);
-            debug->AddressOfRawData = make_relative_virtual_address(section_writer, debug_info_begin);
-            debug->PointerToRawData = to_u32(debug_info_begin - exe->base_address);
+            
+            struct image_debug_directory{
+                // 
+                // Reserved, must be zero. 
+                // 
+                u32 characteristics;
+                
+                // 
+                // Time-date-stamp of the debug data, seems to be zero in practice.
+                // 
+                u32 time_date_stamp; 
+                
+                // 
+                // Major and minor version of the debug data format.
+                // 
+                u16 major_version;
+                u16 minor_version;
+                
+                // 
+                // Type of the debug data, for us only codeview.
+                // 
+                u32 type;
+                
+                // 
+                // Size of the debug data (not including the directory).
+                // 
+                u32 size_of_data;
+                
+                // 
+                // Relative virtual address to the data.
+                // 
+                u32 address_of_raw_data;
+                
+                // 
+                // File pointer the the data.
+                // 
+                u32 pointer_to_raw_data;
+                
+            } *debug = push_struct(arena, struct image_debug_directory);
+            debug->characteristics = 0; // "reserved and must be zero"
+            debug->time_date_stamp = 0;
+            debug->major_version = 0; // @note: version seems to be 0.0
+            debug->minor_version = 0;
+
+            debug->type = /*IMAGE_DEBUG_TYPE_CODEVIEW*/2;
+            debug->size_of_data = to_u32(debug_info_end - debug_info_begin);
+            debug->address_of_raw_data = make_relative_virtual_address(rdata_section_start, debug_info_begin);
+            debug->pointer_to_raw_data = to_u32(debug_info_begin - exe_base_address);
             
             // Debug directory
-            exe->header->DataDirectory[6].VirtualAddress = make_relative_virtual_address(section_writer, debug);
-            exe->header->DataDirectory[6].Size = sizeof(IMAGE_DEBUG_DIRECTORY);
+            image_optional_header->data_directory[6].rva  = make_relative_virtual_address(rdata_section_start, debug);
+            image_optional_header->data_directory[6].size = sizeof(struct image_debug_directory);
         }
         
         
@@ -2044,7 +1959,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                             string_table[index].data = base;
                             string_table[index].size = string_literal.size + element_size;
                             
-                            lit->relative_virtual_address = make_relative_virtual_address(section_writer, base);
+                            lit->relative_virtual_address = make_relative_virtual_address(rdata_section_start, base);
                             
                             break;
                         }
@@ -2059,7 +1974,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                         if(memcmp(string_table[index].data + string_literal.size, (char[]){0, 0, 0, 0}, element_size) != 0) continue;
                         if(memcmp(string_table[index].data, string_literal.data, string_literal.size) != 0) continue;
                         
-                        lit->relative_virtual_address = make_relative_virtual_address(section_writer, string_table[index].data);
+                        lit->relative_virtual_address = make_relative_virtual_address(rdata_section_start, string_table[index].data);
                         break;
                     }
                 }
@@ -2077,20 +1992,20 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 if(lit->literal.type == &globals.typedef_f32){
                     f32 *_float = push_struct(arena, f32);
                     *_float = (f32)lit->literal._f32;
-                    lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
+                    lit->relative_virtual_address = make_relative_virtual_address(rdata_section_start, _float);
                 }else{
                     assert(lit->literal.type == &globals.typedef_f64);
                     f64 *_float = push_struct(arena, f64);
                     *_float = lit->literal._f64;
-                    lit->relative_virtual_address = make_relative_virtual_address(section_writer, _float);
+                    lit->relative_virtual_address = make_relative_virtual_address(rdata_section_start, _float);
                 }
             }
         }
         
-        if(dllexports->count){
-            u32 *export_address_table = push_data(arena, u32, dllexports->count);
-            u32 *name_pointer_table   = push_data(arena, u32, dllexports->count);
-            u16 *ordinal_table        = push_data(arena, u16, dllexports->count);
+        if(dllexports.count){
+            u32 *export_address_table = push_data(arena, u32, dllexports.count);
+            u32 *name_pointer_table   = push_data(arena, u32, dllexports.count);
+            u16 *ordinal_table        = push_data(arena, u16, dllexports.count);
             
             // @cleanup: what is this for exe's?
             char *dll_name = push_cstring_from_string(arena, exe_full_path);
@@ -2106,69 +2021,71 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             *push_struct(arena, u16) = 0; // minor version
             
             // dll name rva (rva of a string that contains the name of the dll)
-            *push_struct(arena, u32) = make_relative_virtual_address(section_writer, dll_name);
+            *push_struct(arena, u32) = make_relative_virtual_address(rdata_section_start, dll_name);
             *push_struct(arena, u32) = ordinal_base; // starting ordinal number
             
             // @note: these seem to be the same as far as I can tell
             
             // number of entries in the "export address table"
-            *push_struct(arena, u32) = to_u32(dllexports->count);
+            *push_struct(arena, u32) = to_u32(dllexports.count);
             // number of entries in the "name pointer table" and "ordinal table"
-            *push_struct(arena, u32) = to_u32(dllexports->count);
+            *push_struct(arena, u32) = to_u32(dllexports.count);
             
             // rva of the "export address table"
-            *push_struct(arena, u32) = make_relative_virtual_address(section_writer, export_address_table);
+            *push_struct(arena, u32) = make_relative_virtual_address(rdata_section_start, export_address_table);
             
             // rva of the "name pointer table"
-            *push_struct(arena, u32) = make_relative_virtual_address(section_writer, name_pointer_table);
+            *push_struct(arena, u32) = make_relative_virtual_address(rdata_section_start, name_pointer_table);
             
             // rva of the "ordinal table"
-            *push_struct(arena, u32) = make_relative_virtual_address(section_writer, ordinal_table);
+            *push_struct(arena, u32) = make_relative_virtual_address(rdata_section_start, ordinal_table);
             
-            exe->header->DataDirectory[0].VirtualAddress = make_relative_virtual_address(section_writer, edata_start);
-            exe->header->DataDirectory[0].Size = to_u32(arena_current(arena) - edata_start);
+            image_optional_header->data_directory[0].rva  = make_relative_virtual_address(rdata_section_start, edata_start);
+            image_optional_header->data_directory[0].size = to_u32(arena_current(arena) - edata_start);
             
 #define function_node_smaller(a, b) \
             string_lexically_smaller( \
                     ((struct ast_function *)a->value)->identifier->string, \
                     ((struct ast_function *)b->value)->identifier->string)
             
-            sll_sort(*dllexports, scratch, function_node_smaller);
+            sll_sort(dllexports, scratch, function_node_smaller);
 #undef function_node_smaller
             
             // emit all the names
             
             u32 i = 0;
-            for_ast_list(*dllexports){
+            for_ast_list(dllexports){
                 assert(*it->value == IR_function);
                 struct ast_function *function = cast(struct ast_function *)it->value;
                 assert(function->relative_virtual_address); // The function better be emitted!
                 
                 
                 char *function_name = push_cstring_from_string(arena, function->identifier->string);
-                name_pointer_table[i] = make_relative_virtual_address(section_writer, function_name);
+                name_pointer_table[i] = make_relative_virtual_address(rdata_section_start, function_name);
                 export_address_table[i] = to_u32(function->relative_virtual_address);
                 ordinal_table[i] = to_u16((smm)i);
                 i++;
             }
         }
         
-        if(tls_declarations->count){
+        if(tls_declarations.count){
             {
                 // Calculate the start of the tls section.
-                struct ast_declaration *first_tls_decl = (struct ast_declaration *)tls_declarations->first->value;
+                struct ast_declaration *first_tls_decl = (struct ast_declaration *)tls_declarations.first->value;
                 smm alignment = get_declaration_alignment(first_tls_decl);
                 push_align(arena, (u32)alignment); // @cleanup: why does push align take a u32?
-                tls_data_rva = make_relative_virtual_address(section_writer, arena_current(arena));
+                tls_data_rva = make_relative_virtual_address(rdata_section_start, arena_current(arena));
             }
             
-            for_ast_list(*tls_declarations){
+            for_ast_list(tls_declarations){
                 struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
                 
                 smm alignment = get_declaration_alignment(decl);
                 smm decl_size = get_declaration_size(decl);
                 
                 push_zero_align(arena, alignment);
+                
+                if(decl_size == 0) decl_size = 1; // Ensure even zero-sized declarations have unique addresses.
                 
                 u8 *mem = push_uninitialized_data(arena, u8, decl_size);
                 
@@ -2179,10 +2096,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 }
                 
                 decl->memory_location = mem;
-                decl->relative_virtual_address = make_relative_virtual_address(section_writer, mem);
+                decl->relative_virtual_address = make_relative_virtual_address(rdata_section_start, mem);
             }
             
-            u32 tls_data_end_rva = make_relative_virtual_address(section_writer, arena_current(arena));
+            u32 tls_data_end_rva = make_relative_virtual_address(rdata_section_start, arena_current(arena));
             
             u64 *tls_callbacks = push_struct(arena, u64); // zero-terminated
             
@@ -2197,26 +2114,31 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 u32 size_of_zero_fill;
                 u32 characteristics; // @cleanup: alignment.
             } *tls_directory = push_struct(arena, struct tls_directory);
-            tls_directory->raw_data_start = exe->header->ImageBase + tls_data_rva;
-            tls_directory->raw_data_end   = exe->header->ImageBase + tls_data_end_rva;
-            tls_directory->address_of_callbacks = exe->header->ImageBase + make_relative_virtual_address(section_writer, tls_callbacks);
-            tls_directory->address_of_index     = exe->header->ImageBase + globals.tls_index_declaration->relative_virtual_address;
+            tls_directory->raw_data_start = image_optional_header->image_base + tls_data_rva;
+            tls_directory->raw_data_end   = image_optional_header->image_base + tls_data_end_rva;
+            tls_directory->address_of_callbacks = image_optional_header->image_base + make_relative_virtual_address(rdata_section_start, tls_callbacks);
+            tls_directory->address_of_index     = image_optional_header->image_base + globals.tls_index_declaration->relative_virtual_address;
             tls_directory->characteristics = /*IMAGE_SCN_ALIGN_4096BYTES*/0x00D00000;
             
             // Fill in the .tls directory.
-            exe->header->DataDirectory[9].VirtualAddress = make_relative_virtual_address(section_writer, tls_directory);
-            exe->header->DataDirectory[9].Size = sizeof(*tls_directory);
+            image_optional_header->data_directory[9].rva = make_relative_virtual_address(rdata_section_start, tls_directory);
+            image_optional_header->data_directory[9].size = sizeof(*tls_directory);
         }
         
-        end_section(section_writer);
         
-        exe->header->SizeOfInitializedData += rdata->SizeOfRawData;
+        if(arena_current(arena) != rdata_section_start){
+            fill_section_header(rdata, ".rdata", SECTION_read | SECTION_initialized_data);
+            image_optional_header->size_of_initialized_data += rdata->size_of_raw_data;
+        }
     }
     
-    if(data){ // .data
-        begin_section(section_writer, data);
+    struct coff_section_header *data = null;
+    {   //
+        // Write out the '.data' section
+        //
+        u8 *data_section_start = arena_current(arena);
         
-        for_ast_list(*initialized_declarations){
+        for_ast_list(initialized_declarations){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
             
             smm alignment = get_declaration_alignment(decl);
@@ -2226,20 +2148,19 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             assert(decl->memory_location);
             
+            if(decl_size == 0) decl_size = 1; // Ensure even zero-sized declarations have unique addresses.
+            
             u8 *mem = push_uninitialized_data(arena, u8, decl_size);
             memcpy(mem, decl->memory_location, decl_size);
             
             decl->memory_location = mem;
-            decl->relative_virtual_address = make_relative_virtual_address(section_writer, mem);
+            decl->relative_virtual_address = make_relative_virtual_address(data_section_start, mem);
         }
         
-        if(arena_current(section_writer->arena) == section_writer->section_memory_location){
-            // @note: The .data section cannot be empty apparently.
-            push_data(section_writer->arena, u8, 1);
+        if(arena_current(arena) != data_section_start){
+            fill_section_header(data, ".data", SECTION_read | SECTION_write | SECTION_initialized_data);
+            image_optional_header->size_of_initialized_data += data->size_of_raw_data;
         }
-        
-        end_section(section_writer);
-        exe->header->SizeOfInitializedData += data->SizeOfRawData;
     }
     
     // From this point all functions and all declarations have their relative virtual address set.
@@ -2268,8 +2189,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     // @hack: We manually add the relocation block for the tls section here.
     //        Once we re-write this whole backend, we can think about how to do this properly.
-    if(tls_declarations->count){
-        u32 tls_base_rva = exe->header->DataDirectory[9].VirtualAddress;
+    if(tls_declarations.count){
+        u32 tls_base_rva = image_optional_header->data_directory[9].rva;
         
         smm page_rva = tls_base_rva & ~((1ull << 12) - 1);
         smm offset   = tls_base_rva &  ((1ull << 12) - 1);
@@ -2366,18 +2287,18 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                         assert(decl->kind == IR_function);
                         struct ast_function *function = (struct ast_function *)decl;
                         struct dll_import_node *import_node = function->dll_import_node;
-                        source_location = import_node->stub_relative_virtual_address + exe->header->ImageBase;
+                        source_location = import_node->stub_relative_virtual_address + image_optional_header->image_base;
                         source_location += patch->location_offset_in_source_declaration;
                     }else{
                         assert(decl->relative_virtual_address);
-                        source_location = decl->relative_virtual_address + exe->header->ImageBase;
+                        source_location = decl->relative_virtual_address + image_optional_header->image_base;
                         source_location += patch->location_offset_in_source_declaration;
                     }
                 }else{
                     assert(source_kind == IR_string_literal);
                     struct ir_string_literal *lit = (struct ir_string_literal *)patch->source;
                     
-                    source_location = (smm)lit->relative_virtual_address + exe->header->ImageBase;
+                    source_location = (smm)lit->relative_virtual_address + image_optional_header->image_base;
                 }
                 
                 *cast(smm *)memory_location = source_location;
@@ -2422,9 +2343,12 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     }
     end_counter(timing, patch);
     
-    if(reloc){
+    struct coff_section_header *reloc = null;
+    {   //
+        // Fill in the .reloc section.
+        // 
+        u8 *reloc_section_start = arena_current(arena);
         
-        begin_section(section_writer, reloc);
         for(struct base_relocation_block *block = relocation_blocks.first; block; block = block->next){
             *push_struct(arena, u32) = to_u32(block->page_rva);
             
@@ -2442,55 +2366,76 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             // 0 is pad
             if(block->relocations.count & 1) push_struct(arena, u16);
         }
-        end_section(section_writer);
         
-        // Reloc data directory
-        exe->header->DataDirectory[5].VirtualAddress = reloc->VirtualAddress;
-        exe->header->DataDirectory[5].Size = reloc->Misc.VirtualSize;
-        // @note: this needs to be the actual size (which is reloc->Misc.VirtualSize)
-        // and cant be 'reloc->SizeOfRawData', because then it just silently fails.
+        if(arena_current(arena) != reloc_section_start){
+            
+            fill_section_header(reloc, ".reloc", SECTION_read | SECTION_initialized_data | SECTION_discardable);
+            
+            // Reloc data directory
+            image_optional_header->data_directory[5].rva  = reloc->virtual_address;
+            image_optional_header->data_directory[5].size = reloc->virtual_size;
+            // @note: this needs to be the actual size (which is reloc->Misc.VirtualSize)
+            // and cant be 'reloc->SizeOfRawData', because then it just silently fails.
+        }
     }
     
-    
-    if(pdata){ // .pdata
-        begin_section(section_writer, pdata);
+    struct coff_section_header *pdata = null;
+    {   // 
+        // Fill in the .pdata section.
+        // 
+        u8 *pdata_section_start = arena_current(arena);
         
         // @note: @WARNING: These have to be sorted by address, right now we just sort the
         //                  functions after gathering them!
-        RUNTIME_FUNCTION *rtfs = push_data(arena, RUNTIME_FUNCTION, functions_with_a_body->count);
         
-        u32 i = 0;
-        for_ast_list(*functions_with_a_body){
-            struct ast_function *function = cast(struct ast_function *)it->value;
-            RUNTIME_FUNCTION *rtf = rtfs + i;
+        struct coff_runtime_function{
+            // 
+            // Relative virtual addresses to the start and end of the function.
+            // 
+            u32 begin_address;
+            u32 end_address;
             
-            rtf->BeginAddress = save_truncate_smm_to_u32(function->relative_virtual_address);
-            rtf->EndAddress   = save_truncate_smm_to_u32(function->relative_virtual_address + function->byte_size);
-            
-            // print("%-40.*s -> [0x%.8x, 0x%.8x]\n", function->identifier.size, function->identifier.data, rtf->BeginAddress, rtf->EndAddress);
-            
-            UNWIND_INFO *unwind = function_fill_in_unwind_info(arena, function);
-            rtf->UnwindInfoAddress = make_relative_virtual_address(section_writer, unwind);
-            i++;
-        }
-        end_section(section_writer);
+            // 
+            // A relative virtual address to the unwind information for the function.
+            // 
+            u32 unwind_info_rva;
+        } *runtime_functions = push_data(arena, struct coff_runtime_function, defined_functions.count);
+        
         
         // Exception data directory
-        exe->header->DataDirectory[3].VirtualAddress = make_relative_virtual_address(section_writer, rtfs);
-        exe->header->DataDirectory[3].Size = to_u32((smm)sizeof(RUNTIME_FUNCTION) * functions_with_a_body->count);
+        image_optional_header->data_directory[3].rva  = (u32)section_virtual_address_at;
+        image_optional_header->data_directory[3].size = to_u32(sizeof(struct coff_runtime_function) * defined_functions.count);
+        
+        u32 runtime_function_index = 0;
+        for_ast_list(defined_functions){
+            struct ast_function *function = (struct ast_function *)it->value;
+            struct coff_runtime_function *runtime_function = runtime_functions + runtime_function_index;
+            
+            runtime_function->begin_address = save_truncate_smm_to_u32(function->relative_virtual_address);
+            runtime_function->end_address   = save_truncate_smm_to_u32(function->relative_virtual_address + function->byte_size);
+            
+            void *unwind_info = push_unwind_information_for_function(arena, function);
+            
+            runtime_function->unwind_info_rva = make_relative_virtual_address(pdata_section_start, unwind_info);
+            runtime_function_index++;
+        }
+        
+        if(arena_current(arena) != pdata_section_start){
+            fill_section_header(pdata, ".pdata", SECTION_read | SECTION_initialized_data);
+        }
     }
     
     
-    exe->header->SizeOfImage = section_writer->virtual_address;
-    if(!text){
-        // @note: set the base of the code to be the first section, its zero sized anyway, but that is what
-        //        link.exe seems to do!
-        exe->header->BaseOfCode = 0x1000;
-    }
+    image_optional_header->size_of_image = (u32)section_virtual_address_at;
+    
+    // @note: set the base of the code to be the first section, its zero sized anyway, but that is what
+    //        link.exe seems to do!
+    image_optional_header->base_of_code = text ? text->virtual_address : 0x1000;
+    
+    coff_file_header->amount_of_sections = (u16)image_section_at;
+    
     push_zero_align(arena, 0x200);
-    exe->end_address = arena_current(arena);
-    
-    end_counter(timing, print_exe);
+    u8 *exe_end_address = arena_current(arena);
     
     
     if(!globals.cli_options.dont_print_the_files){
@@ -2499,13 +2444,12 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // Write exe file to disk.
         // 
         
-        begin_counter(context, write_exe);
         char *exe_name = push_cstring_from_string(arena, exe_full_path);
-        smm size = exe->end_address - exe->base_address;
+        smm size = exe_end_address - exe_base_address;
         
         b32 success;
         {
-            u8 *buffer = exe->base_address;
+            u8 *buffer = exe_base_address;
             smm buffer_size = size;
             
             //u32 FILE_FLAG_NO_BUFFERING = 0x20000000;
@@ -2528,8 +2472,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             CloseHandle(file_handle);
             end_counter(context, virus_scanner);
         }
-        //b32 success = os_write_file(exe_name, coff.exe.base_address, size);
-        end_counter(context, write_exe);
         
         if(success){
             if(!globals.cli_options.quiet) print("Wrote file: '%s'\n", exe_name);
@@ -2550,8 +2492,13 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     begin_counter(timing, print_pdb);
     
+    u16 text_section_id  = text  ? (u16)((text  - image_sections) + 1) : 0;
+    u16 data_section_id  = data  ? (u16)((data  - image_sections) + 1) : 0;
+    u16 bss_section_id   = bss   ? (u16)((bss   - image_sections) + 1) : 0;
+    u16 rdata_section_id = rdata ? (u16)((rdata - image_sections) + 1) : 0;
+    
     struct pdb_write_context *context = &(struct pdb_write_context)zero_struct;
-    if(text) context->text_section_id = section_id_for_section(exe, text); // Only used for the debug info for functions.
+    
     context->arena = arena;
     context->scratch = scratch;
     
@@ -2795,32 +2742,32 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }
             
             // register types for all declaration, this has to be done, as they might be anonymous types...
-            for_ast_list(*initialized_declarations){
+            for_ast_list(initialized_declarations){
                 struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
                 
                 tpi_register_type(context, decl->type);
             }
             
             // register types for all declaration, this has to be done, as they might be anonymous types...
-            for_ast_list(*uninitialized_declarations){
+            for_ast_list(uninitialized_declarations){
                 struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
                 tpi_register_type(context, decl->type);
             }
             
             // register types for all typedefs, this has to be done, as they might be anonymous types...
-            for_ast_list(*typedefs){
+            for_ast_list(typedefs){
                 struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
                 tpi_register_type(context, decl->type);
             }
             
             // register all function types
-            for_ast_list(*functions_with_a_body){
+            for_ast_list(defined_functions){
                 struct ast_function *function = cast(struct ast_function *)it->value;
                 tpi_register_type(context, &function->type->base);
             }
             
             
-            for_ast_list(symbol_context.dll_imports){
+            for_ast_list(dll_imports){
                 struct ast_function *function = (struct ast_function *)it->value;
                 tpi_register_type(context, &function->type->base);
             }
@@ -2828,7 +2775,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             // register types for all declarations in functions... these should probably be 'scoped'?
             // @incomplete:
-            for_ast_list(*functions_with_a_body){
+            for_ast_list(defined_functions){
                 struct ast_function *function = cast(struct ast_function *)it->value;
                 tpi_register_all_types_in_scope__recursive(context, function->scope);
             }
@@ -3079,7 +3026,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }end_symbol();
         }
         
-        for_ast_list(*typedefs){
+        for_ast_list(typedefs){
             struct ast_declaration *decl = (struct ast_declaration *)it->value;
             struct ast_type *type = decl->type;
             
@@ -3093,7 +3040,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }end_symbol();
         }
         
-        for_ast_list(*functions_with_a_body){
+        for_ast_list(defined_functions){
             struct ast_function *function = cast(struct ast_function *)it->value;
             assert(function->type->base.flags & TYPE_FLAG_pdb_permanent);
             begin_symbol(0x1601);{ // LF_FUNC_ID
@@ -3314,7 +3261,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         
         
         begin_counter(timing, module_function_info);
-        for_ast_list(*functions_with_a_body){
+        for_ast_list(defined_functions){
             struct ast_function *function = cast(struct ast_function *)it->value;
             
             function->debug_symbol_offset = pdb_current_offset_from_location(context, module_stream_begin);
@@ -3331,7 +3278,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 out_int(function->byte_size, u32); // end of the section where it makes sense to debug @cleanup
                 out_int(function->type->base.pdb_type_index, u32); // type_index
                 out_int(function->offset_in_text_section, u32); // offset in segment
-                out_int(section_id_for_section(exe, text), u16); // segment
+                out_int(text_section_id, u16); // segment
                 out_int(0, u8); // flags: Frame pointer, @cleanup: custom calling convention, no_return
                 // these are somehow never present???
                 out_string(function->identifier->string);
@@ -3432,7 +3379,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         
         begin_counter(timing, module_line_info);
         // now comes the line info
-        for_ast_list(*functions_with_a_body){
+        for_ast_list(defined_functions){
             struct ast_function *function = cast(struct ast_function *)it->value;
             struct ast_scope *scope = function->scope;
             
@@ -3442,7 +3389,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             // DEBUG_S_LINES header
             out_int(function->offset_in_text_section, u32);   // offset in the section contribution
-            out_int(section_id_for_section(exe, text), u16);                    // section id (segment ?)
+            out_int(text_section_id, u16);                    // section id (segment ?)
             out_int(0, u16);                                  // flags (0x1 = have columns)
             out_int(function->byte_size, u32);                // the size of the contribution
             
@@ -3528,18 +3475,18 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         end_symbol();
         
         
-        for(u32 i = 0; i < exe->amount_of_sections; i++){
-            IMAGE_SECTION_HEADER *header = exe->section_headers[i];
+        for(u32 i = 0; i < coff_file_header->amount_of_sections; i++){
+            struct coff_section_header *header = &image_sections[i];
             
             begin_symbol(0x1136);                      // SECTION (a section in the PE executable file)
             {
                 out_int(i, u16);                       // I think this _defines_ the section number
                 out_int(0xc, u8);                      // 0xc = 12 = log2(0x1000) alignment of the section
                 out_int(0, u8);                        // reserved
-                out_int(header->VirtualAddress, u32);  // relative virtual address
-                out_int(header->SizeOfRawData, u32);   // size in bytes
-                out_int(header->Characteristics, u32); // characteristics
-                out_struct(header->Name);              // name of the section
+                out_int(header->virtual_address, u32);  // relative virtual address
+                out_int(header->size_of_raw_data, u32);   // size in bytes
+                out_int(header->characteristics, u32); // characteristics
+                out_struct(header->name);              // name of the section
             }
             end_symbol();
         }
@@ -3604,11 +3551,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             if(text){
                 struct section_contribution_entry text_entry = {
-                    .section_id = section_id_for_section(exe, text),
+                    .section_id = text_section_id,
                     .offset = 0,
-                    .size = text->Misc.VirtualSize,
+                    .size = text->virtual_size,
                     .module_index = 0,
-                    .characteristics = text->Characteristics,
+                    .characteristics = text->characteristics,
                     .data_crc = 0, // @cleanup:
                     .reloc_crc = 0,
                 };
@@ -3643,16 +3590,16 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         
         {// section contribution substream
             out_int(0xeffe0000 + 19970605, u32);
-            for(u32 i = 0; i < exe->amount_of_sections; i++){
-                IMAGE_SECTION_HEADER *header = exe->section_headers[i];
+            for(u32 i = 0; i < coff_file_header->amount_of_sections; i++){
+                struct coff_section_header *header = &image_sections[i];
                 
                 // @cleanup: right now we just make one contribution per section and say it was module 0
                 struct section_contribution_entry entry = {
                     .section_id = (s16)(i + 1),
                     .offset = 0,
-                    .size = header->Misc.VirtualSize,
+                    .size = header->virtual_size,
                     .module_index = 0,
-                    .characteristics = header->Characteristics,
+                    .characteristics = header->characteristics,
                     .data_crc = 0, // @cleanup:
                     .reloc_crc = 0,
                 };
@@ -3673,10 +3620,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             // write a section map entry for each section.
             u32 frame_index = 1;
-            for(u32 i = 0; i < exe->amount_of_sections; i++){
-                IMAGE_SECTION_HEADER *header = exe->section_headers[i];
+            for(u32 i = 0; i < coff_file_header->amount_of_sections; i++){
+                struct coff_section_header *header = &image_sections[i];
                 
-                u32 characteristics = header->Characteristics;
+                u32 characteristics = header->characteristics;
                 u16 flags = (1 << 3) | (1 << 8);
                 if(characteristics & SECTION_read)    flags |= (1 << 0);
                 if(characteristics & SECTION_write)   flags |= (1 << 1);
@@ -3691,7 +3638,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 out_int(u16_max,       u16); // SecName   (Meaning Unknown)
                 out_int(u16_max,       u16); // ClassName (Meaning Unknown)
                 out_int(0,             u32); // offset
-                out_int(header->Misc.VirtualSize, u32);
+                out_int(header->virtual_size, u32);
             }
             
             // finally write one dummy entry that "is for absolute symbols" what ever that means
@@ -3854,7 +3801,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         
         // emit a 'LPROCREF' or 'PROCREF' for each function
         // @cleanup: does this break for local functions of the same name?
-        for_ast_list(*functions_with_a_body){
+        for_ast_list(defined_functions){
             struct ast_function *function = cast(struct ast_function *)it->value;
             
             assert(!(function->decl_flags & DECLARATION_FLAGS_is_dllimport));
@@ -3879,7 +3826,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 begin_symbol(0x110e);{                              // PUB32
                     out_int(2, u32);                                // flags (is_function)
                     out_int(function->offset_in_text_section, u32); // offset in segment
-                    out_int(section_id_for_section(exe, text), u16);                  // segment
+                    out_int(text_section_id, u16);                  // segment
                     out_string(function->identifier->string);               // name
                 }end_symbol();
                 
@@ -3889,7 +3836,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
         
         // Emit a 'S_PUB32' for every dllimport.
-        for_ast_list(symbol_context.dll_imports){
+        for_ast_list(dll_imports){
             struct ast_function *function = (struct ast_function *)it->value;
             
             struct string name = push_format_string(scratch, "__imp_%.*s", function->identifier->size, function->identifier->data);
@@ -3899,10 +3846,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             begin_symbol(0x110e);{                              // PUB32
                 out_int(0, u32);                                // flags
                 
-                out_int(function->relative_virtual_address - rdata->VirtualAddress, u32); // offset in segment
+                out_int(function->relative_virtual_address - rdata->virtual_address, u32); // offset in segment
                 rva = function->relative_virtual_address;
                 
-                out_int(section_id_for_section(exe, rdata), u16);                 // segment
+                out_int(rdata_section_id, u16);                 // segment
                 out_string(name);                               // name
             }end_symbol();
             
@@ -3911,7 +3858,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
         
         // Emit a 'S_PUB32' for every dllimport stub.
-        for_ast_list(*dll_function_stubs){
+        for_ast_list(dll_function_stubs){
             struct ast_function *function = (struct ast_function *)it->value;
             struct dll_import_node *dll_import_node = function->dll_import_node;
             
@@ -3922,10 +3869,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             begin_symbol(0x110e);{                              // PUB32
                 out_int(0, u32);                                // flags
                 
-                out_int(dll_import_node->stub_relative_virtual_address - text->VirtualAddress, u32); // offset in segment
+                out_int(dll_import_node->stub_relative_virtual_address - text->virtual_address, u32); // offset in segment
                 rva = dll_import_node->stub_relative_virtual_address;
                 
-                out_int(section_id_for_section(exe, text), u16);                 // segment
+                out_int(text_section_id, u16);                 // segment
                 out_string(name);                               // name
             }end_symbol();
             
@@ -3959,7 +3906,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // @cleanup: pub32 for non static data definitions.
         
         // emit 'S_GDATA32' or 'S_LDATA32' for every global
-        for_ast_list(*uninitialized_declarations){
+        for_ast_list(uninitialized_declarations){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
             
             u16 symbol_kind = (decl->flags & DECLARATION_FLAGS_is_static) ? /* S_LDATA32 */ 0x110c : /* S_GDATA32 */ 0x110d;
@@ -3967,8 +3914,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
             begin_symbol(symbol_kind);{
                 out_int(decl->type->pdb_type_index, u32); // type_index
-                out_int(to_u32(decl->relative_virtual_address - bss->VirtualAddress), u32); // offset in section
-                out_int(section_id_for_section(exe, bss), u16);             // section id
+                out_int(to_u32(decl->relative_virtual_address - bss->virtual_address), u32); // offset in section
+                out_int(bss_section_id, u16);             // section id
                 out_string(decl->identifier->string);
             } end_symbol();
             
@@ -3976,7 +3923,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             gsi_amount_of_global_symbols += 1;
         }
         
-        for_ast_list(*initialized_declarations){
+        for_ast_list(initialized_declarations){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
             
             if(decl->flags & DECLARATION_FLAGS_is_unnamed) continue;
@@ -3986,8 +3933,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
             begin_symbol(symbol_kind);{
                 out_int(decl->type->pdb_type_index, u32); // type_index
-                out_int(to_u32(decl->relative_virtual_address - data->VirtualAddress), u32); // offset in section
-                out_int(section_id_for_section(exe, data), u16);             // section id
+                out_int(to_u32(decl->relative_virtual_address - data->virtual_address), u32); // offset in section
+                out_int(data_section_id, u16);             // section id
                 out_string(decl->identifier->string);
             } end_symbol();
             
@@ -3996,7 +3943,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
         
         // emit 'S_UDT' for every typedef
-        for_ast_list(*typedefs){
+        for_ast_list(typedefs){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
             assert(decl->type->pdb_type_index > 0);
             
@@ -4017,8 +3964,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     // header dump stream
     { // :header_dump
         set_current_stream(context, STREAM_section_header_dump);
-        for(u32 i = 0; i < exe->amount_of_sections; i++){
-            IMAGE_SECTION_HEADER *header = exe->section_headers[i];
+        for(u32 i = 0; i < coff_file_header->amount_of_sections; i++){
+            struct coff_section_header *header = &image_sections[i];
             
             out_struct(*header);
         }
