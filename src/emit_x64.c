@@ -2413,8 +2413,12 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         emit(0xcc);
         return emit_location_invalid(context);
     }else if(string_match(identifier, string("_AddressOfReturnAddress"))){
-        struct emit_location *return_address = emit_location_stack_relative(context, -(8 + 8 * /*amount_of_saved_registers*/2), /*size*/8);
+        struct emit_location *return_address = emit_location_stack_relative(context, -(8 * (s32)__popcnt(context->current_function->pushed_register_mask)), /*size*/8);
         return emit_load_address(context, return_address, allocate_register(context, REGISTER_KIND_gpr));
+    }else if(string_match(identifier, string("_exception_info"))){
+        return emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_R13, 8);
+    }else if(string_match(identifier, string("_exception_code"))){
+        return emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_R12, 4);
     }else{
         invalid_code_path;
     }
@@ -4755,14 +4759,30 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     //           maybe the large struct code should live in the epilog?
     // @incomplete: we do not honor the calling convention here...
     // @WARNING: If you change this code you have to also change the implementation of `_AddressOfReturnAddress`.
-    s32 amount_of_saved_registers = 2;
+    
+    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
+        emit(0x41); emit(0x55); // push r13
+        emit(0x41); emit(0x54); // push r12
+        function->pushed_register_mask |= (1 << REGISTER_R12) | (1 << REGISTER_R13);
+    }
+    
     emit(PUSH_REGISTER_DI);
     emit(PUSH_REGISTER_SI);
-    
-    function->pushed_register_mask = (1 << REGISTER_SI) | (1 << REGISTER_DI) | (1 << REGISTER_BP);
-    
     emit(PUSH_REGISTER_BP);
+    
+    function->pushed_register_mask |= (1 << REGISTER_SI) | (1 << REGISTER_DI) | (1 << REGISTER_BP);
+    
+    s32 amount_of_saved_registers = __popcnt(function->pushed_register_mask) - /*rbp*/1;
     emit_reg_reg__(context, REXW, MOVE_REG_REGM, REGISTER_BP, REGISTER_SP);
+    
+    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
+        // mov r13, rdx
+        // mov r12, [rdx]
+        // mov r12d, [r12]
+        emit(0x49); emit(0x89); emit(0xcd);
+        emit(0x4c); emit(0x8b); emit(0x21);
+        emit(0x45); emit(0x8b); emit(0x24); emit(0x24);
+    }
     
     {
         // at this point we have pushed rbp so the memory layout is as follows:
@@ -4920,6 +4940,11 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // @cleanup: only do this if we have a memcpy
     emit(POP_REGISTER_SI);
     emit(POP_REGISTER_DI);
+    
+    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
+        emit(0x41); emit(0x5c); // push r12
+        emit(0x41); emit(0x5d); // push r13
+    }
     
     emit(NEAR_RET_INSTRUCTION);
     

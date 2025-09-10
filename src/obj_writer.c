@@ -862,19 +862,25 @@ func void *push_unwind_information_for_function(struct memory_arena *arena, stru
         *push_struct(arena, u32) = (u32)stack_space_needed;
     }
     
-    u8 amount_of_pushed_registers = (u8)__popcnt(function->pushed_register_mask);
+    // @incomplete: Pushing r8-r15 needs 2 bytes each.
+    u8 big_pushes   = (u8)__popcnt((function->pushed_register_mask >> 8) & 0xff);
+    u8 small_pushes = (u8)__popcnt((function->pushed_register_mask >> 0) & 0xff);
+    
+    u8 push_offset_in_prolog = 2 * big_pushes + small_pushes;
     
     struct unwind_code *frame_pointer_code = push_struct(arena, struct unwind_code);
-    frame_pointer_code->offset_in_prolog = (u8)(amount_of_pushed_registers + /*mov rbp, rsp*/3);
+    frame_pointer_code->offset_in_prolog = (u8)(push_offset_in_prolog + /*mov rbp, rsp*/3);
     frame_pointer_code->operation_code   = /*UWOP_SET_FPREG*/3;
     
-    for(u8 register_index = 0, offset_in_prolog = amount_of_pushed_registers; register_index < 16; register_index++){
+    for(u8 register_index = 0, offset_in_prolog = push_offset_in_prolog; register_index < 16; register_index++){
         if(!(function->pushed_register_mask & (1u << register_index))) continue;
         
         struct unwind_code *pushed_register_code = push_struct(arena, struct unwind_code);
-        pushed_register_code->offset_in_prolog = offset_in_prolog--;
+        pushed_register_code->offset_in_prolog = offset_in_prolog;
         pushed_register_code->operation_code = /*UWOP_PUSH_NONVOL*/0;
         pushed_register_code->operation_info = register_index;
+        
+        offset_in_prolog -= 1 + (register_index >= 8);
     }
     
     unwind_info->count_of_codes = (u8)((struct unwind_code *)arena_current(arena) - unwind_info->codes);
