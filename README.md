@@ -28,6 +28,7 @@ local functions, etc, but all of these should be considered in the "design"-stag
 
 See the [release page](https://github.com/PascalBeyer/Headerless-C-Compiler/releases) for pre-build binaries. To compile from source invoke the `build_msvc.bat` with `cl.exe`,
 `link.exe` and `ucrt.lib` in your path (for example, from an [x64 Native Tools Command Prompt](https://learn.microsoft.com/en-us/cpp/build/building-on-the-command-line?view=msvc-170&viewFallbackFrom=vs-2019)).
+For a release build of the compiler you can use `build_msvc.bat release`.
 
 To use standard library or Windows library functions it is necessary to install a version of the [Windows SDK](https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/).
 
@@ -191,9 +192,7 @@ by re-iterating the syntax tree of all declarations and functions that made it i
 
 ## Current State and Next Steps
 
-At this point, most C-code that compiles using MSVC also compiles using `hlc`. Notable exceptions include code, which uses
-[`__declspec(allocate("<section>"))`](https://learn.microsoft.com/en-us/cpp/cpp/allocate?view=msvc-170)
-or [structured exception handling](https://learn.microsoft.com/en-us/windows/win32/debug/structured-exception-handling).
+At this point, most C-code that compiles using MSVC also compiles using `hlc`.
 
 Code-wise, most of the C-components (`preprocess.c`, `parse.c`, `emit_x64.c`) are hardened through test suites and fuzz-testing.
 Some larger refactors are on the "eventually"-list, like separating out the concept of `tokens` and `preprocessor` tokens.

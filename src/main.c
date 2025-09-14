@@ -4866,7 +4866,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     // Ensure that all thread wrote in `thread_infos[thread_index].context`.
     for(u32 thread_index = 1; thread_index < thread_count; thread_index++){
-        while(atomic_load(struct context *, thread_infos[thread_index].context) == null){};
+        while(atomic_load(struct context *, thread_infos[thread_index].context) == null){
+            _mm_pause();
+        };
     }
     
     assert(globals.work_queue_tokenize_files.work_entries_in_flight == 0);

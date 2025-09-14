@@ -1440,7 +1440,7 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
 func struct emit_location *emit_load_float_into_specific_register(struct context *context, struct emit_location *loc, enum register_encoding reg){
     
     
-    if(loc->state == EMIT_LOCATION_loaded && loc->loaded_register == reg) return loc;
+    if(loc->state == EMIT_LOCATION_loaded && loc->loaded_register == reg && loc->register_kind == REGISTER_KIND_xmm) return loc;
     
     struct prefixes sse_prefix;
     if(loc->size == 32){
@@ -1451,6 +1451,11 @@ func struct emit_location *emit_load_float_into_specific_register(struct context
     
     allocate_specific_register(context, REGISTER_KIND_xmm, reg);
     struct emit_location *ret = emit_location_loaded(context, REGISTER_KIND_xmm, reg, loc->size);
+    
+    // @cleanup: This is stupid, we should rework the back-end to keep track of the register_kind again.
+    if(loc->state == EMIT_LOCATION_loaded && loc->register_kind != REGISTER_KIND_xmm){
+        spill_register(context, REGISTER_KIND_gpr, loc->loaded_register);
+    }
     
     switch(loc->state){
         case EMIT_LOCATION_loaded:{
