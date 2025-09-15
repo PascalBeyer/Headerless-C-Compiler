@@ -2686,74 +2686,86 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         set_current_stream(context, STREAM_TPI);
         stream_emit_struct(context, tpi_stream.base, arena_current(&tpi_stream) - tpi_stream.base);
     }
-    end_counter(timing, tpi_stream);
     
-    begin_counter(timing, names_stream);
+    struct memory_arena names_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
+    
     // stream 5: Names
     { // :names_stream /names
-        set_current_stream(context, STREAM_names);
-        out_int(0xEFFEEFFE, u32); // signature
-        out_int(1, u32);          // hash version
-        struct pdb_location string_buffer_size = stream_allocate_bytes(context, sizeof(u32));
         
-        struct pdb_location string_buffer_start = get_current_pdb_location(context);
+        struct names_stream_header{
+            u32 signature;
+            u32 hash_version;
+            u32 string_buffer_byte_size;
+            char string_buffer[];
+        } *names_stream_header = push_struct(&names_stream, struct names_stream_header);
+        names_stream_header->signature = 0xEFFEEFFE;
+        names_stream_header->hash_version = 1;
         
-        smm file_count = 0;
-        {
-            // first string is the zero_string? referance: DebugStringTableSubsection::commit
-            // also this is _invalid_ I think, see PDBLinker in PDB.cpp of llvm
-            out_int(0, u8);
-            
-            for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
-                struct file *node = globals.file_table.data[file_index];
-                if(!node) continue;
-                
-                file_count++;
-                node->offset_in_names = pdb_current_offset_from_location(context, string_buffer_start);
-                
-                for(char *c = node->absolute_file_path; *c; c++){
-                    if(*c == '/') *c = '\\';
-                }
-                
-                out_string(string_from_cstring(node->absolute_file_path));
-            }
-        }
+        u8 *string_buffer_start = arena_current(&names_stream);
         
-        struct pdb_location string_buffer_end = get_current_pdb_location(context);
-        u32 size = pdb_location_diff(string_buffer_end, string_buffer_start);
-        stream_write_bytes(context, &string_buffer_size, &size, sizeof(u32));
+        // "The first string inside the string buffer always has to be the zero-sized string, 
+        //  as a zero offset is also used as an invalid offset in the hash table."
+        push_struct(&names_stream, u8); // zero-sized string!
         
-        // @cleanup: lazy as fuck should probably round to the next power of two
-        smm smm_bucket_count = 2 * file_count;
-        u32 bucket_count = to_u32(smm_bucket_count);
+        smm string_count = 0;
         
-        // after the string buffer we have a serialized hash table
-        //     string_hash -> offset in the string buffer
-        out_int(bucket_count, u32); // bucket count
-        
-        // write in the buckets
-        u32 *buckets = push_data(scratch, u32, bucket_count);
         for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
             struct file *node = globals.file_table.data[file_index];
             if(!node) continue;
             
-            u32 hash = pdb_string_hash(string_from_cstring(node->absolute_file_path));
-            for(u32 i = 0; bucket_count; i++){
-                u32 index = (hash + i) % bucket_count;
-                if(buckets[index] != 0) continue;
-                buckets[index] = node->offset_in_names;
-                break;
+            // Patch up the string to have windows slashes.
+            // This is needed for WinDbg to work correctly.
+            smm size = 0;
+            for(char *c = node->absolute_file_path; *c; c++){
+                if(*c == '/') *c = '\\';
+                size += 1;
             }
+            
+            // 
+            // Push the string to the string buffer.
+            // 
+            string_count++;
+            node->offset_in_names = (u32)(arena_current(&names_stream) - string_buffer_start);
+            
+            u8 *name = push_data(&names_stream, u8, size);
+            memcpy(name, node->absolute_file_path, size);
+            *push_struct(&names_stream, u8) = 0;
         }
-        stream_emit_struct(context, buckets, sizeof(u32) * bucket_count);
+        
+        u8 *string_buffer_end = arena_current(&names_stream);
+        names_stream_header->string_buffer_byte_size = (u32)(string_buffer_end - string_buffer_start);
+        
+        // 
+        // After the string buffer we have a serialized hash table:
+        //     string_hash -> offset in the string buffer
+        //     
+        u32 bucket_count = to_u32(2 * string_count);
+        *push_struct_unaligned(&names_stream, u32) = bucket_count; // bucket count
+        
+        // Write in the buckets.
+        u32 *buckets = push_data_unaligned(scratch, u32, bucket_count);
+        
+        for(u8 *string = string_buffer_start + 1; string < string_buffer_end; ){
+            struct string s = string_from_cstring((char *)string);
+            
+            u32 hash = pdb_string_hash(s);
+            for(u32 table_index = 0; table_index < bucket_count; table_index++){
+                u32 hash_index = (hash + table_index) % bucket_count;
+                if(buckets[hash_index] != 0) continue;
+                
+                buckets[hash_index] = (u32)(string - string_buffer_start);
+            }
+            
+            string += s.size + 1;
+        }
         
         // at the end is the amount of strings
-        out_int(file_count, u32);
+        *push_struct_unaligned(&names_stream, u32) = (u32)string_count;
+        
+        set_current_stream(context, STREAM_names);
+        stream_emit_struct(context, names_stream.base, arena_current(&names_stream) - names_stream.base);
     }
-    end_counter(timing, names_stream);
     
-    
-    begin_counter(timing, ipi_stream);
     
     // reset the 'context->index_offset_buffer'
     context->index_offset_buffer_boundary = -1;
