@@ -3528,6 +3528,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
         
         struct pdb_location edit_and_continue_begin = get_current_pdb_location(context);
+        #if 0
         {// edit and continue substream
             // this stream has the same layout as the /names stream, but only has the pdb name in it
             out_int(0xEFFEEFFE, u32); // signature
@@ -3551,6 +3552,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             out_int(1, u32); // offset
             out_int(1, u32); // amount of strings
         }
+        #endif
         
         struct pdb_location optional_debug_header_begin = get_current_pdb_location(context);
         { // optional debug header substream
