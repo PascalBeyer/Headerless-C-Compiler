@@ -362,14 +362,13 @@ enum stream_index{
     STREAM_DBI                 = 3, // done
     STREAM_IPI                 = 4, // done
     STREAM_names               = 5, // done
-    STREAM_link_info           = 6, // done
-    STREAM_TPI_hash            = 7, // done
-    STREAM_IPI_hash            = 8, // done
-    STREAM_symbol_records      = 9, // done
-    STREAM_global_symbol_hash  = 10, // done (stubbed)
-    STREAM_public_symbol_hash  = 11, // done (stubbed)
-    STREAM_linker_module       = 12, // done modulo coffgroup
-    STREAM_section_header_dump = 13, // done
+    STREAM_TPI_hash            = 6, // done
+    STREAM_IPI_hash            = 7, // done
+    STREAM_symbol_records      = 8, // done
+    STREAM_global_symbol_hash  = 9, // done (stubbed)
+    STREAM_public_symbol_hash  = 10, // done (stubbed)
+    STREAM_linker_module       = 11, // done modulo coffgroup
+    STREAM_section_header_dump = 12, // done
     
     // after this come the module streams
     STREAM_module_zero,
@@ -3006,17 +3005,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         stream_emit_struct(context, context->index_offset_buffer, ipi.index_offset_buffer_length);
     }
     end_counter(timing, ipi_hash_stream);
-    
-    // stream 5: Link Info stream
-    { // :link_info_stream
-        
-        // @cleanup: Dummy node.
-        struct page_list_node *node = push_struct(context->scratch, struct page_list_node);
-        
-        sll_push_back(context->page_list[STREAM_link_info], node);
-        // set_current_stream(context, STREAM_link_info);
-        // yes, this appears to be empty... not sure if we need it?
-    }
     
     u32 module_stream_symbol_size;
     u32 module_stream_line_info_size;
