@@ -367,8 +367,7 @@ enum stream_index{
     STREAM_symbol_records      = 8, // done
     STREAM_global_symbol_hash  = 9, // done (stubbed)
     STREAM_public_symbol_hash  = 10, // done (stubbed)
-    STREAM_linker_module       = 11, // done modulo coffgroup
-    STREAM_section_header_dump = 12, // done
+    STREAM_section_header_dump = 11, // done
     
     // after this come the module streams
     STREAM_module_zero,
@@ -3236,87 +3235,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     }
     end_counter(timing, module_stream);
     
-    u32 linker_stream_symbol_size;
-    // stream 12: the * Linker * module
-    { // * Linker * module stream
-        set_current_stream(context, STREAM_linker_module);
-        
-        struct pdb_location stream_start = get_current_pdb_location(context);
-        // same layout as :module_streams
-        out_int(4, u32); // signature
-        
-        begin_symbol(0x1101); // OBJNAME
-        {
-            out_int(0, u32); // signature
-            char module_string[] = "* Linker *";
-            out_struct(module_string); // obj name
-        }
-        end_symbol();
-        
-        begin_symbol(0x113c); // S_COMPILE3
-        {
-            out_int(7, u32); // flags, the first byte is for the _language index_ 7 means LINK
-            out_int(0xd0, u16); // mashine
-            
-            // @note: this is copied from the dump
-            out_int(0, u16); // front end major version
-            out_int(0, u16); // front end minor version
-            out_int(0, u16); // front end build version
-            out_int(0, u16); // front end QFE version ????
-            out_int(14, u16); // back end major version
-            out_int(11, u16); // back end minor version
-            out_int(25506, u16); // back end build version
-            out_int(0, u16); // back end QFE version ????
-            char version_string[] = "ccup";
-            out_struct(version_string);
-        }
-        end_symbol();
-        
-        begin_symbol(0x113d);
-        {
-            out_int(0, u8); // reserved
-            // cwd - compile working directory?
-            // exe - path to program that linked
-            // cmd - command line
-            
-            out_struct("cwd");
-            out_struct("l:\\l++\\tests");
-            out_struct("exe");
-            out_struct("l:\\l++\\build\\out.exe");
-            out_struct("pdb");
-            out_string(pdb_full_path);
-            out_struct("cmd");
-            out_struct("-dunno");
-        }
-        end_symbol();
-        
-        
-        for(u32 i = 0; i < coff_file_header->amount_of_sections; i++){
-            struct coff_section_header *header = &image_sections[i];
-            
-            begin_symbol(0x1136);                      // SECTION (a section in the PE executable file)
-            {
-                out_int(i, u16);                       // I think this _defines_ the section number
-                out_int(0xc, u8);                      // 0xc = 12 = log2(0x1000) alignment of the section
-                out_int(0, u8);                        // reserved
-                out_int(header->virtual_address, u32);  // relative virtual address
-                out_int(header->size_of_raw_data, u32);   // size in bytes
-                out_int(header->characteristics, u32); // characteristics
-                out_struct(header->name);              // name of the section
-            }
-            end_symbol();
-        }
-        
-        
-        // @cleanup: are these COFF group things necessary?
-        // they seem to be a more fine grained section information, i.e .pdata is inside .rdata
-        
-        struct pdb_location stream_end = get_current_pdb_location(context);
-        linker_stream_symbol_size = pdb_location_diff(stream_end, stream_start);
-        
-        out_int(0, u32); // amount_of global references
-    }
-    
     begin_counter(timing, dbi_stream);
     // Stream 3: Debug Info stream
     { // :dbi_stream
@@ -3383,22 +3301,9 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             module.byte_size_of_c13_line_information = module_stream_line_info_size;
             out_struct(module);
             
-            
             // @incomplete:
             out_struct("l:\\l++\\build\\test.obj");
             out_struct("l:\\l++\\build\\test.obj");
-            out_align(sizeof(u32));
-            
-            struct dbi_module_info linker_module = zero_struct;
-            linker_module.module_symbol_stream_index = STREAM_linker_module;
-            
-            
-            linker_module.first_section_contribution_entry = invalid_section_contribution_entry;
-            linker_module.byte_size_of_symbol_information = linker_stream_symbol_size;
-            out_struct(linker_module);
-            
-            out_struct("* Linker *");
-            out_struct("");
             out_align(sizeof(u32));
         }
         
@@ -3490,7 +3395,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             // the actuall amount_of_source_files is the sum over module_to_source_file_count_map.
             // module indices seem to be  [0, ... , amount_of_modules - 1]
             
-            u16 amount_of_modules = 2; // @cleanup: Right now there are only two... not sure
+            u16 amount_of_modules = 1; // @cleanup: Right now there are only two... not sure
             out_int(amount_of_modules, u16);
             u16 amount_of_source_files_u16 = (u16)min_of(globals.file_table.size, u16_max);
             out_int(amount_of_source_files_u16, u16);
@@ -3499,10 +3404,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             //           later we want "module_infos" to be in an array, so we can iterate over them
             
             out_int(0, u16); // index of module 0
-            out_int(globals.file_table.size, u16); // index of module 1
             
             out_int(globals.file_table.size, u16); // amount_of_source_files for module 0
-            out_int(0, u16); // amount_of_source_files for module 1 (* Linker *)
             
             smm at = 0;
             for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
