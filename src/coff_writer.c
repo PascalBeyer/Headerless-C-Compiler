@@ -2602,7 +2602,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // 
         u32 udt_order_adjust_table_offset;
         u32 udt_order_adjust_table_length;
-    } *tpi_stream_header = null/*, *ipi_stream_header = null*/;
+    } *tpi_stream_header = null, *ipi_stream_header = null;
     
     
 #define TPI_NUMBER_OF_HASH_BUCKETS (0x40000 - 1)
@@ -2622,7 +2622,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         tpi_stream_header->one_past_last_type_index = register_all_types(&tpi_stream, scratch, &stack_arena, defined_functions);
         tpi_stream_header->byte_count_of_type_record_data_following_the_header = (u32)(arena_current(&tpi_stream) - (u8 *)(tpi_stream_header + 1));
         
-        tpi_stream_header->stream_index_of_hash_stream = (u16)-1;
+        tpi_stream_header->stream_index_of_auxiliary_hash_stream = (u16)-1;
         tpi_stream_header->stream_index_of_hash_stream = STREAM_TPI_hash;
         
         tpi_stream_header->hash_key_size = sizeof(u32);
@@ -2661,7 +2661,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 assert((type_record_offset & 3) == 0);
                 struct codeview_type_record_header *tpi_record_header = (void *)(type_record_start + type_record_offset);
                 u32 type_record_size = tpi_record_header->length + sizeof(tpi_record_header->length);
-                type_record_offset += type_record_size;
                 
                 type_index_buffer[unbiased_type_index] = tpi_hash_table_index_for_record(tpi_record_header, tpi_stream_header->number_of_hash_buckets);
                 
@@ -2670,6 +2669,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     last_entry->offset_in_record_data = type_record_offset;
                     last_entry->type_index = unbiased_type_index + tpi_stream_header->minimal_type_index;
                 }
+                
+                type_record_offset += type_record_size;
             }
             
             tpi_stream_header->index_offset_buffer_offset = tpi_stream_header->hash_table_index_buffer_length;
@@ -2742,7 +2743,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         *push_struct_unaligned(&names_stream, u32) = bucket_count; // bucket count
         
         // Write in the buckets.
-        u32 *buckets = push_data_unaligned(scratch, u32, bucket_count);
+        u32 *buckets = push_data_unaligned(&names_stream, u32, bucket_count);
         
         for(u8 *string = string_buffer_start + 1; string < string_buffer_end; ){
             struct string s = string_from_cstring((char *)string);
@@ -2753,6 +2754,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 if(buckets[hash_index] != 0) continue;
                 
                 buckets[hash_index] = (u32)(string - string_buffer_start);
+                break;
             }
             
             string += s.size + 1;
@@ -2772,239 +2774,261 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     u32 build_info_symbol;
     // stream 4: IPI stream
-    struct tpi_stream ipi = zero_struct;
+    
+    struct memory_arena ipi_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
+    struct memory_arena ipi_hash_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
+    
     { // :ipi_stream
         // the IPI Stream describes _id_ information
         
         // @note: For more detail see the tpi-Stream, which is structured exactly the same, the only difference
         //        is what kind of symbols they contain.
         
-        set_current_stream(context, STREAM_IPI);
+        ipi_stream_header = push_struct(&ipi_stream, struct index_stream_header);
+        ipi_stream_header->version = 20040203;
+        ipi_stream_header->header_size = sizeof(*ipi_stream_header);
+        ipi_stream_header->minimal_type_index = 0x1000;
+        ipi_stream_header->stream_index_of_auxiliary_hash_stream = (u16)-1;
+        ipi_stream_header->stream_index_of_hash_stream = STREAM_IPI_hash;
         
-        ipi.version = 20040203;
-        ipi.header_size = sizeof(struct tpi_stream);
+        ipi_stream_header->hash_key_size = sizeof(u32);
+        ipi_stream_header->number_of_hash_buckets = TPI_NUMBER_OF_HASH_BUCKETS;
         
-        ipi.minimal_type_index = 0x1000;
+        // 
+        // @cleanup: Should we share code here with the obj_writer?
+        // 
         
-        ipi.hash_aux_stream_index = -1;
-        ipi.hash_stream_index = STREAM_IPI_hash;
-        ipi.hash_key_size = sizeof(u32);
-        ipi.number_of_hash_buckets = TPI_NUMBER_OF_HASH_BUCKETS;
-        
-        struct pdb_location header_location = stream_allocate_bytes(context, sizeof(ipi));
-        struct pdb_location type_record_data_begin = get_current_pdb_location(context);
-        context->type_record_data_begin = type_record_data_begin;
-        
-        // after the header is a list of variable sized type records
-        
-        // we associate to any function and any type definition a source line
-        // for functions:
-        //      LF_FUNC_ID
-        // for types:
-        //      LF_UDT_MOD_SRC_LINE
-        
-        // UDT stands for user defined type
+        // 
+        // After the header there is a list of variable sized id records.
+        // 
+        // For source files: LF_STRING_ID
+        // For functions: LF_FUNC_ID
+        // For compound types: LF_UDT_MOD_SRC_LINE
+        // For typedefs: LF_UDT_MOD_SRC_LINE
+        // 
+        // And then a build info structure.
+        // 
         
         
-        // LF_STRING_ID for every used source file
+        // Convenience macros to handle type index creation
+#define begin_id_record(record_kind) { current_id_record = push_struct(&ipi_stream, struct codeview_type_record_header); current_id_record->kind = (record_kind); }
+#define end_id_record() { id_index_at++; push_f3f2f1_align(&ipi_stream, sizeof(u32)); current_id_record->length = to_u16(arena_current(&ipi_stream) - (u8 *)&current_id_record->kind); }
+        
+        struct codeview_type_record_header *current_id_record;
+        u32 id_index_at = 0x1000;
+        
+        // 
+        // One LF_STRING_ID per source file.
+        // 
+        
+        u32 main_file_ipi = 0;
+        
         for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
             struct file *node = globals.file_table.data[file_index];
             if(!node) continue;
             
-            node->ipi = begin_symbol(0x1605);{ // LF_STRING_ID
-                out_int(0, u32); // @cleanup: what was this?
-                out_string(string_from_cstring(node->absolute_file_path));
-            }end_symbol();
-        }
-        
-        // a LF_UDT_MOD_SRC_LINE for every global compound type @cleanup: local types
-        for(u64 i = 0; i < globals.compound_types.capacity; i++){
-            struct ast_node *node = globals.compound_types.nodes + i;
-            if(!node->token) continue;
-            struct ast_compound_type *type = cast(struct ast_compound_type *)node->ast;
-            assert(type->base.kind == AST_enum || type->base.kind == AST_union || type->base.kind == AST_struct);
-            assert(type->base.pdb_type_index);
+            if(node == globals.compilation_units.first->main_file) main_file_ipi = id_index_at;
             
-            struct file *file = globals.file_table.data[type->identifier->file_index];
-            begin_symbol(0x1607);{ // LF_UDT_MOD_SRC_LINE
-                out_int(type->base.pdb_type_index,  u32); // type_index
-                out_int(file->offset_in_names, u32); // file_name    (offset in /names)
-                out_int(type->identifier->line,     u32); // line_number
-                out_int(1,                     u16); // module_index (@hardcoded one counted)
-                out_f3f2f1_align(sizeof(u32));
-            }end_symbol();
+            begin_id_record(0x1605); // LF_STRING_ID
+            
+            *push_struct(&ipi_stream, u32) = 0; // "ID to list of sub-string IDs"
+            push_zero_terminated_string_copy(&ipi_stream, string_from_cstring(node->absolute_file_path));
+            
+            end_id_record();
         }
         
+        // 
+        // One LF_UDT_MOD_SRC_LINE for every compound type.
+        // 
+        struct codeview_udt_mod_src_line{
+            u32 type_index;
+            u32 file_name_offset_in_names;
+            u32 line_number;
+            u16 module_index;
+        };
+        
+        for(u64 table_index = 0; table_index < globals.compound_types.capacity; table_index++){
+            struct ast_node *node = globals.compound_types.nodes + table_index;
+            if(!node->token) continue;
+            struct ast_compound_type *type = (struct ast_compound_type *)node->ast;
+            
+            assert(type->identifier->file_index != -1); // In the future maybe there will be predefined compounds, not sure.
+            struct file *file = globals.file_table.data[type->identifier->file_index];
+            
+            begin_id_record(0x1607);  // LF_UDT_MOD_SRC_LINE
+            
+            struct codeview_udt_mod_src_line *udt_mod_src_line = push_struct_(&ipi_stream, sizeof(struct codeview_udt_mod_src_line) - 2, 1);
+            udt_mod_src_line->type_index = type->base.pdb_type_index;
+            udt_mod_src_line->file_name_offset_in_names = file->offset_in_names;
+            udt_mod_src_line->line_number = type->identifier->line;
+            udt_mod_src_line->module_index = 1; // type->compilation_unit->index + 1;
+            
+            end_id_record();  // LF_UDT_MOD_SRC_LINE
+        }
+        
+        // 
+        // One LF_UDT_MOD_SRC_LINE for every typedef.
+        // 
         for_ast_list(typedefs){
             struct ast_declaration *decl = (struct ast_declaration *)it->value;
             struct ast_type *type = decl->type;
             
             struct file *file = globals.file_table.data[decl->identifier->file_index];
-            begin_symbol(0x1607);{ // LF_UDT_MOD_SRC_LINE
-                out_int(type->pdb_type_index,  u32); // type_index
-                out_int(file->offset_in_names, u32); // file_name    (offset in /names)
-                out_int(decl->identifier->line,     u32); // line_number
-                out_int(1,                     u16); // module_index (@hardcoded one counted)
-                out_f3f2f1_align(sizeof(u32));
-            }end_symbol();
+            
+            begin_id_record(0x1607);  // LF_UDT_MOD_SRC_LINE
+            
+            struct codeview_udt_mod_src_line *udt_mod_src_line = push_struct_(&ipi_stream, sizeof(struct codeview_udt_mod_src_line) - 2, 1);
+            udt_mod_src_line->type_index = type->pdb_type_index;
+            udt_mod_src_line->file_name_offset_in_names = file->offset_in_names;
+            udt_mod_src_line->line_number = decl->identifier->line;
+            udt_mod_src_line->module_index = 1; // decl->compilation_unit->index + 1;
+            
+            end_id_record();  // LF_UDT_MOD_SRC_LINE
         }
         
+        // 
+        // One LF_FUNC_ID for every defined function.
+        // 
         for_ast_list(defined_functions){
-            struct ast_function *function = cast(struct ast_function *)it->value;
-            assert(function->type->base.flags & TYPE_FLAG_pdb_permanent);
-            begin_symbol(0x1601);{ // LF_FUNC_ID
-                // @cleanup: can functions in C be non-global?
-                out_int(0, u32); // parent scope id or 0 if its global @incomplete: maybe local functions
-                out_int(function->type->base.pdb_type_index, u32); // type index of the type
-                out_string(function->identifier->string);
-            }end_symbol();
+            struct ast_function *function = (struct ast_function *)it->value;
+            
+            begin_id_record(0x1601); // LF_FUNC_ID
+            
+            *push_struct(&ipi_stream, u32) = /*parent scope*/0; // @incomplete: look at a language with local procedures.
+            *push_struct(&ipi_stream, u32) = function->type->base.pdb_type_index;
+            push_zero_terminated_string_copy(&ipi_stream, function->identifier->string);
+            
+            end_id_record();
         }
         
-#if 0
-        // @cleanup: should we do this
-        for(struct dll_import_node *import = globals.dll_imports.first; import; import = import->next){
-            for_ast_list(import->functions){
-                struct ast_function *function = cast(struct ast_function *)it->value;
-                assert(function->type->base.flags & TYPE_FLAG_pdb_permanent);
-                begin_symbol(0x1601);{ // LF_FUNC_ID
-                    // @cleanup: can functions in C be non-global?
-                    out_int(0, u32); // parent scope id or 0 if its global @incomplete: maybe local functions
-                    out_int(function->type->base.pdb_type_index, u32); // type index of the type
-                    out_string(function->identifier);
-                }end_symbol();
+        // 
+        // One LF_BUILDINFO containing a bunch of information.
+        // 
+        
+        {
+            u32 working_directiory_symbol = id_index_at;
+            {
+                begin_id_record(0x1605); // LF_STRING_ID
+                
+                *push_struct(&ipi_stream, u32) = 0; // "ID to list of sub-string IDs"
+                
+                // GetCurrentDirectory with 0 returns the size of the buffer including the null terminator
+                smm CurrentWorkingDirectoryLength = GetCurrentDirectoryA(0, null); // @cleanup: What about utf-8?
+                u8 *CurrentWorkingDirectory = push_uninitialized_data(&ipi_stream, u8, CurrentWorkingDirectoryLength);
+                GetCurrentDirectoryA((DWORD)CurrentWorkingDirectoryLength, CurrentWorkingDirectory);
+                
+                end_id_record();
+            }
+            
+            u32 compiler_name_symbol = id_index_at;
+            {
+                begin_id_record(0x1605); // LF_STRING_ID
+                
+                *push_struct(&ipi_stream, u32) = 0; // "ID to list of sub-string IDs"
+                
+                char *ModuleFileName = push_uninitialized_data(&ipi_stream, char, MAX_PATH + 1);
+                smm ModuleFileNameLength = GetModuleFileNameA(null, ModuleFileName, MAX_PATH + 1); // @cleanup: What about utf-8?
+                ModuleFileName[ModuleFileNameLength] = 0;
+                ipi_stream.current -= (MAX_PATH + 1) - ModuleFileNameLength;
+                
+                end_id_record();
+            }
+            
+            u32 pdb_symbol = id_index_at;
+            {
+                begin_id_record(0x1605); // LF_STRING_ID
+                
+                *push_struct(&ipi_stream, u32) = 0; // "ID to list of sub-string IDs"
+                push_zero_terminated_string_copy(&ipi_stream, string("vc140.pdb")); // Not sure why this is here.
+                
+                end_id_record();
+            }
+            
+            u32 command_line_symbol = id_index_at;
+            {
+                begin_id_record(0x1605); // LF_STRING_ID
+                
+                *push_struct(&ipi_stream, u32) = 0; // "ID to list of sub-string IDs"
+                push_zero_terminated_string_copy(&ipi_stream, string_from_cstring(GetCommandLineA())); // @cleanup: What about utf-8?
+                
+                end_id_record();
+            }
+            
+            build_info_symbol = id_index_at;
+            {
+                begin_id_record(0x1603); // LF_BUILDINFO
+                
+                *push_struct(&ipi_stream, u16) = 5; // Count
+                *push_struct_unaligned(&ipi_stream, u32) = working_directiory_symbol;
+                *push_struct_unaligned(&ipi_stream, u32) = compiler_name_symbol;
+                *push_struct_unaligned(&ipi_stream, u32) = main_file_ipi;
+                *push_struct_unaligned(&ipi_stream, u32) = pdb_symbol;
+                *push_struct_unaligned(&ipi_stream, u32) = command_line_symbol;
+                
+                end_id_record();
             }
         }
-#endif
         
-        // @note: @incomplete: I think this exists for every compilation unit?
-        {   // build the BUILDINFO
-            u32 working_directiory_symbol = begin_symbol(0x1605);{ // LF_STRING_ID
-                out_int(0, u32); // id to the list of sub string Id's???????
-                out_struct("l:\\l++\\tests");
-            }end_symbol();
+        ipi_stream_header->byte_count_of_type_record_data_following_the_header = (u32)(arena_current(&ipi_stream) - (u8 *)(ipi_stream_header + 1));
+        ipi_stream_header->one_past_last_type_index = id_index_at;
+        
+        {   //
+            // stream 7: IPI hash   :ipi_hash_stream
+            // 
             
-            u32 compiler_name_symbol = begin_symbol(0x1605);{ // LF_STRING_ID
-                out_int(0, u32); // id to the list of sub string Id's???????
-                out_struct("l:\\l++\\build\\out.exe");
-            }end_symbol();
+            u8 *id_record_start = (u8 *)(ipi_stream_header + 1);
             
-            u32 pdb_symbol = begin_symbol(0x1605);{ // LF_STRING_ID
+            u32 amount_of_id_indices = ipi_stream_header->one_past_last_type_index - ipi_stream_header->minimal_type_index;
+            u32 *type_index_buffer = push_uninitialized_data(&ipi_hash_stream, u32, amount_of_id_indices);
+            
+            ipi_stream_header->hash_table_index_buffer_offset = 0;
+            ipi_stream_header->hash_table_index_buffer_length = amount_of_id_indices * sizeof(u32);
+            
+            struct index_offset_buffer_entry{
+                u32 type_index;
+                u32 offset_in_record_data;
+            } *index_offset_buffer = push_struct(&ipi_hash_stream, struct index_offset_buffer_entry);
+            index_offset_buffer->type_index = ipi_stream_header->minimal_type_index;
+            
+            struct index_offset_buffer_entry *last_entry = index_offset_buffer;
+            
+            for(u32 unbiased_id_index = 0, id_record_offset = 0; unbiased_id_index < amount_of_id_indices; unbiased_id_index += 1){
                 
-                out_int(0, u32); // id to the list of sub string Id's???????
-                out_struct("l:\\l++\\tests\\vc140.pdb");// @cleanup why is this here?
-            }end_symbol();
-            
-            u32 command_line_symbol = begin_symbol(0x1605);{ // LF_STRING_ID
+                // hashing a type_record: (LF_STRUCTURE, LF_UNION, LF_ENUM):
+                // if(!forward_ref && !is_anonymous){
+                //    if(!scoped || has_unique_name){
+                //        return pdb_string_hash(name);
+                //    }
+                // }
+                // return string CRC32(serialized);
                 
-                out_int(0, u32); // id to the list of sub string Id's???????
-                out_struct("-command -line -arguments");
-            }end_symbol();
-            
-            build_info_symbol = begin_symbol(0x1603);{ // LF_BUILDINFO
-                out_int(5, u16); // count
+                assert((id_record_offset & 3) == 0);
+                struct codeview_type_record_header *ipi_record_header = (void *)(id_record_start + id_record_offset);
+                u32 id_record_size = ipi_record_header->length + sizeof(ipi_record_header->length);
                 
-                //  a list of code item id's
-                out_int(working_directiory_symbol,  u32); // current directory
-                out_int(compiler_name_symbol,       u32); // build tool (cl.exe)
-                out_int(globals.compilation_units.first->main_file->ipi, u32); // source file (foo.c)
-                out_int(pdb_symbol,                 u32); // pdb file (foo.pdb)
-                out_int(command_line_symbol,        u32); // command arguments (-I etc)
-            }end_symbol();
+                type_index_buffer[unbiased_id_index] = tpi_hash_table_index_for_record(ipi_record_header, ipi_stream_header->number_of_hash_buckets);
+                
+                if(id_record_offset + id_record_size >= last_entry->offset_in_record_data + 8 * 0x1000){
+                    last_entry = push_struct(&ipi_hash_stream, struct index_offset_buffer_entry);
+                    last_entry->offset_in_record_data = id_record_offset;
+                    last_entry->type_index = unbiased_id_index + ipi_stream_header->minimal_type_index;
+                }
+                
+                id_record_offset += id_record_size;
+            }
+            
+            ipi_stream_header->index_offset_buffer_offset = ipi_stream_header->hash_table_index_buffer_length;
+            ipi_stream_header->index_offset_buffer_length = (u32)((u8 *)(last_entry + 1) - (u8 *)index_offset_buffer);
+            
+            set_current_stream(context, STREAM_IPI_hash);
+            stream_emit_struct(context, ipi_hash_stream.base, arena_current(&ipi_hash_stream) - ipi_hash_stream.base);
         }
         
-        struct pdb_location end_location = get_current_pdb_location(context);
-        ipi.amount_of_bytes_of_type_record_data_following_the_header = (u32)pdb_location_diff(end_location, type_record_data_begin);
-        
-        ipi.maximal_type_index = context->active_page_list->symbol_at;
-        
-        ipi.hash_value_buffer_offset = 0;
-
-        ipi.hash_value_buffer_length = (ipi.maximal_type_index - ipi.minimal_type_index) * ipi.hash_key_size;
-        
-        ipi.index_offset_buffer_offset = ipi.hash_value_buffer_length + ipi.hash_value_buffer_offset;
-        ipi.index_offset_buffer_length = context->index_offset_buffer_at * sizeof(context->index_offset_buffer[0]);
-        
-        ipi.incremental_linking_hash_table_offset = ipi.index_offset_buffer_offset + ipi.index_offset_buffer_length;
-        ipi.incremental_linking_hash_table_length = 0;
-        
-        stream_write_bytes(context, &header_location, &ipi, sizeof(ipi));
+        set_current_stream(context, STREAM_IPI);
+        stream_emit_struct(context, ipi_stream.base, arena_current(&ipi_stream) - ipi_stream.base);
     }
-    end_counter(timing, ipi_stream);
     
-    begin_counter(timing, ipi_hash_stream);
-    // stream 8: IPI hash stream
-    { // :ipi_hash_stream
-        // same as  :ipi_hash_stream
-        set_current_stream(context, STREAM_IPI_hash);
-        
-        // @cleanup: these are like
-        //    hash_entry = hash % (hash_buffer_size)
-        
-        // look at hashTypeRecord
-        // the hashes are computed via a CRC. Do we actually have to use their hash algorithm?
-        // and crc32.h
-        
-        // a map 'type_index' -> type_hash
-        
-        struct page_list_node *current_page = context->page_list[STREAM_IPI].first;
-        smm offset_at = sizeof(struct tpi_stream);
-        for(u32 type_index = ipi.minimal_type_index; type_index < ipi.maximal_type_index; type_index += 1){
-            // hashing a type_record: (LF_STRUCTURE, LF_UNION, LF_ENUM):
-            // if(!forward_ref && !is_anonymous){
-            //    if(!scoped || has_unique_name){
-            //        return pdb_string_hash(name);
-            //    }
-            // }
-            // return string CRC32(serialized);
-            
-            assert((offset_at & 3) == 0);
-            struct{
-                u16 length;
-                u16 kind;
-            } ipi_record_header;
-            memcpy(&ipi_record_header, pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream), sizeof(ipi_record_header));
-            
-            if(ipi_record_header.kind == /*LF_UDT_SRC_LINE*/0x1606 || ipi_record_header.kind == /*LF_UDT_MOD_SRC_LINE*/0x1607){
-                
-                u8 *type_index_data = pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream) + 4;
-                if(((offset_at + 4) & 0xfff) == 0){
-                    type_index_data = pdb_page_from_index(context, current_page->page_index + 1);
-                }
-                
-                u32 hash = pdb_string_hash(create_string(type_index_data, /*sizeof(type_index_t)*/4));
-                out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32); // could make this tpi.hash_key_size
-                
-                offset_at += ipi_record_header.length + sizeof(ipi_record_header.length);
-                while(current_page->offset_in_stream + 0x1000 < offset_at) current_page = current_page->next;
-            }else{
-                
-                u32 length = ipi_record_header.length + sizeof(ipi_record_header.length);
-                smm end_offset = offset_at + length;
-                
-                u32 hash = 0;
-                while(offset_at != end_offset){
-                    smm page_end = 0x1000 - (offset_at - current_page->offset_in_stream);
-                    
-                    u8 *at   = pdb_page_from_index(context, current_page->page_index) + (offset_at - current_page->offset_in_stream);
-                    smm size = length < page_end ? length : page_end;
-                    
-                    hash = crc32(hash, at, size);
-                    
-                    offset_at += size;
-                    length -= (u32)size;
-                    if(offset_at == current_page->offset_in_stream + 0x1000) current_page = current_page->next;
-                }
-                
-                out_int(hash % TPI_NUMBER_OF_HASH_BUCKETS, u32);
-            }
-            
-        }
-        // index_offset_buffer:
-        // An array of type_index offset pairs, which are used _chunk_ the type_records into 8KB chunks.
-        // This gives O(log(n)) access time. (binary search over this buffer + linear search of 8KB).
-        stream_emit_struct(context, context->index_offset_buffer, ipi.index_offset_buffer_length);
-    }
-    end_counter(timing, ipi_hash_stream);
+    
     
     u32 module_stream_symbol_size;
     u32 module_stream_line_info_size;

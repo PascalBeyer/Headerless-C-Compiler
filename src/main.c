@@ -264,7 +264,6 @@ struct file{
     struct token_array tokens;
     
     // pdb debug info
-    u32 ipi;
     u32 offset_in_names;
     u32 offset_in_f4;
 };
@@ -3790,13 +3789,13 @@ int main(int argc, char *argv[]){
     struct string working_directory = zero_struct;
     // GetCurrentDirectory with 0 returns the size of the buffer including the null terminator
     working_directory.size = GetCurrentDirectoryA(0, null) - 1;
-    working_directory.data = push_uninitialized_data(arena, u8, working_directory.length + 1);
+    working_directory.data = push_uninitialized_data(arena, u8, working_directory.length + 1); // @cleanup: What about utf-8?
     GetCurrentDirectoryA(cast(u32)working_directory.length + 1, working_directory.data);
     canonicalize_slashes(working_directory); // @cleanup: not sure where to put this
     
     u8 compiler_path_buffer[MAX_PATH + 1];
     struct string compiler_path = zero_struct;
-    compiler_path.size = GetModuleFileNameA(null, (char *)compiler_path_buffer, MAX_PATH + 1);
+    compiler_path.size = GetModuleFileNameA(null, (char *)compiler_path_buffer, MAX_PATH + 1); // @cleanup: What is even happening here? This seems wrong.
     compiler_path.data = compiler_path_buffer;
     GetModuleFileNameA(null, (char *)compiler_path.data, (u32)(compiler_path.size + 1));
     canonicalize_slashes(compiler_path);
