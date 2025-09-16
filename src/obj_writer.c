@@ -707,7 +707,7 @@ struct debug_symbols_relocation_info{
 };
 
 
-void codeview_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast_scope *scope, struct memory_arena *relocation_arena, u8 *debug_symbols_base){
+void codeview_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast_scope *scope, struct memory_arena *relocation_arena, u8 *debug_symbols_base, u16 text_section_id, u32 parent_pointer){
     
     if(scope->amount_of_declarations){
         
@@ -741,9 +741,17 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
             
             block->section = 0; // filled in by relocation.
             
-            struct debug_symbols_relocation_info *relocation = push_struct(relocation_arena, struct debug_symbols_relocation_info);
-            relocation->destination_offset = (u32)((u8 *)&block->offset_in_section - debug_symbols_base);
-            relocation->source_declaration = &function->as_decl;
+            if(relocation_arena){
+                struct debug_symbols_relocation_info *relocation = push_struct(relocation_arena, struct debug_symbols_relocation_info);
+                relocation->destination_offset = (u32)((u8 *)&block->offset_in_section - debug_symbols_base);
+                relocation->source_declaration = &function->as_decl;
+            }else{
+                block->offset_in_section += (u32)function->offset_in_text_section;
+                block->section = text_section_id;
+                block->pointer_to_parent = parent_pointer;
+                
+                parent_pointer = (u32)(arena_current(arena) - debug_symbols_base);
+            }
         }
         
         for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
@@ -796,7 +804,7 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
     }
     
     for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
-        codeview_emit_debug_information_for_function__recursive(function, arena, subscope, relocation_arena, debug_symbols_base);
+        codeview_emit_debug_information_for_function__recursive(function, arena, subscope, relocation_arena, debug_symbols_base, text_section_id, parent_pointer);
     }
     
     if(scope->amount_of_declarations && function->scope != scope){
@@ -805,7 +813,7 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
     }
 }
 
-void codeview_emit_debug_info_for_function(struct ast_function *function, struct memory_arena *arena, struct memory_arena *relocation_arena, u8 *debug_symbols_base){
+void codeview_emit_debug_info_for_function(struct ast_function *function, struct memory_arena *arena, struct memory_arena *relocation_arena, u8 *debug_symbols_base, u16 text_section_id){
     
     u16 *frameproc_length = push_struct(arena, u16);
     *push_struct(arena, u16) = /*S_FRAMEPROC*/0x1012; 
@@ -850,7 +858,7 @@ void codeview_emit_debug_info_for_function(struct ast_function *function, struct
     
     *frameproc_length = (u16)(arena_current(arena) - (u8 *)(frameproc_length + 1));
     
-    codeview_emit_debug_information_for_function__recursive(function, arena, function->scope, relocation_arena, debug_symbols_base);
+    codeview_emit_debug_information_for_function__recursive(function, arena, function->scope, relocation_arena, debug_symbols_base, text_section_id, function->debug_symbol_offset);
     
 }
 
@@ -958,6 +966,129 @@ func void *push_unwind_information_for_function(struct memory_arena *arena, stru
     
     
     return unwind_info;
+}
+
+void codeview_push_debug_s_file_checksums(struct memory_arena *arena){
+    
+    // 
+    // The 'DEBUG_S_FILECHKSUM' subsection contains information about the files
+    // used to compile the object file. This file is particularly important for
+    // line information later on. We emit this function first, so we have the 
+    // offsets ready for the DEBUG_S_LINES sections below.
+    // 
+    
+    *push_struct(arena, u32) = /*DEBUG_S_FILECHKSUM*/0xf4;
+    u32 *subsection_size = push_struct(arena, u32);
+    
+    u8 *section_start = arena_current(arena);
+    for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
+        struct file *file = globals.file_table.data[file_index];
+        if(!file) continue;
+        
+        file->offset_in_f4 = (u32)(arena_current(arena) - section_start);
+        
+        // :padded_file_size
+        // 
+        // We have padded the file size when allocating for it so we can use 'hash_md5_inplace'
+        // here instead of 'hash_md5' which would have to allocate.
+        // 
+        m128 md5 = hash_md5_inplace(file->file.memory, file->file.size, file->file.size + 128);
+        
+        struct codeview_file_checksum_header{
+            u32 offset_in_stringtable;
+            u16 hash_function_kind;
+            u8  hash[16];    // variable sized hash (always 16 for md5 and 2 bytes padding for 4-byte alignment)
+            u8  padding[2];
+        } *file_checksum_header = push_struct(arena, struct codeview_file_checksum_header);
+        file_checksum_header->offset_in_stringtable = file->offset_in_names;
+        file_checksum_header->hash_function_kind = /*md5*/0x110;
+        memcpy(file_checksum_header->hash, md5._u8, 16);
+    }
+    
+    *subsection_size = (u32)(arena_current(arena) - (u8 *)(subsection_size + 1));
+    push_align(arena, 4);
+}
+
+void codeview_push_debug_s_lines(struct ast_function *function, struct memory_arena *arena, struct memory_arena *relocation_arena, u8 *debug_symbols_base, u16 text_section_id){
+    
+    // 
+    // The DEBUG_S_LINES contains a mapping of offsets to file and line information. 
+    // This subsection feels somewhat overengineered, it has a header and then consists
+    // of blocks, each of which covers one file for the function.
+    // In practice, this means there are two headers here.
+    // 
+    // @cleanup: What happens when the function is spread between 
+    //           multiple files? What happens when the function is not contigious?
+    //           Why are we not using the [section:offset]?
+    // 
+    *push_struct(arena, u32) = /*DEBUG_S_LINES*/0xf2;
+    u32 *subsection_size = push_struct(arena, u32);
+    
+    struct codeview_lines_header{
+        u32 offset_in_section_contribution;
+        u16 section_id;
+        u16 flags;
+        u32 size_of_the_contribution;
+    } *lines_header = push_struct(arena, struct codeview_lines_header);
+    lines_header->offset_in_section_contribution = 0; // filled in by a relocation
+    lines_header->section_id = 0;                     // filled in by a relocation
+    lines_header->flags = 0;
+    lines_header->size_of_the_contribution = (u32)function->byte_size;  // everything else is somehow 0.
+    
+    if(relocation_arena){
+        struct debug_symbols_relocation_info *relocation = push_struct(relocation_arena, struct debug_symbols_relocation_info);
+        relocation->destination_offset = (u32)((u8 *)&lines_header->offset_in_section_contribution - debug_symbols_base);
+        relocation->source_declaration = &function->as_decl;
+    }else{
+        lines_header->offset_in_section_contribution = (u32)function->offset_in_text_section;
+        lines_header->section_id = text_section_id;
+    }
+    
+    struct ast_scope *scope = function->scope;
+    u32 file_index = scope->token->file_index;
+    struct file *file = globals.file_table.data[file_index];
+    
+    struct codeview_lines_block{
+        u32 offset_in_file_checksums;
+        u32 amount_of_lines;
+        u32 block_size;
+    } *lines_block = push_struct(arena, struct codeview_lines_block);
+    lines_block->offset_in_file_checksums = file->offset_in_f4;
+    
+    // The lines for the function are in the format:
+    // struct{
+    //    u32 offset;
+    //    u32 start_line_number     : 24;
+    //    u32 optional_delta_to_end : 7;
+    //    u32 is_a_statement        : 1;
+    // };
+    // 
+    
+    u8 *lines_start = arena_current(arena);
+    
+    // 
+    // Emit an initial line for the prologue.
+    // 
+    *push_struct(arena, u32) = 0;
+    *push_struct(arena, u32) = (u32)(scope->token->line | /*is_statement*/0x80000000);
+    
+    for(smm index = 0; index < function->line_information.size; index++){
+        struct function_line_information line = function->line_information.data[index];
+        
+        u32 offset = (u32)(line.offset + function->size_of_prolog);
+        
+        *push_struct(arena, u32) = (u32)offset;
+        *push_struct(arena, u32) = (u32)(line.line | /*is_statement*/0x80000000);
+    }
+    
+    smm lines_size = arena_current(arena) - lines_start;
+    
+    lines_block->amount_of_lines = (u32)(lines_size/8);
+    lines_block->block_size = (u32)(sizeof(*lines_block) + lines_size);
+    
+    *subsection_size = (u32)(arena_current(arena) - (u8 *)(subsection_size + 1));
+    push_align(arena, 4);
+    
 }
 
 void print_obj(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
@@ -1976,45 +2107,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             push_align(arena, 4);
         }
         
-        {
-            // 
-            // The 'DEBUG_S_FILECHKSUM' subsection contains information about the files
-            // used to compile the object file. This file is particularly important for
-            // line information later on. We emit this function first, so we have the 
-            // offsets ready for the DEBUG_S_LINES sections below.
-            // 
-            
-            *push_struct(arena, u32) = /*DEBUG_S_FILECHKSUM*/0xf4;
-            u32 *subsection_size = push_struct(arena, u32);
-            
-            u8 *section_start = arena_current(arena);
-            for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
-                struct file *file = globals.file_table.data[file_index];
-                if(!file) continue;
-                
-                file->offset_in_f4 = (u32)(arena_current(arena) - section_start);
-                
-                // :padded_file_size
-                // 
-                // We have padded the file size when allocating for it so we can use 'hash_md5_inplace'
-                // here instead of 'hash_md5' which would have to allocate.
-                // 
-                m128 md5 = hash_md5_inplace(file->file.memory, file->file.size, file->file.size + 128);
-                
-                struct codeview_file_checksum_header{
-                    u32 offset_in_stringtable;
-                    u16 hash_function_kind;
-                    u8  hash[16];    // variable sized hash (always 16 for md5 and 2 bytes padding for 4-byte alignment)
-                    u8  padding[2];
-                } *file_checksum_header = push_struct(arena, struct codeview_file_checksum_header);
-                file_checksum_header->offset_in_stringtable = file->offset_in_names;
-                file_checksum_header->hash_function_kind = /*md5*/0x110;
-                memcpy(file_checksum_header->hash, md5._u8, 16);
-            }
-            
-            *subsection_size = (u32)(arena_current(arena) - (u8 *)(subsection_size + 1));
-            push_align(arena, 4);
-        }
+        codeview_push_debug_s_file_checksums(arena);
         
         u32 function_id_at = defined_function_func_id_base; // @note: this indexes the LF_FUNC_ID at 'defined_function_func_id_base'.
         
@@ -2073,7 +2166,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 relocation->destination_offset = (u32)((u8 *)&proc_symbol->offset_in_section - debug_symbols_base);
                 relocation->source_declaration = &function->as_decl;
                 
-                codeview_emit_debug_info_for_function(function, arena, /*relocation_arena*/scratch, debug_symbols_base);
+                codeview_emit_debug_info_for_function(function, arena, /*relocation_arena*/scratch, debug_symbols_base, /*text_section_id (used by coff_writer.c)*/0);
                 
                 *push_struct(arena, u16) = 2; // length
                 *push_struct(arena, u16) = /*S_PROC_ID_END*/0x114f;
@@ -2085,80 +2178,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 push_align(arena, 4);
             }
             
-            {
-                // 
-                // The DEBUG_S_LINES contains a mapping of offsets to file and line information. 
-                // This subsection feels somewhat overengineered, it has a header and then consists
-                // of blocks, each of which covers one file for the function.
-                // In practice, this means there are two headers here.
-                // 
-                // @cleanup: What happens when the function is spread between 
-                //           multiple files? What happens when the function is not contigious?
-                //           Why are we not using the [section:offset]?
-                // 
-                *push_struct(arena, u32) = /*DEBUG_S_LINES*/0xf2;
-                u32 *subsection_size = push_struct(arena, u32);
-                
-                struct codeview_lines_header{
-                    u32 offset_in_section_contribution;
-                    u16 section_id;
-                    u16 flags;
-                    u32 size_of_the_contribution;
-                } *lines_header = push_struct(arena, struct codeview_lines_header);
-                lines_header->offset_in_section_contribution = 0; // filled in by a relocation
-                lines_header->section_id = 0;                     // filled in by a relocation
-                lines_header->flags = 0;
-                lines_header->size_of_the_contribution = (u32)function->byte_size;  // everything else is somehow 0.
-                
-                struct debug_symbols_relocation_info *relocation = push_struct(scratch, struct debug_symbols_relocation_info);
-                relocation->destination_offset = (u32)((u8 *)&lines_header->offset_in_section_contribution - debug_symbols_base);
-                relocation->source_declaration = &function->as_decl;
-                
-                struct ast_scope *scope = function->scope;
-                u32 file_index = scope->token->file_index;
-                struct file *file = globals.file_table.data[file_index];
-                
-                struct codeview_lines_block{
-                    u32 offset_in_file_checksums;
-                    u32 amount_of_lines;
-                    u32 block_size;
-                } *lines_block = push_struct(arena, struct codeview_lines_block);
-                lines_block->offset_in_file_checksums = file->offset_in_f4;
-                
-                // The lines for the function are in the format:
-                // struct{
-                //    u32 offset;
-                //    u32 start_line_number     : 24;
-                //    u32 optional_delta_to_end : 7;
-                //    u32 is_a_statement        : 1;
-                // };
-                // 
-                
-                u8 *lines_start = arena_current(arena);
-                
-                // 
-                // Emit an initial line for the prologue.
-                // 
-                *push_struct(arena, u32) = 0;
-                *push_struct(arena, u32) = (u32)(scope->token->line | /*is_statement*/0x80000000);
-                
-                for(smm index = 0; index < function->line_information.size; index++){
-                    struct function_line_information line = function->line_information.data[index];
-                    
-                    u32 offset = (u32)(line.offset + function->size_of_prolog);
-                    
-                    *push_struct(arena, u32) = (u32)offset;
-                    *push_struct(arena, u32) = (u32)(line.line | /*is_statement*/0x80000000);
-                }
-                
-                smm lines_size = arena_current(arena) - lines_start;
-                
-                lines_block->amount_of_lines = (u32)(lines_size/8);
-                lines_block->block_size = (u32)(sizeof(*lines_block) + lines_size);
-                
-                *subsection_size = (u32)(arena_current(arena) - (u8 *)(subsection_size + 1));
-                push_align(arena, 4);
-            }
+            codeview_push_debug_s_lines(function, arena, scratch, debug_symbols_base, /*text_section_id (used by coff_writer.c)*/0);
         }
         
         {

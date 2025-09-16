@@ -2968,6 +2968,9 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }
         }
         
+#undef begin_id_record
+#undef end_id_record
+        
         ipi_stream_header->byte_count_of_type_record_data_following_the_header = (u32)(arena_current(&ipi_stream) - (u8 *)(ipi_stream_header + 1));
         ipi_stream_header->one_past_last_type_index = id_index_at;
         
@@ -3027,211 +3030,155 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         stream_emit_struct(context, ipi_stream.base, arena_current(&ipi_stream) - ipi_stream.base);
     }
     
-    
+    // 
+    // We for now just have a single module stream.
+    // I don't really see a reason to have multiple.
+    // And we don't have to duplicate things like file tables if we only have one.
+    // 
     
     u32 module_stream_symbol_size;
     u32 module_stream_line_info_size;
     
-    begin_counter(timing, module_stream);
-    // stream > 12: Module streams
-    { // :module_streams
-        set_current_stream(context, STREAM_module_zero);
-        // module layout:
-        // u32 signature; always 4
-        // u8  symbols[symbol_byte_size - 4];
-        // u8  line_information[line_info_byte_size]
-        // u32 global_refs_byte_size;
-        // u8  global_refs[global_refs_byte_size]
+    struct string module_object_name_full_path = push_format_string(scratch, "%.*s.obj", root_file_name.size, root_file_name.data);
+    replace_characters(module_object_name_full_path, "/", '\\');
+    
+    struct memory_arena module_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
+    
+    {   // Module streams :module_streams
+        // 
+        // Module stream layout:
+        // 
+        //     u32 signature;
+        //     u8  symbols[symbol_byte_size - 4];
+        //     u8  line_information[line_info_byte_size];
+        //     u32 global_refs_byte_size;
+        //     u8  global_refs[global_refs_byte_size];
+        //     
         
-        struct pdb_location module_stream_begin = get_current_pdb_location(context);
-        context->module_stream_begin = module_stream_begin;
+        *push_struct(&module_stream, u32) = /*CV_SIGNATURE_C13*/4;
         
-        out_int(4, u32); // signature
+#define begin_symbol_record(record_kind) { current_symbol_record = push_struct(&module_stream, struct codeview_type_record_header); current_symbol_record->kind = (record_kind); }
+#define end_symbol_record() { push_f3f2f1_align(&module_stream, sizeof(u32)); current_symbol_record->length = to_u16(arena_current(&module_stream) - (u8 *)&current_symbol_record->kind); }
         
-        // first thing is always the OBJNAME, then the COMPILE3
+        struct codeview_type_record_header *current_symbol_record;
         
-        begin_symbol(0x1101);{ // OBJNAME
-            out_int(0, u32); // signature
-            char module_string[] = "l:\\l++\\build\\test.obj";
-            out_struct(module_string); // obj name
-        }end_symbol();
+        // 
+        // First thing is always the S_OBJNAME, then the S_COMPILE3.
+        // 
+        begin_symbol_record(0x1101); // S_OBJNAME
+        *push_struct(&module_stream, u32) = 0; // Signature (?)
+        push_zero_terminated_string_copy(&module_stream, module_object_name_full_path);
+        end_symbol_record();
         
-        begin_symbol(0x113c);{ // S_COMPILE3
+        
+        begin_symbol_record(0x113c); // S_COMPILE3
+        
+        struct codeview_compile3{
+            u32 flags;
+            u16 machine;
             
-            out_int(0, u32); // flags, the first byte is for the _language index_ 0 means C
-            out_int(0xd0, u16); // machine
+            u16 front_end_major_version;
+            u16 front_end_minor_version;
+            u16 front_end_build_version;
+            u16 front_end_QFE_version;
             
-            // @note: this is copied from the dump
-            out_int(19,    u16); // front end major version
-            out_int(11,    u16); // front end minor version
-            out_int(25506, u16); // front end build version
-            out_int(0,     u16); // front end QFE version ????
-            out_int(19,    u16); // back end major version
-            out_int(11,    u16); // back end minor version
-            out_int(25506, u16); // back end build version
-            out_int(0,     u16); // back end QFE version ????
-            char version_string[] = "ccup";
-            out_struct(version_string);
-        }end_symbol();
+            u16 back_end_major_version;
+            u16 back_end_minor_version;
+            u16 back_end_build_version;
+            u16 back_end_QFE_version;
+            
+            char compiler_version_string[];
+        } *compile3 = push_struct(&module_stream, struct codeview_compile3);
+        compile3->flags   = 0;    // 0 means C
+        compile3->machine = 0xd0; // machine = x64 <- This is used by cvdump.
         
+        // @cleanup: Not sure what to do about these, but I am also not sure that anyone cares.
+        compile3->front_end_major_version = 19;
+        compile3->front_end_minor_version = 11;
+        compile3->front_end_build_version = 25506;
+        compile3->front_end_QFE_version = 0;
         
-        begin_counter(timing, module_function_info);
+        compile3->back_end_major_version = 19;
+        compile3->back_end_minor_version = 11;
+        compile3->back_end_build_version = 25506;
+        compile3->back_end_QFE_version = 0;
+        
+        push_zero_terminated_string_copy(&module_stream, string("hlc")); // @cleanup: When we have a version system thing, we should probably put it in here.
+        
+        end_symbol_record();
+        
         for_ast_list(defined_functions){
-            struct ast_function *function = cast(struct ast_function *)it->value;
+            struct ast_function *function = (struct ast_function *)it->value;
             
-            function->debug_symbol_offset = pdb_current_offset_from_location(context, module_stream_begin);
+            function->debug_symbol_offset = (u32)(arena_current(&module_stream) - module_stream.base);
             
-            struct pdb_location function_pointer_to_end;
+            u16 function_symbol_kind = (function->decl_flags & DECLARATION_FLAGS_is_static) ? /* LPROC32 */ 0x110f: /* GPROC32 */ 0x1110;
             
-            u16 symbol = (function->decl_flags & DECLARATION_FLAGS_is_static) ? /* LPROC32 */ 0x110f: /* GPROC32 */ 0x1110;
-            begin_symbol(symbol);{ // GPROC32 (global procdure start)
-                out_int(0, u32); // pointer to parent (what is a pointer ?)
-                function_pointer_to_end = stream_allocate_bytes(context, sizeof(u32)); // pointer to end
-                out_int(0, u32); // pointer to next symbol? why is this always 0?
-                out_int(function->byte_size, u32); // length of the procedure
-                out_int(function->size_of_prolog, u32); // offset in the function where debugging makes sense
-                out_int(function->byte_size, u32); // end of the section where it makes sense to debug @cleanup
-                out_int(function->type->base.pdb_type_index, u32); // type_index
-                out_int(function->offset_in_text_section, u32); // offset in segment
-                out_int(text_section_id, u16); // segment
-                out_int(0, u8); // flags: Frame pointer, @cleanup: custom calling convention, no_return
-                // these are somehow never present???
-                out_string(function->identifier->string);
-            }end_symbol();
+            begin_symbol_record(function_symbol_kind);
             
-            begin_symbol(0x1012);{ // FRAMEPROC
-                
-                // dll_return_a_struct:
-                // 0000000180001030: 48 89 4C 24 08     mov         qword ptr [rsp+8],rcx
-                // 0000000180001035: 56                 push        rsi
-                // 0000000180001036: 57                 push        rdi
-                // 0000000180001037: 48 81 EC 88 00 00  sub         rsp,88h
-                
-                // Frame size = 0x00000088 bytes
-                // Pad size = 0x00000000 bytes
-                // Offset of pad in frame = 0x00000000
-                // Size of callee save registers = 0x00000000
-                // Address of exception handler = 0000:00000000
-                // Function info: asynceh invalid_pgo_counts opt_for_speed Local=rsp Param=rsp (0x00114200)
-                
-                // this appearanly is not really the frame size, but only the space used by the function
-                // no pushed registers and return value usw.
-                u32 frame_size = to_u32(function->stack_space_needed);
-                
-                out_int(frame_size, u32); // frame size
-                out_int(0, u32); // pad size @cleanup: search up what this was again
-                out_int(0, u32); // offset of pad
-                out_int(0, u32); // callee saved register byte size (not sure)
-                out_int(0, u32); // offset of exception handler
-                out_int(0, u16); // section id of exception handler
-                
-                u32 flags = 0;
-                flags |= (2 << 14); // local base pointer (3 = r13) (2 = rbp) (1 = rsp) (0 = none)
-                flags |= (2 << 16); // param base pointer (3 = r13) (2 = rbp) (1 = rsp) (0 = none)
-                flags |= (1 << 9);  // asynceh, function compiled with /EHa ?
-                flags |= (1 << 20); // opt_for_speed, always set for some reason
-                out_int(flags, u32); // asynceh invalid_pgo_counts opt_for_speed Local=rsp Param=rsp ???
-            }end_symbol();
+            struct codeview_proc{
+                u32 pointer_to_parent;
+                u32 pointer_to_end;
+                u32 pointer_to_next;
+                u32 procedure_length;
+                u32 debug_start_offset;
+                u32 debug_end_offset;
+                u32 type_index;
+                u32 offset_in_section;
+                u16 section_id;
+                u8 procedure_flags;
+                u8 procedure_name[];
+            } *proc_symbol = push_struct_(&module_stream, offset_in_type(struct codeview_proc, procedure_name) + (function->identifier->length + 1), 4);
+            proc_symbol->pointer_to_parent  = 0;
+            proc_symbol->pointer_to_end     = 0;
+            proc_symbol->pointer_to_next    = 0;
+            proc_symbol->procedure_length   = (u32)function->byte_size;
+            proc_symbol->debug_start_offset = (u32)function->size_of_prolog;
+            proc_symbol->debug_end_offset   = (u32)function->byte_size;
+            proc_symbol->type_index         = function->type->base.pdb_type_index;
+            proc_symbol->offset_in_section  = (u32)function->offset_in_text_section;
+            proc_symbol->section_id         = text_section_id;
+            proc_symbol->procedure_flags    = 0; // Flags, somehow never present.
+            memcpy(proc_symbol->procedure_name, function->identifier->data, function->identifier->length);
+            proc_symbol->procedure_name[function->identifier->length] = 0;
             
-            // @cleanup: we don't have to emit blocks, that do not have variables
-            //           and also we do not have to emit the _initial_ block as it is implicit,
-            //           but these might be things to do in the part that creates debug_members
-            
+            end_symbol_record();
             
             // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
             
-            emit_debug_info_for_function(context, function);
+            codeview_emit_debug_info_for_function(function, &module_stream, /*relocation_arena (used by obj_writer.c)*/null, /*debug_symbol_base (used by obj_writer.c)*/null, text_section_id);
             
             // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
             
+            proc_symbol->pointer_to_end = (u32)(arena_current(&module_stream) - module_stream.base);
             
-            u32 diff = pdb_current_offset_from_location(context, module_stream_begin);
-            stream_write_bytes(context, &function_pointer_to_end, &diff, sizeof(u32));
-            begin_symbol(0x6);{ // S_END
-            }end_symbol();
-        }
-        end_counter(timing, module_function_info);
-        
-        begin_symbol(0x114c);{ // S_BUILDINFO
-            out_int(build_info_symbol, u32); // Item Id: type_index of a LF_BUILDINFO in the IPI stream
-        }end_symbol();
-        
-        struct pdb_location symbols_end = get_current_pdb_location(context);
-        module_stream_symbol_size = pdb_location_diff(symbols_end, module_stream_begin);
-        
-        begin_counter(timing, module_file_info);
-        // 
-        // Here come the md5's
-        // 
-        {
-            out_int(0xf4, u32); // DEBUG_S_FILECHKSUM or something like that
-            struct pdb_location size_loc = stream_allocate_bytes(context, sizeof(u32));
-            struct pdb_location begin_loc = get_current_pdb_location(context);
-            for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
-                struct file *node = globals.file_table.data[file_index];
-                if(!node) continue;
-                
-                node->offset_in_f4 = pdb_current_offset_from_location(context, begin_loc);
-                out_int(node->offset_in_names, u32);   // offset in /names
-                out_int(0x110, u16); // kind of hash function (md5)
-                
-                // :padded_file_size
-                // 
-                // We have padded the file size when allocating for it so we can use 'hash_md5_inplace'
-                // here instead of 'hash_md5' which would have to allocate.
-                // 
-                m128 md5 = hash_md5_inplace(node->file.memory, node->file.size, node->file.size + 128);
-                
-                stream_emit_struct(context, md5._u8, 16);
-                out_align(sizeof(u32)); // align up to 32.. there are two bytes of pad
-            }
-            struct pdb_location end_loc = get_current_pdb_location(context);
-            smm size = pdb_location_diff(end_loc, begin_loc);
-            stream_write_bytes(context, &size_loc, &size, sizeof(u32));
+            begin_symbol_record(0x6); end_symbol_record(); // S_END
         }
         
-        end_counter(timing, module_file_info);
+        begin_symbol_record(0x114c); // S_BUILDINFO
+        *push_struct(&module_stream, u32) = build_info_symbol; // Item Id: type_index of a LF_BUILDINFO in the IPI stream
+        end_symbol_record();
         
-        begin_counter(timing, module_line_info);
+        module_stream_symbol_size = (u32)(arena_current(&module_stream) - module_stream.base);
+        
+        u8 *line_information_start = arena_current(&module_stream);
+        
+        codeview_push_debug_s_file_checksums(&module_stream);
+        
         // now comes the line info
         for_ast_list(defined_functions){
             struct ast_function *function = cast(struct ast_function *)it->value;
-            struct ast_scope *scope = function->scope;
             
-            out_int(0xf2, u32); // DEBUG_S_LINES
-            struct pdb_location size_loc = stream_allocate_bytes(context, sizeof(u32));
-            struct pdb_location begin_loc = get_current_pdb_location(context);
-            
-            // DEBUG_S_LINES header
-            out_int(function->offset_in_text_section, u32);   // offset in the section contribution
-            out_int(text_section_id, u16);                    // section id (segment ?)
-            out_int(0, u16);                                  // flags (0x1 = have columns)
-            out_int(function->byte_size, u32);                // the size of the contribution
-            
-            struct pdb_location block_begin = get_current_pdb_location(context);
-            
-            // offset of the file info in the 0xf4 DEBUG_S_SECTION
-            out_int(globals.file_table.data[scope->token->file_index]->offset_in_f4, u32);
-            struct pdb_location amount_of_lines_loc = stream_allocate_bytes(context, sizeof(u32));
-            struct pdb_location block_write = stream_allocate_bytes(context, sizeof(u32));
-            
-            emit_pdb_line_info_for_function(context, function);
-            u32 amount_of_lines = save_truncate_smm_to_u32(context->pdb_amount_of_lines);
-            stream_write_bytes(context, &amount_of_lines_loc, &amount_of_lines, sizeof(u32));
-            
-            struct pdb_location end_loc = get_current_pdb_location(context);
-            smm block_size = pdb_location_diff(end_loc, block_begin);
-            stream_write_bytes(context, &block_write, &block_size, sizeof(u32));
-            
-            smm size = pdb_location_diff(end_loc, begin_loc);
-            stream_write_bytes(context, &size_loc, &size, sizeof(u32));
+            codeview_push_debug_s_lines(function, &module_stream, /*relocation_arena (used by obj_writer.c)*/null, /*debug_symbol_base (used by obj_writer.c)*/null, text_section_id);
         }
-        end_counter(timing, module_line_info);
         
-        struct pdb_location module_stream_end = get_current_pdb_location(context);
-        module_stream_line_info_size = pdb_location_diff(module_stream_end, symbols_end);
         
-        out_int(0, u32); // amount_of global references
+        module_stream_line_info_size = (u32)(arena_current(&module_stream) - line_information_start);
+        
+        *push_struct(&module_stream, u32) = 0; // Amount of global references.
+        
+        set_current_stream(context, STREAM_module_zero);
+        stream_emit_struct(context, module_stream.base, arena_current(&module_stream) - module_stream.base);
     }
     end_counter(timing, module_stream);
     
