@@ -645,7 +645,7 @@ u32 register_all_types(struct memory_arena *arena, struct memory_arena *scratch,
         struct ast_function *function = (struct ast_function *)function_node->value;
         
         // 
-        // Iterate down all statements registering the types of all declarations.
+        // Iterate down all scopes registering the types of all declarations.
         // 
         smm ast_stack_capacity = 32;
         struct ast_stack_node{
@@ -678,7 +678,7 @@ u32 register_all_types(struct memory_arena *arena, struct memory_arena *scratch,
             }
             
             // 
-            // Push all the statements to the ast stack in reverse order.
+            // Push all the subscopes to the ast stack in reverse order.
             // 
             
             smm subscope_count = scope->subscopes.count;
@@ -708,7 +708,6 @@ struct debug_symbols_relocation_info{
 
 
 void codeview_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast_scope *scope, struct memory_arena *relocation_arena, u8 *debug_symbols_base){
-    // assert(ast->byte_offset_in_function >= 0);
     
     if(scope->amount_of_declarations){
         
@@ -804,6 +803,55 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
         *push_struct(arena, u16) = /*length*/2;
         *push_struct(arena, u16) = /*S_END*/6;
     }
+}
+
+void codeview_emit_debug_info_for_function(struct ast_function *function, struct memory_arena *arena, struct memory_arena *relocation_arena, u8 *debug_symbols_base){
+    
+    u16 *frameproc_length = push_struct(arena, u16);
+    *push_struct(arena, u16) = /*S_FRAMEPROC*/0x1012; 
+    
+    struct codeview_frameproc{
+        u32 stack_frame_size;
+        u32 stack_frame_padding_size;
+        u32 offset_of_padding;
+        u32 callee_saved_registers_size;
+        u32 offset_in_section_of_exception_handler;
+        u16 section_id_of_exception_handler;
+        
+        u16 has_alloca     : 1;
+        u16 has_set_jump   : 1;
+        u16 has_long_jump  : 1;
+        u16 has_inline_asm : 1;
+        u16 has_eh_states  : 1; // ?
+        u16 was_declared_inline : 1;
+        u16 has_structured_exception_handling : 1;
+        u16 was_declared_nacked : 1;
+        u16 has_GS_security_checks : 1;
+        u16 has_async_exception_handling : 1;
+        u16 has_GS_but_no_stack_ordering : 1;
+        u16 was_inlined_into_another_function : 1;
+        u16 was_declared_strict_gs_check : 1;
+        u16 was_declared_safe_buffers    : 1;
+        u16 encoded_local_base_pointer     : 2;
+        u16 encoded_parameter_base_pointer : 2;
+        u16 was_compiled_with_pgo_pgu : 1;
+        u16 have_valid_pogo_counts    : 1;
+        u16 was_optimized_for_speed   : 1;
+        u16 contains_cfg_checks_but_no_write_checks : 1;
+        u16 contains_cfg_checks_and_instrumentation : 1;
+        u16 : 9;
+        
+    } *frameproc = push_struct(arena, struct codeview_frameproc);
+    frameproc->stack_frame_size = (u32)function->stack_space_needed;
+    frameproc->encoded_local_base_pointer     = /*rbp*/2;
+    frameproc->encoded_parameter_base_pointer = /*rbp*/2;
+    frameproc->has_async_exception_handling   = 1;
+    frameproc->was_optimized_for_speed        = 1; // always set for some reason
+    
+    *frameproc_length = (u16)(arena_current(arena) - (u8 *)(frameproc_length + 1));
+    
+    codeview_emit_debug_information_for_function__recursive(function, arena, function->scope, relocation_arena, debug_symbols_base);
+    
 }
 
 func void *push_unwind_information_for_function(struct memory_arena *arena, struct ast_function *function){
@@ -1968,7 +2016,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             push_align(arena, 4);
         }
         
-        u32 function_id_at = 0; // @note: this indexes the LF_FUNC_ID at 'defined_function_func_id_base'.
+        u32 function_id_at = defined_function_func_id_base; // @note: this indexes the LF_FUNC_ID at 'defined_function_func_id_base'.
         
         for(struct ast_list_node *function_ast_node = defined_functions.first; function_ast_node; function_ast_node = function_ast_node->next){
             
@@ -2011,7 +2059,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 proc_symbol->procedure_length   = (u32)function->byte_size;
                 proc_symbol->debug_start_offset = (u32)function->size_of_prolog;
                 proc_symbol->debug_end_offset   = (u32)function->byte_size;
-                proc_symbol->type_index         = defined_function_func_id_base + function_id_at++; // @note: as this is an S_LPROC32_ID not an S_LPROC32 this is the LF_FUNC_ID not the type.
+                proc_symbol->type_index         = function_id_at++; // @note: as this is an S_LPROC32_ID not an S_LPROC32 this is the LF_FUNC_ID not the type.
                 proc_symbol->offset_in_section  = 0; // Filled in by a relocation
                 proc_symbol->section_id         = 0; // Filled in by a relocation
                 proc_symbol->procedure_flags    = 0;
@@ -2025,50 +2073,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 relocation->destination_offset = (u32)((u8 *)&proc_symbol->offset_in_section - debug_symbols_base);
                 relocation->source_declaration = &function->as_decl;
                 
-                u16 *frameproc_length = push_struct(arena, u16);
-                *push_struct(arena, u16) = /*S_FRAMEPROC*/0x1012; 
-                
-                struct codeview_frameproc{
-                    u32 stack_frame_size;
-                    u32 stack_frame_padding_size;
-                    u32 offset_of_padding;
-                    u32 callee_saved_registers_size;
-                    u32 offset_in_section_of_exception_handler;
-                    u16 section_id_of_exception_handler;
-                    
-                    u16 has_alloca     : 1;
-                    u16 has_set_jump   : 1;
-                    u16 has_long_jump  : 1;
-                    u16 has_inline_asm : 1;
-                    u16 has_eh_states  : 1; // ?
-                    u16 was_declared_inline : 1;
-                    u16 has_structured_exception_handling : 1;
-                    u16 was_declared_nacked : 1;
-                    u16 has_GS_security_checks : 1;
-                    u16 has_async_exception_handling : 1;
-                    u16 has_GS_but_no_stack_ordering : 1;
-                    u16 was_inlined_into_another_function : 1;
-                    u16 was_declared_strict_gs_check : 1;
-                    u16 was_declared_safe_buffers    : 1;
-                    u16 encoded_local_base_pointer     : 2;
-                    u16 encoded_parameter_base_pointer : 2;
-                    u16 was_compiled_with_pgo_pgu : 1;
-                    u16 have_valid_pogo_counts    : 1;
-                    u16 was_optimized_for_speed   : 1;
-                    u16 contains_cfg_checks_but_no_write_checks : 1;
-                    u16 contains_cfg_checks_and_instrumentation : 1;
-                    u16 : 9;
-                    
-                } *frameproc = push_struct(arena, struct codeview_frameproc);
-                frameproc->stack_frame_size = (u32)function->stack_space_needed;
-                frameproc->encoded_local_base_pointer     = /*rbp*/2;
-                frameproc->encoded_parameter_base_pointer = /*rbp*/2;
-                frameproc->has_async_exception_handling   = 1;
-                frameproc->was_optimized_for_speed        = 1; // always set for some reason
-                
-                *frameproc_length = (u16)(arena_current(arena) - (u8 *)(frameproc_length + 1));
-                
-                codeview_emit_debug_information_for_function__recursive(function, arena, function->scope, scratch, debug_symbols_base);
+                codeview_emit_debug_info_for_function(function, arena, /*relocation_arena*/scratch, debug_symbols_base);
                 
                 *push_struct(arena, u16) = 2; // length
                 *push_struct(arena, u16) = /*S_PROC_ID_END*/0x114f;
