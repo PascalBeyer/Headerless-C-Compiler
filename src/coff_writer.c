@@ -1290,17 +1290,17 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         for_ast_list(defined_functions){
             struct ast_function *function = cast(struct ast_function *)it->value;
             
-            smm function_size = function->size_of_prolog + function->byte_size_without_prolog;
+            smm function_size = function->size_of_prologue + function->byte_size_without_prologue;
             
             u8 *memory_for_function = push_uninitialized_data(arena, u8, function_size);
             
             u8 *at = memory_for_function;
-            memcpy(at, function->base_of_prolog, function->size_of_prolog);
-            at += function->size_of_prolog;
+            memcpy(at, function->base_of_prologue, function->size_of_prologue);
+            at += function->size_of_prologue;
             
-            memcpy(at, function->base_of_main_function, function->byte_size_without_prolog);
+            memcpy(at, function->base_of_main_function, function->byte_size_without_prologue);
             function->base_of_main_function = at;
-            at += function->byte_size_without_prolog;
+            at += function->byte_size_without_prologue;
             
             push_align_initialized_to_specific_value(arena, 16, 0xcc);
             
@@ -1888,8 +1888,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             if(patch->dest_declaration->kind == IR_function){
                 struct ast_function *function = cast(struct ast_function *)patch->dest_declaration;
                 
-                memory_location += function->size_of_prolog;
-                patch->rip_at   += function->size_of_prolog;
+                memory_location += function->size_of_prologue;
+                patch->rip_at   += function->size_of_prologue;
             }
             
             if(patch->kind == PATCH_rip_relative){
@@ -2972,7 +2972,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             proc_symbol->pointer_to_end     = 0;
             proc_symbol->pointer_to_next    = 0;
             proc_symbol->procedure_length   = (u32)function->byte_size;
-            proc_symbol->debug_start_offset = (u32)function->size_of_prolog;
+            proc_symbol->debug_start_offset = (u32)function->size_of_prologue;
             proc_symbol->debug_end_offset   = (u32)function->byte_size;
             proc_symbol->type_index         = function->type->base.pdb_type_index;
             proc_symbol->offset_in_section  = (u32)function->offset_in_text_section;

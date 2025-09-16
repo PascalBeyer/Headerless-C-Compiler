@@ -1139,7 +1139,7 @@ func void emit_location_prevent_spilling(struct context *context, struct emit_lo
 
 func void emit_location_allow_spilling(struct context *context, struct emit_location *loc){
     (void)context;
-
+    
     assert(loc->prevent_spilling > 0);
     loc->prevent_spilling -= 1;
     if(loc->state == EMIT_LOCATION_register_relative){
@@ -2079,7 +2079,7 @@ func struct emit_location *emit_load_bitfield(struct context *context, struct em
         emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, loc);
         emit(bit_size - (bitfield->bit_index + bitfield->width));
     }
-        
+    
     if(bitfield->width != bit_size){
         u8 shift_type = type_is_signed(bitfield->base_type) ? REG_OPCODE_SHIFT_ARITHMETIC_RIGHT : REG_OPCODE_SHIFT_RIGHT;
         emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), shift_type, loc);
@@ -2381,7 +2381,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         // Because `context->max_amount_of_function_call_arguments * 8` is not yet known, we need to emit a "patch".
         // 
         struct emit_location *size = emit_load_gpr(context, argument_locations[0]);
-
+        
         // Align-up the size to a 16-byte boundary.
         //    add size, 15
         //    and size, ~15
@@ -2480,7 +2480,7 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
     // @note: we use the 'patch_call_source_declaration' here, as the other one might not be defined.
     struct ast_scope *scope = function->scope;
     assert(scope->asm_block);
-
+    
     struct ir_asm_block *asm_block = scope->asm_block;
     context->in_inline_asm_function = asm_block->token;
     context->current_inline_asm_function = function;
@@ -2536,7 +2536,7 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
     // as 'index' has either a premultiplied 'index' or uses a 'scale'
     //
     
-    #if 0
+#if 0
     int log_scale = -1;
     switch(deref_type->size){
         case 1: log_scale = 0; break;
@@ -2550,7 +2550,7 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
         loc->log_index_scale = log_scale;
         return loc;
     }
-    #endif
+#endif
     index = emit_load_gpr(context, index);
     
     // @incomplete:
@@ -4799,7 +4799,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // set the current code section to the prolog
     u8 *prolog_start = context->emit_pool.current;
     context->current_emit_base = prolog_start;
-    function->base_of_prolog = prolog_start;
+    function->base_of_prologue = prolog_start;
     
     // @cleanup: only do this if we have a memcpy, this value is also needed to be known when returning a large struct
     //           maybe the large struct code should live in the epilog?
@@ -4901,7 +4901,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // rsp ------------------------------------------------------------^
     //                                                                             -25.07.2021
     
-    function->size_of_prolog = get_bytes_emitted(context);
+    function->size_of_prologue = get_bytes_emitted(context);
     
     // main code section
     u8 *main_function_start = context->emit_pool.current;
@@ -5002,9 +5002,9 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
         context->alloca_patch_nodes.first = context->alloca_patch_nodes.last = null;
     }
     
-    function->byte_size_without_prolog = get_bytes_emitted(context);
+    function->byte_size_without_prologue = get_bytes_emitted(context);
     
-    function->byte_size = function->size_of_prolog + function->byte_size_without_prolog;
+    function->byte_size = function->size_of_prologue + function->byte_size_without_prologue;
     
     end_counter(context, emit_code_for_function);
 }
