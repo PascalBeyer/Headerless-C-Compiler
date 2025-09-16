@@ -3146,7 +3146,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
             
-            codeview_emit_debug_info_for_function(function, &module_stream, /*relocation_arena (used by obj_writer.c)*/null, /*debug_symbol_base (used by obj_writer.c)*/null, text_section_id);
+            codeview_emit_debug_info_for_function(function, &module_stream, /*relocation_arena (used by obj_writer.c)*/null, module_stream.base, text_section_id);
             
             // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
             

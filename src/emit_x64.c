@@ -2614,14 +2614,47 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
     smm line_information_size = current_function->line_information.size;
     smm line_information_at = 0;
     
+    // @cleanup: Is there a good way to fold that to the stuff below?
+    u32 **scope_offsets = push_data(&context->scratch, u32 *, 0);
+    for(struct ast_scope *scope = current_function->scope; scope; ){
+        *push_uninitialized_struct(&context->scratch, u32 *) = &scope->start_offset;
+        
+        if(scope->subscopes.first){
+            scope = scope->subscopes.first;
+        }else{
+            while(1){
+                *push_uninitialized_struct(&context->scratch, u32 *) = &scope->end_offset;
+                if(scope->subscopes.next){
+                    scope = scope->subscopes.next;
+                    break;
+                }
+                
+                if(scope->flags & SCOPE_FLAG_is_function_scope){
+                    scope = null;
+                    break;
+                }else{
+                    scope = scope->parent;
+                }
+            }
+        }
+    }
+    smm amount_of_scopes = push_data(&context->scratch, u32 *, 0) - scope_offsets;
+    smm scope_at = 0;
+    
     for(u8 *ir_arena_at = current_function->start_in_ir_arena; ir_arena_at < current_function->end_in_ir_arena; ){
         struct ir *ir = (struct ir *)ir_arena_at;
         
-        if((line_information_at < line_information_size) && (line_information[line_information_at].offset == (u32)(ir_arena_at - current_function->start_in_ir_arena))){
+        u32 current_offset = (u32)(ir_arena_at - current_function->start_in_ir_arena);
+        
+        if((line_information_at < line_information_size) && (line_information[line_information_at].offset == current_offset)){
             // :function_line_information
             // 
             // Here we remap the offset from pointing into the ir_arena to pointing into the emit_pool.
             line_information[line_information_at++].offset = to_s32(get_bytes_emitted(context));
+        }
+        
+        while(scope_at < amount_of_scopes && *scope_offsets[scope_at] == current_offset){
+            *scope_offsets[scope_at++] = to_s32(get_bytes_emitted(context));
         }
         
         enum ir_kind ir_kind = ir->kind;
@@ -4700,6 +4733,14 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
     }
     
     assert_that_no_registers_are_allocated(context);
+    
+    u32 ir_size = (u32)(current_function->end_in_ir_arena - current_function->start_in_ir_arena);
+    u32 asm_size = to_s32(get_bytes_emitted(context));
+    
+    while(scope_at < amount_of_scopes){
+        assert(*scope_offsets[scope_at] == ir_size);
+        *scope_offsets[scope_at++] = asm_size;
+    }
     
     assert(emit_location_stack_at == 0);
     

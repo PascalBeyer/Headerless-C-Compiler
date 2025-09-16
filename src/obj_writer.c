@@ -709,35 +709,25 @@ struct debug_symbols_relocation_info{
 
 void codeview_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast_scope *scope, struct memory_arena *relocation_arena, u8 *debug_symbols_base, u16 text_section_id, u32 parent_pointer){
     
+    struct codeview_block32{
+        u16 length;
+        u16 kind;
+        u32 pointer_to_parent; // filled in by the linker
+        u32 pointer_to_end;    // filled in by the linker
+        u32 scope_size;
+        u32 offset_in_section;
+        u16 section;
+    } *block = null;
+    
     if(scope->amount_of_declarations){
         
         if(function->scope != scope){
-            struct codeview_block32{
-                u16 length;
-                u16 kind;
-                u32 pointer_to_parent; // filled in by the linker
-                u32 pointer_to_end;    // filled in by the linker
-                u32 scope_size;
-                u32 offset_in_section;
-                u16 section;
-            } *block = push_struct(arena, struct codeview_block32);
+            block = push_struct(arena, struct codeview_block32);
             block->length = sizeof(*block) - 2;
             block->kind   = /*S_BLOCK32*/0x1103;
             
-            if(scope->start_line_index == -1){
-                // Function is empty.
-                block->scope_size = 0;
-                block->offset_in_section = 0; // ?
-            }else{
-                
-                u32 start_offset = function->line_information.data[scope->start_line_index].offset;
-                u32 end_offset   = scope->end_line_index < function->line_information.size ? function->line_information.data[scope->end_line_index].offset : (u32)function->byte_size_without_prolog;
-                
-                
-                // @cleanup: Does this correctly include function->size_of_prologue?
-                block->scope_size = end_offset - start_offset;
-                block->offset_in_section = start_offset; // relocated by relocation.
-            }
+            block->scope_size = scope->end_offset - scope->start_offset;
+            block->offset_in_section = (u32)(scope->start_offset + function->size_of_prolog); // relocated by relocation.
             
             block->section = 0; // filled in by relocation.
             
@@ -750,7 +740,7 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
                 block->section = text_section_id;
                 block->pointer_to_parent = parent_pointer;
                 
-                parent_pointer = (u32)(arena_current(arena) - debug_symbols_base);
+                parent_pointer = (u32)((u8 *)block - debug_symbols_base);
             }
         }
         
@@ -808,6 +798,10 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
     }
     
     if(scope->amount_of_declarations && function->scope != scope){
+        if(block && !relocation_arena){
+            block->pointer_to_end = (u32)(arena_current(arena) - debug_symbols_base);
+        }
+        
         *push_struct(arena, u16) = /*length*/2;
         *push_struct(arena, u16) = /*S_END*/6;
     }

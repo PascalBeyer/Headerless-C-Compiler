@@ -837,23 +837,22 @@ func void maybe_insert_cast_from_void_pointer(struct expr *lhs, struct expr *rhs
 
 func struct ast_scope *parser_push_new_scope(struct context *context, struct token *token, enum scope_flags flags){
     
+    struct ast_scope *parent = context->current_scope;
+    
     struct ast_scope *scope = push_uninitialized_struct(context->arena, struct ast_scope);
     scope->flags = flags;
     scope->token = token;
+    scope->start_offset = (u32)(arena_current(&context->ir_arena) - context->current_function->start_in_ir_arena); // kinda dumb, this is not true for function scopes. Maybe this function should not be called for function scopes.
+    scope->parent = parent;
     
-    struct ast_scope *parent = context->current_scope;
-    if(parent){
-        if(parent->subscopes.last){ // @note: sll_push_back does not work because of the `subscopes` member.
-            parent->subscopes.last->subscopes.next = scope;
-            parent->subscopes.last = scope;
-        }else{
-            parent->subscopes.first = scope;
-            parent->subscopes.last  = scope;
-        }
-        parent->subscopes.count += 1;
-        
-        scope->parent = parent;
+    if(parent->subscopes.last){ // @note: sll_push_back does not work because of the `subscopes` member.
+        parent->subscopes.last->subscopes.next = scope;
+        parent->subscopes.last = scope;
+    }else{
+        parent->subscopes.first = scope;
+        parent->subscopes.last  = scope;
     }
+    parent->subscopes.count += 1;
     
     context->current_scope = scope;
     
@@ -862,6 +861,7 @@ func struct ast_scope *parser_push_new_scope(struct context *context, struct tok
 
 func void parser_scope_pop(struct context *context, struct ast_scope *scope){
     assert(context->current_scope == scope);
+    scope->end_offset = (u32)(arena_current(&context->ir_arena) - context->current_function->start_in_ir_arena);
     context->current_scope = context->current_scope->parent;
 }
 
@@ -8803,8 +8803,12 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     return ret;
                 }
                 
-                scope = parser_push_new_scope(context, get_current_token(context), SCOPE_FLAG_is_function_scope);
-                parser_scope_pop(context, scope);
+                // @note: We don't want to use the general `parser_push_new_scope` function, as it is not designed for function scopes,
+                //        and we would not want to add this scope to the scopes of the current function anyway (if it is local).
+                scope = push_struct(context->arena, struct ast_scope);
+                scope->flags = SCOPE_FLAG_is_function_scope;
+                scope->parent = context->current_scope;
+                scope->token = get_current_token(context);
                 
                 ret.is_function_definition = scope;
                 
@@ -9821,8 +9825,6 @@ func void parse_imperative_scope(struct context *context){
     struct ast_scope *scope = context->current_scope;
     assert(scope);
     
-    scope->start_line_index = (u32)context->current_function->line_information.size;
-    
     // Keep parsing inputs even after an error has occurred!
     while(true){
         // Statements only occur at function scope, so there should not be any sleeping.
@@ -9861,10 +9863,6 @@ func void parse_imperative_scope(struct context *context){
         }
     }
     
-    scope->end_line_index = (u32)context->current_function->line_information.size;
-    if(scope->start_line_index > scope->end_line_index){
-        scope->start_line_index = scope->end_line_index;
-    }
 }
 
 func struct declarator_return parse_declarator(struct context* context, struct ast_type *_initial_type, enum ast_kind *_initial_defined_type, enum declarator_kind_flags declarator_kind_flags){

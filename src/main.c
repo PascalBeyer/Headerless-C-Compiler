@@ -3412,6 +3412,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     
     function->end_in_ir_arena = arena_current(&context->ir_arena);
     
+    scope->end_offset = (u32)(function->end_in_ir_arena - function->start_in_ir_arena);
+    
     context->current_function = null;
 }
 

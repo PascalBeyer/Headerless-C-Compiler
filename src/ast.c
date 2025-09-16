@@ -679,10 +679,9 @@ struct ast_scope{
     u32 amount_of_compound_types;
     u32 current_max_amount_of_compound_types;
     
-    // These are indices into the `function->line_information` array
-    // and are used to determine which region of code holds which declarations.
-    u32 start_line_index;
-    u32 end_line_index;
+    // These are offsets into the ir until code generation, then they are offsets into the function.
+    u32 start_offset;
+    u32 end_offset;
 };
 
 static struct token *get_initializer_token(struct ast_declaration *decl){
