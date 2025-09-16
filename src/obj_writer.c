@@ -727,7 +727,7 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
             block->kind   = /*S_BLOCK32*/0x1103;
             
             block->scope_size = scope->end_offset - scope->start_offset;
-            block->offset_in_section = (u32)(scope->start_offset + function->size_of_prolog); // relocated by relocation.
+            block->offset_in_section = (u32)(scope->start_offset + function->size_of_prologue); // relocated by relocation.
             
             block->section = 0; // filled in by relocation.
             

@@ -9701,7 +9701,10 @@ func void parse_statement(struct context *context){
                 
                 {
                     context->in_exception_filter += 1;
-                    struct ast_scope *filter_scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_none);
+                    struct ast_scope *filter_scope = push_struct(context->arena, struct ast_scope);
+                    filter_scope->flags = SCOPE_FLAG_is_function_scope;
+                    filter_scope->parent = context->current_scope;
+                    filter_scope->token = get_current_token(context);
                     
                     struct ast_function *filter_function = push_uninitialized_struct(context->arena, struct ast_function);
                     filter_function->kind = IR_function;
@@ -9724,6 +9727,7 @@ func void parse_statement(struct context *context){
                     push_ir(context, IR_return);
                     
                     filter_function->end_in_ir_arena = arena_current(&context->ir_arena);
+                    filter_scope->end_offset = (u32)(filter_function->end_in_ir_arena - filter_function->start_in_ir_arena);
                     
                     {
                         // 
@@ -9736,7 +9740,6 @@ func void parse_statement(struct context *context){
                         sll_push_back(context->current_function->referenced_declarations, new_reference);
                     }
                     
-                    parser_scope_pop(context, filter_scope);
                     ast_list_append(&context->local_functions, context->arena, &filter_function->kind);
                     
                     seh_exception_handler->filter_function = filter_function;
