@@ -260,100 +260,6 @@ static const u8 pdb_signature[] = {
 };
 static_assert(sizeof(pdb_signature) == 32);
 
-struct tpi_stream{
-    u32 version;            // always 20040203
-    u32 header_size;        // sizeof(tpi_header_size)
-    u32 minimal_type_index; // always 0x1000
-    u32 maximal_type_index; // -> maximal_type_index - minimal_type_index = amount
-    u32 amount_of_bytes_of_type_record_data_following_the_header;
-    
-    u16 hash_stream_index;
-    s16 hash_aux_stream_index; // unknown, can be -1
-    
-    u32 hash_key_size;         // usually 4 bytes
-    u32 number_of_hash_buckets;
-    
-    // the length and offset of a buffer of hash values whithin the TPI hash stream (tpi->hash_stream_index)
-    // this buffer should be of size (maximal_type_index - minimal_type_index) * hash_key_size
-    s32 hash_value_buffer_offset;
-    u32 hash_value_buffer_length; // = (maximal_type_index - minimal_type_index) * hash_key_size
-    
-    // the length and offset of a buffer of (type_index, offset of the type in the type record data)
-    // again in the TPI hash stream (pairs of u32's)
-    s32 index_offset_buffer_offset;
-    u32 index_offset_buffer_length;
-    
-    // a serialized hash table in the TPI hash stream
-    s32 incremental_linking_hash_table_offset; // mapping hashes to type indices
-    u32 incremental_linking_hash_table_length;
-};
-
-struct dbi_stream{
-    u32 version_signature;                             // always -1
-    u32 version;                                       // always 19990903
-    u32 amount_of_times_the_pdb_has_been_written;      // same as in pdb_stream
-    u16 index_of_the_global_symbol_stream;
-    u16 toolchain_version; // u16 major_version: 8, minor_version : 7, is_new_version_format : 1;
-    u16 index_of_the_public_symbol_stream;             // what are these indices? are they in the stream array?
-    u16 version_number_of_mspdb;                       // we dont use this?
-    u16 index_of_the_symbol_record_stream;
-    u16 PdbDllRbld;                                    // unknown
-    u32 module_info_substream_byte_size;           // substream 0
-    u32 section_contribution_substream_byte_size;  // substream 1
-    u32 section_map_substream_byte_size;           // substream 2
-    u32 source_info_substream_byte_size;           // substream 3
-    u32 type_server_map_substream_byte_size;       // substream 4
-    u32 offset_of_the_MFC_type_server_in_the_type_server_map_substream; // unknown what this is for
-    u32 optional_debug_header_substream_byte_size; // substream 6
-    u32 edit_and_continue_substream_byte_size;     // substream 5
-    // unknown what the last flag does /DEBUG:CTYPES link flag
-    u16 flags; // u16 incrementally_linked :1, private_symbols_stripped :1, has_conflict_types       :1; 
-    u16 machine;                                        // for us always 0x8664 (x86_64)
-    u32 padding;
-};
-
-struct section_contribution_entry{
-    s16 section_id;
-    // this seems to be one based and can be used to identify the section from some other data
-    char Padding1[2];
-    s32 offset; // offset of the contribution in the section. can be computed contrib.rva - section.rva
-    s32 size;   // size of the contribution
-    u32 characteristics;
-    s16 module_index;    // the module, that is responsible for the contribution
-    char Padding2[2];
-    u32 data_crc;         // CRC-32 check sums
-    u32 reloc_crc;        // CRC-32 check sums
-};
-
-struct dbi_module_info{
-    u32 pad1; // currently open module in the source code???
-    struct section_contribution_entry first_section_contribution_entry; // the modules first section_contribution_entry
-    u16 flags;
-    // {was_written_since_dbi_was_opened : 1,unused :7, index_into_TSM_list_for_this_mods_server;}
-    u16 module_symbol_stream_index;
-    // these 3 correspond to the sizes of Symbols C11LineInfo and C13LineInfo
-    u32 byte_size_of_symbol_information;
-    u32 byte_size_of_c11_line_information; // not understood assumed to be 0
-    u32 byte_size_of_c13_line_information;
-    u16 amount_of_source_files;
-    u16 pad2;
-    u32 pad3;
-    u32 offset_in_module_name;  // these are offsets into the buffers below, they are always 0
-    u32 offset_in_obj_file_name; // these are offsets into the buffers below, they are always 0
-    char module_name[];
-    //char ObjFileName[];
-};
-
-struct dbi_source_info {
-    u16 amount_of_modules;
-    u16 ignored_amount_of_source_files; // ignored as this would limit the amount of source files
-    
-    //uint16_t module_indices[NumModules];           // present but "does not appear to be useful"
-    //uint16_t module_to_source_file_count_map[NumModules];
-    //uint32_t FileNameOffsets[NumSourceFiles];  // mapping each source file to an offset to a name in the names buffer
-    //char NamesBuffer[][NumSourceFiles];
-};
-
 
 enum stream_index{
     STREAM_old_directory       = 0, // done :old_directory_hack
@@ -377,11 +283,6 @@ struct pdb_location{
     struct page_list_node *page;
     u16 offset;
     u32 size;
-};
-
-struct pdb_line_info{
-    smm offset_in_function;
-    smm line_number;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////
@@ -2598,7 +2499,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             string += s.size + 1;
         }
         
-        // at the end is the amount of strings
+        // At the end is the amount of strings.
         *push_struct_unaligned(&names_stream, u32) = (u32)string_count;
         
         set_current_stream(context, STREAM_names);
@@ -3019,45 +2920,104 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         set_current_stream(context, STREAM_module_zero);
         stream_emit_struct(context, module_stream.base, arena_current(&module_stream) - module_stream.base);
     }
-    end_counter(timing, module_stream);
     
-    begin_counter(timing, dbi_stream);
-    // Stream 3: Debug Info stream
-    { // :dbi_stream
-        set_current_stream(context, STREAM_DBI);
-        struct dbi_stream dbi = zero_struct;
-        dbi.version = 19990903;
-        dbi.version_signature = (u32)-1;
-        dbi.amount_of_times_the_pdb_has_been_written = 1;
+    struct memory_arena dbi_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
+    
+    
+    {   //
+        // Stream 3: Debug Info stream :dbi_stream
+        //
         
-        dbi.index_of_the_global_symbol_stream = STREAM_global_symbol_hash;
-        dbi.index_of_the_public_symbol_stream = STREAM_public_symbol_hash;
-        dbi.index_of_the_symbol_record_stream = STREAM_symbol_records;
+        struct dbi_stream_header{
+            u32 version_signature;
+            u32 version;
+            u32 amount_of_times_the_pdb_has_been_written;
+            u16 index_of_the_global_symbol_stream;
+            struct{
+                u16 major_version: 8; 
+                u16 minor_version : 7;
+                u16 is_new_version_format : 1;
+            } toolchain_version;
+            u16 index_of_the_public_symbol_stream;
+            u16 version_number_of_mspdb;
+            u16 index_of_the_symbol_record_stream;
+            u16 PdbDllRbld;
+            u32 module_info_substream_byte_size;                                // substream 0
+            u32 section_contribution_substream_byte_size;                       // substream 1
+            u32 section_map_substream_byte_size;                                // substream 2
+            u32 source_info_substream_byte_size;                                // substream 3
+            u32 type_server_map_substream_byte_size;                            // substream 4
+            u32 offset_of_the_MFC_type_server_in_the_type_server_map_substream; // unknown what this is for
+            u32 optional_debug_header_substream_byte_size;                      // substream 6
+            u32 edit_and_continue_substream_byte_size;                          // substream 5
+            struct {
+                u16 incrementally_linked :1;
+                u16 private_symbols_stripped :1;
+                u16 has_conflict_types       :1; 
+            } flags;
+            u16 machine; // for us always 0x8664 (x86_64)
+            u32 padding;
+        } *dbi_stream_header = push_struct(&dbi_stream, struct dbi_stream_header);
+        dbi_stream_header->version = 19990903;
+        dbi_stream_header->version_signature = (u32)-1;
+        dbi_stream_header->amount_of_times_the_pdb_has_been_written = 1;
         
-        dbi.toolchain_version = (11 << 0) | (14 << 8) | (1 << 15);
-        //dbi.toolchain_version.major_version = 11;
-        //dbi.toolchain_version.minor_version = 14;
-        //dbi.toolchain_version.is_new_version_format = 1;
+        dbi_stream_header->index_of_the_global_symbol_stream = STREAM_global_symbol_hash;
+        dbi_stream_header->index_of_the_public_symbol_stream = STREAM_public_symbol_hash;
+        dbi_stream_header->index_of_the_symbol_record_stream = STREAM_symbol_records;
         
-        // @cleanup:
-        dbi.version_number_of_mspdb = 25506; // I don't know. copied from a pdb
-        dbi.PdbDllRbld = 0;
-        dbi.flags = 0;
+        dbi_stream_header->toolchain_version.major_version = 11;
+        dbi_stream_header->toolchain_version.minor_version = 14;
+        dbi_stream_header->toolchain_version.is_new_version_format = 1;
         
-        dbi.machine = 0x8664;
+        dbi_stream_header->version_number_of_mspdb = 25506; // I don't know. Copied from a pdb.
+        dbi_stream_header->PdbDllRbld = 0;
+        dbi_stream_header->machine = 0x8664;
         
-        struct pdb_location header_location = stream_allocate_bytes(context, sizeof(dbi));
         
-        struct pdb_location module_info_begin = get_current_pdb_location(context);
+        struct section_contribution_entry{
+            s16 section_id;      // This seems to be one based and can be used to identify the section from some other data.
+            char Padding1[2];
+            s32 offset;          // Offset of the contribution in the section. can be computed contrib.rva - section.rva.
+            s32 size;            // Size of the contribution.
+            u32 characteristics; // These are similar to the characteristics of the section.
+            s16 module_index;    // The module, that is responsible for the contribution
+            char Padding2[2];
+            u32 data_crc;        // CRC-32 check sums (usually 0).
+            u32 reloc_crc;       // CRC-32 check sums (usually 0).
+        };
         
-        { // module info substream
-            // @incomplete: these are just _filled in_ for now
+        
+        u8 *module_info_begin = arena_current(&dbi_stream);
+        
+        {   // 
+            // Module info substream
+            // 
+            // We currently only have a single module.
+            // 
             
-            // @cleanup: this should not be invalid, or at least is not in the reference pdb's
-            
-            struct dbi_module_info module = zero_struct;
-            module.module_symbol_stream_index = STREAM_module_zero;
-            module.amount_of_source_files = (u16)globals.file_table.size;
+            struct dbi_module_info{
+                u32 pad1; 
+                struct section_contribution_entry first_section_contribution_entry; // The modules first code section_contribution_entry.
+                u16 flags; // {was_written_since_dbi_was_opened : 1,unused :7, index_into_TSM_list_for_this_mods_server;}
+                
+                // 
+                // These members correspond to the debug information inside of the module symbol stream.
+                u16 module_symbol_stream_index; 
+                u32 byte_size_of_symbol_information;
+                u32 byte_size_of_c11_line_information; // Not understood assumed to be 0.
+                u32 byte_size_of_c13_line_information;
+                
+                u16 amount_of_source_files;
+                u16 pad2;
+                u32 pad3;
+                u32 offset_in_module_name;   // These are offsets into the buffers below, they are always 0.
+                u32 offset_in_obj_file_name; // These are offsets into the buffers below, they are always 0.
+                char module_name[];
+                //char ObjFileName[];
+            } *module = push_struct(&dbi_stream, struct dbi_module_info);
+            module->module_symbol_stream_index = STREAM_module_zero;
+            module->amount_of_source_files = (u16)globals.file_table.size;
             
             const struct section_contribution_entry invalid_section_contribution_entry = {
                 .section_id = -1,
@@ -3079,97 +3039,105 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     .data_crc = 0, // @cleanup:
                     .reloc_crc = 0,
                 };
-                module.first_section_contribution_entry = text_entry;
+                module->first_section_contribution_entry = text_entry;
             }else{
-                module.first_section_contribution_entry = invalid_section_contribution_entry;
+                module->first_section_contribution_entry = invalid_section_contribution_entry;
             }
-            module.byte_size_of_symbol_information = module_stream_symbol_size;
-            module.byte_size_of_c13_line_information = module_stream_line_info_size;
-            out_struct(module);
+            module->byte_size_of_symbol_information = module_stream_symbol_size;
+            module->byte_size_of_c13_line_information = module_stream_line_info_size;
             
-            // @incomplete:
-            out_struct("l:\\l++\\build\\test.obj");
-            out_struct("l:\\l++\\build\\test.obj");
-            out_align(sizeof(u32));
+            push_zero_terminated_string_copy(&dbi_stream, module_object_name_full_path);
+            push_zero_terminated_string_copy(&dbi_stream, module_object_name_full_path);
+            push_align(&dbi_stream, sizeof(u32));
         }
         
-        struct pdb_location section_contribution_begin = get_current_pdb_location(context);
+        u8 *section_contribution_begin = arena_current(&dbi_stream);
         
-        {// section contribution substream
-            out_int(0xeffe0000 + 19970605, u32);
-            for(u32 i = 0; i < coff_file_header->amount_of_sections; i++){
-                struct coff_section_header *header = &image_sections[i];
+        {   //
+            // Section contribution substream.
+            // 
+            *push_struct(&dbi_stream, u32) = 0xeffe0000 + /*version 1*/19970605;
+            
+            struct section_contribution_entry *entries = push_data(&dbi_stream, struct section_contribution_entry, coff_file_header->amount_of_sections);
+            
+            for(u32 section_index = 0; section_index < coff_file_header->amount_of_sections; section_index++){
+                struct coff_section_header *header = &image_sections[section_index];
                 
                 // @cleanup: right now we just make one contribution per section and say it was module 0
-                struct section_contribution_entry entry = {
-                    .section_id = (s16)(i + 1),
+                entries[section_index] = (struct section_contribution_entry){
+                    .section_id = (s16)(section_index + 1),
                     .offset = 0,
                     .size = header->virtual_size,
                     .module_index = 0,
                     .characteristics = header->characteristics,
-                    .data_crc = 0, // @cleanup:
+                    .data_crc  = 0,
                     .reloc_crc = 0,
                 };
-                
-                stream_emit_struct(context, &entry, sizeof(entry));
             }
         }
         
-        struct pdb_location section_map_begin = get_current_pdb_location(context);
-        {  // section map substream
-            
-            // @note: I will note that I have no idear why this is here or what it does.
+        u8 *section_map_begin = arena_current(&dbi_stream);
+        
+        {   // 
+            // Section map substream.
+            // 
+            // I will note that I have no idear why this is here or what it does.
             // referance: DbiStreamBuilder::createSectionMap
             
-            // write the header @note: these are always the same in llvm
-            struct pdb_location number_of_segment_descriptors = stream_allocate_bytes(context, sizeof(u16));
-            struct pdb_location number_of_logical_segment_descriptors = stream_allocate_bytes(context, sizeof(u16));
+            // These are always the same in llvm.
+            u16 section_map_size = coff_file_header->amount_of_sections + 1;
+            *push_struct(&dbi_stream, u16) = section_map_size;
+            *push_struct(&dbi_stream, u16) = section_map_size;
             
-            // write a section map entry for each section.
+            // Write a section map entry for each section.
+            struct section_map_entry{
+                u16 flags;
+                u16 ovl;
+                u16 group;
+                u16 frame;
+                u16 secname;
+                u16 classname;
+                u32 offset;
+                u32 size;
+            } *section_map_entries = push_data(&dbi_stream, struct section_map_entry, coff_file_header->amount_of_sections + 1);
+            
             u32 frame_index = 1;
-            for(u32 i = 0; i < coff_file_header->amount_of_sections; i++){
-                struct coff_section_header *header = &image_sections[i];
+            for(u32 section_index = 0; section_index < coff_file_header->amount_of_sections; section_index++){
+                struct coff_section_header *header = &image_sections[section_index];
                 
                 u32 characteristics = header->characteristics;
+                
+                // @note: llvm checked reserved flag IMGAE_SCN_MEM_16BIT here
+                // and only added (1 << 3) if it was not set.. I don't know the flag, so I probably wont set it
                 u16 flags = (1 << 3) | (1 << 8);
                 if(characteristics & SECTION_read)    flags |= (1 << 0);
                 if(characteristics & SECTION_write)   flags |= (1 << 1);
                 if(characteristics & SECTION_execute) flags |= (1 << 2);
-                // @note: llvm checked reserved flag IMGAE_SCN_MEM_16BIT here
-                // and only added (1 << 3) if it was not set.. I don't know the flag, so I probably wont set it
                 
-                out_int(flags,         u16);
-                out_int(0,             u16); // Ovl   ??
-                out_int(0,             u16); // group ??
-                out_int(frame_index++, u16); // Frame ??
-                out_int(u16_max,       u16); // SecName   (Meaning Unknown)
-                out_int(u16_max,       u16); // ClassName (Meaning Unknown)
-                out_int(0,             u32); // offset
-                out_int(header->virtual_size, u32);
+                struct section_map_entry *entry = &section_map_entries[section_index];
+                entry->flags = flags;
+                entry->frame = (u16)frame_index++;
+                entry->secname = u16_max;
+                entry->classname = u16_max;
+                entry->size = header->virtual_size;
             }
             
-            // finally write one dummy entry that "is for absolute symbols" what ever that means
-            // (1 << 9) is apperantly for IsAbsoluteAddress
-            u16 flags = (1 << 3) | (1 << 9);
-            out_int(flags, u16);
-            out_int(0, u16);           // Ovl
-            out_int(0, u16);           // group
-            out_int(frame_index, u16); // Frame
-            out_int(u16_max, u16);     // SecName   (Meaning Unknown)
-            out_int(u16_max, u16);     // ClassName (Meaning Unknown)
-            out_int(0, u32);           // offset
-            out_int(u32_max, u32);
-            
-            // @cleanup: why are these initialized to the same value?
-            stream_write_bytes(context, &number_of_segment_descriptors,         &frame_index, sizeof(u16));
-            stream_write_bytes(context, &number_of_logical_segment_descriptors, &frame_index, sizeof(u16));
+            // Finally, write one dummy entry that "is for absolute symbols" whatever that means
+            // (1 << 9) is apperantly for IsAbsoluteAddress.
+            struct section_map_entry *absolute = &section_map_entries[coff_file_header->amount_of_sections];
+            absolute->flags = (1 << 3) | (1 << 9);
+            absolute->secname = u16_max;
+            absolute->classname = u16_max;
+            absolute->size = u32_max;
         }
         
+        u8 *source_info_begin = arena_current(&dbi_stream);
         
-        struct pdb_location source_info_begin = get_current_pdb_location(context);
-        { // source info substream
+        {   //
+            // Source info substream.
+            // 
             
-            // the layout is as follows:
+            // The layout is as follows:
             //     u16 amount_of_modules;
             //     u16 ignored_amount_of_source_files;
             //     u16 module_indices[amount_of_modules];
@@ -3177,106 +3145,65 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             //     u32 source_file_name_offset_in_the_name_buffer[amount_of_source_files];
             //     char name_buffer[][NumSourceFiles];
             
-            // the "ignored_amount_of_source_files" is ignored as this would limit the amount of source files to max_u16, but we should still try to approximate it the best
-            // the actuall amount_of_source_files is the sum over module_to_source_file_count_map.
+            // 
+            // The "ignored_amount_of_source_files" is ignored as this would limit the amount of source files to max_u16, 
+            // but we should still try to approximate it the best we can.
+            // The actual amount_of_source_files is the sum over module_to_source_file_count_map.
             // module indices seem to be  [0, ... , amount_of_modules - 1]
+            // 
             
-            u16 amount_of_modules = 1; // @cleanup: Right now there are only two... not sure
-            out_int(amount_of_modules, u16);
-            u16 amount_of_source_files_u16 = (u16)min_of(globals.file_table.size, u16_max);
-            out_int(amount_of_source_files_u16, u16);
+            smm amount_of_source_files = globals.file_table.size;
             
-            // @cleanup: right now we know that "amount_of_modules" is 2 so we will just write this stuff out
-            //           later we want "module_infos" to be in an array, so we can iterate over them
+            *push_struct(&dbi_stream, u16) = /*amount_of_modules*/1;
+            *push_struct(&dbi_stream, u16) = /*amount_of_source_files_u16*/(u16)min_of(amount_of_source_files, u16_max);
+            *push_struct(&dbi_stream, u16) = /*source index of module 0*/0;
+            *push_struct(&dbi_stream, u16) = /*amount of source files for module 0*/(u16)amount_of_source_files;
             
-            out_int(0, u16); // index of module 0
+            u32 *source_file_offsets = push_uninitialized_data(&dbi_stream, u32, amount_of_source_files);
             
-            out_int(globals.file_table.size, u16); // amount_of_source_files for module 0
-            
-            smm at = 0;
-            for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
-                struct file *node = globals.file_table.data[file_index];
+            for(smm table_index = 0, offset_at = 0, file_index = 0; table_index < array_count(globals.file_table.data); table_index++){
+                struct file *node = globals.file_table.data[table_index];
                 if(!node) continue;
                 
-                out_int(at, u32); // offset of the one and only source file
-                at += cstring_length(node->absolute_file_path) + 1;
-            }
-            for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
-                struct file *node = globals.file_table.data[file_index];
-                if(!node) continue;
+                source_file_offsets[file_index++] = (u32)offset_at;
                 
-                out_string(string_from_cstring(node->absolute_file_path));
+                struct string absolute_file_path = string_from_cstring(node->absolute_file_path);
+                push_zero_terminated_string_copy(&dbi_stream, absolute_file_path);
+                offset_at += absolute_file_path.size + 1;
             }
             
-            out_align(sizeof(u32));
+            push_align(&dbi_stream, sizeof(u32));
         }
         
-        //struct pdb_location type_server_begin = get_current_pdb_location(context);
-        dbi.type_server_map_substream_byte_size = 0;
-        {// type server substream (0 bytes)
-        }
+        u8 *optional_debug_header_begin = arena_current(&dbi_stream);
         
-        struct pdb_location edit_and_continue_begin = get_current_pdb_location(context);
-        #if 0
-        {// edit and continue substream
-            // this stream has the same layout as the /names stream, but only has the pdb name in it
-            out_int(0xEFFEEFFE, u32); // signature
-            out_int(1, u32);          // hash version
-            struct pdb_location string_buffer_size = stream_allocate_bytes(context, sizeof(u32));
+        {   //
+            // Optional debug header substream.
+            // 
             
-            struct pdb_location string_buffer_start = get_current_pdb_location(context);
-            {
-                out_int(0, u8);
-                // @incomplete: for source files write them out.
-                // @cleanup: at least make this dependent on the actual file
-                out_string(pdb_full_path);
-            }
-            struct pdb_location string_buffer_end = get_current_pdb_location(context);
-            u32 size = pdb_location_diff(string_buffer_end, string_buffer_start);
-            stream_write_bytes(context, &string_buffer_size, &size, sizeof(u32));
-            
-            // @note this whole thing is copy and pastes from the /names string
-            // see that string for more information
-            out_int(1, u32); // bucket count
-            out_int(1, u32); // offset
-            out_int(1, u32); // amount of strings
-        }
-        #endif
-        
-        struct pdb_location optional_debug_header_begin = get_current_pdb_location(context);
-        { // optional debug header substream
-            // @note: I have no idea what any of these are... These meanings are mearly copied
-            out_int(-1, s16); // no FPO data
-            out_int(-1, s16); // no Exception data
-            out_int(-1, s16); // no Fixup data
-            out_int(-1, s16); // no Omap to source data
-            out_int(-1, s16); // no Omap from source data
-            out_int(STREAM_section_header_dump, s16); // section header dump stream
-            out_int(-1, s16); // no Token / RID map
-            out_int(-1, s16); // no xdata dump
-            out_int(-1, s16); // no pdata dump
-            out_int(-1, s16); // no new fpo data
-            out_int(-1, s16); // no original section header data
+            *push_struct(&dbi_stream, s16) = -1; // no FPO data
+            *push_struct(&dbi_stream, s16) = -1; // no Exception data
+            *push_struct(&dbi_stream, s16) = -1; // no Fixup data
+            *push_struct(&dbi_stream, s16) = -1; // no Omap to source data
+            *push_struct(&dbi_stream, s16) = -1; // no Omap from source data
+            *push_struct(&dbi_stream, s16) = STREAM_section_header_dump; // section header dump stream
+            *push_struct(&dbi_stream, s16) = -1; // no Token / RID map
+            *push_struct(&dbi_stream, s16) = -1; // no xdata dump
+            *push_struct(&dbi_stream, s16) = -1; // no pdata dump
+            *push_struct(&dbi_stream, s16) = -1; // no new fpo data
+            *push_struct(&dbi_stream, s16) = -1; // no original section header data
         }
         
-        struct pdb_location dbi_end = get_current_pdb_location(context);
+        u8 *dbi_end = arena_current(&dbi_stream);
         
-        // substream 0
-        dbi.module_info_substream_byte_size = pdb_location_diff(section_contribution_begin, module_info_begin);
-        // substream 1
-        dbi.section_contribution_substream_byte_size = pdb_location_diff(section_map_begin, section_contribution_begin);
-        // substream 2
-        dbi.section_map_substream_byte_size = pdb_location_diff(source_info_begin, section_map_begin);
-        // substream 3
-        dbi.source_info_substream_byte_size = pdb_location_diff(edit_and_continue_begin, source_info_begin);
-        // substream 4
-        // empty dealt with above
-        // substream 5
-        dbi.edit_and_continue_substream_byte_size = pdb_location_diff(optional_debug_header_begin, edit_and_continue_begin);
-        // substream 6
-        dbi.optional_debug_header_substream_byte_size = pdb_location_diff(dbi_end, optional_debug_header_begin);
+        dbi_stream_header->module_info_substream_byte_size           = (u32)(section_contribution_begin - module_info_begin);
+        dbi_stream_header->section_contribution_substream_byte_size  = (u32)(section_map_begin - section_contribution_begin);
+        dbi_stream_header->section_map_substream_byte_size           = (u32)(source_info_begin - section_map_begin);
+        dbi_stream_header->source_info_substream_byte_size           = (u32)(optional_debug_header_begin - source_info_begin);
+        dbi_stream_header->optional_debug_header_substream_byte_size = (u32)(dbi_end - optional_debug_header_begin);
         
-        stream_write_bytes(context, &header_location, &dbi, sizeof(dbi));
+        set_current_stream(context, STREAM_DBI);
+        stream_emit_struct(context, dbi_stream.base, arena_current(&dbi_stream) - dbi_stream.base);
     }
     
     // :gsi_hash_table
