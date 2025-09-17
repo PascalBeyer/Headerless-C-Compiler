@@ -1840,6 +1840,10 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     //                                                                                   02.05.2021
                     
                     patch_array_size(context, redecl_type, decl_type->amount_of_elements, redecl->identifier);
+                    
+                    struct sleeper_table *sleeper_table = &globals.declaration_sleeper_table;
+                    if(redecl->flags & DECLARATION_FLAGS_is_static) sleeper_table = &decl->compilation_unit->static_sleeper_table;
+                    wake_up_sleepers(sleeper_table, redecl->identifier, SLEEP_on_array_size);
                 }
                 
                 if(decl_type->is_of_unknown_size && !redecl_type->is_of_unknown_size){

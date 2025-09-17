@@ -1,5 +1,4 @@
 // compile -nodebug
 // run
-// broken
 
-int _start(){}
+int _start(){ return 0; }
