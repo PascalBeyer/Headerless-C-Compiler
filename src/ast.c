@@ -783,15 +783,10 @@ struct ast_function{
     u8 *end_in_ir_arena;
     
     
-    u8 *base_of_prologue;
-    smm size_of_prologue; // these could be smaller
-    
     // right now _just_ the function without the prolog
-    u8 *base_of_main_function;
-    smm byte_size_without_prologue;
+    smm byte_size;
     
     smm rsp_subtract_offset;
-    smm byte_size;
     
     smm stack_space_needed; // after parsing this is what we need for declarations, and then in emit 
     // it gets adjusted to the full thing (including stack spilling usw)

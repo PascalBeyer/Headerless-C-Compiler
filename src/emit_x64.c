@@ -4795,11 +4795,10 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     
     b32 do_first_loop_for_a_big_return = type_is_returned_by_address(return_type); // :returning_structs
     
-    
-    // set the current code section to the prolog
+    // Set the current code section to the prolog/base of the function.
     u8 *prolog_start = context->emit_pool.current;
     context->current_emit_base = prolog_start;
-    function->base_of_prologue = prolog_start;
+    function->memory_location = prolog_start;
     
     // @cleanup: only do this if we have a memcpy, this value is also needed to be known when returning a large struct
     //           maybe the large struct code should live in the epilog?
@@ -4901,13 +4900,6 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // rsp ------------------------------------------------------------^
     //                                                                             -25.07.2021
     
-    function->size_of_prologue = get_bytes_emitted(context);
-    
-    // main code section
-    u8 *main_function_start = context->emit_pool.current;
-    context->current_emit_base = main_function_start;
-    function->base_of_main_function = main_function_start;
-    
     struct jump_context jump_to_function_epilog = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
     context->jump_to_function_epilog = &jump_to_function_epilog;
     
@@ -5002,9 +4994,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
         context->alloca_patch_nodes.first = context->alloca_patch_nodes.last = null;
     }
     
-    function->byte_size_without_prologue = get_bytes_emitted(context);
-    
-    function->byte_size = function->size_of_prologue + function->byte_size_without_prologue;
+    function->byte_size = get_bytes_emitted(context);
     
     end_counter(context, emit_code_for_function);
 }

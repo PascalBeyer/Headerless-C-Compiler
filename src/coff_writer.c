@@ -1191,18 +1191,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         for_ast_list(defined_functions){
             struct ast_function *function = cast(struct ast_function *)it->value;
             
-            smm function_size = function->size_of_prologue + function->byte_size_without_prologue;
+            smm function_size = function->byte_size;
             
             u8 *memory_for_function = push_uninitialized_data(arena, u8, function_size);
-            
-            u8 *at = memory_for_function;
-            memcpy(at, function->base_of_prologue, function->size_of_prologue);
-            at += function->size_of_prologue;
-            
-            memcpy(at, function->base_of_main_function, function->byte_size_without_prologue);
-            function->base_of_main_function = at;
-            at += function->byte_size_without_prologue;
-            
+            memcpy(memory_for_function, function->memory_location, function_size);
             push_align_initialized_to_specific_value(arena, 16, 0xcc);
             
             function->offset_in_text_section   = memory_for_function - text_section_start;
@@ -1782,16 +1774,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             }
             
             u8 *memory_location = patch->dest_declaration->memory_location + patch->location_offset_in_dest_declaration;
-            
-            // @hack... this is ugly.. we emit first the body then the prolog, so everything is actually
-            //          relative to 'function->memory_location + function->size_of_prolog'
-            // @cleanup: could we do everything relative to 'emit_pool.base'?
-            if(patch->dest_declaration->kind == IR_function){
-                struct ast_function *function = cast(struct ast_function *)patch->dest_declaration;
-                
-                memory_location += function->size_of_prologue;
-                patch->rip_at   += function->size_of_prologue;
-            }
             
             if(patch->kind == PATCH_rip_relative){
                 assert(patch->dest_declaration->kind == IR_function);
@@ -2873,7 +2855,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             proc_symbol->pointer_to_end     = 0;
             proc_symbol->pointer_to_next    = 0;
             proc_symbol->procedure_length   = (u32)function->byte_size;
-            proc_symbol->debug_start_offset = (u32)function->size_of_prologue;
+            proc_symbol->debug_start_offset = (u32)function->rsp_subtract_offset;
             proc_symbol->debug_end_offset   = (u32)function->byte_size;
             proc_symbol->type_index         = function->type->base.pdb_type_index;
             proc_symbol->offset_in_section  = (u32)function->offset_in_text_section;
@@ -3216,8 +3198,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     smm psi_amount_of_bucket_offsets = 0;
     smm psi_amount_of_global_symbols = 0;
     
-    // stream 9: Symbol record stream
-    { // :symbol_records :symbol_stream
+    
+    {   // 
+        // stream 9: Symbol record stream :symbol_records :symbol_stream
+        // 
         set_current_stream(context, STREAM_symbol_records);
         
         struct pdb_location symbol_record_start = get_current_pdb_location(context);
@@ -3393,7 +3377,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         }
         
     }
-    end_counter(timing, dbi_stream);
     
     // header dump stream
     { // :header_dump

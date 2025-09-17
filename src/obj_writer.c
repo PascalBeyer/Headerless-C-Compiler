@@ -727,7 +727,7 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
             block->kind   = /*S_BLOCK32*/0x1103;
             
             block->scope_size = scope->end_offset - scope->start_offset;
-            block->offset_in_section = (u32)(scope->start_offset + function->size_of_prologue); // relocated by relocation.
+            block->offset_in_section = (u32)scope->start_offset; // relocated by relocation.
             
             block->section = 0; // filled in by relocation.
             
@@ -876,7 +876,7 @@ func void *push_unwind_information_for_function(struct memory_arena *arena, stru
     
     unwind_info->version = 1;
     unwind_info->flags   = function->seh_exception_handler ? /*UNW_FLAG_EHANDLER*/1 : 0;
-    unwind_info->size_of_prolog = (u8)(function->size_of_prologue);
+    unwind_info->size_of_prolog = (u8)(function->rsp_subtract_offset); // @note: Subtracting off rsp is the last thing that happens in the prologue.
     unwind_info->count_of_codes = 0;
     unwind_info->frame_register = REGISTER_BP;
     
@@ -948,10 +948,10 @@ func void *push_unwind_information_for_function(struct memory_arena *arena, stru
         
         u32 count = 0;
         for(struct seh_exception_handler *handler = function->seh_exception_handler; handler; handler = handler->next, count++){
-            *push_struct(arena, u32) = (u32)(handler->start_offset_in_function + function->relative_virtual_address + function->size_of_prologue); // BeginAddress
-            *push_struct(arena, u32) = (u32)(handler->end_offset_in_function + function->relative_virtual_address + function->size_of_prologue);   // EndAddress
+            *push_struct(arena, u32) = (u32)(handler->start_offset_in_function + function->relative_virtual_address); // BeginAddress
+            *push_struct(arena, u32) = (u32)(handler->end_offset_in_function + function->relative_virtual_address);   // EndAddress
             *push_struct(arena, u32) = (u32)handler->filter_function->relative_virtual_address;                       // HandlerAddress
-            *push_struct(arena, u32) = (u32)(handler->end_offset_in_function + function->relative_virtual_address + function->size_of_prologue);   // JumpTarget (assumed to be the same as EndAddress for now)
+            *push_struct(arena, u32) = (u32)(handler->end_offset_in_function + function->relative_virtual_address);   // JumpTarget (assumed to be the same as EndAddress for now)
         }
         
         *count_dest = count;
@@ -1069,9 +1069,7 @@ void codeview_push_debug_s_lines(struct ast_function *function, struct memory_ar
     for(smm index = 0; index < function->line_information.size; index++){
         struct function_line_information line = function->line_information.data[index];
         
-        u32 offset = (u32)(line.offset + function->size_of_prologue);
-        
-        *push_struct(arena, u32) = (u32)offset;
+        *push_struct(arena, u32) = (u32)line.offset;
         *push_struct(arena, u32) = (u32)(line.line | /*is_statement*/0x80000000);
     }
     
@@ -1447,17 +1445,11 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         for_ast_list(defined_functions){
             struct ast_function *function = (struct ast_function *)it->value;
             
-            smm function_size = function->size_of_prologue + function->byte_size_without_prologue;
+            smm function_size = function->byte_size;
             
             u8 *memory_for_function = push_uninitialized_data(arena, u8, function_size);
             
-            u8 *at = memory_for_function;
-            memcpy(at, function->base_of_prologue, function->size_of_prologue);
-            at += function->size_of_prologue;
-            
-            memcpy(at, function->base_of_main_function, function->byte_size_without_prologue);
-            function->base_of_main_function = at;
-            at += function->byte_size_without_prologue;
+            memcpy(memory_for_function, function->memory_location, function_size);
             
             push_align_initialized_to_specific_value(arena, 16, 0xcc);
             
@@ -2144,7 +2136,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 proc_symbol->pointer_to_end     = 0;
                 proc_symbol->pointer_to_next    = 0;
                 proc_symbol->procedure_length   = (u32)function->byte_size;
-                proc_symbol->debug_start_offset = (u32)function->size_of_prologue;
+                proc_symbol->debug_start_offset = (u32)function->rsp_subtract_offset;
                 proc_symbol->debug_end_offset   = (u32)function->byte_size;
                 proc_symbol->type_index         = function_id_at++; // @note: as this is an S_LPROC32_ID not an S_LPROC32 this is the LF_FUNC_ID not the type.
                 proc_symbol->offset_in_section  = 0; // Filled in by a relocation
@@ -2855,7 +2847,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
             struct ast_function *function = (struct ast_function *)patch->dest_declaration;
             
-            smm destination_offset = (function->offset_in_text_section + function->size_of_prologue + patch->location_offset_in_dest_declaration);
+            smm destination_offset = (function->offset_in_text_section + patch->location_offset_in_dest_declaration);
             
             struct coff_relocation *relocation = (void *)(text_relocations_data + 10 * index++);
             
@@ -2872,7 +2864,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 // 
                 s32 value_to_write = (s32)((patch->location_offset_in_dest_declaration + 4) - patch->rip_at + patch->location_offset_in_source_declaration);
                 if(value_to_write){
-                    u8 *memory_location = function->memory_location + patch->location_offset_in_dest_declaration + function->size_of_prologue;
+                    u8 *memory_location = function->memory_location + patch->location_offset_in_dest_declaration;
                     *(s32 *)memory_location = value_to_write;
                 }
             }else{
