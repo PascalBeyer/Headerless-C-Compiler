@@ -1514,6 +1514,7 @@ void parse_and_process_pragma_pack(struct context *context){
                     show_token = token;
                 }else if(string_match(identifier, string("pop"))){
                     operation = PRAGMA_PACK_pop;
+                    show_token = token;
                 }else if(string_match(identifier, string("show"))){
                     operation = PRAGMA_PACK_show;
                     show_token = token;
@@ -1587,6 +1588,8 @@ void parse_and_process_pragma_pack(struct context *context){
                     context->pragma_alignment = pop->value;
                     
                     sll_pop_front(context->pragma_pack_stack);
+                }else{
+                    report_warning(context, WARNING_pragma_pack_show, show_token, "Using #pragma pack(pop) when the pragma stack is empty.");
                 }
             }
             

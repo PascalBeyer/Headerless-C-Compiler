@@ -2877,7 +2877,30 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 
                 peek_token_eat(context, TOKEN_identifier); // skip the name of the struct/enum/union
                 if(peek_token(context, TOKEN_open_curly)){
-                    skip_until_tokens_are_balanced(context, null, TOKEN_open_curly, TOKEN_closed_curly, "Unmatched '{' in type definition.");
+                    struct token *initial_token = next_token(context);
+                    
+                    u64 count = 1;
+                    smm token_at = context->token_at;
+                    struct token_array tokens = context->tokens;
+                    for(; token_at < tokens.amount; token_at++){
+                        struct token *check = tokens.data + token_at;
+                        
+                        if(check->type == TOKEN_closed_curly){
+                            if (--count == 0) break;
+                        }else if(check->type == TOKEN_open_curly){
+                            count++;
+                        }else if(check->type == TOKEN_pragma_pack){
+                            context->token_at = token_at + 1;
+                            parse_and_process_pragma_pack(context);
+                            token_at = context->token_at - 1;
+                        }
+                    }
+                    
+                    context->token_at = token_at + 1;
+                    
+                    if(count){
+                        report_error(context, initial_token, "Unmatched '{' in type definition.");
+                    }
                 }
                 
                 got_type = true;
