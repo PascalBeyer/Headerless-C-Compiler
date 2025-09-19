@@ -1096,6 +1096,8 @@ func struct parsed_integer parse_octal_literal(struct context *context, struct t
     smm start = 1;
     if(lit_token->data[1] == 'o' || lit_token->data[1] == 'O'){
         start = 2;
+    }else{
+        report_warning(context, WARNING_octal_constant_used, lit_token, "Octal constant used, use 0o<octal> to squelch this warning.");
     }
     
     if(lit_token->size == start){
@@ -1732,12 +1734,6 @@ at     += size;
                         while(u8_is_valid_in_c_ident(*at)) at++; // suffix
                         
                         next_token__internal(token_type, at - start);
-                        
-                        if(token_type == TOKEN_octal_literal){
-                            cur->data = start;
-                            cur->size = (at - start);
-                            report_warning(context, WARNING_octal_constant_used, cur, "Octal constant used, use 0o<octal> to squelch this warning.");
-                        }
                     }else{
                         // This could be either a base10 literal or a float number.
                         goto handle_numbers;
