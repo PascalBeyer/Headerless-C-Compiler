@@ -616,15 +616,6 @@ func b32 type_is_array_of_unknown_size(struct ast_type *type){
 
 //_____________________________________________________________________________________________________________________
 
-// @cleanup: reserve
-struct emit_pool{
-    u8 *base;
-    u8 *current;
-    u8 *end;
-    smm capacity;
-    smm reserved; // assumed to never change
-};
-
 enum register_kind{
     REGISTER_KIND_gpr,
     REGISTER_KIND_xmm,
@@ -690,6 +681,7 @@ struct context{
     struct memory_arena scratch; // Cleared after every thread_do_work.
     struct memory_arena *arena; // Right now never cleared. Think later about how we can minimize memory usage.
     struct memory_arena ir_arena;
+    struct memory_arena emit_arena; // Used for declarations and code.
     
     struct thread_info *thread_info;
     
@@ -848,7 +840,6 @@ struct context{
     //
     // Emiting
     //
-    struct emit_pool emit_pool;
     u8 *current_emit_base;
     smm current_emit_offset_of_rsp; // done in register_declaration
     struct token *inline_asm_mode;
@@ -2625,15 +2616,8 @@ func void init_context(struct context *context, struct thread_info *info, struct
     context->thread_info = info;
     context->arena = arena;
     context->ir_arena = create_memory_arena(giga_bytes(8), 1.0f, mega_bytes(1));
+    context->emit_arena = create_memory_arena(giga_bytes(8), 1.0f, mega_bytes(1));
     context->ast_serializer = (s32)(thread_index << 24);
-    
-    smm emit_pool_capacity = mega_bytes(100);
-    struct os_virtual_buffer emit_pool_buf = os_reserve_memory(0, emit_pool_capacity);
-    if(!emit_pool_buf.memory){ print("memory error!\n"); os_panic(1); }
-    context->emit_pool.base     = emit_pool_buf.memory;
-    context->emit_pool.current  = emit_pool_buf.memory;
-    context->emit_pool.end      = emit_pool_buf.memory;
-    context->emit_pool.reserved = emit_pool_capacity;
     
     context->pragma_alignment = 16;
 }

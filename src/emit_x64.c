@@ -448,39 +448,17 @@ enum register_encoding{
 #define emit_u32(val) emit_bytes(context, 4, val)
 #define emit_u64(val) emit_bytes(context, 8, val)
 
-func smm emit_bytes_unchecked(struct context *context, smm size, u64 data){
-    struct emit_pool *emit_pool = &context->emit_pool;
-    
-    memcpy(emit_pool->current, &data, size);
-    smm offset = emit_pool->current - context->current_emit_base;
-    assert(offset >= 0);
-    emit_pool->current += size;
-    return offset;
-}
-
 func smm emit_bytes(struct context *context, smm size, u64 data){
     assert(size <= 8);
-    struct emit_pool *emit_pool = &context->emit_pool;
     
-    if(emit_pool->current + size < emit_pool->end){
-        return emit_bytes_unchecked(context, size, data);
-    }else if(emit_pool->capacity < emit_pool->reserved){
-        struct os_virtual_buffer buf = os_commit_memory(emit_pool->end, mega_bytes(100));
-        if(!buf.memory){
-            print("Memory error!\n");
-            os_panic(1);
-        }
-        emit_pool->capacity += mega_bytes(100);
-        emit_pool->end = emit_pool->base + emit_pool->capacity;
-        return emit_bytes_unchecked(context, size, data);
-    }else{
-        report_error(context, context->current_function->identifier, "Too many bytes of code. Maximally %lld allowed.", emit_pool->capacity);
-        return emit_pool->capacity; // @cleanup: test this path
-    }
+    u8 *dest = push_uninitialized_data(&context->emit_arena, u8, size);
+    memcpy(dest, &data, size);
+    
+    return dest - context->current_emit_base;
 }
 
 func smm get_bytes_emitted(struct context *context){
-    return context->emit_pool.current - context->current_emit_base;
+    return context->emit_arena.current - context->current_emit_base;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2025,7 +2003,7 @@ func void jump_context_emit(struct context *context, struct jump_context *jump_c
     
     if(cond != COMP_none) emit(TWO_BYTE_INSTRUCTION_PREFIX);
     emit(inst);
-    node->patch_location = context->emit_pool.current;
+    node->patch_location = context->emit_arena.current;
     node->jump_from = emit_bytes(context, 4, 0) + 4;
     
     sll_push_back(jump_context->jump_list, node);
@@ -2403,7 +2381,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         emit(LOAD_ADDRESS_REG_MEMORY_LOCATION);
         emit(make_modrm(MODRM_REGM32, (return_register & 7), REGISTER_SP));
         emit(make_sib(0, REGISTER_SP, REGISTER_SP));
-        u8 *patch_location = context->emit_pool.current;
+        u8 *patch_location = context->emit_arena.current;
         emit_u32(0x13371337);
         
         struct alloca_patch_node *patch_node = push_struct(&context->scratch, struct alloca_patch_node);
@@ -4796,7 +4774,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     b32 do_first_loop_for_a_big_return = type_is_returned_by_address(return_type); // :returning_structs
     
     // Set the current code section to the prolog/base of the function.
-    u8 *prolog_start = context->emit_pool.current;
+    u8 *prolog_start = context->emit_arena.current;
     context->current_emit_base = prolog_start;
     function->memory_location = prolog_start;
     
@@ -4888,7 +4866,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     }
     
     emit_reg_reg__(context, REXW, REG_EXTENDED_OPCODE_REGM_IMMIDIATE, REG_OPCODE_SUB, REGISTER_SP);
-    u32 *stack_space_subtract_address = cast(u32 *)context->emit_pool.current;
+    u32 *stack_space_subtract_address = cast(u32 *)context->emit_arena.current;
     emit_u32(0);
     
     function->rsp_subtract_offset = get_bytes_emitted(context);
