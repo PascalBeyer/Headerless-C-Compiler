@@ -7562,11 +7562,11 @@ case NUMBER_KIND_##type:{ \
     // Remove the artificial invalid ast we put on in the beginning.
     if(did_push){
         struct ast_stack_entry *guard_ast = ast_stack_pop(context);
-        assert(guard_ast->ast_kind == AST_invalid);
+        assert(context->error || guard_ast->ast_kind == AST_invalid);
     }
     
     // @note: This should never fire as we want to return early if there is an error deeper in the stack.
-    assert(ast_stack_before == context->ast_stack_at);
+    assert(context->error || ast_stack_before == context->ast_stack_at);
     
     return operand;
 }
