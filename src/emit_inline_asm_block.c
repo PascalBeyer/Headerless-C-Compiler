@@ -624,6 +624,8 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             // instruction without operands
             //
             case MEMONIC_int3:  { emit(0xcc); } break;
+            case MEMONIC_int1:  { emit(0xf1); } break;
+            case MEMONIC_ud2:  { emit(0x0f); emit(0x0b); } break;
             case MEMONIC_ret:   { emit(0xc3); } break;
             case MEMONIC_pause: { emit(0xf3); emit(0x90); } break;
             
@@ -730,7 +732,13 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 // @note: rhs is also a destination in some sense
                 if(loaded != rhs) emit_store(context, rhs, loaded);
             }break;
+            
             case MEMONIC_cmpxchg: case MEMONIC_xadd:{
+                if(inst->memonic == MEMONIC_cmpxchg){
+                    asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_A, 8);
+                    asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_D, 8);
+                }
+                
                 struct emit_location *loaded = emit_load_without_freeing_gpr(context, rhs);
                 
                 u8 op = memonic_to_opcode[inst->memonic];

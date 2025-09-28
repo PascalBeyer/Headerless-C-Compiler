@@ -752,6 +752,10 @@ __declspec(inline_asm) __declspec(noreturn) void __fastfail(unsigned int __exit_
     int 0x29
 }
 
+__declspec(inline_asm) __declspec(noreturn) void __ud2(){
+    ud2
+}
+
 __declspec(inline_asm) unsigned __int64 __rdtsc(){
     rdtsc
     shl rdx, 32
@@ -1049,6 +1053,43 @@ __declspec(inline_asm) unsigned __int64 _byteswap_uint64(unsigned __int64 val){
 
 __declspec(inline_asm) void __faststorefence(void){
     lock or dword ptr [rsp], 0
+}
+
+
+__declspec(inline_asm) __int8 __iso_volatile_load8(const volatile __int8 * Location){
+    movzx eax, [Location]
+    return al
+}
+
+__declspec(inline_asm) __int16 __iso_volatile_load16(const volatile __int16 * Location){
+    movzx eax, [Location]
+    return ax
+}
+
+__declspec(inline_asm) __int32 __iso_volatile_load32(const volatile __int32 * Location){
+    mov eax, [Location]
+    return eax
+}
+
+__declspec(inline_asm) __int64 __iso_volatile_load64(const volatile __int64 * Location){
+    mov rax, [Location]
+    return rax
+}
+
+__declspec(inline_asm) void __iso_volatile_store8(volatile __int8 * Location, __int8 Value){
+    mov [Location], Value
+}
+
+__declspec(inline_asm) void __iso_volatile_store16(volatile __int16 * Location, __int16 Value){
+    mov [Location], Value
+}
+
+__declspec(inline_asm) void __iso_volatile_store32(volatile __int32 * Location, __int32 Value){
+    mov [Location], Value
+}
+
+__declspec(inline_asm) void __iso_volatile_store64(volatile __int64 * Location, __int64 Value){
+    mov [Location], Value
 }
 
 //_____________________________________________________________________________________________________________________
@@ -3424,5 +3465,4 @@ __declspec(inline_asm)__m256i _mm256_cmpeq_epi8(__m256i a, __m256i b){
     vpcmpeqb ymm0, a, b
     return ymm0
 }
-
 

@@ -178,7 +178,9 @@ enum memonic{
     
     MEMONIC_rdtsc, MEMONIC_rdtscp,
     
+    MEMONIC_int1,
     MEMONIC_int3,
+    MEMONIC_ud2,
     MEMONIC_ret,
     
     MEMONIC_inc, MEMONIC_dec,
@@ -514,7 +516,9 @@ static struct{
     [MEMONIC_cpuid]  = {.memonic = const_string("cpuid"),  .amount_of_operands = 0 },
     [MEMONIC_rdtsc]  = {.memonic = const_string("rdtsc"),  .amount_of_operands = 0 },
     [MEMONIC_rdtscp] = {.memonic = const_string("rdtscp"), .amount_of_operands = 0 },
+    [MEMONIC_int1]   = {.memonic = const_string("int1"),   .amount_of_operands = 0 },
     [MEMONIC_int3]   = {.memonic = const_string("int3"),   .amount_of_operands = 0 },
+    [MEMONIC_ud2]   = {.memonic = const_string("ud2"),   .amount_of_operands = 0 },
     [MEMONIC_ret]    = {.memonic = const_string("ret"),    .amount_of_operands = 0 },
     
     [MEMONIC_movsb]  = {.memonic = const_string("movsb"), .amount_of_operands = 0 },
@@ -2020,7 +2024,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
         // Zero Operand Memonics
         //
         case MEMONIC_pause: case MEMONIC_sfence: case MEMONIC_lfence: case MEMONIC_mfence:
-        case MEMONIC_int:   case MEMONIC_int3: case MEMONIC_ret:
+        case MEMONIC_int:   case MEMONIC_int3: case MEMONIC_ret: case MEMONIC_int1: case MEMONIC_ud2:
         case MEMONIC_cpuid: case MEMONIC_xgetbv:
         case MEMONIC_rdtsc: case MEMONIC_rdtscp:
         case MEMONIC_movsb: case MEMONIC_movsw:                     case MEMONIC_movsq:
@@ -2347,6 +2351,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             }
             
             if(!peek_token(context, TOKEN_closed_curly)){
+                // Error: This error sort of sucks, when you put like a ; at the end of it out of habit.
                 report_error(context, token, "The hlc-specific 'return'-memonic has to be the last memonic in the function.");
             }
         }break;
