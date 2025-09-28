@@ -4378,6 +4378,21 @@ globals.typedef_##postfix = (struct ast_type){                                  
             add_memonic_to_string_to_memonic_table(string("setng"),  MEMONIC_setle);
             add_memonic_to_string_to_memonic_table(string("setg"),   MEMONIC_setnle);
             
+            add_memonic_to_string_to_memonic_table(string("jb"),   MEMONIC_jc);
+            add_memonic_to_string_to_memonic_table(string("jnae"), MEMONIC_jc);
+            add_memonic_to_string_to_memonic_table(string("jnb"),  MEMONIC_jnc);
+            add_memonic_to_string_to_memonic_table(string("jae"),  MEMONIC_jnc);
+            add_memonic_to_string_to_memonic_table(string("je"),   MEMONIC_jz);
+            add_memonic_to_string_to_memonic_table(string("jne"),  MEMONIC_jnz);
+            add_memonic_to_string_to_memonic_table(string("jna"),  MEMONIC_jbe);
+            add_memonic_to_string_to_memonic_table(string("ja"),   MEMONIC_jnbe);
+            add_memonic_to_string_to_memonic_table(string("jpe"),  MEMONIC_jp);
+            add_memonic_to_string_to_memonic_table(string("jpo"),  MEMONIC_jnp);
+            add_memonic_to_string_to_memonic_table(string("jnge"), MEMONIC_jl);
+            add_memonic_to_string_to_memonic_table(string("jge"),  MEMONIC_jnl);
+            add_memonic_to_string_to_memonic_table(string("jng"),  MEMONIC_jle);
+            add_memonic_to_string_to_memonic_table(string("jg"),   MEMONIC_jnle);
+            
             add_memonic_to_string_to_memonic_table(string("cmpgeps"),  MEMONIC_cmpnltps);
             add_memonic_to_string_to_memonic_table(string("cmpgtps"),  MEMONIC_cmpnleps);
             add_memonic_to_string_to_memonic_table(string("cmpngeps"), MEMONIC_cmpltps);

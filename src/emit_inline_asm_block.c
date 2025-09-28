@@ -183,6 +183,11 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
         case ASM_ARG_immediate:{
             return emit_location_immediate(context, operand->immediate, operand->size);
         }break;
+        
+        case ASM_ARG_label:{
+            return emit_location_immediate(context, 0, 0); // @cleanup: not sure.
+        }break;
+        
         invalid_default_case();
     }
     
@@ -778,6 +783,36 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 emit(0xc8 + (loaded->loaded_register & 7));
                 
                 if(loaded != operand) emit_store(context, operand, loaded);
+            }break;
+            
+            case MEMONIC_label:{
+                struct asm_operand *inst_op = &inst->operands[0];
+                struct ir_jump_node *jump_label = inst_op->label_jump;
+                
+                context->jump_labels[jump_label->label_number].jump_location = get_bytes_emitted(context);
+            }break;
+            
+            case MEMONIC_jo:  case MEMONIC_jno:
+            case MEMONIC_jc:  case MEMONIC_jnc:
+            case MEMONIC_jz:  case MEMONIC_jnz:
+            case MEMONIC_jbe: case MEMONIC_jnbe:
+            case MEMONIC_js:  case MEMONIC_jns:
+            case MEMONIC_jp:  case MEMONIC_jnp:
+            case MEMONIC_jl:  case MEMONIC_jnl:
+            case MEMONIC_jle: case MEMONIC_jnle:{
+                u8 opcode = (u8)(0x80 + inst->memonic - MEMONIC_jo);
+                
+                struct asm_operand *inst_op = &inst->operands[0];
+                struct jump_context *jump_context = &context->jump_labels[inst_op->label_jump->label_number].context;
+                
+                emit(TWO_BYTE_INSTRUCTION_PREFIX);
+                emit(opcode);
+                
+                struct jump_node *node = push_struct(&context->scratch, struct jump_node);
+                node->patch_location = context->emit_arena.current;
+                node->jump_from = emit_bytes(context, 4, 0) + 4;
+                
+                sll_push_back(jump_context->jump_list, node);
             }break;
             
             case MEMONIC_seto:  case MEMONIC_setno:

@@ -90,6 +90,7 @@ enum asm_arg_kind{
     ASM_ARG_declaration_reference,   // e.g. s.member, array[0]
     ASM_ARG_declaration_dereference, // e.g. [s.member], *s.member, s.member[0]
     ASM_ARG_immediate,               // e.g. 1337, sizeof(int)
+    ASM_ARG_label,                   // e.g. label:
     
     ASM_ARG_count,
 };
@@ -122,6 +123,9 @@ struct asm_operand{
         struct{
             u8 *data; // for MEMONIC_bytes
         };
+        struct{ // ASM_ARG_label
+            struct ir_jump_node *label_jump;
+        };
     };
 };
 
@@ -135,6 +139,24 @@ enum memonic{
     MEMONIC_movzx, MEMONIC_movsx, MEMONIC_movsxd,
     MEMONIC_xchg,
     MEMONIC_bswap,
+    
+    
+    MEMONIC_jo,
+    MEMONIC_jno,
+    MEMONIC_jc,
+    MEMONIC_jnc,
+    MEMONIC_jz,
+    MEMONIC_jnz,
+    MEMONIC_jbe,
+    MEMONIC_jnbe,
+    MEMONIC_js,
+    MEMONIC_jns,
+    MEMONIC_jp,
+    MEMONIC_jnp,
+    MEMONIC_jl,
+    MEMONIC_jnl,
+    MEMONIC_jle,
+    MEMONIC_jnle,
     
     MEMONIC_lea,
     
@@ -418,6 +440,7 @@ enum memonic{
     MEMONIC_crc32,
     
     MEMONIC_return_from_inline_asm_function,
+    MEMONIC_label,
     MEMONIC_bytes,
     
     MEMONIC_count,
@@ -466,6 +489,8 @@ enum asm_operand_kind_flags{
     
     ASM_OP_KIND_ymmm256 = ASM_OP_KIND_mem256 | ASM_OP_KIND_ymm,
     
+    ASM_OP_KIND_label = 0x10000,
+    
     // ASM_OP_KIND_zmm  = 0x10000,
     // ASM_OP_KIND_zmmm = 0x20000,
     
@@ -480,6 +505,7 @@ static struct{
     
     [MEMONIC_return_from_inline_asm_function] = {.memonic = const_string("return"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_reg | ASM_OP_KIND_xmm | ASM_OP_KIND_ymm },
     [MEMONIC_bytes] = {.memonic = const_string("bytes"), .amount_of_operands = 0}, // We handle this manually.
+    [MEMONIC_label] = {.memonic = const_string("<label>"), .amount_of_operands = 0}, // This is just here for the system not to complain.
     
     [MEMONIC_lock_prefix] = {.memonic = const_string("lock") },
     [MEMONIC_repe_prefix] = {.memonic = const_string("repe") },
@@ -500,6 +526,23 @@ static struct{
     [MEMONIC_stosq]  = {.memonic = const_string("stosq"), .amount_of_operands = 0 },
     
     [MEMONIC_pause]  = {.memonic = const_string("pause"), .amount_of_operands = 0},
+    
+    [MEMONIC_jo] = {.memonic = const_string("jo"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jno] = {.memonic = const_string("jno"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jc] = {.memonic = const_string("jc"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jnc] = {.memonic = const_string("jnc"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jz] = {.memonic = const_string("jz"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jnz] = {.memonic = const_string("jnz"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jbe] = {.memonic = const_string("jbe"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jnbe] = {.memonic = const_string("jnbe"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_js] = {.memonic = const_string("js"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jns] = {.memonic = const_string("jns"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jp] = {.memonic = const_string("jp"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jnp] = {.memonic = const_string("jnp"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jl] = {.memonic = const_string("jl"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jnl] = {.memonic = const_string("jnl"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jle] = {.memonic = const_string("jle"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jnle] = {.memonic = const_string("jnle"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
     
     [MEMONIC_clflush] = {.memonic = const_string("clflush"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm & ~ASM_OP_KIND_any_reg},
     [MEMONIC_int]  = {.memonic = const_string("int"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_imm8 },
@@ -1543,8 +1586,29 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
     return arg;
 }
 
-func void add_memonic_to_string_to_memonic_table(struct string string, enum memonic memonic){
+func struct asm_operand asm_maybe_parse_label(struct context *context){
+    struct asm_operand arg = zero_struct;
+    if(!peek_token_eat(context, TOKEN_dot)) return arg;
+    
+    struct token *ident = expect_token(context, TOKEN_identifier, "Missing identifier after '.' for label reference.");
+    
+    struct ast_goto *ast_goto = push_struct(&context->scratch, struct ast_goto);
+    ast_goto->ident = ident->atom;
+    ast_goto->token = ident;
+    sll_push_back(context->goto_list, ast_goto);
+    
+    // The ir is skipped anyway.
+    struct ir_jump_node *goto_jump = push_jump(context, IR_jump);
+    ast_goto->jump = goto_jump;
+    
+    arg.kind = ASM_ARG_label;
+    arg.size = 1; // @cleanup: not sure.
+    arg.label_jump = goto_jump;
+    return arg;
+}
 
+func void add_memonic_to_string_to_memonic_table(struct string string, enum memonic memonic){
+    
     u64 hash = string_djb2_hash(string);
     for(u32 i = 0; i < array_count(globals.memonic_table); i++){
         u32 index = (hash + i) & (array_count(globals.memonic_table) - 1);
@@ -1594,13 +1658,16 @@ func struct asm_operand parse_asm_operand(struct context *context){
     operand = asm_maybe_parse_memory_operand(context);
     if(operand.kind != ASM_ARG_invalid) return operand;
     
+    operand = asm_maybe_parse_label(context);
+    if(operand.kind != ASM_ARG_invalid) return operand;
+    
     return asm_maybe_parse_expression_operand(context);
 }
 
 func struct asm_instruction *parse_asm_instruction(struct context *context){
     context->current_asm_flags = 0;
     
-    retry_because_there_was_a_prefix:
+    retry_because_there_was_a_prefix_or_label:
     // this does not work because of int
     // struct token *memonic = expect_token(context, TOKEN_identifier, "Expected a memonic in '__asm__' block");
     
@@ -1609,12 +1676,43 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
     
     if(memonic == MEMONIC_lock_prefix){
         context->current_asm_flags |= ASM_PREFIX_lock;
-        goto retry_because_there_was_a_prefix;
+        goto retry_because_there_was_a_prefix_or_label;
     }
     
     if(memonic == MEMONIC_repe_prefix){
         context->current_asm_flags |= ASM_PREFIX_repe;
-        goto retry_because_there_was_a_prefix;
+        goto retry_because_there_was_a_prefix_or_label;
+    }
+    
+    if(memonic == MEMONIC_none && peek_token_eat(context, TOKEN_colon)){
+        // 
+        // A label!
+        // 
+        struct atom ident = token->atom;
+        
+        for(struct ast_label *label = context->label_list.first; label; label = label->next){
+            if(atoms_match(label->ident, ident)){
+                begin_error_report(context);
+                report_error(context, token, "Redefinition of label '%.*s'.", ident.amount, ident.data);
+                report_error(context, label->token, "... Here is the previous definition.");
+                end_error_report(context);
+            }
+        }
+        
+        struct ast_label *label = push_struct(&context->scratch, struct ast_label);
+        label->ident = ident;
+        sll_push_back(context->label_list, label);
+        
+        struct ir_jump_node *jump_label = push_jump(context, IR_jump_label);
+        jump_label->label_number = context->jump_label_index++;
+        label->jump_label = jump_label;
+        
+        struct asm_instruction *label_instruction = push_asm_instruction(context, MEMONIC_label, 1, token);
+        label_instruction->operands[0].kind = ASM_ARG_label;
+        label_instruction->operands[0].size = 1;
+        label_instruction->operands[0].label_jump = jump_label;
+        
+        return label_instruction;
     }
     
     if(memonic == MEMONIC_movsd){
@@ -1824,6 +1922,13 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                     report_error(context, operand_token, "Operand %u of '%.*s' cannot be an integer.", operand_index + 1, token->size, token->data);
                 }
             }break;
+            
+            case ASM_ARG_label:{
+                if(!(desired_operand_flags & ASM_OP_KIND_label)){
+                    report_error(context, operand_token, "Operand %u of '%.*s' cannot be a label.", operand_index + 1, token->size, token->data);
+                }
+            }break;
+            
             invalid_default_case();
         }
         
@@ -2267,7 +2372,7 @@ func void parse_asm_block(struct context *context, struct ir_asm_block *asm_bloc
     
     struct ir_skip *ir_skip = null;
     if(!context->in_inline_asm_function){
-        // @HACK: skip all the ir that is in the block.
+        // @HACK: skip all the ir that is in the block. @note: This is currently needed at least for labels.
         ir_skip = push_struct(&context->ir_arena, struct ir_skip);
         ir_skip->base.kind = IR_skip;
     }
@@ -2291,7 +2396,6 @@ func void parse_asm_block(struct context *context, struct ir_asm_block *asm_bloc
             break;
         }
     }
-    
     
     if(ir_skip){
         ir_skip->size_to_skip = (u32)(arena_current(&context->ir_arena) - (u8*)ir_skip);

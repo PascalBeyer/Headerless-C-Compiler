@@ -1997,7 +1997,7 @@ func u8 instruction_from_comp_condition(enum comp_condition cond, enum jump_cont
 }
 
 func void jump_context_emit(struct context *context, struct jump_context *jump_context, enum jump_context_condition jump_context_condition, enum comp_condition cond){
-    struct jump_node *node = push_struct(context->arena, struct jump_node); // @cleanup: Why is this using arena?
+    struct jump_node *node = push_struct(&context->scratch, struct jump_node);
     
     u8 inst = instruction_from_comp_condition(cond, jump_context_condition);
     
@@ -2466,7 +2466,17 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
     context->in_inline_asm_function = asm_block->token;
     context->current_inline_asm_function = function;
     
+    struct jump_label_information *previous_jumps = context->jump_labels;
+    context->jump_labels = push_data(&context->scratch, struct jump_label_information, function->amount_of_jump_labels);
+    
     emit_inline_asm_block(context, asm_block);
+    
+    // Patch in jumps
+    for(u32 jump_label_index = 0; jump_label_index < function->amount_of_jump_labels; jump_label_index++){
+        struct jump_label_information *jump_label_information = &context->jump_labels[jump_label_index];
+        emit_end_jumps_location(jump_label_information->context, jump_label_information->jump_location);
+    }
+    context->jump_labels = previous_jumps;
     
     // free all 'argument_locations'
     for(u32 i = 0; i < arg_count; i++){

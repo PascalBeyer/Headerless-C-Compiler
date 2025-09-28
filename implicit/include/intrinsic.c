@@ -860,52 +860,42 @@ __declspec(inline_asm) unsigned __int8 _addcarry_u64(unsigned __int8 carry_in, u
 
 __declspec(inline_asm) char _InterlockedOr8(char volatile *value, char mask){
     
-    // I think this would be the correct code, but we don't have jumps yet. @incomplete
-    // 
-    //     mov al, [value]
-    // 
-    // loop:
-    //     mov cl, al
-    //     or  cl, mask
-    //     
-    //     lock cmpxchg [value], cl
-    //     jne loop
-    //     
-    //     return cl
-    // 
-    
     mov al, [value]
     
+  loop:
     mov cl, al
     or  cl, mask
     
     lock cmpxchg [value], cl
+    jne .loop
     
     return cl
 }
 
-__declspec(inline_asm) long _InterlockedOr(long volatile *value, long mask){
+__declspec(inline_asm) short _InterlockedOr16(short volatile *value, short mask){
     
-    // I think this would be the correct code, but we don't have jumps yet. @incomplete
-    // 
-    //     mov eax, [value]
-    // 
-    // loop:
-    //     mov ecx, eax
-    //     or  ecx, mask
-    //     
-    //     lock cmpxchg [value], ecx
-    //     jne loop
-    //     
-    //     return ecx
-    // 
+    mov ax, [value]
+    
+    loop:
+    mov cx, ax
+    or  cx, mask
+    
+    lock cmpxchg [value], cx
+    jne .loop
+    
+    return cx
+}
+
+__declspec(inline_asm) long _InterlockedOr(long volatile *value, long mask){
     
     mov eax, [value]
     
+  loop:
     mov ecx, eax
     or  ecx, mask
     
     lock cmpxchg [value], ecx
+    jne .loop
     
     return ecx
 }
@@ -913,41 +903,114 @@ __declspec(inline_asm) long _InterlockedOr(long volatile *value, long mask){
 
 __declspec(inline_asm) __int64 _InterlockedOr64(__int64 volatile *value, __int64 mask){
     
-    // See above for @incomplete
-    
     mov rax, [value]
     
+  loop:
     mov rcx, rax
     or  rcx, mask
     
     lock cmpxchg [value], rcx
+    jne .loop
+    
+    return rcx
+}
+
+__declspec(inline_asm) char _InterlockedXor8(char volatile *value, char mask){
+    
+    mov al, [value]
+    
+  loop:
+    mov cl, al
+    xor cl, mask
+    
+    lock cmpxchg [value], cl
+    jne .loop
+    
+    return cl
+}
+
+__declspec(inline_asm) short _InterlockedXor16(short volatile *value, short mask){
+    
+    mov ax, [value]
+    
+  loop:
+    mov cx, ax
+    xor cx, mask
+    
+    lock cmpxchg [value], cx
+    jne .loop
+    
+    return cx
+}
+
+__declspec(inline_asm) long _InterlockedXor(long volatile *value, long mask){
+    
+    mov eax, [value]
+    
+  loop:
+    mov ecx, eax
+    xor ecx, mask
+    
+    lock cmpxchg [value], ecx
+    jne .loop
+    
+    return ecx
+}
+
+
+__declspec(inline_asm) __int64 _InterlockedXor64(__int64 volatile *value, __int64 mask){
+    
+    mov rax, [value]
+    
+  loop:
+    mov rcx, rax
+    xor rcx, mask
+    
+    lock cmpxchg [value], rcx
+    jne .loop
     
     return rcx
 }
 
 
-__declspec(inline_asm) long _InterlockedAnd(long volatile *value, long mask){
+__declspec(inline_asm) char _InterlockedAnd8(char volatile *value, char mask){
     
-    // I think this would be the correct code, but we don't have jumps yet. @incomplete
-    // 
-    //     mov eax, [value]
-    // 
-    // loop:
-    //     mov ecx, eax
-    //     and ecx, mask
-    //     
-    //     lock cmpxchg [value], ecx
-    //     jne loop
-    //     
-    //     return ecx
-    // 
+    mov al, [value]
+    
+  loop:
+    mov cl, al
+    and cl, mask
+    
+    lock cmpxchg [value], cl
+    jne .loop
+    
+    return cl
+}
+
+__declspec(inline_asm) short _InterlockedAnd16(short volatile *value, short mask){
+    
+    mov ax, [value]
+    
+  loop:
+    mov cx, ax
+    and cx, mask
+    
+    lock cmpxchg [value], cx
+    jne .loop
+    
+    return cx
+}
+
+__declspec(inline_asm) long _InterlockedAnd(long volatile *value, long mask){
     
     mov eax, [value]
     
+  loop:
     mov ecx, eax
     and ecx, mask
     
     lock cmpxchg [value], ecx
+    jne .loop
     
     return ecx
 }
@@ -955,14 +1018,14 @@ __declspec(inline_asm) long _InterlockedAnd(long volatile *value, long mask){
 
 __declspec(inline_asm) __int64 _InterlockedAnd64(__int64 volatile *value, __int64 mask){
     
-    // See above for @incomplete
-    
     mov rax, [value]
     
+  loop:
     mov rcx, rax
     and rcx, mask
     
     lock cmpxchg [value], rcx
+    jne .loop
     
     return rcx
 }
