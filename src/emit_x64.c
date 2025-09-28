@@ -2398,6 +2398,9 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
     }else if(string_match(identifier, string("_AddressOfReturnAddress"))){
         struct emit_location *return_address = emit_location_stack_relative(context, -(8 * (s32)__popcnt(context->current_function->pushed_register_mask)), /*size*/8);
         return emit_load_address(context, return_address, allocate_register(context, REGISTER_KIND_gpr));
+    }else if(string_match(identifier, string("_ReturnAddress"))){
+        struct emit_location *return_address = emit_location_stack_relative(context, -(8 * (s32)__popcnt(context->current_function->pushed_register_mask)), /*size*/8);
+        return return_address;
     }else if(string_match(identifier, string("_exception_info"))){
         return emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_R13, 8);
     }else if(string_match(identifier, string("_exception_code"))){

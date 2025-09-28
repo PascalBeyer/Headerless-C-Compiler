@@ -4569,6 +4569,18 @@ globals.typedef_##postfix = (struct ast_type){                                  
         }
         
         {   // 
+            // void *_ReturnAddress(void)
+            // 
+            
+            struct token *token = push_dummy_token(arena, atom_for_string(string("_ReturnAddress")), TOKEN_identifier);
+            
+            struct ast_function_type *type = parser_type_push(context, function_type);
+            type->return_type = &void_pointer->base;
+            
+            register_intrinsic_function_declaration(context, token, type);
+        }
+        
+        {   // 
             // void *_exception_info(void)
             // 
             
