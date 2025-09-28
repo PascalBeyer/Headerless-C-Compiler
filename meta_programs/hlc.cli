@@ -224,9 +224,9 @@ https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-libr
 
 -> clatest - Use the newest c standard.
 
-/warning_limit - A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis. 
+/warning_limit <u64> - A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis. 
 
-/error_limit - A loose limit to the amount of errors reported. This limit is keept on a per-thread basis. 
+/error_limit <u64> - A loose limit to the amount of errors reported. This limit is keept on a per-thread basis. 
 
 /syntax_check | /Zs - Only check syntax. No compilation after type-checking.
 

@@ -817,8 +817,8 @@ struct context{
     b32 error; 
     
     // Avoid reporting too many errors/warnings.
-    int warnings_reported;
-    int errors_reported;
+    u32 warnings_reported;
+    u32 errors_reported;
     
     //
     // Fields for 'begin_error_report' and 'end_error_report'.
@@ -4637,8 +4637,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.tls_index_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
         ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->kind, globals.tls_index_declaration->identifier);
         
-        if(!globals.cli_options.warning_limit) globals.cli_options.warning_limit = 100;
-        if(!globals.cli_options.error_limit)   globals.cli_options.error_limit = 100;
+        if(!globals.cli_options.warning_limit_specified) globals.cli_options.warning_limit = 100;
+        if(!globals.cli_options.error_limit_specified)   globals.cli_options.error_limit = 100;
     }
     
 #if PRINT_ADDITIONAL_INCLUDE_DIRECTORIES

@@ -413,8 +413,8 @@ void print_warning_or_error_reports(struct context *context){
         struct error_report_node *last;
     } error_list = zero_struct;
     
-    smm total_errors_reported = 0;
-    smm total_warnings_reported = 0;
+    u64 total_errors_reported = 0;
+    u64 total_warnings_reported = 0;
     
     for(u32 thread_index = 0; thread_index < globals.thread_count; thread_index++){
         
