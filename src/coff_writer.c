@@ -2106,10 +2106,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     pdb_init_basic_type_index(f32);
     pdb_init_basic_type_index(f64);
     
-    globals.typedef_s8_pointer->pdb_type_index = CV_s8_pointer;
-    globals.typedef_u8_pointer->pdb_type_index = CV_u8_pointer;
-    globals.typedef_s8_pointer->flags |= TYPE_FLAG_pdb_permanent;
-    globals.typedef_u8_pointer->flags |= TYPE_FLAG_pdb_permanent;
+    globals.typedef_s8_pointer.base.pdb_type_index = CV_s8_pointer;
+    globals.typedef_u8_pointer.base.pdb_type_index = CV_u8_pointer;
+    globals.typedef_s8_pointer.base.flags |= TYPE_FLAG_pdb_permanent;
+    globals.typedef_u8_pointer.base.flags |= TYPE_FLAG_pdb_permanent;
     
 #undef pdb_init_basic_type_index
     

@@ -101,16 +101,18 @@ func void pop_from_ir_arena_(struct context *context, u8 *ir_memory, smm size){
 #define parser_compound_type_push(context, type) (struct ast_compound_type *)_parser_type_push(context, sizeof(struct ast_compound_type), alignof(struct ast_compound_type), AST_##type);
 
 func struct ast_type *parser_push_pointer_type(struct context *context, struct ast_type *pointer_to, enum ast_kind *defined_type){
-    // @cleanup: we could check here if its a basic type and then do some math to figure out the pointer
-    // this is kinda complicated, as globals.basic_types is an array of pointers, not basic_types themself.
-    // I think we had to iterate
-    assert(pointer_to);
-    struct ast_pointer_type *ptr = parser_type_push(context, pointer_type);
-    ptr->pointer_to = pointer_to;
-    ptr->pointer_to_defined_type = defined_type;
-    ptr->base.size = 8;
-    ptr->base.alignment = 8;
-    return cast(struct ast_type *)ptr;
+    
+    if(&globals.typedef_void <= pointer_to && pointer_to <= &globals.typedef_f64){
+        struct ast_pointer_type *base = &globals.typedef_void_pointer;
+        return &base[pointer_to - &globals.typedef_void].base;
+    }else{
+        struct ast_pointer_type *pointer_type = parser_type_push(context, pointer_type);
+        pointer_type->pointer_to = pointer_to;
+        pointer_type->pointer_to_defined_type = defined_type;
+        pointer_type->base.size = 8;
+        pointer_type->base.alignment = 8;
+        return &pointer_type->base;
+    }
 }
 
 func b32 size_is_big_or_oddly_sized(smm size){

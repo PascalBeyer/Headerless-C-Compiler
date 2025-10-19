@@ -567,9 +567,18 @@ static struct{
     
     struct ast_type typedef_poison;
     
-    struct ast_type *typedef_void_pointer;
-    struct ast_type *typedef_u8_pointer;
-    struct ast_type *typedef_s8_pointer;
+    struct ast_pointer_type typedef_void_pointer;
+    struct ast_pointer_type typedef_Bool_pointer;
+    struct ast_pointer_type typedef_s8_pointer;
+    struct ast_pointer_type typedef_u8_pointer;
+    struct ast_pointer_type typedef_s16_pointer;
+    struct ast_pointer_type typedef_u16_pointer;
+    struct ast_pointer_type typedef_s32_pointer;
+    struct ast_pointer_type typedef_u32_pointer;
+    struct ast_pointer_type typedef_s64_pointer;
+    struct ast_pointer_type typedef_u64_pointer;
+    struct ast_pointer_type typedef_f32_pointer;
+    struct ast_pointer_type typedef_f64_pointer;
     
     struct ast_function_type *seh_filter_funtion_type;
     
@@ -4483,27 +4492,16 @@ globals.typedef_##postfix = (struct ast_type){                                  
 
         end_counter(context, create_perfect_keyword_tables);
         
-        struct ast_pointer_type *u8_pointer = push_struct(arena, struct ast_pointer_type);
-        u8_pointer->pointer_to = &globals.typedef_u8;
-        memset(&u8_pointer->base, 0, sizeof(u8_pointer->base));
-        u8_pointer->base.kind = AST_pointer_type;
-        u8_pointer->base.size = 8;
-        globals.typedef_u8_pointer = &u8_pointer->base;
-        
-        struct ast_pointer_type *s8_pointer = push_struct(arena, struct ast_pointer_type);
-        s8_pointer->pointer_to = &globals.typedef_s8;
-        memset(&s8_pointer->base, 0, sizeof(s8_pointer->base));
-        s8_pointer->base.kind = AST_pointer_type;
-        s8_pointer->base.size = 8;
-        globals.typedef_s8_pointer = &s8_pointer->base;
-        
-        struct ast_pointer_type *void_pointer = push_struct(arena, struct ast_pointer_type);
-        void_pointer->pointer_to = &globals.typedef_void;
-        memset(&void_pointer->base, 0, sizeof(void_pointer->base));
-        void_pointer->base.kind = AST_pointer_type;
-        void_pointer->base.size = 8;
-        void_pointer->base.alignment = 8;
-        globals.typedef_void_pointer = &void_pointer->base;
+        for(struct ast_type *basic_type = &globals.typedef_void; basic_type <= &globals.typedef_f64; basic_type++){
+            
+            struct ast_pointer_type *base = &globals.typedef_void_pointer;
+            u64 index = basic_type - &globals.typedef_void;
+            
+            base[index].pointer_to = basic_type;
+            base[index].base.kind = AST_pointer_type;
+            base[index].base.size = 8;
+            base[index].base.alignment = 8;
+        }
         
         struct ast_function_type *seh_filter_function_type = parser_type_push(context, function_type);
         seh_filter_function_type->return_type = &globals.typedef_s32;
@@ -4532,7 +4530,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct token *size_token = push_dummy_token(arena, atom_for_string(string("size")), TOKEN_identifier);
             
             struct ast_function_type *alloca_type = parser_type_push(context, function_type);
-            alloca_type->return_type = &void_pointer->base;
+            alloca_type->return_type = &globals.typedef_void_pointer.base;
             
             struct declarator_return parameter_declarator = {
                 .type = &globals.typedef_u64,
@@ -4578,7 +4576,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct token *token = push_dummy_token(arena, atom_for_string(string("_AddressOfReturnAddress")), TOKEN_identifier);
             
             struct ast_function_type *type = parser_type_push(context, function_type);
-            type->return_type = &void_pointer->base;
+            type->return_type = &globals.typedef_void_pointer.base;;
             
             register_intrinsic_function_declaration(context, token, type);
         }
@@ -4590,7 +4588,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct token *token = push_dummy_token(arena, atom_for_string(string("_ReturnAddress")), TOKEN_identifier);
             
             struct ast_function_type *type = parser_type_push(context, function_type);
-            type->return_type = &void_pointer->base;
+            type->return_type = &globals.typedef_void_pointer.base;;
             
             register_intrinsic_function_declaration(context, token, type);
         }
@@ -4602,7 +4600,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct token *token = push_dummy_token(arena, atom_for_string(string("_exception_info")), TOKEN_identifier);
             
             struct ast_function_type *type = parser_type_push(context, function_type);
-            type->return_type = &void_pointer->base;
+            type->return_type = &globals.typedef_void_pointer.base;
             type->flags |= FUNCTION_TYPE_FLAGS_is_seh_intrinsic;
             
             register_intrinsic_function_declaration(context, token, type);
