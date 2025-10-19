@@ -4618,7 +4618,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         
                         expect_token_raw(context, pragma_comment_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma comment(<comment-type>, \"<comment>\"'.");
                         
-                        
                         if(string_match(pragma_comment_directive->string, string("lib"))){
                             
                             // e.g.: #pragma comment(lib, "Shell32.lib")
@@ -4636,7 +4635,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 static struct ticket_spinlock pragma_comment_lib_spinlock = {0};
                                 ticket_spinlock_lock(&pragma_comment_lib_spinlock);
                                 
-                                string_list_add_uniquely(&globals.specified_libraries, context->arena, library);
+                                add_specified_library(context->arena, library, pragma_comment_directive);
                                 
                                 ticket_spinlock_unlock(&pragma_comment_lib_spinlock);
                             }
@@ -4737,7 +4736,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     // @cleanup: Maybe I should make this a routine at this point...
                                     // 
                                     struct compilation_unit *compilation_unit = push_struct(context->arena, struct compilation_unit);
-                                    compilation_unit->index = globals.compilation_units.last->index + 1; // @cleanup: are we sure 'compilation_unit->last' exists?
+                                    compilation_unit->index = globals.compilation_units.last->index + 1; // @cleanup: are we sure 'compilation_unit->last' exists? @note: we are in a spinlock, so probably fine to access it like this!
                                     compilation_unit->static_declaration_table = ast_table_create(128);
                                     compilation_unit->static_sleeper_table = sleeper_table_create(1 << 8);
                                     compilation_unit->is_token_static_table.capacity = 0x100;

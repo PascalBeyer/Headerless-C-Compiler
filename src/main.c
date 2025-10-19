@@ -416,7 +416,13 @@ static struct{
     } dlls;
     
     struct string_list library_paths;
-    struct string_list specified_libraries;
+    struct{
+        struct specified_library{
+            struct specified_library *next;
+            struct string library_path;
+            struct token *pragma_compilation_unit_token;
+        } *first, *last;
+    } specified_libraries;
     struct{
         struct library_node *first;
         struct library_node *last;
@@ -975,6 +981,24 @@ func void add_global_reference_for_declaration(struct memory_arena *arena, struc
         list = atomic_load(struct declaration_reference_node *, globals.globally_referenced_declarations);
         node->next = list;
     }while(atomic_compare_and_swap(&globals.globally_referenced_declarations, node, list) != list);
+}
+
+func void add_specified_library(struct memory_arena *arena, struct string library, struct token *pragma_compilation_unit_token){
+    
+    int found = 0;
+    for(struct specified_library *node = globals.specified_libraries.first; node; node = node->next){
+        if(string_match(node->library_path, library)){
+            found = 1;
+        }
+    }
+    
+    if(!found){
+        struct specified_library *specified_library = push_struct(arena, struct specified_library);
+        specified_library->library_path = library;
+        specified_library->pragma_compilation_unit_token = pragma_compilation_unit_token;
+        
+        sll_push_back(globals.specified_libraries, specified_library);
+    }
 }
 
 //_____________________________________________________________________________________________________________________
@@ -3883,7 +3907,7 @@ int main(int argc, char *argv[]){
             // Hence, in this loop we don't want to handle it in any way.
             // 
             if(string_match(extension, string(".lib"))){
-                string_list_add_uniquely(&globals.specified_libraries, arena, path);
+                add_specified_library(arena, path, null);
                 continue;
             }else if(string_match(extension, string(".obj"))){
                 // @hack: This is a hack to handle linking for now.
@@ -4097,12 +4121,12 @@ int main(int argc, char *argv[]){
         if(!string_match(get_file_extension(library), string(".lib"))){
             library = string_concatenate(arena, library, string(".lib"));
         }
-        string_list_add_uniquely(&globals.specified_libraries, arena, library);
+        add_specified_library(arena, library, null);
     }
     
     if(globals.output_file_type != OUTPUT_FILE_obj && !no_standard_library){
         struct string ucrt_lib_path = push_format_string(arena, "%.*s\\ucrt.lib", ucrt_library_path.size, ucrt_library_path.data);
-        string_list_add_uniquely(&globals.specified_libraries, arena, ucrt_lib_path);
+        add_specified_library(arena, ucrt_lib_path, null);
         
         int ucrt_load_error = os_load_file((char *)ucrt_lib_path.data, null, 0).file_does_not_exist;
         if(ucrt_load_error){
@@ -4114,7 +4138,7 @@ int main(int argc, char *argv[]){
         }
         
         struct string kernel32_lib_path = push_format_string(arena, "%.*s\\kernel32.lib", um_library_path.size, um_library_path.data);
-        string_list_add_uniquely(&globals.specified_libraries, arena, kernel32_lib_path);
+        add_specified_library(arena, kernel32_lib_path, null);
         
         int kernel32_load_error = os_load_file((char *)kernel32_lib_path.data, null, 0).file_does_not_exist;
         if(kernel32_load_error){
@@ -4933,8 +4957,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
             WriteFile(globals.preprocessed_file_handle, buffer, (u32)length, &chars_written, 0);
         }
         
-        for(struct string_list_node *library = globals.specified_libraries.list.first; library; library = library->next){
-            int length = snprintf(buffer, sizeof(buffer), "#pragma comment(lib, \"%.*s\")\n", (int)library->string.size, library->string.data);
+        for(struct specified_library *library = globals.specified_libraries.first; library; library = library->next){
+            int length = snprintf(buffer, sizeof(buffer), "#pragma comment(lib, \"%.*s\")\n", (int)library->library_path.size, library->library_path.data);
             DWORD chars_written;
             WriteFile(globals.preprocessed_file_handle, buffer, (u32)length, &chars_written, 0);
         }
@@ -5283,12 +5307,10 @@ globals.typedef_##postfix = (struct ast_type){                                  
         // If we are not compiling to an object file, we should now be loading / parsing all of the libraries.
         // In theory, we _could_ parse them lazily.
         
-        // @cleanup: If the library came from a #pragma comment(lib, "library") we should have the token.
-        
-        for(struct string_list_node *node = globals.specified_libraries.list.first; node; node = node->next){
+        for(struct specified_library *node = globals.specified_libraries.first; node; node = node->next){
             // @note: We always add the 'specified_libraries' as unique strings.
             //        In theory, there could be two paths to the same library, but whatever.
-            struct string library = node->string;
+            struct string library = node->library_path;
             struct string full_library_path = zero_struct;
             
             if(path_is_absolute(library)){
@@ -5306,14 +5328,14 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 
                 if(!full_library_path.data){
                     begin_error_report(context);
-                    report_error(context, null, "Error: Could not find specified library '%.*s'.\n\n", library.size, library.data);
+                    report_error(context, node->pragma_compilation_unit_token, "Error: Could not find specified library '%.*s'.\n", library.size, library.data);
                     
-                    report_error(context, null, "Library paths:\n");
+                    report_error(context, null, "Library paths:");
                     for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
-                                report_error(context, null, "    %.*s\n", library_path_node->string.size, library_path_node->string.data);
+                                report_error(context, null, "    %.*s", library_path_node->string.size, library_path_node->string.data);
                     }
-                    report_error(context, null, "\n");
-                    report_error(context, null, "You can add your own library search paths using /LIBPATH option.\n");
+                    report_error(context, null, "");
+                    report_error(context, null, "You can add your own library search paths using /LIBPATH option.");
                     end_error_report(context);
                     globals.an_error_has_occurred = true;
                     continue;

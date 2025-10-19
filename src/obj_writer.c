@@ -1159,8 +1159,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     string_list_postfix(&directives, scratch, crtlib);
     string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\"OLDNAMES\" /STACK:0x1000000,0x1000000 "));
     
-    for(struct string_list_node *library_node = globals.specified_libraries.list.first; library_node; library_node = library_node->next){
-        struct string file_name = strip_file_path(library_node->string);
+    for(struct specified_library *library_node = globals.specified_libraries.first; library_node; library_node = library_node->next){
+        struct string file_name = strip_file_path(library_node->library_path);
         
         string_list_postfix_no_copy(&directives, scratch, string("/DEFAULTLIB:\""));
         string_list_postfix_no_copy(&directives, scratch, file_name);
