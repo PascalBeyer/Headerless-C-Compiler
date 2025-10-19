@@ -194,7 +194,9 @@ enum warning{
     WARNING_ALTERNATENAME_type_mismatch                   = 40, // Mismatching types between the source and destination of a /ALTERNATENAME.
     WARNING_relative_include_is_treated_as_system_include = 41, // ""-Include was not found and treated as <>-Include.
     WARNING_pragma_pack_show                              = 42, // The `#praga pack(show)` directive was used.
-    WARNING_octal_constant_used                           = 43, // Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.
+    WARNING_pragma_pack_pop_unknown_identifier            = 43, // The `#praga pack(pop, <identifier>)` directive was used with an unknown `<identifier>`.
+    WARNING_pragma_pack_pop_with_empty_stack              = 44, // The `#pragma pack(pop)` directive was used when the pragma pack stack was empty.
+    WARNING_octal_constant_used                           = 45, // Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.
 };
 
 struct cli_options{
@@ -248,7 +250,7 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 44
+#define WARNING_count 46
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -298,7 +300,9 @@ struct warning_table_entry{
     [30] = {{25, (u8 *)"alternatenametypemismatch"}, WARNING_ALTERNATENAME_type_mismatch},
     [44] = {{39, (u8 *)"relativeincludeistreatedassysteminclude"}, WARNING_relative_include_is_treated_as_system_include},
     [2] = {{14, (u8 *)"pragmapackshow"}, WARNING_pragma_pack_show},
-    [4] = {{17, (u8 *)"octalconstantused"}, WARNING_octal_constant_used},
+    [4] = {{30, (u8 *)"pragmapackpopunknownidentifier"}, WARNING_pragma_pack_pop_unknown_identifier},
+    [45] = {{27, (u8 *)"pragmapackpopwithemptystack"}, WARNING_pragma_pack_pop_with_empty_stack},
+    [5] = {{17, (u8 *)"octalconstantused"}, WARNING_octal_constant_used},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -902,8 +906,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "ALTERNATENAME_type_mismatch (40)        | Mismatching types between the source and destination of a /ALTERNATENAME.\n"
                                 "relative_include_is_treated_as_system_include (41)| ""-Include was not found and treated as <>-Include.\n"
                                 "pragma_pack_show (42)                   | The `#praga pack(show)` directive was used.\n"
-                                "octal_constant_used (43)                | Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.\n"
-                                , 4529);
+                                "pragma_pack_pop_unknown_identifier (43) | The `#praga pack(pop, <identifier>)` directive was used with an unknown `<identifier>`.\n"
+                                "pragma_pack_pop_with_empty_stack (44)   | The `#pragma pack(pop)` directive was used when the pragma pack stack was empty.\n"
+                                "octal_constant_used (45)                | Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.\n"
+                                , 4782);
                     }
                 }break;
                 invalid_default_case();

@@ -462,8 +462,6 @@ enum ast_kind{
     // Statements
     AST_scope,
     
-    AST_empty_statement, // @cleanup: get rid of me!
-    
     AST_count,
 };
 
@@ -636,15 +634,6 @@ inline smm get_declaration_size(struct ast_declaration *decl){
     return size;
 }
 
-#if 0 
-struct ast_array_range{ // array[1 ... 5] - only allowed in initializers.
-    struct ast base;
-    struct ast *lhs;
-    u64 start_index;
-    u64 end_index;
-};
-#endif
-
 enum scope_flags{
     SCOPE_FLAG_none              = 0x0,
     SCOPE_FLAG_can_continue      = 0x1,
@@ -735,7 +724,7 @@ struct ast_compound_type{
 struct ast_function_type{
     struct ast_type base;
     struct ast_type *return_type;
-    enum ast_kind *return_type_defined_type; // :defined_type @cleanup: make sure this is filled 
+    enum ast_kind *return_type_defined_type;
     
     b64 flags;
     

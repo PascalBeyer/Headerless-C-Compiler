@@ -461,7 +461,7 @@ __declspec(dllimport) LPTOP_LEVEL_EXCEPTION_FILTER __stdcall SetUnhandledExcepti
 #endif // #else of if 0 #include <windows.h>
 
 struct os_thread_info{
-    smm id; // @cleanup: how is this initialized?
+    smm id;
     void *handle;
 };
 
@@ -766,7 +766,6 @@ func b32 path_is_directory(char *path){
     return (file_attributes != INVALID_FILE_ATTRIBUTES) && (file_attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-// @cleanup: for now file_name has to be zero terminated maybe we can alloca or something
 static b32 os_write_file(char *file_name, void *buffer, smm buffer_size){
     HANDLE file_handle = CreateFileA(file_name, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, NULL);
     if (file_handle == INVALID_HANDLE_VALUE) return false;

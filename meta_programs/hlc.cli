@@ -576,6 +576,20 @@ Example:
 Example:
 > #pragma pack(show) // Current "pragma pack(show)"-value is 16.
 
+-> pragma_pack_pop_unknown_identifier - The `#praga pack(pop, <identifier>)` directive was used with an unknown `<identifier>`.
+
+Example:
+> #pragma pack(push, hi)
+> #pragma pack(pop, bye) // Warning: Identifier 'bye' is not on the pragma pack stack.
+
+
+-> pragma_pack_pop_with_empty_stack - The `#pragma pack(pop)` directive was used when the pragma pack stack was empty.
+
+Example: 
+> #pragma pack(push, 1)
+> #pragma pack(pop)
+> #pragma pack(pop) // Warning: Using #pragma pack(pop) when the pragma stack is empty.
+
 -> octal_constant_used - Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.
 
 For the longest time this compiler did not support octal constants, but sadly some people use them :(

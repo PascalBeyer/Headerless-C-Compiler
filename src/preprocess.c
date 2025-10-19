@@ -924,13 +924,12 @@ struct parsed_integer{
         NUMBER_KIND_s16, // i16
         NUMBER_KIND_s32, // i32
         NUMBER_KIND_s64, // i64
-        NUMBER_KIND_s128, // i128 @cleanup: remove me later
         
         NUMBER_KIND_u8,  // ui8
         NUMBER_KIND_u16, // ui16
         NUMBER_KIND_u32, // ui32
         NUMBER_KIND_u64, // ui64
-        NUMBER_KIND_u128, // ui128 @cleanup: remove me later
+        
         
         NUMBER_KIND_float32,
         NUMBER_KIND_float64,
@@ -1947,7 +1946,6 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 *token = *macro_expansion_site;
                 
                 if(define->builtin_define_type == BUILTIN_DEFINE___FILE__){
-                    // @cleanup: This seems very slow.
                     struct string file_name = strip_file_path(string_from_cstring(globals.file_table.data[token->file_index]->absolute_file_path));
                     
                     token->type = TOKEN_string_literal;
@@ -2214,7 +2212,6 @@ func struct token *expand_define(struct context *context, struct token *token_to
             //
             
             // save the tokenizer state so we can expand the arguments in isolation
-            // @cleanup: put the cspec quote here 
             
             smm saved_token_stack_blocked_size = context->token_stack.blocked_size;
             context->token_stack.blocked_size = context->token_stack.size;
@@ -3033,14 +3030,7 @@ func s64 static_if_evaluate(struct context *context){
                 
                 eat_whitespace_and_comments(context);
                 
-                struct token *token = next_token(context);
-                
-                // We are gonna report an error, set the token.
-                if(token->type != TOKEN_identifier){ // @cleanup: Is this just expect token?
-                    if(token->type == TOKEN_invalid) token = get_current_token_for_error_report(context);
-                    report_error(context, token, "Expected an identifier after 'defined'.");
-                    return 0;
-                }
+                struct token *token = expect_token(context, TOKEN_identifier, "Expected an identifier after 'defined'.");
                 
                 if(got_paren) expect_token(context, TOKEN_closed_paren, "Expected a ')' after 'defined(<identifier>'.");
                 
@@ -4216,7 +4206,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                         
                                         if(i == tokens.amount || j == redecl_tokens.amount){
                                             if(i != tokens.amount || j != redecl_tokens.amount){
-                                                // @cleanup: this was commented out for some reason? 
                                                 defines_are_equivalent = false;
                                             }
                                             break;
@@ -4237,7 +4226,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     }
                                 }break;
                                 case DEFINE_REPLACEMENT_hash:{
-                                    // @cleanup: is this reliable?
                                     if(decl_list->stringify_index != redecl_list->stringify_index){
                                         defines_are_equivalent = false;
                                     }
@@ -4736,7 +4724,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     // @cleanup: Maybe I should make this a routine at this point...
                                     // 
                                     struct compilation_unit *compilation_unit = push_struct(context->arena, struct compilation_unit);
-                                    compilation_unit->index = globals.compilation_units.last->index + 1; // @cleanup: are we sure 'compilation_unit->last' exists? @note: we are in a spinlock, so probably fine to access it like this!
+                                    compilation_unit->index = globals.compilation_units.last->index + 1; // @note: we are in a spinlock, so probably fine to access it like this!
                                     compilation_unit->static_declaration_table = ast_table_create(128);
                                     compilation_unit->static_sleeper_table = sleeper_table_create(1 << 8);
                                     compilation_unit->is_token_static_table.capacity = 0x100;

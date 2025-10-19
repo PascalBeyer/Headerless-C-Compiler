@@ -128,5 +128,8 @@ int main(){
         if(r.m128_f32[3] != 1.000000) return 1;
     }
     
+    
+    u32 = _InterlockedAnd(&u32, u32);
+    
     return 0;
 }

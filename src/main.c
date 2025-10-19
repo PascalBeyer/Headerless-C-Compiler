@@ -1027,10 +1027,6 @@ func struct string push_token_string(struct context *context, struct token *toke
     }
 }
 
-func void print_token(struct context *context, struct token *token, b32 print_whitespace_and_comments){
-    print_string(push_token_string(context, token, print_whitespace_and_comments));
-}
-
 //_____________________________________________________________________________________________________________________
 #include "ar.c"
 //_____________________________________________________________________________________________________________________
@@ -5633,23 +5629,38 @@ globals.typedef_##postfix = (struct ast_type){                                  
     // 
     
     if(globals.output_file_type != OUTPUT_FILE_obj){
-        #if 0
         
-        // @incomplete: Reintroduce these warnings:
-        
-        if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)){
-            if(function->scope){
-                report_warning(context, WARNING_function_defined_but_unreachable, function->base.token, "Function was defined but unreachable.");
-            }else{
-                report_warning(context, WARNING_function_declared_but_never_defined, function->base.token, "Function was declared but never defined.");
+        if(warning_enabled[WARNING_function_defined_but_unreachable] || warning_enabled[WARNING_function_declared_but_never_defined]){
+            
+            
+            for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+                struct ast_table *table = &compilation_unit->static_declaration_table;
+                
+                for(u64 table_index = 0; table_index < table->capacity; table_index++){
+                    enum ast_kind *ast = table->nodes[table_index].ast;
+                    if(!ast) continue;
+                    
+                    if(*ast == AST_function){
+                        struct ast_function *function = (struct ast_function *)ast;
+                        
+                        if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)){
+                            if(function->scope){
+                                report_warning(context, WARNING_function_defined_but_unreachable, function->identifier, "Function was defined but unreachable.");
+                            }else{
+                                report_warning(context, WARNING_function_declared_but_never_defined, function->identifier, "Function was declared but never defined.");
+                            }
+                        }
+                    }else{
+                        // Declaration or typedef.
+#if 0
+                        if(!(decl->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport))){
+                            report_warning(context, WARNING_unreachable_declaration, decl->base.token, "Discarding unreachable, global declaration.");
+                        }
+#endif
+                    }
+                }
             }
-            continue;
         }
-        
-        if(!(decl->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport))){
-            report_warning(context, WARNING_unreachable_declaration, decl->base.token, "Discarding unreachable, global declaration.");
-        }
-        #endif
     }
     
     end:; 

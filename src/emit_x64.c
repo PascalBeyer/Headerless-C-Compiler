@@ -616,7 +616,6 @@ func void emit_prefixes_and_opcode(struct context *context, struct prefixes _pre
             last_byte |= register_is_extended(reg) ? 0 : 0x80; // note: inverted!
         }
         
-        // @cleanup: what does rexW do?
         emit(last_byte);
         emit(opcode.bytes[opcode.amount_of_bytes - 1]);
         
@@ -767,10 +766,6 @@ struct emit_location{
         }; // register_relative & rip_relative
     };
 };
-
-// @cleanup: I think we actually rely on this begin null now, so this abstraction is really
-//           useless not... get rid of it!
-#define emit_location_invalid(context) ((struct emit_location *)null)
 
 func struct emit_location *emit_location_loaded(struct context *context, enum register_kind kind, enum register_encoding reg, smm size){
     assert(reg != INVALID_REGISTER);
@@ -1266,44 +1261,6 @@ func void emit_register_relative_extended(struct context *context, struct prefix
 }
 
 /////////////////////////////////////////////////
-
-// @note: this always uses the reg_regm versions, so this can be used to load either reg or regm
-func struct opcode get_opcode_for_move_instruction_and_adjust_size(struct emit_location *source, smm dest_size, b32 is_signed){
-    struct opcode opcode;
-    if(source->size < dest_size){
-        if(is_signed){
-            if(source->size == 1){
-                opcode = two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM8);
-            }else if(source->size == 2){
-                opcode = two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM16);
-            }else{
-                // "MOVXD without REXW is discouraged"
-                opcode = one_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM);
-                assert(source->size == 4);
-            }
-            source->size = dest_size;
-        }else{
-            if(source->size == 1){
-                opcode = two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM8);
-                source->size = dest_size;
-            }else if(source->size == 2){
-                opcode = two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM16);
-                source->size = dest_size;
-            }else{
-                assert(source->size == 4);
-                // only move, it will zero extend
-                opcode = one_byte_opcode(MOVE_REG_REGM);
-            }
-        }
-    }else{
-        if(dest_size == 1){
-            opcode = one_byte_opcode(MOVE_REG8_REGM8);
-        }else{
-            opcode = one_byte_opcode(MOVE_REG_REGM);
-        }
-    }
-    return opcode;
-}
 
 func struct emit_location *emit_load_into_specific_gpr(struct context *context, struct emit_location *source, enum register_encoding register_to_load_into){
     if(source->size == 0){
@@ -1996,6 +1953,9 @@ func u8 instruction_from_comp_condition(enum comp_condition cond, enum jump_cont
     return inst;
 }
 
+//_____________________________________________________________________________________________________________________
+// jump context
+
 func void jump_context_emit(struct context *context, struct jump_context *jump_context, enum jump_context_condition jump_context_condition, enum comp_condition cond){
     struct jump_node *node = push_struct(&context->scratch, struct jump_node);
     
@@ -2223,6 +2183,13 @@ func void assert_that_no_registers_are_allocated(struct context *context){
     }
 }
 
+func b32 type_is_returned_by_address(struct ast_type *type){
+    smm size = type->size;
+    if(type->flags & TYPE_FLAG_is_intrin_type) return false;
+    if(size_is_big_or_oddly_sized(size)) return true;
+    return false;
+}
+
 func void emit_inline_asm_binary_op(struct context *context, struct prefixes prefixes, struct emit_location *lhs, struct emit_location *rhs,
         b32 is_signed, u8 reg_extended, u8 u8_code, u8 opcode, u8 u8_compound, u8 opcode_compound){
     assert(lhs->size == rhs->size);
@@ -2394,7 +2361,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         return emit_location_immediate(context, 0, 4);
     }else if(string_match(identifier, string("__debugbreak"))){
         emit(0xcc);
-        return emit_location_invalid(context);
+        return null;
     }else if(string_match(identifier, string("_AddressOfReturnAddress"))){
         struct emit_location *return_address = emit_location_stack_relative(context, -(8 * (s32)__popcnt(context->current_function->pushed_register_mask)), /*size*/8);
         return emit_load_address(context, return_address, allocate_register(context, REGISTER_KIND_gpr));
@@ -2512,7 +2479,7 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
         }
         return ret;
     }else{
-        return emit_location_invalid(context);
+        return null;
     }
 }
 
@@ -2808,7 +2775,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 smm stack_index = emit_location_stack_at-1;
                 struct emit_location *loc = emit_location_stack[stack_index];
                 if(loc) free_emit_location(context, loc);
-                emit_location_stack[stack_index] = emit_location_invalid(context);
+                emit_location_stack[stack_index] = null;
             }break;
             
             case IR_cast_to_bool: case IR_cast_to_bool_lhs:{
@@ -3639,7 +3606,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 }
                 
                 if(return_type == &globals.typedef_void){
-                    emit_location_stack[emit_location_stack_at++] = emit_location_invalid(context);
+                    emit_location_stack[emit_location_stack_at++] = null;
                     break;
                 }
                 
@@ -3970,7 +3937,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 emit_location_prevent_spilling(context, loc);
                 
-                struct emit_location *loaded = emit_location_invalid(context);
+                struct emit_location *loaded = null;
                 
                 if(ir_kind < IR_preinc_u8){
                     if(ir_arena_at < current_function->end_in_ir_arena){ // @paranoid

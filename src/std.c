@@ -228,16 +228,8 @@ static NO_RETURN void __do_assert(const char *file, int line, const char *expres
 #endif // _Debug
 
 
-#ifdef __clang__
+#if defined(__clang__) || defined(__HLC__)
 #define static_assert(expr) _Static_assert(expr, "")
-
-#elif defined(__HLC__)
-
-#define zero_struct {}
-// @cleanup: I guess we should allow the above as well?
-#define M_concat2__internal(a, b) a ## b
-#define M_concat2(a, b) M_concat2__internal(a, b)
-#define static_assert(expr) static u8 M_concat2(static_assert, __LINE__)[(expr) ? 1 : -1]
 
 #elif defined(_MSC_VER)
 
@@ -948,10 +940,6 @@ func void solidify_temporary_memory(struct temporary_memory temp){
 }
 
 ////////////////////////////////////////////////////////////////
-
-// @cleanup flag is_zero_terminated?
-// u32 type: ascii, utf8, utf16, utf32
-// u32 flags: is_zero_terminated, ...
 
 func smm cstring_length(char *c_string){
     if(!c_string) return 0;
@@ -1775,7 +1763,6 @@ struct ticket_spinlock{
 #define atomic_store(type, address, value) *(cast(volatile type *)(&address)) = (*&(type)zero_struct = value, (value))
 #endif
 
-// @cleanup: think of some asserts
 func void ticket_spinlock_lock(struct ticket_spinlock *mutex){
     s64 my_ticket = atomic_postincrement(&mutex->tickets_given_out);
     while(atomic_load(s64, mutex->ticket_in_work) != my_ticket){
@@ -2169,70 +2156,6 @@ static void quicksort_u32_array(struct memory_arena *scratch, u32 *evaluations, 
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
-
-// utility for dumping out indented "txt" files
-struct txt_context{
-    struct string_list list;
-    struct memory_arena *scratch;
-    u32 indentation_level;
-    u32 indentation_disabled;
-    u32 newline_disabled;
-};
-
-func void txt_print_no_indent(struct txt_context *file, char *format, ...){
-    va_list va;
-    va_start(va, format);
-    string_list_postfix(&file->list, file->scratch, push_format_string_va_list(file->scratch, format, va));
-    va_end(va);
-}
-
-func void txt_print(struct txt_context *file, char *format, ...){
-    // we dont do anything
-    if(file->indentation_disabled && file->newline_disabled && !*format) return;
-    va_list va;
-    va_start(va, format);
-    if(!file->indentation_disabled){
-        for(u32 i = 0; i < file->indentation_level; i++){
-            string_list_postfix(&file->list, file->scratch, string("\t"));
-        }
-    }
-    string_list_postfix(&file->list, file->scratch, push_format_string_va_list(file->scratch, format, va));
-    va_end(va);
-    if(!file->newline_disabled) string_list_postfix(&file->list, file->scratch, string("\n"));
-}
-
-func void txt_print_bytes(struct txt_context *txt, u8 *bytes, smm amount, b32 skip_indent){
-    u32 prev_indent = txt->indentation_level++;
-    if(skip_indent) txt->indentation_level = 0;
-    txt_print(txt, "bytes:");
-    txt->indentation_level = 0;
-    for(u32 i = 0; i < amount; i++){
-        txt_print(txt, " %.2x", bytes[i]);
-    }
-    txt_print(txt, "\n");
-    txt->indentation_level = prev_indent;
-}
-
-func void txt_print_printables(struct txt_context *txt, u8 *bytes, smm amount, b32 skip_indent){
-    u32 prev_indent = txt->indentation_level++;
-    if(skip_indent) txt->indentation_level = 0;
-    txt_print(txt, "printables:");
-    txt->indentation_level = 0;
-    for(u32 i = 0; i < amount; i++){
-        txt_print(txt, "%c", u8_is_printable(bytes[i]) ? bytes[i] : '.');
-    }
-    txt_print(txt, "\n");
-    txt->indentation_level = prev_indent;
-}
-
-func struct string txt_flatten(struct memory_arena *arena, struct txt_context *txt){
-    return string_list_flatten(txt->list, arena);
-}
-
-func b32 write_txt_to_file(struct txt_context *txt, char *file_name){
-    struct string buf = txt_flatten(txt->scratch, txt);
-    return os_write_file(file_name, buf.data, buf.size);
-}
 
 // @cleanup: Fairly untested.
 func struct string utf16le_to_utf8(struct memory_arena *arena, u16 *data, smm length) {

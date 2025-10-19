@@ -1,4 +1,4 @@
-// check "(8,13): Warning 43 at '0123': Octal constant used, use 0o<octal> to squelch this warning."
+// check "(8,13): Warning 45 at '0123': Octal constant used, use 0o<octal> to squelch this warning."
 // run
 
 #define assert(a) if(!(a)) return 1;

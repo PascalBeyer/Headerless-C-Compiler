@@ -2059,7 +2059,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
         }break;
         
         case MEMONIC_lea: case MEMONIC_clflush:{
-            asm_instruction->operands[0].size = 4;
+            asm_instruction->operands[regm_index].size = 4;
         }break;
         
         // no need to do anything, we made sure that these only take memory addresses and the size does not matter to us

@@ -3496,9 +3496,3 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     return;
 }
 
-#undef out_struct
-#undef out_int
-#undef out_align
-#undef begin_symbol
-#undef end_symbol
-

@@ -32,19 +32,6 @@ func b32 skip_until_tokens_are_balanced(struct context *context, struct token *i
 }
 
 
-// unique_serial
-// unique()
-// :unique
-func s32 get_unique_ast_serial(struct context *context){
-    s32 ret = context->ast_serializer++;
-    
-#if 0
-    if(ret == 25) os_debug_break();
-#endif
-    
-    return ret;
-}
-
 func void _parser_sleep(struct context *context, struct token *sleep_on, u32 line, enum sleep_purpose purpose){
     if(context->should_sleep) return;
     assert(sleep_on);
@@ -73,6 +60,23 @@ func struct ast_type *_parser_type_push(struct context *context, smm size, u32 a
     return type;
 }
 
+#define parser_compound_type_push(context, type) (struct ast_compound_type *)_parser_type_push(context, sizeof(struct ast_compound_type), alignof(struct ast_compound_type), AST_##type);
+
+func struct ast_type *parser_push_pointer_type(struct context *context, struct ast_type *pointer_to, enum ast_kind *defined_type){
+    
+    if(&globals.typedef_void <= pointer_to && pointer_to <= &globals.typedef_f64){
+        struct ast_pointer_type *base = &globals.typedef_void_pointer;
+        return &base[pointer_to - &globals.typedef_void].base;
+    }else{
+        struct ast_pointer_type *pointer_type = parser_type_push(context, pointer_type);
+        pointer_type->pointer_to = pointer_to;
+        pointer_type->pointer_to_defined_type = defined_type;
+        pointer_type->base.size = 8;
+        pointer_type->base.alignment = 8;
+        return &pointer_type->base;
+    }
+}
+
 //_____________________________________________________________________________________________________________________
 // IR building stuff
 
@@ -98,32 +102,8 @@ func void pop_from_ir_arena_(struct context *context, u8 *ir_memory, smm size){
 }
 
 
-#define parser_compound_type_push(context, type) (struct ast_compound_type *)_parser_type_push(context, sizeof(struct ast_compound_type), alignof(struct ast_compound_type), AST_##type);
-
-func struct ast_type *parser_push_pointer_type(struct context *context, struct ast_type *pointer_to, enum ast_kind *defined_type){
-    
-    if(&globals.typedef_void <= pointer_to && pointer_to <= &globals.typedef_f64){
-        struct ast_pointer_type *base = &globals.typedef_void_pointer;
-        return &base[pointer_to - &globals.typedef_void].base;
-    }else{
-        struct ast_pointer_type *pointer_type = parser_type_push(context, pointer_type);
-        pointer_type->pointer_to = pointer_to;
-        pointer_type->pointer_to_defined_type = defined_type;
-        pointer_type->base.size = 8;
-        pointer_type->base.alignment = 8;
-        return &pointer_type->base;
-    }
-}
-
 func b32 size_is_big_or_oddly_sized(smm size){
     return (size > 8) || (size == 3) || (size == 5) || (size == 6) || (size == 7);
-}
-
-func b32 type_is_returned_by_address(struct ast_type *type){
-    smm size = type->size;
-    if(type->flags & TYPE_FLAG_is_intrin_type) return false;
-    if(size_is_big_or_oddly_sized(size)) return true;
-    return false;
 }
 
 func struct expr ast_push_s64_literal(struct context *context, s64 value, struct token *token){
@@ -731,7 +711,6 @@ func struct ast_type *perform_usual_arithmetic_conversions(struct ast_type *lhs,
     // "if they are of the same type no further conversion is needed"
     if(lhs == rhs) return lhs;
     
-    // @cleanup: we ignore 'long' for now
     // if they have same signedness we uppromote the lower
     if(lhs == &globals.typedef_s32 && rhs == &globals.typedef_s64) return &globals.typedef_s64;
     if(rhs == &globals.typedef_s32 && lhs == &globals.typedef_s64) return &globals.typedef_s64;
@@ -784,7 +763,6 @@ func void maybe_insert_arithmetic_conversion_casts(struct context *context, stru
     }
 }
 
-// @cleanup: Should this only be allowed for actually literal 0?
 func void maybe_cast_literal_0_to_void_pointer(struct expr *lhs, struct expr *rhs){
     
     if(lhs->resolved_type->kind == AST_pointer_type && rhs->ir->kind == IR_integer_literal){
@@ -1069,8 +1047,6 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
         return ret;
     }
     
-    // @cleanup: can we assert here that the types in the end are basic tpyes?
-    // they match iff they are equal in the end. (this is the case for example for int * == int *)
     return (wanted == given) ? ret : null;
 }
 
@@ -1581,8 +1557,7 @@ void parse_and_process_pragma_pack(struct context *context){
                 }
                 
                 if(!found){
-                    // @cleanup: make this its own warning value.
-                    report_warning(context, WARNING_pragma_pack_show, show_token, "Identifier '%.*s' is not on the pragma pack stack.", pack_identifier.size, pack_identifier.data);
+                    report_warning(context, WARNING_pragma_pack_pop_unknown_identifier, show_token, "Identifier '%.*s' is not on the pragma pack stack.", pack_identifier.size, pack_identifier.data);
                 }
             }else{
                 if(context->pragma_pack_stack.first){
@@ -1591,7 +1566,7 @@ void parse_and_process_pragma_pack(struct context *context){
                     
                     sll_pop_front(context->pragma_pack_stack);
                 }else{
-                    report_warning(context, WARNING_pragma_pack_show, show_token, "Using #pragma pack(pop) when the pragma stack is empty.");
+                    report_warning(context, WARNING_pragma_pack_pop_with_empty_stack, show_token, "Using #pragma pack(pop) when the pragma stack is empty.");
                 }
             }
             
@@ -2127,7 +2102,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         
         peek_token_eat(context, TOKEN_comma); // Technically, an initializer list is allowed to have a trailing comma.
         
-        expect_token(context, TOKEN_closed_curly, "More than one member in initializer-list for scalar type.");
+        expect_token(context, TOKEN_closed_curly, "More than one member in initializer-list for scalar type."); // @Error: print the type?
         
         maybe_load_address_for_array_or_function(context, IR_load_address, &initializer);
         maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, type_to_initialize, /*ast_to_initialize->defined_type*/null, &initializer, initial_open_curly); // @cleanup:
@@ -4632,11 +4607,6 @@ case NUMBER_KIND_##type:{ \
                 explicit_number_kind_case(u16, ui16);
                 explicit_number_kind_case(u32, ui32);
                 explicit_number_kind_case(u64, ui64);
-                
-                case NUMBER_KIND_s128: case NUMBER_KIND_u128:{
-                    report_error(context, lit_token, "128-bit literals are not supported.");
-                    return (struct expr){.ir = &lit->base, lit_token, &globals.typedef_s32};
-                }
                 
 #undef explicit_number_kind_case
                 
@@ -10187,8 +10157,8 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                     
                     ast_list_append(&function->argument_list, context->arena, &decl->kind);
                     
-                    if(decl->assign_expr){ // @cleanup: This can never happen right? we should 'peek_token(context, TOKEN_equals)' if anything.
-                        report_error(context, prev_token(context), "Assignment in function declaration. Default arguments are invalid.");
+                    if(peek_token(context, TOKEN_equals)){
+                        report_error(context, get_current_token(context), "Cannot assign to function parameter. Default arguments are unsupported.");
                         return ret;
                     }
                     

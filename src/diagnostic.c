@@ -467,7 +467,7 @@ void print_warning_or_error_reports(struct context *context){
         print("\n%lld errors reported. Error limit reached. Adjust using `--error_limit=<limit>`.\n", total_errors_reported);
     }
     
-    if(!globals.an_error_has_occurred && total_warnings_reported >= globals.cli_options.error_limit){
+    if(!globals.an_error_has_occurred && total_warnings_reported >= globals.cli_options.warning_limit){
         print("\n%lld warnings reported. Warning limit reached. Adjust using `--warning_limit=<limit>`.\n", total_warnings_reported);
     }
     
