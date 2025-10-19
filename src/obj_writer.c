@@ -54,6 +54,40 @@ void push_unsigned_number_leaf(struct memory_arena *arena, u64 value){
     }
 }
 
+
+void push_signed_number_leaf(struct memory_arena *arena, s64 value){
+    
+    if(value >= 0){
+        if(value < 0x8000){
+            *push_struct(arena, u16) = (u16)value;
+        }else if(value <= s16_max){
+            *push_struct(arena, u16) = /*LF_SHORT*/0x8001;
+            *push_struct(arena, u16) = (u16)value;
+        }else if(value <= s32_max){
+            *push_struct(arena, u16) = /*LF_LONG*/0x8003;
+            *(u32 *)push_data(arena, u8, sizeof(u32)) = (u32)value;
+        }else{
+            *push_struct(arena, u16) = /*LF_QUADWORD*/0x8009;
+            *(u64 *)push_data(arena, u8, sizeof(u64)) = value;
+        }
+    }else{
+        if(value >= s8_min){
+            *push_struct(arena, u16) = 0x8000; // LF_CHAR
+            *push_struct(arena, u8) = (u8)value;
+        }else if(value >= s16_min){
+            *push_struct(arena, u16) = 0x8001; // LF_SHORT
+            *push_struct(arena, u16) = (u16)value;
+        }else if(value >= s32_min){
+            *push_struct(arena, u16) = 0x8003; // LF_LONG
+            *push_struct(arena, u32) = (u32)value;
+        }else{
+            *push_struct(arena, u16) = 0x8009; // LF_QUADWORD
+            *push_struct(arena, s64) = value;
+        }
+    }
+}
+
+
 void register_type(u32 *inout_type_index, struct memory_arena *arena, struct memory_arena *scratch, struct ast_type *initial_type){
     
     // @cleanup: This description did not end up being very good, redo it once everything is in place.

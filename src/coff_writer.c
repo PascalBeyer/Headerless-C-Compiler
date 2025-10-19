@@ -244,23 +244,6 @@ u32 tpi_hash_table_index_for_record(struct codeview_type_record_header *type_rec
 }
 
 
-struct pdb_header{
-    u8 signature[32];
-    u32 page_size;
-    u32 free_page_map;
-    u32 number_of_pages;
-    u32 directory_stream_size;
-    u32 reserved;
-    u32 page_number_of_directory_stream_number_list; // i.e some relative pointer to an array
-};
-
-static const u8 pdb_signature[] = {
-    0x4d, 0x69, 0x63, 0x72, 0x6f, 0x73, 0x6f, 0x66, 0x74, 0x20, 0x43, 0x2f, 0x43, 0x2b, 0x2b, 0x20,
-    0x4d, 0x53, 0x46, 0x20, 0x37, 0x2e, 0x30, 0x30, 0x0d, 0x0a, 0x1a, 0x44, 0x53, 0x00, 0x00, 0x00,
-};
-static_assert(sizeof(pdb_signature) == 32);
-
-
 enum stream_index{
     STREAM_old_directory       = 0, // done :old_directory_hack
     STREAM_PDB                 = 1, // done
@@ -277,389 +260,10 @@ enum stream_index{
     
     // after this come the module streams
     STREAM_module_zero,
-};
-
-struct pdb_location{
-    struct page_list_node *page;
-    u16 offset;
-    u32 size;
+    STREAM_count,
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////
-
-// @note @maybe_cleanup @hardcoded we always use 0x1000 here when we need page size, maybe that should be a macro or something
-
-struct page_list_node{
-    struct page_list_node *next;
-    u16 page_index;
-    u16 offset;
-    u32 offset_in_stream;
-};
-
-struct pdb_write_context{
-    struct memory_arena *arena;
-    struct memory_arena *scratch;
-    
-    struct pdb_header *pdb_header;
-    struct{
-        struct page_list_node *first;
-        struct page_list_node *last;
-    } free_page_maps;
-    
-    struct{
-        struct page_list_node *first;
-        struct page_list_node *last;
-    } unused_free_page_maps;
-    
-    // address in memory while writing you can get a page_index by doint (page - pdb_base) >> 12
-    u8 *pdb_base;
-    u8 *pdb_end;
-    smm pdb_size;
-    
-    // @hmm: Right now we do the whole pdb thing, where pages could be all over the place...
-    // I actually don't really see a reason for that. Maybe it would be faster if this was just
-    // u16 starting_page_index; u16 ending_page_index; and we just commit to writing stuff out sequentially
-    // @hmm: actually if we have to write these multi threaded (:PDBFunctionSize) there is good reason
-    struct page_list{
-        struct page_list_node *first;
-        struct page_list_node *last;
-        
-        u32 amount_of_pages;
-        u32 symbol_at;
-    } page_list[0x1000];
-    
-    // we let this be stateful. call set_current_stream, to change what stream you are writing to.
-    enum stream_index active_stream;
-    struct page_list *active_page_list;
-    
-    struct pdb_location active_symbol;
-    b32 in_symbol;
-    
-    // TPI stream
-    struct ast_type **type_stack;
-    smm type_stack_at;
-    smm type_stack_size;
-    struct pdb_type_info{
-        u32 pointer_type_index;
-        struct ast_type *type;
-    }*type_index_to_type_info;
-    smm maximal_amount_of_type_indices;
-    smm amount_of_type_indices;
-    
-    // for emitting type info: (TPI stream/IPI stream)
-    // @WARNING: this means that TPI < TPI_hash < IPI < IPI_hash;
-    struct pdb_location type_record_data_begin;
-    struct pdb_index_offset_buffer_entry{
-        u32 type_index;
-        u32 offset;
-    } *index_offset_buffer;
-    u32 index_offset_buffer_size;
-    u32 index_offset_buffer_at;
-    smm index_offset_buffer_boundary;
-    
-    // MODULE stream
-    smm pdb_line_at; // used to track the line number when emitting line information
-    smm pdb_offset_at;
-    smm pdb_amount_of_lines;
-    
-    struct pdb_location module_stream_begin;
-    smm current_block32_offset_in_stream;
-    
-    s16 text_section_id;
-};
-
-func struct pdb_location get_current_pdb_location(struct pdb_write_context *context){
-    struct page_list *list = context->active_page_list;
-    
-    struct pdb_location ret;
-    ret.page   = list->last;
-    ret.offset = ret.page->offset;
-    ret.size   = 0;
-    
-    return ret;
-}
-
-// calculates (a - b), where a and be are assumed to be in the same stream
-func u32 pdb_location_diff(struct pdb_location a, struct pdb_location b){
-    if(a.page == b.page){
-        assert(a.offset >= b.offset);
-        return a.offset - b.offset;
-    }
-    
-    u32 a_offset = a.page->offset_in_stream + a.offset;
-    u32 b_offset = b.page->offset_in_stream + b.offset;
-    
-    assert(a_offset >= b.offset);
-    return a_offset - b_offset;
-}
-
-func u32 pdb_current_offset_from_location(struct pdb_write_context *context, struct pdb_location loc){
-    return pdb_location_diff(get_current_pdb_location(context), loc);
-}
-
-
-func u8 *pdb_page_from_index(struct pdb_write_context *context, smm index){
-    assert(0 <= index && index <= max_u16);
-    return context->pdb_base + index * 0x1000;
-}
-
-func void stream_push_page(struct pdb_write_context *context, struct page_list *list){
-    retry:;
-    // @cleanup: is uninitialized correct here?
-    u8 *page = push_uninitialized_data(context->arena, u8, 0x1000);
-    
-    struct page_list_node *node = push_struct(context->scratch, struct page_list_node);
-    
-    smm page_offset = page - context->pdb_base;
-    assert(!(page_offset & (0x1000 - 1)));
-    node->page_index = to_u16(page_offset / 0x1000);
-    node->offset     = 0;
-    node->offset_in_stream = list->amount_of_pages * 0x1000;
-    
-    // :free_page_map
-    // we implicitly push free page maps when we have to.
-    // The pdb format has free page maps every 0x1000 blocks and they cover
-    // the first '8 * 0x1000' blocks, so there are like way to many of them... but that's just life
-    if((node->page_index & (0x1000 - 1)) == 1){
-        sll_push_back(context->free_page_maps, node);
-        goto retry;
-    }
-    
-    if((node->page_index & (0x1000 - 1)) == 2){
-        sll_push_back(context->unused_free_page_maps, node);
-        goto retry;
-    }
-    
-    list->amount_of_pages++;
-    sll_push_back(*list, node);
-}
-
-
-func void set_current_stream(struct pdb_write_context *context, enum stream_index stream_index){
-    assert(!context->in_symbol);
-    assert(stream_index < array_count(context->page_list));
-    context->active_stream = stream_index;
-    
-    // init if not inited
-    struct page_list *list = &context->page_list[stream_index];
-    if(!list->last){
-        stream_push_page(context, list);
-        list->symbol_at = 0x1000; // first symbol
-    }
-    
-    context->active_page_list = list;
-}
-
-func struct pdb_location stream_allocate_bytes(struct pdb_write_context *context, smm size){
-    struct page_list *list = context->active_page_list;
-    assert(list->last);
-    
-    struct pdb_location ret;
-    ret.page   = list->last;
-    ret.offset = ret.page->offset;
-    ret.size   = to_u32(size);
-    
-    assert(ret.offset <= 0x1000);
-    assert(ret.page->next == null);
-    
-    struct page_list_node *current_page = list->last;
-    smm remaining_size = 0x1000 - current_page->offset;
-    if(remaining_size <= size){
-        current_page->offset = 0x1000; // page is now _full_
-        
-        smm size_to_allocate  = size - remaining_size;
-        smm pages_to_allocate = size_to_allocate >> 12;
-        
-        // @cleanup: dumb loop this could be way faster, but we probably never do more then one iteration...
-        for(smm page = 0; page < pages_to_allocate; page++){
-            stream_push_page(context, list);
-            list->last->offset = 0x1000; // these lists are all _full_
-        }
-        
-        smm rest_size_to_allocate = size_to_allocate & (0x1000 - 1);
-        
-        // allocate a new page even if rest_size_to_allocate == 0
-        stream_push_page(context, list);
-        list->last->offset = to_u16(rest_size_to_allocate);
-    }else{
-        current_page->offset += to_u16(size);
-    }
-    
-    return ret;
-}
-
-func void stream_write_bytes(struct pdb_write_context *context, struct pdb_location *dest, void *_source, smm size){
-    assert(size <= dest->size);
-    smm save_size = size;
-    u8 *source = _source;
-    
-    while(size){
-        u8 *page = pdb_page_from_index(context, dest->page->page_index);
-        u8 *at = page + dest->offset;
-        assert(dest->offset <= 0x1000);
-        
-        smm remaining_size_in_page = 0x1000 - dest->offset;
-        if(remaining_size_in_page < size){
-            memcpy(at, source, remaining_size_in_page);
-            
-            size   -= remaining_size_in_page;
-            source += remaining_size_in_page;
-            
-            dest->offset = 0;
-            assert(dest->page->next); // this should always be here, as you can only write, after you allocated.
-            dest->page = dest->page->next;
-        }else{
-            assert(size <= 0x1000);
-            memcpy(at, source, size);
-            dest->offset += to_u16(size);
-            break;
-        }
-    }
-    
-    dest->size -= to_u32(save_size);
-}
-
-func void stream_emit_struct(struct pdb_write_context *context, void *memory, smm size){
-    struct pdb_location dest = stream_allocate_bytes(context, size);
-    stream_write_bytes(context, &dest, memory, size);
-}
-
-func void stream_emit_int(struct pdb_write_context *context, s64 integer, smm size){
-    assert(size <= 8);
-    stream_emit_struct(context, &integer, size);
-}
-
-func void stream_align(struct pdb_write_context *context, u16 align_to, b32 f3f2f1){
-    struct page_list *list = context->active_page_list;
-    assert(list->last);
-    assert(is_power_of_two(align_to));
-    u16 offset = list->last->offset;
-    u16 up = align_up(offset, align_to);
-    if(up > offset){
-        u8 *page = pdb_page_from_index(context, list->last->page_index);
-        u8 *dest = page + list->last->offset;
-        if(f3f2f1){
-            for(s32 i = offset; i < up; i++){
-                page[i] = 0xf0 + to_u8(up - i);
-            }
-        }else{
-            memset(dest, 0, up - offset);
-        }
-        list->last->offset = up;
-    }
-}
-
-func u32 stream_begin_symbol(struct pdb_write_context *context, u16 symbol_kind){
-    assert(!context->in_symbol);
-    context->in_symbol = true;
-    u32 ret = context->active_page_list->symbol_at++;
-    
-    if(context->active_stream == STREAM_TPI || context->active_stream == STREAM_IPI){
-        u32 offset = pdb_current_offset_from_location(context, context->type_record_data_begin);
-        if(offset > context->index_offset_buffer_boundary){
-            u32 index = context->index_offset_buffer_at++;
-            if(index >= context->index_offset_buffer_size){
-                struct pdb_index_offset_buffer_entry *new_entries = push_uninitialized_data(context->scratch, struct pdb_index_offset_buffer_entry, context->index_offset_buffer_size * 2);
-                memcpy(new_entries, context->index_offset_buffer, context->index_offset_buffer_size * sizeof(context->index_offset_buffer[0]));
-                context->index_offset_buffer_size *= 2;
-                context->index_offset_buffer = new_entries;
-            }
-            context->index_offset_buffer[index].type_index = ret;
-            context->index_offset_buffer[index].offset = offset;
-            context->index_offset_buffer_boundary += kilo_bytes(8);
-        }
-    }
-    
-    // size of the symbol is filled in stream_end_symbol
-    context->active_symbol = stream_allocate_bytes(context, sizeof(u16));
-    stream_emit_struct(context, &symbol_kind, sizeof(u16));
-    
-    return ret;
-}
-
-func void stream_end_symbol(struct pdb_write_context *context){
-    stream_align(context, sizeof(u32), false);
-    
-    struct pdb_location current_loc = get_current_pdb_location(context);
-    
-    // -2 because the length field excludes the 'size' field on the symbol record
-    smm size = pdb_location_diff(current_loc, context->active_symbol) - 2;
-    if(size > max_u16){
-        // :ERROR :pdb_symbol_overflow
-        print("Internal Compiler Error:\n");
-        print("A symbol in the '.pdb' has a size of %lld but the biggest size allowed is 65535.\n", size);
-        print("This might probably leads to a coruppt '.pdb'. Sorry!\n");
-        // os_panic(1);
-    }
-    u16 size_u16 = to_u16(size);
-    stream_write_bytes(context, &context->active_symbol, &size_u16, sizeof(u16));
-    context->in_symbol = false;
-}
-
-
-///////////////////////////////////////////////////////////////////////////////
-
-
-#define out_struct(data) stream_emit_struct(context, &data, sizeof(data))
-#define out_string(string) {stream_emit_struct(context, (string).data, (string).length); out_int(0, u8);}
-
-#define out_int(integer, type) ((void)(type)3, stream_emit_int(context, integer, sizeof(type)))
-#define out_align(align_to) stream_align(context, align_to, false)
-#define out_f3f2f1_align(align_to) stream_align(context, align_to, true)
-#define begin_symbol(type) stream_begin_symbol(context, type)
-#define end_symbol() stream_end_symbol(context)
-
-func void stream_emit_size_and_name(struct pdb_write_context *context, smm value, b32 is_signed, struct string string){
-    if(is_signed){
-        smm val = value;
-        if(val >= 0){
-            if(val < 0x8000){
-                out_int(val, u16);
-            }else if(val <= s16_max){
-                out_int(0x8001, u16); // LF_SHORT
-                out_int(val, u16);
-            }else if(val <= s32_max){
-                out_int(0x8003, u16); // LF_LONG
-                out_int(val, u32);
-            }else{
-                out_int(0x8009, u16); // LF_QUADWORD
-                out_int(val, u64);
-            }
-        }else{
-            if(val >= s8_min){
-                out_int(0x8000, u16); // LF_CHAR
-                out_int(val, u8);
-            }else if(val >= s16_min){
-                out_int(0x8001, u16); // LF_SHORT
-                out_int(val, u16);
-            }else if(val >= s32_min){
-                out_int(0x8003, u16); // LF_LONG
-                out_int(val, u32);
-            }else{
-                out_int(0x8009, u16); // LF_QUADWORD
-                out_int(val, u64);
-            }
-        }
-    }else{
-        u64 val = value;
-        if(val < 0x8000){
-            out_int(val, u16);
-        }else if(val <= u16_max){
-            out_int(0x8002, u16); // LF_USHORT
-            out_int(val, u16);
-        }else if(val <= u32_max){
-            out_int(0x8004, u16); // LF_ULONG
-            out_int(val, u32);
-        }else{
-            out_int(0x800a, u16); // LF_UQUADWORD
-            out_int(val, u64);
-        }
-    }
-    
-    out_string(string);
-    out_f3f2f1_align(sizeof(u32));
-}
-
 
 #define IPHR_HASH 4096
 struct gsi_hash_bucket{
@@ -718,6 +322,287 @@ func b32 global_symbol_stream_hash_table_add(struct gsi_hash_bucket **hash_table
         }
         return 0;
     }
+}
+
+//_____________________________________________________________________________________________________________________
+// Write the MSF
+
+struct msf_stream{
+    u8 *data;
+    u64 size;
+};
+
+// 
+// Write an MSF from a set of streams.
+// The general layout will be as follows:
+//     
+//     MSF file-header page
+//     Free Page Map (Used)
+//     Free Page Map (Unused)
+//     
+//     <Stream Table Stream Page list>
+//     <Stream Table Stream>
+//     <streams[0]>
+//     ...
+//     <streams[amount_of_streams]>
+// 
+// Here, 'stream[index]' has stream index 'index + 1', to make space for the 
+// "Old stream table"-stream. Furthermore, everything past the first 3 pages 
+// is potentially "interrupted", by the later pages of the Free Page Maps.
+// 
+int write_msf(char *file_name, struct msf_stream *streams, u32 amount_of_streams){
+    
+    // 
+    // Figure out the size the on-disk size of the specified streams.
+    u64 aligned_total_size = 0;
+    for(u32 index = 0; index < amount_of_streams; index++){
+        aligned_total_size += (streams[index].size + 0xfff) & ~0xfff;
+    }
+    
+    //
+    // The stream table stream contains information about where all the other streams are located.
+    // It has the following layout:
+    //     u32 amount_of_streams;
+    //     u32 stream_sizes[amount_of_streams];
+    //     u32 stream_one_pages[];
+    //     u32 stream_two_pages[];
+    //     ...
+    //
+    u64 stream_table_stream_size = 4 + (4 * (u64)(amount_of_streams + /*old stream table stream*/1)) + 4 * (aligned_total_size/0x1000);
+    u32 stream_table_stream_size_in_pages = (u32)((stream_table_stream_size + 0xfff)/0x1000);
+    
+    // The MSF-header refers to the page-list for the stream table stream.
+    u64 stream_table_page_list_size = 4 * stream_table_stream_size_in_pages;
+    
+    aligned_total_size += (stream_table_stream_size    + 0xfff) & ~0xfff;
+    aligned_total_size += (stream_table_page_list_size + 0xfff) & ~0xfff;
+    
+    // Every page with page index equal to 1 or 2 modulo 0x1000, is reserved for the Free Page Map.
+    // Equivilantly, not counting the header every page with page index equal to 0 or 1 modulo 0x1000,
+    // is reserved for the Free Page Map. Quick toy example shows the formular 
+    //     '2 * ceil(pages/(0x1000 - 2))'
+    // for the amount of Free Page Map pages:
+    // 
+    //     20 Pages every page equal to 0 or 1 mod 5 is a FPM:
+    // 
+    //         x, x,  1,  2,  3  ( 5)
+    //         x, x,  4,  5,  6  (10)
+    //         x, x,  7,  8,  9  (15)
+    //         x, x, 10, 11, 12  (20)
+    //         x, x, 13, 14, 15  (25)
+    //         x, x, 16, 17, 18, (30)
+    //         x, x, 19, 20,     (34)
+    //    
+    //     18/3 = 6   (30 = 18 + 12)
+    //     19/3 = 6.3 (33 = 19 + 14)
+    //     20/3 = 6.6 (34 = 20 + 14)
+    //     21/3 = 7   (35 = 21 + 14)
+    //     
+    u64 amount_of_pages = aligned_total_size/0x1000;
+    amount_of_pages += 2 * ((amount_of_pages + ((0x1000 - 2) - 1))/(0x1000 - 2));
+    
+    // Add in the header page.
+    amount_of_pages += 1;
+    
+    aligned_total_size = amount_of_pages * 0x1000;
+    
+    // 
+    // Create "extra streams" for the stream table stream and the stream table stream page list.
+    // 
+    u32 *stream_table_stream    = malloc(stream_table_stream_size);
+    u32 *stream_table_page_list = malloc(stream_table_page_list_size);
+    
+    u32 stream_table_page_list_size_in_pages = (u32)((stream_table_page_list_size + 0xfff)/0x1000);
+    
+    // Fill in the stream table stream page number list.
+    u32 stream_table_page_list_end   = 3 + stream_table_page_list_size_in_pages;
+    u32 stream_table_stream_page_end = 3 + (stream_table_page_list_size_in_pages + stream_table_stream_size_in_pages);
+    
+    // Add the pages potentially required for free page maps.
+    // @note: This formular is what you get in the above, if you put the x's last.
+    //        The ceil turns into a floor.
+    stream_table_page_list_end   += 2 * (stream_table_page_list_size_in_pages/(0x1000 - 2));
+    stream_table_stream_page_end += 2 * ((stream_table_page_list_size_in_pages + stream_table_stream_size_in_pages)/(0x1000 - 2));
+    
+    {
+        u32 index = 0;
+        for(u32 page_index = stream_table_page_list_end; page_index < stream_table_stream_page_end; page_index++){
+            if((page_index & 0xfff) == 1 || (page_index & 0xfff) == 2) continue;
+            stream_table_page_list[index++] = page_index;
+        }
+        assert(index == stream_table_page_list_size/4);
+    }
+    
+    {   // Fill in the stream table stream.
+        // This is a bit annoying, as we have not yet written the pages
+        // and have to recreate the algorithm here, which we are going to
+        // use below when writing the file.
+        // 
+        // Here is the layout again:
+        //     u32 amount_of_streams;
+        //     u32 stream_sizes[amount_of_streams];
+        //     u32 stream_one_pages[];
+        //     u32 stream_two_pages[];
+        //     ...
+        u32 *it = stream_table_stream;
+        *it++ = amount_of_streams + /*old stream table stream*/1;
+        *it++ = /*size of old stream table stream*/0;
+        for(u32 stream_index = 0; stream_index < amount_of_streams; stream_index++){
+            *it++ = (u32)streams[stream_index].size;
+        }
+        
+        for(u32 page_index = stream_table_stream_page_end; page_index < amount_of_pages; page_index++){
+            if((page_index & 0xfff) == 1 || (page_index & 0xfff) == 2) continue;
+            *it++ = page_index;
+        }
+        assert(it == (u32 *)((u8 *)stream_table_stream + stream_table_stream_size));
+    }
+    
+    struct msf_header{
+        //
+        // "Microsoft C/C++ MSF 7.00\r\n\032DS\0\0\0"
+        //
+        u8 signature[32];
+        
+        //
+        // The msf format allocates data in "pages".
+        // This value is usually '0x1000' on x64 systems.
+        //
+        u32 page_size;
+        
+        //
+        // The free page map has a bit set for every page that is unused.
+        // The first free page map covers the first 8 'intervals', i.e the
+        // first 0x8000 pages.
+        // There are always two free page maps (one on page 1 and one on page 2),
+        // but only one is used.
+        // The one used is specified by this field.
+        //
+        u32 active_free_page_map_number;
+        
+        //
+        // The total amount of pages in the file.
+        // 'amount_of_pages * page_size' should equal the file size.
+        //
+        u32 amount_of_pages;
+        
+        //
+        // The size of the stream_table stream. This field is used together with the
+        // 'stream_table_stream_number_list' to find the stream_table stream.
+        //
+        u32 stream_table_stream_size;
+        
+        //
+        // This field comes from a 32 bit pointer, which was written here for an earlier
+        // version of the msf format, but never used.
+        //
+        u32 reserved;
+        
+        //
+        // The page number list of an array of page numbers.
+        // Each page number in the array corresponds to a page in the stream_table stream.
+        // The amount of entries is determined by 'stream_table_stream_size'.
+        //
+        u32 page_list_of_stream_table_stream_page_list[0];
+    } *msf_header = (void *)(u8 [0x1000]){0};
+    memcpy(msf_header->signature, "Microsoft C/C++ MSF 7.00\r\n\032DS\0\0\0", sizeof(msf_header->signature));
+    msf_header->page_size = 0x1000;
+    msf_header->active_free_page_map_number = 1;
+    msf_header->amount_of_pages = (u32)amount_of_pages;
+    msf_header->stream_table_stream_size = (u32)stream_table_stream_size;
+    
+    u64 max_size = (0x1000 - (u64)&((struct msf_header *)0)->page_list_of_stream_table_stream_page_list)/4;
+    if(stream_table_page_list_size_in_pages > max_size){
+        return 0;
+    }
+    
+    for(u32 index = 0; index < stream_table_page_list_size_in_pages; index++){
+        msf_header->page_list_of_stream_table_stream_page_list[index] = 3 + index;
+    }
+    
+    u8 zero_buffer[0x1000] = {0}; // Used to align writes.
+    u8 ones_buffer[0x1000]; // Used to write free page maps.
+    memset(ones_buffer, 0xff, 0x1000);
+    
+    HANDLE file_handle = CreateFileA(file_name, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, NULL);
+    if(file_handle == INVALID_HANDLE_VALUE) return 0;
+    
+    WriteFile(file_handle, msf_header, 0x1000, 0, 0);
+    
+    u64 write_offset = 0x1000;
+    u64 next_free_page_maps = 0x1000;
+    
+    for(s64 stream_index = -2; stream_index < amount_of_streams; stream_index++){
+        
+        struct msf_stream stream = {0};
+        if(stream_index == -2){
+            stream.data = (u8 *)stream_table_page_list;
+            stream.size = stream_table_page_list_size;
+        }else if(stream_index == -1){
+            stream.data = (u8 *)stream_table_stream;
+            stream.size = stream_table_stream_size;
+        }else{
+            stream = streams[stream_index];
+        }
+        
+        u32 offset_in_stream = 0;
+        while(offset_in_stream < stream.size){
+            
+            if(write_offset == next_free_page_maps){
+                u64 free_page_map_page = (next_free_page_maps / 0x1000)/0x1000;
+                u64 range_start = (free_page_map_page + 0) * 0x8000;
+                u64 range_end   = (free_page_map_page + 1) * 0x8000;
+                
+                if(range_end <= amount_of_pages){
+                    // If the range covered by this free page map is entirely in the file,
+                    // write all zeros (all allocated).
+                    WriteFile(file_handle, zero_buffer, 0x1000, 0, 0);
+                }else if(amount_of_pages < range_start){
+                    // If the range covered by this free page map is entirely outside the file,
+                    // write all ones (all free).
+                    WriteFile(file_handle, ones_buffer, 0x1000, 0, 0);
+                }else{
+                    u8 buffer[0x1000] = {0};
+                    
+                    for(u64 page_index = amount_of_pages; page_index < range_end; page_index++){
+                        
+                        u64 relative_page_index = page_index - range_start;
+                        
+                        u64 byte_index = relative_page_index/8;
+                        u64 bit_index  = relative_page_index%8;
+                        
+                        buffer[byte_index] |= (u8)(1 << bit_index);
+                    }
+                    WriteFile(file_handle, buffer, 0x1000, 0, 0);
+                }
+                
+                WriteFile(file_handle, zero_buffer, 0x1000, 0, 0); // Ignored free page map.
+                
+                write_offset += 0x2000;
+                next_free_page_maps += 0x1000 * 0x1000;
+            }
+            
+            // Write till the next free page map or till the end of the stream.
+            u32 size_to_write = (u32)(stream.size - offset_in_stream);
+            if(size_to_write > (next_free_page_maps - write_offset)){
+                size_to_write = (u32)(next_free_page_maps - write_offset);
+            }
+            
+            WriteFile(file_handle, stream.data + offset_in_stream, size_to_write, 0, 0);
+            
+            if(size_to_write & 0xfff){
+                u32 size_to_zero = 0x1000 - (size_to_write & 0xfff);
+                WriteFile(file_handle, zero_buffer, size_to_zero, 0, 0); // Ignored free page map.
+                size_to_write += size_to_zero;
+            }
+            
+            write_offset     += size_to_write;
+            offset_in_stream += size_to_write;
+        }
+    }
+    
+    CloseHandle(file_handle);
+    return 1;
 }
 
 //_____________________________________________________________________________________________________________________
@@ -869,7 +754,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     }
     
     
-    assert(globals.output_file_type == OUTPUT_FILE_exe || globals.output_file_type == OUTPUT_FILE_dll);
+    assert(globals.output_file_type == OUTPUT_FILE_exe || globals.output_file_type == OUTPUT_FILE_dll || globals.output_file_type == OUTPUT_FILE_efi);
     
     struct temporary_memory temporary_memory = begin_temporary_memory(scratch);
     
@@ -1128,8 +1013,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     if(globals.output_file_type != OUTPUT_FILE_dll) image_optional_header->dll_characteristics |= /*DLL_TERMINAL_SERVER_AWARE*/0x8000; // Not sure what this field means.
     if(!globals.cli_options.no_dynamic_base) image_optional_header->dll_characteristics |= /*DLL_DYNAMIC_BASE*/0x0040;
     
-    image_optional_header->size_of_stack_reserve = mega_bytes(1);
-    image_optional_header->size_of_stack_commit  = mega_bytes(1);
+    image_optional_header->size_of_stack_reserve = mega_bytes(50);
+    image_optional_header->size_of_stack_commit  = mega_bytes(50);
     image_optional_header->number_of_rva_and_sizes = array_count(image_optional_header->data_directory);
     
     // We currently have at most 6 sections. In the future, when we allow user sections this needs to be variable sized.
@@ -2034,11 +1919,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     u16 bss_section_id   = bss   ? (u16)((bss   - image_sections) + 1) : 0;
     u16 rdata_section_id = rdata ? (u16)((rdata - image_sections) + 1) : 0;
     
-    struct pdb_write_context *context = &(struct pdb_write_context)zero_struct;
-    
-    context->arena = arena;
-    context->scratch = scratch;
-    
     // the pdb format is formated in pages: first 3 pages are
     // 1) The PDB header
     // 2) The first free block map
@@ -2107,20 +1987,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     // LF_ENDPRECOMP
     
     const u32 page_size = 0x1000;
-    push_align(arena, page_size);
-    context->pdb_base = arena_current(arena);
-    
-    struct pdb_header *pdb_header = push_struct(arena, struct pdb_header);
-    context->pdb_header = pdb_header;
-    {
-        memcpy(pdb_header->signature, pdb_signature, sizeof(pdb_signature));
-        pdb_header->page_size = page_size;
-        pdb_header->free_page_map = 1; // has to be 1 or 2
-        //pdb_header->number_of_file_pages;
-        pdb_header->reserved = 0;
-        //pdb_header->page_number_of_directory_stream_page_list = ???;
-    }
-    
     push_align(arena, page_size);
     
     struct memory_arena pdb_information_stream = create_memory_arena(mega_bytes(1), 2.0f, 0);
@@ -2220,23 +2086,12 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         
         // Feature code: 
         *push_struct_unaligned(&pdb_information_stream, u32) = /*impvVC140*/20140508;
-        
-        set_current_stream(context, STREAM_PDB);
-        stream_emit_struct(context, pdb_information_stream.base, arena_current(&pdb_information_stream) - pdb_information_stream.base);
     }
-    
-    context->maximal_amount_of_type_indices = max_of(0x1000, globals.compound_types.capacity);
-    context->amount_of_type_indices = 0;
-    context->type_index_to_type_info = push_data(scratch, struct pdb_type_info, context->maximal_amount_of_type_indices);
-    
-    context->type_stack_size = 0x100;
-    context->type_stack = push_uninitialized_data(scratch, struct ast_type *, context->type_stack_size);
     
 #define pdb_init_basic_type_index(type_name)\
 {\
     globals.typedef_##type_name.pdb_type_index = CV_##type_name;\
     globals.typedef_##type_name.flags |= TYPE_FLAG_pdb_permanent;\
-    context->type_index_to_type_info[CV_##type_name].type = &globals.typedef_##type_name;\
 }
     pdb_init_basic_type_index(void);
     pdb_init_basic_type_index(Bool);
@@ -2253,23 +2108,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     globals.typedef_s8_pointer->pdb_type_index = CV_s8_pointer;
     globals.typedef_u8_pointer->pdb_type_index = CV_u8_pointer;
-    context->type_index_to_type_info[CV_s8_pointer].type = globals.typedef_s8_pointer;
-    context->type_index_to_type_info[CV_u8_pointer].type = globals.typedef_u8_pointer;
     globals.typedef_s8_pointer->flags |= TYPE_FLAG_pdb_permanent;
     globals.typedef_u8_pointer->flags |= TYPE_FLAG_pdb_permanent;
     
-    
-    context->type_index_to_type_info[CV_s8].pointer_type_index = CV_s8_pointer;
-    context->type_index_to_type_info[CV_u8].pointer_type_index = CV_u8_pointer;
-    
 #undef pdb_init_basic_type_index
-    
-    context->index_offset_buffer_size = 0x100;
-    context->index_offset_buffer = push_uninitialized_data(scratch, struct pdb_index_offset_buffer_entry, context->index_offset_buffer_size);
-    context->index_offset_buffer_at = 0;
-    context->index_offset_buffer_boundary = -1; // initialized to -1 so we always allocate one immediately
-    
-    begin_counter(timing, tpi_stream);
     
     struct index_stream_header{
         // We expect the version to be '20040203'.
@@ -2396,16 +2238,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             tpi_stream_header->index_offset_buffer_offset = tpi_stream_header->hash_table_index_buffer_length;
             tpi_stream_header->index_offset_buffer_length = (u32)((u8 *)(last_entry + 1) - (u8 *)index_offset_buffer);
-            
-            set_current_stream(context, STREAM_TPI_hash);
-            stream_emit_struct(context, tpi_hash_stream.base, arena_current(&tpi_hash_stream) - tpi_hash_stream.base);
         }
         
         tpi_stream_header->udt_order_adjust_table_offset = tpi_stream_header->index_offset_buffer_offset + tpi_stream_header->index_offset_buffer_length;
         tpi_stream_header->udt_order_adjust_table_length = 0;
-        
-        set_current_stream(context, STREAM_TPI);
-        stream_emit_struct(context, tpi_stream.base, arena_current(&tpi_stream) - tpi_stream.base);
     }
     
     struct memory_arena names_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
@@ -2483,15 +2319,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         
         // At the end is the amount of strings.
         *push_struct_unaligned(&names_stream, u32) = (u32)string_count;
-        
-        set_current_stream(context, STREAM_names);
-        stream_emit_struct(context, names_stream.base, arena_current(&names_stream) - names_stream.base);
     }
     
-    
-    // reset the 'context->index_offset_buffer'
-    context->index_offset_buffer_boundary = -1;
-    context->index_offset_buffer_at = 0;
     
     u32 build_info_symbol;
     // stream 4: IPI stream
@@ -2743,13 +2572,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             ipi_stream_header->index_offset_buffer_offset = ipi_stream_header->hash_table_index_buffer_length;
             ipi_stream_header->index_offset_buffer_length = (u32)((u8 *)(last_entry + 1) - (u8 *)index_offset_buffer);
-            
-            set_current_stream(context, STREAM_IPI_hash);
-            stream_emit_struct(context, ipi_hash_stream.base, arena_current(&ipi_hash_stream) - ipi_hash_stream.base);
         }
-        
-        set_current_stream(context, STREAM_IPI);
-        stream_emit_struct(context, ipi_stream.base, arena_current(&ipi_stream) - ipi_stream.base);
     }
     
     // 
@@ -2899,12 +2722,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         
         *push_struct(&module_stream, u32) = 0; // Amount of global references.
         
-        set_current_stream(context, STREAM_module_zero);
-        stream_emit_struct(context, module_stream.base, arena_current(&module_stream) - module_stream.base);
+#undef begin_symbol_record
+#undef end_symbol_record
     }
     
     struct memory_arena dbi_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
-    
     
     {   //
         // Stream 3: Debug Info stream :dbi_stream
@@ -3183,9 +3005,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         dbi_stream_header->section_map_substream_byte_size           = (u32)(source_info_begin - section_map_begin);
         dbi_stream_header->source_info_substream_byte_size           = (u32)(optional_debug_header_begin - source_info_begin);
         dbi_stream_header->optional_debug_header_substream_byte_size = (u32)(dbi_end - optional_debug_header_begin);
-        
-        set_current_stream(context, STREAM_DBI);
-        stream_emit_struct(context, dbi_stream.base, arena_current(&dbi_stream) - dbi_stream.base);
     }
     
     // :gsi_hash_table
@@ -3199,12 +3018,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     smm psi_amount_of_global_symbols = 0;
     
     
+    struct memory_arena symbol_record_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
+    
     {   // 
         // stream 9: Symbol record stream :symbol_records :symbol_stream
         // 
-        set_current_stream(context, STREAM_symbol_records);
-        
-        struct pdb_location symbol_record_start = get_current_pdb_location(context);
         
         // Members generated by the linker:
         //     S_PUB32    < associate a name (marker) to specific location (section, offset), does not give any type info
@@ -3217,6 +3035,12 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         //     S_GDATA32  < export globals, tells you about the location (section, offset), and the type of some data.
         //     S_LDATA32  < static globals, tells you about the location (section, offset), and the type of some data.
         
+        
+#define begin_symbol_record(record_kind) { current_symbol_record = push_struct(&symbol_record_stream, struct codeview_type_record_header); current_symbol_record->kind = (record_kind); }
+#define end_symbol_record() { push_f3f2f1_align(&symbol_record_stream, sizeof(u32)); current_symbol_record->length = to_u16(arena_current(&symbol_record_stream) - (u8 *)&current_symbol_record->kind); }
+        
+        struct codeview_type_record_header *current_symbol_record;
+        
         // emit a 'LPROCREF' or 'PROCREF' for each function
         // @cleanup: does this break for local functions of the same name?
         for_ast_list(defined_functions){
@@ -3224,29 +3048,29 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             assert(!(function->decl_flags & DECLARATION_FLAGS_is_dllimport));
             
-            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+            u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
             
             u16 symbol = (function->as_decl.flags & DECLARATION_FLAGS_is_static) ? /* LPROCREF */0x1127 : /* PROCREF */0x1125;
-            begin_symbol(symbol);{
-                out_int(0, u32);                             // sumName < this appears to always be 0
-                out_int(function->debug_symbol_offset, u32); // offset in the module symbol stream
-                out_int(1, u16);                             // module index of the stream containing the symbol
-                out_string(function->identifier->string);            // name (not sure if this is mangled or not)
-            }end_symbol();
+            begin_symbol_record(symbol);{
+                *push_struct(&symbol_record_stream, u32) = 0;                                          // sumName < this appears to always be 0
+                *push_struct(&symbol_record_stream, u32) = function->debug_symbol_offset;              // offset in the module symbol stream
+                *push_struct(&symbol_record_stream, u16) = 1;                                          // module index of the stream containing the symbol
+                push_zero_terminated_string_copy(&symbol_record_stream, function->identifier->string); // name (not sure if this is mangled or not)
+            }end_symbol_record();
             
             gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, function->relative_virtual_address, function->identifier->string);
             gsi_amount_of_global_symbols += 1;
             
             if(!(function->decl_flags & DECLARATION_FLAGS_is_static)){
                 
-                ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+                ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
                 
-                begin_symbol(0x110e);{                              // PUB32
-                    out_int(2, u32);                                // flags (is_function)
-                    out_int(function->offset_in_text_section, u32); // offset in segment
-                    out_int(text_section_id, u16);                  // segment
-                    out_string(function->identifier->string);               // name
-                }end_symbol();
+                begin_symbol_record(0x110e);{                                                              // PUB32
+                    *push_struct(&symbol_record_stream, u32) = 2;                                          // flags (is_function)
+                    *push_struct(&symbol_record_stream, u32) = (u32)function->offset_in_text_section;           // offset in segment
+                    *push_struct(&symbol_record_stream, u16) = text_section_id;                            // segment
+                    push_zero_terminated_string_copy(&symbol_record_stream, function->identifier->string); // name
+                }end_symbol_record();
                 
                 psi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(psi_hash_table, scratch, ref_offset, function->relative_virtual_address, function->identifier->string);
                 psi_amount_of_global_symbols += 1;
@@ -3258,18 +3082,15 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct ast_function *function = (struct ast_function *)it->value;
             
             struct string name = push_format_string(scratch, "__imp_%.*s", function->identifier->size, function->identifier->data);
-            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+            u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
             
-            smm rva;
-            begin_symbol(0x110e);{                              // PUB32
-                out_int(0, u32);                                // flags
-                
-                out_int(function->relative_virtual_address - rdata->virtual_address, u32); // offset in segment
-                rva = function->relative_virtual_address;
-                
-                out_int(rdata_section_id, u16);                 // segment
-                out_string(name);                               // name
-            }end_symbol();
+            smm rva = function->relative_virtual_address;
+            begin_symbol_record(0x110e);{                                                // PUB32
+                *push_struct(&symbol_record_stream, u32) = 0;                            // flags
+                *push_struct(&symbol_record_stream, u32) = (u32)(rva - rdata->virtual_address); // offset in segment
+                *push_struct(&symbol_record_stream, u16) = rdata_section_id;             // segment
+                push_zero_terminated_string_copy(&symbol_record_stream, name);           // name
+            }end_symbol_record();
             
             psi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(psi_hash_table, scratch, ref_offset, rva, name);
             psi_amount_of_global_symbols += 1;
@@ -3281,18 +3102,15 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct dll_import_node *dll_import_node = function->dll_import_node;
             
             struct string name = function->identifier->string;
-            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+            u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
             
-            smm rva;
-            begin_symbol(0x110e);{                              // PUB32
-                out_int(0, u32);                                // flags
-                
-                out_int(dll_import_node->stub_relative_virtual_address - text->virtual_address, u32); // offset in segment
-                rva = dll_import_node->stub_relative_virtual_address;
-                
-                out_int(text_section_id, u16);                 // segment
-                out_string(name);                               // name
-            }end_symbol();
+            smm rva = dll_import_node->stub_relative_virtual_address;
+            begin_symbol_record(0x110e);{                                               // PUB32
+                *push_struct(&symbol_record_stream, u32) = 0;                           // flags
+                *push_struct(&symbol_record_stream, u32) = (u32)(rva - text->virtual_address); // offset in segment
+                *push_struct(&symbol_record_stream, u16) = text_section_id;             // segment
+                push_zero_terminated_string_copy(&symbol_record_stream, name);          // name
+            }end_symbol_record();
             
             psi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(psi_hash_table, scratch, ref_offset, rva, name);
             psi_amount_of_global_symbols += 1;
@@ -3309,12 +3127,13 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             for(u32 member_index = 0; member_index < ast_enum->amount_of_members; member_index++){
                 struct compound_member *member = &ast_enum->members[member_index];
                 
-                u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
+                u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
                 s32 value = (s32)member->enum_value;
-                begin_symbol(0x1107);{ // S_CONSTANT
-                    out_int(ast_enum->base.pdb_type_index, u32);
-                    stream_emit_size_and_name(context, value, true, member->name->string);
-                }end_symbol();
+                begin_symbol_record(0x1107);{ // S_CONSTANT
+                    *push_struct(&symbol_record_stream, u32) = ast_enum->base.pdb_type_index;
+                    push_signed_number_leaf(&symbol_record_stream, value);
+                    push_zero_terminated_string_copy(&symbol_record_stream, member->name->string);
+                }end_symbol_record();
                 
                 gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, 0, member->name->string);
                 gsi_amount_of_global_symbols += 1;
@@ -3329,15 +3148,16 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             u16 symbol_kind = (decl->flags & DECLARATION_FLAGS_is_static) ? /* S_LDATA32 */ 0x110c : /* S_GDATA32 */ 0x110d;
             
-            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
-            begin_symbol(symbol_kind);{
-                out_int(decl->type->pdb_type_index, u32); // type_index
-                out_int(to_u32(decl->relative_virtual_address - bss->virtual_address), u32); // offset in section
-                out_int(bss_section_id, u16);             // section id
-                out_string(decl->identifier->string);
-            } end_symbol();
+            u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
+            u64 rva = decl->relative_virtual_address;
+            begin_symbol_record(symbol_kind);{
+                *push_struct(&symbol_record_stream, u32) = decl->type->pdb_type_index; // type_index
+                *push_struct(&symbol_record_stream, u32) = to_u32(rva - bss->virtual_address); // offset in section
+                *push_struct(&symbol_record_stream, u16) = bss_section_id;             // section id
+                push_zero_terminated_string_copy(&symbol_record_stream, decl->identifier->string);
+            }end_symbol_record();
             
-            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, decl->relative_virtual_address, decl->identifier->string);
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, rva, decl->identifier->string);
             gsi_amount_of_global_symbols += 1;
         }
         
@@ -3348,15 +3168,16 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             u16 symbol_kind = (decl->flags & DECLARATION_FLAGS_is_static) ? /* S_LDATA32 */ 0x110c : /* S_GDATA32 */ 0x110d;
             
-            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
-            begin_symbol(symbol_kind);{
-                out_int(decl->type->pdb_type_index, u32); // type_index
-                out_int(to_u32(decl->relative_virtual_address - data->virtual_address), u32); // offset in section
-                out_int(data_section_id, u16);             // section id
-                out_string(decl->identifier->string);
-            } end_symbol();
+            u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
+            u64 rva = decl->relative_virtual_address;
+            begin_symbol_record(symbol_kind);{
+                *push_struct(&symbol_record_stream, u32) = decl->type->pdb_type_index; // type_index
+                *push_struct(&symbol_record_stream, u32) = to_u32(rva - data->virtual_address); // offset in section
+                *push_struct(&symbol_record_stream, u16) = data_section_id;             // section id
+                push_zero_terminated_string_copy(&symbol_record_stream, decl->identifier->string);
+            }end_symbol_record();
             
-            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, decl->relative_virtual_address, decl->identifier->string);
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, rva, decl->identifier->string);
             gsi_amount_of_global_symbols += 1;
         }
         
@@ -3365,42 +3186,32 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
             assert(decl->type->pdb_type_index > 0);
             
-            u32 ref_offset = pdb_current_offset_from_location(context, symbol_record_start);
-            begin_symbol(0x1108);{ // S_UDT
-                out_int(decl->type->pdb_type_index, u32);
-                out_string(decl->identifier->string);
-            } end_symbol();
-            
+            u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
+            begin_symbol_record(0x1108);{ // S_UDT
+                *push_struct(&symbol_record_stream, u32) = decl->type->pdb_type_index;
+                push_zero_terminated_string_copy(&symbol_record_stream, decl->identifier->string);
+            } end_symbol_record();
             
             gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, 0, decl->identifier->string);
             gsi_amount_of_global_symbols += 1;
         }
         
+#undef begin_symbol_record
+#undef end_symbol_record
     }
     
-    // header dump stream
-    { // :header_dump
-        set_current_stream(context, STREAM_section_header_dump);
-        for(u32 i = 0; i < coff_file_header->amount_of_sections; i++){
-            struct coff_section_header *header = &image_sections[i];
-            
-            out_struct(*header);
-        }
-    }
+    struct memory_arena global_symbol_hash_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
     
-    begin_counter(timing, gsi_stream);
-    // global symbol hash stream
-    { // :global_symbol_hash_stream
-        set_current_stream(context, STREAM_global_symbol_hash);
+    {   // global symbol hash stream :global_symbol_hash_stream
         
         // global_symbol_stream layout:
-        // u32 unclear = -1;
-        // u32 signature;
-        // u32 byte_size_of_hash_records;
-        // u32 size_of_buckets_and_bitmap;
-        // hash_records[amount_of_global_symbols];
-        // hash_bitmap[(IPHR_HASH + 32)/32];
-        // hash_bucket_offsets[];
+        //     u32 unclear = -1;
+        //     u32 signature;
+        //     u32 byte_size_of_hash_records;
+        //     u32 size_of_buckets_and_bitmap;
+        //     hash_records[amount_of_global_symbols];
+        //     hash_bitmap[(IPHR_HASH + 32)/32];
+        //     hash_bucket_offsets[];
         
         // The reader is supposed to reconstruct a hash_table:
         // pdb_string_hash(symbol_name) -> {offset, reference_count}
@@ -3412,18 +3223,23 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // :gsi_hash_table
         // We have constructed this hash table iteratively while adding the symbols to the symbol_stream
         
-        // gsi header
-        out_int(-1, u32); // unclear
-        out_int(0xeffe0000 + 19990810, u32); // signature
-        
-        out_int(gsi_amount_of_global_symbols * 2 * sizeof(u32), u32); // size of hash records in bytes
-        
         u32 bitmap_size = (IPHR_HASH + 32)/32;
-        out_int(bitmap_size * 4 + gsi_amount_of_bucket_offsets * 4, u32); // size of buckets and bitmap in bytes
         
-        struct pdb_location records = stream_allocate_bytes(context, gsi_amount_of_global_symbols * 2 *sizeof(u32));
-        struct pdb_location bitmap  = stream_allocate_bytes(context, bitmap_size * sizeof(u32));
-        struct pdb_location offsets = stream_allocate_bytes(context, gsi_amount_of_bucket_offsets * sizeof(u32));
+        *push_struct(&global_symbol_hash_stream, u32) = (u32)-1; // unclear
+        *push_struct(&global_symbol_hash_stream, u32) = 0xeffe0000 + 19990810; // signature
+        *push_struct(&global_symbol_hash_stream, u32) = (u32)(gsi_amount_of_global_symbols * 2 * sizeof(u32)); // size of hash records in bytes
+        *push_struct(&global_symbol_hash_stream, u32) = (u32)(bitmap_size * 4 + gsi_amount_of_bucket_offsets * 4); // size of buckets and bitmap in bytes
+        
+        struct gsi_ref{
+            u32 ref_offset;
+            u32 ref_count;
+        } *records = push_data(&global_symbol_hash_stream, struct gsi_ref, gsi_amount_of_global_symbols);
+        u32 *bitmap  = push_data(&global_symbol_hash_stream, u32, bitmap_size);
+        u32 *offsets = push_data(&global_symbol_hash_stream, u32, gsi_amount_of_bucket_offsets);
+        
+        smm records_at = 0;
+        smm bitmap_at = 0;
+        smm offsets_at = 0;
         
         u32 bit = 0;
         u32 bit_index = 0;
@@ -3433,64 +3249,72 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             if(gsi_hash_table[i]) bit |= (1u << bit_index);
             bit_index += 1;
             if(bit_index == 32){
-                stream_write_bytes(context, &bitmap, &bit, sizeof(bit));
+                bitmap[bitmap_at++] = bit; // Ughh, we should simplify this.
                 bit = 0;
                 bit_index = 0;
             }
             if(!gsi_hash_table[i]) continue;
             
             u32 amount_in_bucket = 0;
-            u32 one = 1;
             for(struct gsi_hash_bucket *it = gsi_hash_table[i]; it; it = it->next){
                 amount_in_bucket++;
                 // @note: +1 for some stupid reason
                 // this offset is the offset in the symbol record stream, so no module index.
                 u32 ref_offset = it->symbol_offset + 1;
-                stream_write_bytes(context, &records, &ref_offset, sizeof(u32));
-                stream_write_bytes(context, &records, &one, sizeof(u32));
+                records[records_at].ref_offset = ref_offset;
+                records[records_at].ref_count = 1;
+                records_at += 1;
             }
             
             // 12 is the size of a 'gsi_hash_bucket' on a 32-bit system...
-            stream_write_bytes(context, &offsets, &offset_at, sizeof(u32));
+            offsets[offsets_at++] = offset_at;
             offset_at += 12 * amount_in_bucket;
         }
-        stream_write_bytes(context, &bitmap, &bit, sizeof(bit));
-        assert(records.size == 0);
-        assert(bitmap.size == 0);
-        assert(offsets.size == 0);
+        bitmap[bitmap_at++] = bit; // Ughh, we should simplify this.
         
+        assert(records_at == gsi_amount_of_global_symbols);
+        assert(bitmap_at  == bitmap_size);
+        assert(offsets_at == gsi_amount_of_bucket_offsets);
     }
-    end_counter(timing, gsi_stream);
     
-    begin_counter(timing, psi_stream);
-    // public symbol hash stream
-    { // :public_symbol_hash_stream
-        set_current_stream(context, STREAM_public_symbol_hash);
+    struct memory_arena public_symbol_hash_stream = create_memory_arena(giga_bytes(4), 2.0f, 0);
+    
+    {   // public symbol hash stream :public_symbol_hash_stream
         
         // public symbol stream header
-        struct pdb_location size = stream_allocate_bytes(context, sizeof(u32));// symbol hash byte size
-        out_int(psi_amount_of_global_symbols * sizeof(u32), u32); // address map byte size
-        out_int(0, u32); // number of thunks
-        out_int(0, u32); // thunk byte size
-        out_int(0, u16); // thunk table section index
-        out_int(0, u16); // pad
-        out_int(0, u32); // thunk table index
-        out_int(0, u32); // number of sections
+        u32 *symbol_hash_byte_size = push_struct(&public_symbol_hash_stream, u32);
+        *push_struct(&public_symbol_hash_stream, u32) = (u32)(psi_amount_of_global_symbols * sizeof(u32)); // address map byte size
+        *push_struct(&public_symbol_hash_stream, u32) = 0; // number of thunks
+        *push_struct(&public_symbol_hash_stream, u32) = 0; // thunk byte size
+        *push_struct(&public_symbol_hash_stream, u16) = 0; // thunk table section index
+        *push_struct(&public_symbol_hash_stream, u16) = 0; // pad
+        *push_struct(&public_symbol_hash_stream, u32) = 0; // thunk table index
+        *push_struct(&public_symbol_hash_stream, u32) = 0; // number of sections
         
         
-        struct pdb_location before_gsi = get_current_pdb_location(context);
-        // now comes a copy of the gsi stream, but for public symbols
-        out_int(-1, u32); // unclear
-        out_int(0xeffe0000 + 19990810, u32); // signature
+        u8 *before_gsi = arena_current(&public_symbol_hash_stream);
         
-        out_int(psi_amount_of_global_symbols * 2 * sizeof(u32), u32); // size of hash records in bytes
+        // 
+        // Now comes a copy of the gsi stream, but for public symbols.
+        // 
         
         u32 bitmap_size = (IPHR_HASH + 32)/32;
-        out_int(bitmap_size * 4 + psi_amount_of_bucket_offsets * 4, u32); // size of buckets and bitmap in bytes
         
-        struct pdb_location records = stream_allocate_bytes(context, psi_amount_of_global_symbols * 2 * sizeof(u32));
-        struct pdb_location bitmap  = stream_allocate_bytes(context, bitmap_size * sizeof(u32));
-        struct pdb_location offsets = stream_allocate_bytes(context, psi_amount_of_bucket_offsets * sizeof(u32));
+        *push_struct(&public_symbol_hash_stream, u32) = (u32)-1; // unclear
+        *push_struct(&public_symbol_hash_stream, u32) = 0xeffe0000 + 19990810; // signature
+        *push_struct(&public_symbol_hash_stream, u32) = (u32)(psi_amount_of_global_symbols * 2 * sizeof(u32)); // size of hash records in bytes
+        *push_struct(&public_symbol_hash_stream, u32) = (u32)(bitmap_size * 4 + psi_amount_of_bucket_offsets * 4); // size of buckets and bitmap in bytes
+        
+        struct psi_ref{
+            u32 ref_offset;
+            u32 ref_count;
+        } *records = push_data(&public_symbol_hash_stream, struct psi_ref, psi_amount_of_global_symbols);
+        u32 *bitmap  = push_data(&public_symbol_hash_stream, u32, bitmap_size);
+        u32 *offsets = push_data(&public_symbol_hash_stream, u32, psi_amount_of_bucket_offsets);
+        
+        smm records_at = 0;
+        smm bitmap_at = 0;
+        smm offsets_at = 0;
         
         u32 bit = 0;
         u32 bit_index = 0;
@@ -3500,39 +3324,43 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             if(psi_hash_table[bucket_index]) bit |= (1u << bit_index);
             bit_index += 1;
             if(bit_index == 32){
-                stream_write_bytes(context, &bitmap, &bit, sizeof(bit));
+                bitmap[bitmap_at++] = bit;
                 bit = 0;
                 bit_index = 0;
             }
             if(!psi_hash_table[bucket_index]) continue;
             
             u32 amount_in_bucket = 0;
-            u32 one = 1;
             for(struct gsi_hash_bucket *it = psi_hash_table[bucket_index]; it; it = it->next){
                 amount_in_bucket++;
                 // @note: +1 for some stupid reason
                 // this offset is the offset in the symbol record stream, so no module index.
                 u32 ref_offset = it->symbol_offset + 1;
-                stream_write_bytes(context, &records, &ref_offset, sizeof(u32));
-                stream_write_bytes(context, &records, &one, sizeof(u32));
+                records[records_at].ref_offset = ref_offset;
+                records[records_at].ref_count = 1;
+                records_at++;
             }
             
             // 12 is the size of a 'psi_hash_bucket' on a 32-bit system...
-            stream_write_bytes(context, &offsets, &offset_at, sizeof(u32));
+            offsets[offsets_at++] = offset_at;
             offset_at += 12 * amount_in_bucket;
         }
-        stream_write_bytes(context, &bitmap, &bit, sizeof(bit));
-        assert(records.size == 0);
-        assert(bitmap.size == 0);
-        assert(offsets.size == 0);
+        bitmap[bitmap_at++] = bit;
         
-        u32 diff = pdb_current_offset_from_location(context, before_gsi);
-        stream_write_bytes(context, &size, &diff, sizeof(u32));
+        assert(records_at == psi_amount_of_global_symbols);
+        assert(bitmap_at  == bitmap_size);
+        assert(offsets_at == psi_amount_of_bucket_offsets);
         
+        *symbol_hash_byte_size = (u32)(arena_current(&public_symbol_hash_stream) - before_gsi);
+        
+        
+        // 
+        // Now the address map:
+        // 
         // "The address map is an array of symbol offsets sorted so that it can be binary searched by address."
         // after the gsi stream copy thing there is an address map mapping "addresses" to symbol offsets
         {
-            u32 *symbol_offsets             = push_uninitialized_data(scratch, u32, psi_amount_of_global_symbols);
+            u32 *symbol_offsets             = push_uninitialized_data(&public_symbol_hash_stream, u32, psi_amount_of_global_symbols);
             u32 *relative_virtual_addresses = push_uninitialized_data(scratch, u32, psi_amount_of_global_symbols);
             
             smm out = 0;
@@ -3631,131 +3459,38 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     
                     right = sort_stack[--sort_stack_at];
                 }
-                
             }
-            
-            stream_emit_struct(context, symbol_offsets, psi_amount_of_global_symbols * sizeof(u32));
-        }
-        
-    }
-    end_counter(timing, psi_stream);
-    
-    begin_counter(timing, directory_stream);
-    {// :directory_stream
-        // directory stream layout:
-        // u32 amount_of_streams;
-        // u32 stream_sizes[amount_of_streams]
-        // u32 stream_one_pages[]
-        // u32 stream_two_pages[]
-        // ...
-        
-        // :old_directory_hack
-        set_current_stream(context, STREAM_old_directory);
-        u32 amount_of_streams = 0;
-        for(u32 i = 0; i < array_count(context->page_list); i++){
-            struct page_list *list = context->page_list + i;
-            if(!list->first) break;
-            amount_of_streams++;
-        }
-        out_int(amount_of_streams, u32);
-        
-        u32 *sizes = push_uninitialized_data(scratch, u32, amount_of_streams);
-        struct pdb_location stream_sizes = stream_allocate_bytes(context, amount_of_streams * sizeof(u32));
-        for(u32 i = 0; i < amount_of_streams; i++){
-            smm size = 0;
-            struct page_list *list = context->page_list + i;
-            for(struct page_list_node *it = list->first; it; it = it->next){
-                //os_console_print("stream %d page %d\n", i, it->page_index);
-                
-                // @hmm, right now we emit a page on 'set_current_stream' if the stream then turns out to
-                // be empty we would still emit the page, this is why this 'if' is here...
-                
-                if(it->offset) out_int(it->page_index, u32);
-                size += it->offset;
-            }
-            sizes[i] = to_u32(size);
-            
-        }
-        stream_write_bytes(context, &stream_sizes, sizes, amount_of_streams * sizeof(u32));
-    }
-    end_counter(timing, directory_stream);
-    
-    
-    {
-        u8 *directory_page_list_page = push_uninitialized_data(arena, u8, 0x1000);
-        
-        u32 page_number = to_u32((directory_page_list_page - context->pdb_base) >> 12);
-        pdb_header->page_number_of_directory_stream_number_list = page_number;
-        
-        // :old_directory_hack @note: right now we use old directory to do the current directory
-        u32 *directory_page_list_entry = (u32 *)directory_page_list_page;
-        u32 directory_stream_size = 0;
-        u32 i = 0;
-        for(struct page_list_node *it = context->page_list[STREAM_old_directory].first; it; it = it->next){
-            directory_stream_size += it->offset;
-            directory_page_list_entry[i++] = it->page_index;
-        }
-        
-        pdb_header->directory_stream_size = directory_stream_size;
-    }
-    
-    
-    u8 *end_address = arena_current(arena);
-    pdb_header->number_of_pages = to_u32((end_address - context->pdb_base) >> 12);
-    context->pdb_end = end_address;
-    context->pdb_size = context->pdb_end - context->pdb_base;
-    
-    // free page maps :free_page_map
-    begin_counter(timing, free_page_map);
-    {
-        // the free page map has a bit set for every page that is free.
-        // @note: every page is used until 'pdb_header->number_of_pages' and all other pages are unused.
-        // @note: the first free page map covers the first 8 'intervals' i.e. the first 0x8000 pages.
-        u32 first_non_zero_page_index_in_fpm = pdb_header->number_of_pages / 0x8000;
-        struct page_list_node *first_non_zero_page = context->free_page_maps.first;
-        for(u32 i = 0; i < first_non_zero_page_index_in_fpm; i++){
-            u8 *page = pdb_page_from_index(context, first_non_zero_page->page_index);
-            memset(page, 0, page_size);
-            first_non_zero_page = first_non_zero_page->next;
-        }
-        for(struct page_list_node *node = first_non_zero_page; node; node = node->next){
-            u8 *page = pdb_page_from_index(context, node->page_index);
-            memset(page, 0xff, page_size);
-        }
-        
-        u32 remainder = pdb_header->number_of_pages - first_non_zero_page_index_in_fpm * 0x8000;
-        u8 *page = pdb_page_from_index(context, first_non_zero_page->page_index);
-        for(u32 i = 0; i < remainder; i++){
-            page[i / 8] &= ~(1 << (i % 8));
         }
     }
-    end_counter(timing, free_page_map);
     
-    end_temporary_memory(temporary_memory);
+    // 
+    // Write out the msf file!
+    // 
     
-#if READ_PDB_AFTER_EMITING_IT
-    struct os_file pdb_file = {
-        .memory = context->pdb_base,
-        .size = context->pdb_size,
+    struct msf_stream streams[STREAM_count] = {
+        [STREAM_PDB]                 = {.data = pdb_information_stream.base, .size = pdb_information_stream.current - pdb_information_stream.base},
+        [STREAM_TPI]                 = {.data = tpi_stream.base, .size = tpi_stream.current - tpi_stream.base},
+        [STREAM_DBI]                 = {.data = dbi_stream.base, .size = dbi_stream.current - dbi_stream.base},
+        [STREAM_IPI]                 = {.data = ipi_stream.base, .size = ipi_stream.current - ipi_stream.base},
+        [STREAM_names]               = {.data = names_stream.base, .size = names_stream.current - names_stream.base},
+        [STREAM_TPI_hash]            = {.data = tpi_hash_stream.base, .size = tpi_hash_stream.current - tpi_hash_stream.base},
+        [STREAM_IPI_hash]            = {.data = ipi_hash_stream.base, .size = ipi_hash_stream.current - ipi_hash_stream.base},
+        [STREAM_symbol_records]      = {.data = symbol_record_stream.base, .size = symbol_record_stream.current - symbol_record_stream.base},
+        [STREAM_global_symbol_hash]  = {.data = global_symbol_hash_stream.base, .size = global_symbol_hash_stream.current - global_symbol_hash_stream.base},
+        [STREAM_public_symbol_hash]  = {.data = public_symbol_hash_stream.base, .size = public_symbol_hash_stream.current - public_symbol_hash_stream.base},
+        [STREAM_section_header_dump] = {.data = (u8 *)image_sections, .size = coff_file_header->amount_of_sections * sizeof(*image_sections)},
+        [STREAM_module_zero]         = {.data = module_stream.base, .size = module_stream.current - module_stream.base},
     };
     
-    read_pdb(scratch, pdb_file);
-#endif
+    char *pdb_name = (char *)pdb_full_path.data;
     
-    end_counter(timing, print_pdb);
-    
-    if(!globals.cli_options.dont_print_the_files){
-        begin_counter(context, write_pdb);
-        char *pdb_name = (char *)pdb_full_path.data;
-        smm success = os_write_file(pdb_name, context->pdb_base, context->pdb_size);
-        end_counter(context, write_pdb);
-        
-        if(success){
-            if(!globals.cli_options.quiet) print("Wrote file: '%s'\n", pdb_name);
-        }else{
-            print("Error: Unable to write file '%s'.\n", pdb_name);
-            globals.an_error_has_occurred = true;
-        }
+    // @note: The 0-th stream is added by the write_msf function implicitly.
+    int success = write_msf(pdb_name, streams + 1, STREAM_count - 1);
+    if(success){
+        if(!globals.cli_options.quiet) print("Wrote file: '%s'\n", pdb_name);
+    }else{
+        print("Error: Unable to write file '%s'.\n", pdb_name);
+        globals.an_error_has_occurred = true;
     }
     
     return;
