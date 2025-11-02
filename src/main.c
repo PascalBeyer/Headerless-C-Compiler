@@ -4312,7 +4312,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             
             struct string predefines_string = string_list_flatten(predefines, arena);
             
-            struct token_array tokens = tokenize_raw(context, predefines_string, (u32)globals.invalid_file.file_index, /*is_stupid_hack*/false, /*out lines*/null);
+            struct token_array tokens = tokenize_raw(context, predefines_string, (u32)globals.invalid_file.file_index, /*out lines*/null);
             globals.predefined_tokens = tokens;
         }
         

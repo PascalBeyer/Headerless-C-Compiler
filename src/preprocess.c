@@ -1199,44 +1199,14 @@ func struct parsed_integer parse_hex_literal(struct context *context, struct tok
 
 //_____________________________________________________________________________________________________________________
 
-func struct token_array tokenize_raw(struct context *context, struct string string, u32 file_index, b32 is_stupid_hash_hash_hack, smm *lines){
+func struct token_array tokenize_raw(struct context *context, struct string string, u32 file_index, smm *lines){
     
     if(!string.size) return (struct token_array)zero_struct;
     
     begin_counter(context, tokenize_raw);
     
-    struct token *tokens;
-    smm bytes_reserved;
-    smm bytes_committed;
-    if(is_stupid_hash_hash_hack){
-        //
-        // In the stupid '##' hack case we don't want to allocate the memory with 
-        // 'os_reserve_memory' as that would be at least a page and would call to the os.
-        // instead we are supposed to just push 8 tokens onto 'context->scratch'.
-        //
-        bytes_reserved = sizeof(struct token) * 8;
-        bytes_committed = bytes_reserved;
-        
-        tokens = push_uninitialized_data(&context->scratch, struct token, 8);
-    }else{
-        //
-        // There can at most be one raw token per byte. Thus reserve this much!
-        // In the loop we then incrementally commit the memory.
-        //
-        bytes_reserved = align_up(string.amount * sizeof(struct token), 0x1000);
-        bytes_committed = 0;
-        
-        struct os_virtual_buffer token_buffer = os_reserve_memory(0, bytes_reserved);
-        if(!token_buffer.memory){
-            assert(file_index < array_count(globals.file_table.data));
-            char *file_name = globals.file_table.data[file_index]->absolute_file_path;
-            
-            print("%s: Allocation failure when allocating memory for file.\n", file_name);
-            os_panic(1);
-        }
-        
-        tokens = (struct token *)token_buffer.memory;
-    }
+    // There is at most one token per byte.
+    struct token *tokens = push_uninitialized_data(&context->emit_arena, struct token, string.size);
     
     smm amount_of_tokens = 0;
     
@@ -1247,20 +1217,6 @@ func struct token_array tokenize_raw(struct context *context, struct string stri
     smm column = 1;
     
     while(at < end_of_file){
-        
-        smm size_used = amount_of_tokens * sizeof(struct token);
-        if(size_used == bytes_committed){
-            smm size_left = bytes_reserved - bytes_committed;
-            
-            smm max_commit = sizeof(struct token) * 0x1000;
-            smm to_commit  = min_of(size_left, max_commit);
-            
-            u8 *current_end = (u8 *)tokens + size_used;
-            void *success = os_commit_memory(current_end, to_commit).memory;
-            assert(success == current_end);
-            
-            bytes_committed += to_commit;
-        }
         
         struct token *cur = tokens + amount_of_tokens++;
         cur->file_index = file_index;
@@ -1801,6 +1757,8 @@ at     += size;
         .data = tokens,
         .size = amount_of_tokens,
     };
+    
+    context->emit_arena.current = (u8 *)(tokens + amount_of_tokens);
     
     // minus one as lines are one based
     if(lines) *lines = line - 1;
@@ -2441,7 +2399,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 //        need to point to something valid
                 struct string concat = string_concatenate(context->arena, prev_string, next_string);
                 
-                struct token_array tokens = tokenize_raw(context, concat, macro_expansion_site->file_index, /* is_stupid_hash_hash_hack */ true, /* lines */null);
+                struct token_array tokens = tokenize_raw(context, concat, macro_expansion_site->file_index, /* lines */null);
                 
                 if(tokens.amount){
                     // @note: amount can be 0 for 
@@ -2717,7 +2675,7 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
         goto end;
     }
     
-    file->tokens = tokenize_raw(context, file_contents, file->file_index, /* is_stupid_hack */ false, &file->lines);
+    file->tokens = tokenize_raw(context, file_contents, file->file_index, &file->lines);
     
     end:
     atomic_store(int, file->in_progress, false);
