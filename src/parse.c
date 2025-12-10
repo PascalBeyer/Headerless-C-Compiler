@@ -2718,7 +2718,7 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
         
         compound_literal->initializer_size = arena_current(&context->ir_arena) - (u8 *)(compound_literal + 1);
         
-        if(type_is_array_of_unknown_size(type)){
+        if(!context->should_exit_statement && type_is_array_of_unknown_size(type)){
             // 
             // If we initialized an array of unknown type, we have to patch in the type.
             // @copy_and_paste from :struct_literal
