@@ -47,6 +47,46 @@ func void _parser_sleep(struct context *context, struct token *sleep_on, u32 lin
 #define parser_sleep(context, sleep_on, purpose) _parser_sleep(context, sleep_on, __LINE__, purpose)
 
 
+func struct string report_type_mismatch__internal(struct context *context, char *prefix, struct ast_type *type, enum ast_kind *defined_type){
+    struct string ret = zero_struct;
+    
+    b32 handled = false;
+    if(defined_type){
+        if(*defined_type == IR_typedef){
+            struct ast_declaration *decl = cast(struct ast_declaration *)defined_type;
+            struct string lhs_string = push_type_string(context->arena, &context->scratch, decl->type);
+            ret = push_format_string(&context->scratch, "%s '%.*s' (aka %.*s)", prefix, decl->identifier->amount, decl->identifier->data, lhs_string.amount, lhs_string.data);
+            handled = true;
+        }else if(*defined_type == AST_enum){
+            struct string lhs_string = push_type_string(context->arena, &context->scratch, cast(struct ast_type *)defined_type);
+            ret = push_format_string(&context->scratch, "%s '%.*s'", prefix, lhs_string.amount, lhs_string.data);
+            handled = true;
+        }
+    }
+    
+    if(!handled){
+        struct string lhs_string = push_type_string(context->arena, &context->scratch, type);
+        ret = push_format_string(&context->scratch, "%s '%.*s'", prefix, lhs_string.amount, lhs_string.data);
+    }
+    return ret;
+}
+
+func void report_type_mismatch_error(struct context *context, struct ast_type *lhs, enum ast_kind *lhs_defined_type, struct ast_type *rhs, enum ast_kind *rhs_defined_type, struct token *location){
+    struct string lhs_string = report_type_mismatch__internal(context, "Wanted", lhs, lhs_defined_type);
+    struct string rhs_string = report_type_mismatch__internal(context, "given", rhs, rhs_defined_type);
+    
+    report_error(context, location, "%.*s %.*s.", lhs_string.amount, lhs_string.data, rhs_string.amount, rhs_string.data);
+}
+
+
+func void report_type_mismatch_warning(struct context *context, struct ast_type *lhs, enum ast_kind *lhs_defined_type, struct ast_type *rhs, enum ast_kind *rhs_defined_type, struct token *location){
+    struct string lhs_string = report_type_mismatch__internal(context, "Wanted", lhs, lhs_defined_type);
+    struct string rhs_string = report_type_mismatch__internal(context, "given", rhs, rhs_defined_type);
+    
+    report_warning(context, WARNING_type_mismatch, location, "%.*s %.*s.", lhs_string.amount, lhs_string.data, rhs_string.amount, rhs_string.data);
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define parser_type_push(context, type) (struct ast_##type *)_parser_type_push(context, sizeof(struct ast_##type), alignof(struct ast_##type), AST_##type)
@@ -813,6 +853,36 @@ func void maybe_insert_cast_from_void_pointer(struct expr *lhs, struct expr *rhs
     }
 }
 
+func void msvc_extension_maybe_insert_cast_from_pointer_to_u64(struct context *context, struct expr *lhs, struct expr *rhs, struct token *site){
+    // @cleanup: I could see an argument here, that we should not use push_cast here, but just do it ourselves.
+    //           There should be no need to ever push something, but we do need to thing about pointer literals.
+    
+    // MSVC allows:
+    //     int a, *b;
+    //     a = b, b = a, a == b, a != b, a < b, a > b, ...
+    // and just warns for mismatching levels of indirection.
+    struct expr *should_cast = null;
+    enum ast_kind cast_kind = AST_invalid;
+    
+    if(lhs->resolved_type->kind == AST_pointer_type && rhs->resolved_type->kind == AST_integer_type){
+        should_cast = lhs;
+        cast_kind = AST_cast_lhs;
+    }
+    
+    if(lhs->resolved_type->kind == AST_integer_type && rhs->resolved_type->kind == AST_pointer_type){
+        should_cast = rhs;
+        cast_kind = AST_cast;
+    }
+    
+    if(should_cast){
+        struct string lhs_string = report_type_mismatch__internal(context, "Left", lhs->resolved_type, lhs->defined_type);
+        struct string rhs_string = report_type_mismatch__internal(context, "Right", rhs->resolved_type, rhs->defined_type);
+        report_warning(context, WARNING_comparing_integer_to_pointer, site, "Comparing integer to pointer: %.*s, %.*s.", lhs_string.amount, lhs_string.data, rhs_string.amount, rhs_string.data);
+        
+        push_cast(context, cast_kind, &globals.typedef_u64, null, should_cast);
+    }
+}
+
 //_____________________________________________________________________________________________________________________
 
 func struct ast_scope *parser_push_new_scope(struct context *context, struct token *token, enum scope_flags flags){
@@ -1048,45 +1118,6 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
     }
     
     return (wanted == given) ? ret : null;
-}
-
-func struct string report_type_mismatch__internal(struct context *context, char *prefix, struct ast_type *type, enum ast_kind *defined_type){
-    struct string ret = zero_struct;
-    
-    b32 handled = false;
-    if(defined_type){
-        if(*defined_type == IR_typedef){
-            struct ast_declaration *decl = cast(struct ast_declaration *)defined_type;
-            struct string lhs_string = push_type_string(context->arena, &context->scratch, decl->type);
-            ret = push_format_string(&context->scratch, "%s '%.*s' (aka %.*s)", prefix, decl->identifier->amount, decl->identifier->data, lhs_string.amount, lhs_string.data);
-            handled = true;
-        }else if(*defined_type == AST_enum){
-            struct string lhs_string = push_type_string(context->arena, &context->scratch, cast(struct ast_type *)defined_type);
-            ret = push_format_string(&context->scratch, "%s '%.*s'", prefix, lhs_string.amount, lhs_string.data);
-            handled = true;
-        }
-    }
-    
-    if(!handled){
-        struct string lhs_string = push_type_string(context->arena, &context->scratch, type);
-        ret = push_format_string(&context->scratch, "%s '%.*s'", prefix, lhs_string.amount, lhs_string.data);
-    }
-    return ret;
-}
-
-func void report_type_mismatch_error(struct context *context, struct ast_type *lhs, enum ast_kind *lhs_defined_type, struct ast_type *rhs, enum ast_kind *rhs_defined_type, struct token *location){
-    struct string lhs_string = report_type_mismatch__internal(context, "Wanted", lhs, lhs_defined_type);
-    struct string rhs_string = report_type_mismatch__internal(context, "given", rhs, rhs_defined_type);
-    
-    report_error(context, location, "%.*s %.*s.", lhs_string.amount, lhs_string.data, rhs_string.amount, rhs_string.data);
-}
-
-
-func void report_type_mismatch_warning(struct context *context, struct ast_type *lhs, enum ast_kind *lhs_defined_type, struct ast_type *rhs, enum ast_kind *rhs_defined_type, struct token *location){
-    struct string lhs_string = report_type_mismatch__internal(context, "Wanted", lhs, lhs_defined_type);
-    struct string rhs_string = report_type_mismatch__internal(context, "given", rhs, rhs_defined_type);
-    
-    report_warning(context, WARNING_type_mismatch, location, "%.*s %.*s.", lhs_string.amount, lhs_string.data, rhs_string.amount, rhs_string.data);
 }
 
 func b32 casts_implicitly_to_bool(struct ast_type *resolved_type){
@@ -1911,7 +1942,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
         
         should_skip_check = true;
     }else if(lhs_type->kind == AST_pointer_type && rhs_type->kind == AST_integer_type){
-        should_push_cast = true;
+        should_push_cast = true; // I think in the case where it is not a null pointer constant, this is an MSVC extension.
         
         // 'pointer' = 'integer'
         if(rhs->ir->kind == IR_integer_literal){
@@ -1921,6 +1952,12 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
         }else{
             should_report_warning  = true;
         }
+    }else if(lhs_type->kind == AST_integer_type && rhs_type->kind == AST_pointer_type){
+        // 'integer' = 'pointer'
+        // @note: MSVC reports mismatching levels of indirection, but that has always been a weird error to me.
+        //        This also is a MSVC extension, gcc complains about making integer from pointer without a cast.
+        should_push_cast = true;
+        should_report_warning  = true;
     }else if(lhs_type->kind == AST_pointer_type && rhs_type->kind == AST_pointer_type){
         // 'pointer' = 'pointer'
         struct ast_pointer_type *wanted_pointer = cast(struct ast_pointer_type *)lhs_type;
@@ -6281,6 +6318,14 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
+                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs);
+                maybe_load_address_for_array_or_function(context, IR_load_address, op_rhs);
+                
+                // @cleanup: this seems sus to me, but all compilers seem to do this.
+                //           This needs to be before msvc_extension_maybe_insert_cast_from_pointer_to_u64 to avoid warning.
+                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs); 
+                
+                msvc_extension_maybe_insert_cast_from_pointer_to_u64(context, op_lhs, op_rhs, stack_entry->token);
                 maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
                 
                 if(op_lhs->ir->kind == IR_float_literal && op_rhs->ir->kind == IR_float_literal){
@@ -6289,12 +6334,7 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs);
-                maybe_load_address_for_array_or_function(context, IR_load_address, op_rhs);
-                
                 if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_basic)) return operand;
-                
-                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs); // @cleanup: this seems sus to me, but all compilers seem to do this.
                 
                 struct ast_type *match = types_are_equal(op_lhs->resolved_type, op_rhs->resolved_type);
                 if(!match){
@@ -6355,6 +6395,13 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
+                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs);
+                maybe_load_address_for_array_or_function(context, IR_load_address,     op_rhs);
+                
+                // This needs to be before msvc_extension_maybe_insert_cast_from_pointer_to_u64 to avoid warning.
+                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs);
+                
+                msvc_extension_maybe_insert_cast_from_pointer_to_u64(context, op_lhs, op_rhs, stack_entry->token);
                 maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
                 
                 if(op_lhs->ir->kind == IR_float_literal && op_rhs->ir->kind == IR_float_literal){
@@ -6363,13 +6410,9 @@ case NUMBER_KIND_##type:{ \
                     break;
                 }
                 
-                maybe_load_address_for_array_or_function(context, IR_load_address_lhs, op_lhs);
-                maybe_load_address_for_array_or_function(context, IR_load_address,     op_rhs);
-                
                 if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_basic)) return operand;
                 
                 maybe_insert_cast_from_void_pointer(op_lhs, op_rhs);
-                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs);
                 
                 struct ast_type *match = types_are_equal(op_lhs->resolved_type, op_rhs->resolved_type);
                 if(!match){

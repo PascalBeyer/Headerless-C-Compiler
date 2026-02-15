@@ -593,3 +593,9 @@ Example:
 -> octal_constant_used - Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.
 
 For the longest time this compiler did not support octal constants, but sadly some people use them :(
+
+-> comparing_integer_to_pointer - Comparing an integer to a pointer without a cast is an MSVC extension.
+
+Example:
+> int a, *b;
+> a == b; // Warning: Comparing integer to pointer: Left 'int', Right 'int*'.

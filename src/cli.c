@@ -197,6 +197,7 @@ enum warning{
     WARNING_pragma_pack_pop_unknown_identifier            = 43, // The `#praga pack(pop, <identifier>)` directive was used with an unknown `<identifier>`.
     WARNING_pragma_pack_pop_with_empty_stack              = 44, // The `#pragma pack(pop)` directive was used when the pragma pack stack was empty.
     WARNING_octal_constant_used                           = 45, // Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.
+    WARNING_comparing_integer_to_pointer                  = 46, // Comparing an integer to a pointer without a cast is an MSVC extension.
 };
 
 struct cli_options{
@@ -250,7 +251,7 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 46
+#define WARNING_count 47
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -303,6 +304,7 @@ struct warning_table_entry{
     [4] = {{30, (u8 *)"pragmapackpopunknownidentifier"}, WARNING_pragma_pack_pop_unknown_identifier},
     [45] = {{27, (u8 *)"pragmapackpopwithemptystack"}, WARNING_pragma_pack_pop_with_empty_stack},
     [5] = {{17, (u8 *)"octalconstantused"}, WARNING_octal_constant_used},
+    [7] = {{25, (u8 *)"comparingintegertopointer"}, WARNING_comparing_integer_to_pointer},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -909,7 +911,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "pragma_pack_pop_unknown_identifier (43) | The `#praga pack(pop, <identifier>)` directive was used with an unknown `<identifier>`.\n"
                                 "pragma_pack_pop_with_empty_stack (44)   | The `#pragma pack(pop)` directive was used when the pragma pack stack was empty.\n"
                                 "octal_constant_used (45)                | Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.\n"
-                                , 4782);
+                                "comparing_integer_to_pointer (46)       | Comparing an integer to a pointer without a cast is an MSVC extension.\n"
+                                , 4895);
                     }
                 }break;
                 invalid_default_case();
