@@ -48,6 +48,7 @@ static u8 warning_enabled[WARNING_count] = {
     
     [WARNING_pragma_pack_show] = 1,
     [WARNING_octal_constant_used] = 1,
+    [WARNING_comparing_integer_to_pointer] = 1,
 };
 
 struct error_report_node{
