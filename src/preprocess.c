@@ -107,7 +107,7 @@ struct define_node{
     
     // 
     // Builtin defines:
-    u32 builtin_define_type  : 4;
+    u32 builtin_define_type : 4;
     
     struct define_argument_list arguments;
     smm stringify_count; // The amount of arguments that have to be stringified when evaluating the define.
@@ -119,6 +119,8 @@ struct define_node{
     smm token_stack_node_count;
 };
 
+//_____________________________________________________________________________________________________________________
+// (define) Token Stack Routines
 
 func void push_to_token_stack(struct context *context, struct token_array tokens, smm at, struct define_node *define_to_reenable_on_exit){
     if(context->token_stack.size == context->token_stack.capacity){
@@ -137,7 +139,7 @@ func void push_to_token_stack(struct context *context, struct token_array tokens
     new_node->define_to_reenable_on_exit = define_to_reenable_on_exit;
 }
 
-func struct token *get_current_token_raw(struct context *context){
+func struct token *get_current_token_define(struct context *context){
     
     while(true){
         if(context->token_stack.size == context->token_stack.blocked_size) return &globals.invalid_token;
@@ -146,11 +148,6 @@ func struct token *get_current_token_raw(struct context *context){
         if(node->at >= node->tokens.amount){
             if(node->define_to_reenable_on_exit){
                 node->define_to_reenable_on_exit->is_disabled = false;
-                context->define_depth--;
-                if(context->define_depth == 0){
-                    context->macro_expansion_token = null;
-                }
-                assert(context->define_depth >= 0);
             }
             
             context->token_stack.size -= 1;
@@ -161,8 +158,8 @@ func struct token *get_current_token_raw(struct context *context){
     }
 }
 
-func struct token *next_token_raw(struct context *context){
-    struct token *ret = get_current_token_raw(context);
+func struct token *next_token_define(struct context *context){
+    struct token *ret = get_current_token_define(context);
     
     if(context->token_stack.size != context->token_stack.blocked_size){
         struct token_stack_node *node = &context->token_stack.nodes[context->token_stack.size-1];
@@ -174,39 +171,39 @@ func struct token *next_token_raw(struct context *context){
     return ret;
 }
 
-func struct token *expect_token_raw(struct context *context, struct token *site, enum token_type type, char *error){
-    struct token *token = get_current_token_raw(context);
+func struct token *expect_token_define(struct context *context, struct token *site, enum token_type type, char *error){
+    struct token *token = get_current_token_define(context);
     if(token->type != type){
         report_syntax_error(context, site, error);
         return token;
     }
-    return next_token_raw(context);
+    return next_token_define(context);
 }
 
-func struct token *peek_token_raw(struct context *context, enum token_type type){
-    struct token *token = get_current_token_raw(context);
+func struct token *peek_token_define(struct context *context, enum token_type type){
+    struct token *token = get_current_token_define(context);
     if(token->type == type){
         return token;
     }
     return null;
 }
 
-func struct token *peek_token_eat_raw(struct context *context, enum token_type type){
-    struct token *token = get_current_token_raw(context);
+func struct token *peek_token_eat_define(struct context *context, enum token_type type){
+    struct token *token = get_current_token_define(context);
     if(token->type == type){
-        return next_token_raw(context);
+        return next_token_define(context);
     }
     return null;
 }
 
-func b32 skip_until_tokens_are_balanced_raw(struct context *context, struct token *initial_token, enum token_type open, enum token_type closed, char *error){
+func b32 skip_until_tokens_are_balanced_define(struct context *context, struct token *initial_token, enum token_type open, enum token_type closed, char *error){
     if(!initial_token){
-        initial_token = next_token_raw(context);
+        initial_token = next_token_define(context);
     }
     
     u64 count = 1;
     while(true){
-        struct token *token = next_token_raw(context);
+        struct token *token = next_token_define(context);
         
         if(token->type == TOKEN_invalid){
             // :Error this should report the beginning and the end
@@ -222,99 +219,139 @@ func b32 skip_until_tokens_are_balanced_raw(struct context *context, struct toke
     return true;
 }
 
+func void eat_whitespace_and_comments_define(struct context *context){
+    smm did_something;
+    do{
+        did_something = (smm)peek_token_eat_define(context, TOKEN_whitespace);
+    }while(did_something);
+}
+
+func void eat_whitespace_comments_and_newlines_define(struct context *context){
+    smm did_something;
+    do{
+        did_something  = (smm)peek_token_eat_define(context, TOKEN_whitespace);
+        did_something |= (smm)peek_token_eat_define(context, TOKEN_newline);
+    }while(did_something);
+}
+
 //_____________________________________________________________________________________________________________________
+// Include Stack Routines
+
+func void push_to_include_stack(struct context *context, struct raw_token_array tokens, struct file *file){
+    if(context->include_stack.size == context->include_stack.capacity){
+        smm new_capacity = 2 * context->include_stack.capacity;
+        struct include_stack_node *new_nodes = push_uninitialized_data(&context->scratch, struct include_stack_node, new_capacity);
+        memcpy(new_nodes, context->include_stack.nodes, sizeof(*new_nodes) * context->include_stack.capacity);
+        context->include_stack.nodes = new_nodes;
+        context->include_stack.capacity = new_capacity;
+    }
+    
+    u64 index = context->include_stack.size++;
+    struct include_stack_node *new_node = &context->include_stack.nodes[index];
+    new_node->tokens = tokens;
+    new_node->file = file;
+    new_node->at = 0;
+    new_node->offset = 0;
+}
+
+func struct token get_current_token_raw(struct context *context){
+    
+    while(true){
+        if(context->include_stack.size == 0){
+            return (struct token){0};
+        }
+        
+        struct include_stack_node *node = &context->include_stack.nodes[context->include_stack.size-1];
+        
+        if(node->at >= node->tokens.amount){
+            context->include_stack.size -= 1;
+            continue;
+        }
+        
+        struct raw_token *raw = (node->tokens.data + node->at);
+        
+        struct token ret = {
+            .type = raw->type,
+            .location_index = node->file->file_index,
+            .data = node->file->contents.data + node->offset,
+            .size = raw->size,
+        };
+        
+        if(ret.type == TOKEN_identifier){
+            ret.string_hash = string_djb2_hash(ret.string);
+        }
+        
+        return ret;
+    }
+}
+
+func struct token next_token_raw(struct context *context){
+    struct token ret = get_current_token_raw(context);
+    
+    if(context->include_stack.size != 0){
+        struct include_stack_node *node = &context->include_stack.nodes[context->include_stack.size-1];
+        // get_current_token just made sure this is true!
+        assert(node->at < node->tokens.amount);
+        node->at++;    
+        
+        node->offset += ret.size;
+    }
+    
+    return ret;
+}
+
+func struct token expect_token_raw(struct context *context, struct token *site, enum token_type type, char *error){
+    struct token token = get_current_token_raw(context);
+    if(token.type != type){
+        report_syntax_error(context, site, error);
+        return token;
+    }
+    return next_token_raw(context);
+}
+
+func int peek_token_raw(struct context *context, enum token_type type){
+    struct token token = get_current_token_raw(context);
+    return (token.type == type);
+}
+
+func int peek_token_eat_raw(struct context *context, enum token_type type){
+    struct token token = get_current_token_raw(context);
+    if(token.type == type){
+        next_token_raw(context);
+        return true;
+    }
+    return false;
+}
+
+func void eat_whitespace_and_comments_raw(struct context *context){
+    smm did_something;
+    do{
+        did_something  = (smm)peek_token_eat_raw(context, TOKEN_whitespace);
+    }while(did_something);
+}
+
+func void eat_whitespace_comments_and_newlines_raw(struct context *context){
+    smm did_something;
+    do{
+        did_something  = (smm)peek_token_eat_raw(context, TOKEN_whitespace);
+        did_something |= (smm)peek_token_eat_raw(context, TOKEN_newline);
+    }while(did_something);
+}
+
+func struct token *push_token_copy(struct memory_arena *arena, struct token token){
+    struct token *ret = push_struct(arena, struct token);
+    *ret = token;
+    return ret;
+}
+
+//_____________________________________________________________________________________________________________________
+// 
 
 func void print_token(struct context *context, struct token *token, b32 print_whitespace_and_comments);
-func void print_define(struct context *context, struct define_node *define, char *prefix){
-    (void)(context);
-    
-    char *file = globals.file_table.data[define->defined_token->file_index]->absolute_file_path;
-    print("%s(%u,%u): [%lld] %s %.*s", file, define->defined_token->line, define->defined_token->column, 
-            context->current_compilation_unit->index, prefix, define->name.size, define->name.data);
-    
-    if(define->is_function_like){
-        print("(");
-        
-        for(struct define_argument *arg = define->arguments.first; arg; arg = arg->next){
-            print("%.*s", arg->argument.size, arg->argument.data);
-            if(arg->next){
-                print(", ");
-            }
-        }
-        
-        print(")");
-    }
-    print(" ");
-    
-    for(struct define_replacement_node *node = define->replacement_list.first; node; node = node->next){
-        switch(node->kind){
-            case DEFINE_REPLACEMENT_tokens:{
-                for(smm i = 0; i < node->tokens.size; i++){
-                    print("%.*s", node->tokens.data[i].size, node->tokens.data[i].data);
-                }
-            }break;
-            case DEFINE_REPLACEMENT_argument:{
-                struct define_argument *arg = define->arguments.first;
-                for(int i = 0; i < node->argument_index; i++){
-                    arg = arg->next;
-                }
-                
-                print("%.*s", arg->argument.size, arg->argument.data);
-            }break;
-            case DEFINE_REPLACEMENT_hash:{
-                struct define_argument *arg = define->arguments.first;
-                for(; arg; arg = arg->next){
-                    if(arg->stringify_index == node->stringify_index) break;
-                }
-                assert(arg);
-                
-                print("#%.*s", arg->argument.size, arg->argument.data);
-            }break;
-            case DEFINE_REPLACEMENT_hashhash:{
-                if(node->prefix_argument != -1){
-                    struct define_argument *arg = define->arguments.first;
-                    for(int i = 0; i < node->prefix_argument; i++){
-                        arg = arg->next;
-                    }
-                    print("%.*s", arg->argument.size, arg->argument.data);
-                }
-                
-                print("##");
-                
-                if(node->postfix_argument != -1){
-                    struct define_argument *arg = define->arguments.first;
-                    for(int i = 0; i < node->prefix_argument; i++){
-                        arg = arg->next;
-                    }
-                    print("%.*s", arg->argument.size, arg->argument.data);
-                }
-                
-                if(node->postfix_token){
-                    print("%.*s", node->postfix_token->size, node->postfix_token->data);
-                }
-            }break;
-            invalid_default_case();
-        }
-    }
-    
-    print("\n");
-}
 
 func void register_define(struct context *context, struct define_node *new_node){
     
     assert(new_node->name.size != 0);
-    
-#if 0
-    if(context->current_compilation_unit->index == 41){
-        print_define(context, new_node, "#define");
-    }
-#endif
-    
-#ifdef DEFINE_TO_PRINT
-    if(string_match(new_node->name.string, string(DEFINE_TO_PRINT))){
-        print_define(context, new_node, "#define");
-    }
-#endif
     
     if(2 * context->define_table.amount + 1 > context->define_table.capacity){
         begin_counter(context, define_table_grow);
@@ -370,19 +407,6 @@ func struct define_node *lookup_define(struct context *context, struct atom name
 
 //_____________________________________________________________________________________________________________________
 
-func void tokenizer_report_error(struct context *context, struct token *token, struct token *macro_expansion_token, char *error){
-    struct token *ret = push_struct(&context->scratch, struct token);
-    *ret = *token;
-    // :copy_expanded_location
-    if(macro_expansion_token){
-        ret->line   = macro_expansion_token->line;
-        ret->column = macro_expansion_token->column;
-        ret->file_index   = macro_expansion_token->file_index;
-    }
-    report_error(context, ret, error);
-}
-
-//_____________________________________________________________________________________________________________________
 
 func b32 u8_is_valid_in_c_ident(u8 a){
     // either ascii alpha numeric, $ or utf8 are allowed
@@ -930,7 +954,6 @@ struct parsed_integer{
         NUMBER_KIND_u32, // ui32
         NUMBER_KIND_u64, // ui64
         
-        
         NUMBER_KIND_float32,
         NUMBER_KIND_float64,
     }number_kind;
@@ -1007,37 +1030,6 @@ func struct parsed_integer parse_base10_literal(struct context *context, struct 
     
     if(ret.number_kind == NUMBER_KIND_invalid){
         report_error(context, lit_token, "Invalid suffix '%.*s' on integer literal.", suffix.size, suffix.data);
-    }
-    
-    return ret;
-}
-
-// @cleanup: get rid of this function!
-//           and also 'parse_integer' maybe.
-//           At least most of the uses.
-func struct parsed_integer parse_character_literal(struct context *context, struct token *lit_token){
-    struct parsed_integer ret = zero_struct;
-    
-    struct escaped_string escaped = handle_escaping(context, lit_token);
-    
-    if(escaped.string.size > 8){
-        report_error(context, lit_token, "Character literal is too big.");
-    }else if(escaped.string.size == 0){
-        report_error(context, lit_token, "Empty character constant is not allowed.");
-    }
-    
-    u64 value = 0;
-    for(smm i = 0; i < escaped.string.size; i++){
-        value <<= 8;
-        value += escaped.string.data[i];
-    }
-    
-    ret.value = value;
-    switch(escaped.string_kind){
-        case STRING_KIND_utf8:  ret.number_kind = NUMBER_KIND_s8;  break;
-        case STRING_KIND_utf16: ret.number_kind = NUMBER_KIND_u16; break;
-        case STRING_KIND_utf32: ret.number_kind = NUMBER_KIND_u32; break;
-        default: ret.number_kind = NUMBER_KIND_invalid; break;
     }
     
     return ret;
@@ -1197,595 +1189,139 @@ func struct parsed_integer parse_hex_literal(struct context *context, struct tok
     return ret;
 }
 
+func struct parsed_integer parse_integer_literal(struct context *context, struct token *lit_token){
+    if(lit_token->size >= 2 && lit_token->data[0] == '0'){
+        if((lit_token->data[1]|32) == 'x'){
+            return parse_hex_literal(context, lit_token);
+        }else if((lit_token->data[1]|32) == 'b'){
+            return parse_binary_literal(context, lit_token);
+        }else{
+            return parse_octal_literal(context, lit_token);
+        }
+    }else{
+        return parse_base10_literal(context, lit_token);
+    }
+}
+
+
+// @cleanup: get rid of this function!
+//           and also 'parse_integer' maybe.
+//           At least most of the uses.
+func struct parsed_integer parse_character_literal(struct context *context, struct token *lit_token){
+    struct parsed_integer ret = zero_struct;
+    
+    struct escaped_string escaped = handle_escaping(context, lit_token);
+    
+    if(escaped.string.size > 8){
+        report_error(context, lit_token, "Character literal is too big.");
+    }else if(escaped.string.size == 0){
+        report_error(context, lit_token, "Empty character constant is not allowed.");
+    }
+    
+    u64 value = 0;
+    for(smm i = 0; i < escaped.string.size; i++){
+        value <<= 8;
+        value += escaped.string.data[i];
+    }
+    
+    ret.value = value;
+    switch(escaped.string_kind){
+        case STRING_KIND_utf8:  ret.number_kind = NUMBER_KIND_s8;  break;
+        case STRING_KIND_utf16: ret.number_kind = NUMBER_KIND_u16; break;
+        case STRING_KIND_utf32: ret.number_kind = NUMBER_KIND_u32; break;
+        default: ret.number_kind = NUMBER_KIND_invalid; break;
+    }
+    
+    return ret;
+}
+
 //_____________________________________________________________________________________________________________________
 
-func struct token_array tokenize_raw(struct context *context, struct string string, u32 file_index, smm *lines){
+func struct raw_token_array tokenize_raw(struct context *context, struct string string){
     
-    if(!string.size) return (struct token_array)zero_struct;
+    if(!string.size) return (struct raw_token_array)zero_struct;
     
     begin_counter(context, tokenize_raw);
     
     // There is at most one token per byte.
-    struct token *tokens = push_uninitialized_data(&context->emit_arena, struct token, string.size);
+    struct raw_token *tokens = push_uninitialized_data(context->arena, struct raw_token, string.size);
     
-    smm amount_of_tokens = 0;
+    u8 *start = (u8 *)string.data;
+    u8 *end = (u8 *)(string.data + string.size);
     
-    u8 *at = string.data;
-    u8 *end_of_file = string.data + string.size;
+    int state = 0;
+    u64 out = 0;
     
-    smm line   = 1;
-    smm column = 1;
-    
-    while(at < end_of_file){
+    u8 *s = start;
+    for(; s + 8 < end; s += 8){
         
-        struct token *cur = tokens + amount_of_tokens++;
-        cur->file_index = file_index;
-        cur->line   = (u32)line;
-        cur->column = (u32)column;
+        u8 c0 = s[0];
+        u8 c1 = s[1];
+        u8 c2 = s[2];
+        u8 c3 = s[3];
+        u8 c4 = s[4];
+        u8 c5 = s[5];
+        u8 c6 = s[6];
+        u8 c7 = s[7];
         
-#define next_token__internal(_type, size)\
-cur->type = _type;                    \
-column += size;
+        u32 state0 = state;
+        u32 state1 = dfa[c0][state0];
+        u32 state2 = dfa[c1][state1];
+        u32 state3 = dfa[c2][state2];
+        u32 state4 = dfa[c3][state3];
+        u32 state5 = dfa[c4][state4];
+        u32 state6 = dfa[c5][state5];
+        u32 state7 = dfa[c6][state6];
+        u32 state8 = dfa[c7][state7];
+        state = state8;
         
-#define next_token__internal_char(_type, size)\
-cur->type      = _type;                    \
-column += size;                     \
-at     += size;
+        u32 info1 = dfa_info[c0][state0];
+        u32 info2 = dfa_info[c1][state1];
+        u32 info3 = dfa_info[c2][state2];
+        u32 info4 = dfa_info[c3][state3];
+        u32 info5 = dfa_info[c4][state4];
+        u32 info6 = dfa_info[c5][state5];
+        u32 info7 = dfa_info[c6][state6];
+        u32 info8 = dfa_info[c7][state7];
         
-        
-        u8 *start = at;
-        
-        switch (*at){
-            case '\x00':
-            case '\x01': case '\x02': case '\x03': case '\x04':
-            case '\x05': case '\x06': case '\x07': case '\x08':
-            case '\x0e': case '\x0f': case '\x10': case '\x11':
-            case '\x12': case '\x13': case '\x14': case '\x15':
-            case '\x16': case '\x17': case '\x18': case '\x19':
-            case '\x1a': case '\x1b': case '\x1c': case '\x1d':
-            case '\x1e': case '\x1f': case '\x7f':{
-                
-                static char *invalid_byte_name[0x80] = {
-                    [0x00] = "NUL (^@)", 
-                    [0x01] = "SOH (^A)", [0x02] = "STX (^B)", [0x03] = "ETX (^C)", [0x04] = "EOT (^D)", 
-                    [0x05] = "ENQ (^E)", [0x06] = "ACK (^F)", [0x07] = "BEL (^G)", [0x08] = "BS (^H)",
-                    
-                    [0x0e] = "SO (^N)",  [0x0f] = "SI (^O)",  [0x10] = "DLE (^P)", [0x11] = "DC1 (^Q)",
-                    [0x12] = "DC2 (^R)", [0x13] = "DC3 (^S)", [0x14] = "DC4 (^T)", [0x15] = "NAK (^U)",
-                    [0x16] = "SYN (^V)", [0x17] = "ETB (^W)", [0x18] = "CAN (^X)", [0x19] = "EM (^Y)",
-                    [0x1a] = "SUB (^Z)", [0x1b] = "ESC (^[)", [0x1c] = "FS (^\\)", [0x1d] = "GS (^])",
-                    [0x1e] = "RS (^^)",  [0x1f] = "US (^_)",  [0x7f] = "DEL",
-                };
-                
-                report_error(context, cur, "Invalid %s byte 0x%.2x in file.", invalid_byte_name[*at], *at);
-                next_token__internal_char(TOKEN_invalid, 1);
-            }break;
-            case '\\':{
-                at++;
-                
-                while(u8_is_whitespace(*at)) at++;
-                b32 got_newline = false;
-                if(*at == '\n'){
-                    at++;
-                    if(at[0] == '\r') at++;
-                    got_newline = true;
-                }else if(*at == '\r'){
-                    at++;
-                    if(at[0] == '\n') at++;
-                    got_newline = true;
-                }
-                u8 *end = at;
-                
-                next_token__internal(TOKEN_whitespace, (end - start));
-                if(got_newline){
-                    line++;
-                    column = 1;
-                }else{
-                    report_warning(context, WARNING_missing_newline_after_backslash, cur, "No newline after '\\'.");
-                }
-            }break;
-            case '\v': case '\t': case '\f': case ' ': {
-                while(u8_is_whitespace(*++at));
-                next_token__internal(TOKEN_whitespace, (at - start));
-            }break;
-            case '\n':{
-                if(at[1] == '\r'){
-                    next_token__internal_char(TOKEN_newline, 2);
-                }else{
-                    next_token__internal_char(TOKEN_newline, 1);
-                }
-                line++;
-                column = 1;
-            }break;
-            case '\r':{
-                if(at[1] == '\n'){
-                    next_token__internal_char(TOKEN_newline, 2);
-                }else{
-                    next_token__internal_char(TOKEN_newline, 1);
-                }
-                line++;
-                column = 1;
-            }break;
-            case '@':{
-                next_token__internal_char(TOKEN_at_sign, 1);
-            }break;
-            case '`':{
-                next_token__internal_char(TOKEN_backtick, 1);
-            }break;
-            case '#':{
-                if(at[1] == '#'){
-                    next_token__internal_char(TOKEN_hashhash, 2);
-                }else{
-                    next_token__internal_char(TOKEN_hash, 1);
-                }
-            }break;
-            case '=':{
-                if(at[1] == '='){
-                    next_token__internal_char(TOKEN_logical_equals, 2);
-                }else{
-                    next_token__internal_char(TOKEN_equals, 1);
-                }
-            }break;
-            case '(':{
-                next_token__internal_char(TOKEN_open_paren, 1);
-            }break;
-            case ')':{
-                next_token__internal_char(TOKEN_closed_paren, 1);
-            }break;
-            case '{':{
-                next_token__internal_char(TOKEN_open_curly, 1);
-            }break;
-            case '}':{
-                next_token__internal_char(TOKEN_closed_curly, 1);
-            }break;
-            case '[':{
-                next_token__internal_char(TOKEN_open_index, 1);
-            }break;
-            case ']':{
-                next_token__internal_char(TOKEN_closed_index, 1);
-            }break;
-            case ';':{
-                next_token__internal_char(TOKEN_semicolon, 1);
-            }break;
-            case ':':{
-                next_token__internal_char(TOKEN_colon, 1);
-            }break;
-            case ',':{
-                next_token__internal_char(TOKEN_comma, 1);
-            }break;
-            case '.':{
-                if(at[1] == '.' && at[2] == '.'){
-                    next_token__internal_char(TOKEN_dotdotdot, 3);
-                }else if(u8_is_number(at[1])){
-                    goto handle_numbers;
-                }else{
-                    next_token__internal_char(TOKEN_dot, 1);
-                }
-            }break;
-            case '>':{
-                if(at[1] == '>'){
-                    if(at[2] == '='){
-                        next_token__internal_char(TOKEN_right_shift_equals, 3);
-                    }else{
-                        next_token__internal_char(TOKEN_right_shift, 2);
-                    }
-                }else if(at[1] == '='){
-                    next_token__internal_char(TOKEN_bigger_equals, 2);
-                }else{
-                    next_token__internal_char(TOKEN_bigger, 1);
-                }
-            }break;
-            case '<':{
-                if(at[1] == '<'){
-                    if(at[2] == '='){
-                        next_token__internal_char(TOKEN_left_shift_equals, 3);
-                    }else{
-                        next_token__internal_char(TOKEN_left_shift, 2);
-                    }
-                    
-                }else if(at[1] == '='){
-                    next_token__internal_char(TOKEN_smaller_equals, 2);
-                }else{
-                    next_token__internal_char(TOKEN_smaller, 1);
-                }
-            }break;
-            case '~':{
-                next_token__internal_char(TOKEN_bitwise_not, 1);
-            }break;
-            case '!':{
-                if(at[1] == '='){
-                    next_token__internal_char(TOKEN_logical_unequals, 2);
-                }else{
-                    next_token__internal_char(TOKEN_logical_not, 1);
-                }
-            }break;
-            case '?':{
-                next_token__internal_char(TOKEN_question_mark, 1);
-            }break;
-            case '+':{
-                if(at[1] == '+'){
-                    next_token__internal_char(TOKEN_increment, 2);
-                }else if(at[1] == '='){
-                    next_token__internal_char(TOKEN_plus_equals, 2);
-                }else{
-                    next_token__internal_char(TOKEN_plus, 1);
-                }
-            }break;
-            case '-':{
-                if(at[1] == '-'){
-                    next_token__internal_char(TOKEN_decrement, 2);
-                }else if(at[1] == '>'){
-                    next_token__internal_char(TOKEN_arrow, 2);
-                }else if(at[1] == '='){
-                    next_token__internal_char(TOKEN_minus_equals, 2);
-                }else{
-                    next_token__internal_char(TOKEN_minus, 1);
-                }
-            }break;
-            case '&':{
-                if(at[1] == '&'){
-                    next_token__internal_char(TOKEN_logical_and, 2);
-                }else if(at[1] == '='){
-                    next_token__internal_char(TOKEN_and_equals, 2);
-                }else {
-                    next_token__internal_char(TOKEN_and, 1);
-                }
-            }break;
-            case '|':{
-                if(at[1] == '|'){
-                    next_token__internal_char(TOKEN_logical_or, 2);
-                }else if(at[1] == '='){
-                    next_token__internal_char(TOKEN_or_equals, 2);
-                }else {
-                    next_token__internal_char(TOKEN_or, 1);
-                }
-            }break;
-            case '^':{
-                if(at[1] == '='){
-                    next_token__internal_char(TOKEN_xor_equals, 2);
-                }else {
-                    next_token__internal_char(TOKEN_xor, 1);
-                }
-            }break;
-            case '*':{
-                if(at[1] == '='){
-                    next_token__internal_char(TOKEN_times_equals, 2);
-                }else{
-                    next_token__internal_char(TOKEN_times, 1);
-                }
-            }break;
-            case '/':{
-                if(at[1] == '*'){
-                    at += 2;
-                    
-                    u8 *last_newline = at - column; // actually the newline, as 1 counted
-                    while(*at){
-                        if(at[1] == '/' && at[0] == '*'){
-                            break;
-                        }else if(at[0] == '\n'){
-                            line++;
-                            last_newline = at;
-                            at++;
-                        }else{
-                            at += 1;
-                        }
-                    }
-                    
-                    if(*at == 0){
-                        cur->data = start;
-                        cur->size = 8;
-                        report_error(context, cur, "File ended during block comment.");
-                    }
-                    
-                    at += 2;
-                    column = at - last_newline;
-                    
-                    next_token__internal(TOKEN_comment, 0); // note we already adjusted the column, so we dont want to adjust it here again
-                }else if(at[1] == '/'){
-                    at += 2;
-                    
-                    while(*at && *at != '\n') at++;
-                    
-                    next_token__internal(TOKEN_comment, at - start);
-                }else if(at[1] == '='){
-                    next_token__internal_char(TOKEN_div_equals, 2);
-                }else{
-                    next_token__internal_char(TOKEN_slash, 1);
-                }
-            }break;
-            case '%':{
-                if(at[1] == '='){
-                    next_token__internal_char(TOKEN_mod_equals, 2);
-                }else{
-                    next_token__internal_char(TOKEN_mod, 1);
-                }
-            }break;
-            case '\'':{
-                character_literal_case:; // we jump here for L'', U'', u'' and such.
-                cur->type = TOKEN_character_literal;
-                
-                b32 no_end = false;
-                
-                u8 _ = *at++;
-                assert(_ == '\'');
-                
-                while(true){
-                    if(at[0] == '\\'){
-                        if(at[1] == '\r' && at[2] == '\n'){
-                            at += 3;
-                        }else{
-                            at += 2; // Skip the escaped character, whatever it is.
-                        }
-                    }else if(at[0] == '\''){
-                        break;
-                    }else if(!*at || at[0] == '\n'){
-                        no_end = true;
-                        break;
-                    }else{
-                        at += 1;
-                    }
-                }
-                
-                if(!no_end){
-                    at += 1; // eat the end quote
-                }
-                
-                column += at - start;
-                
-                if(no_end){
-                    cur->data = start;
-                    cur->size = 8;
-                    report_error(context, cur, "Unterminated character literal.");
-                }
-                
-            }break;
-            case '"':{
-                string_literal_case:; // we jump here for L"", U"", u"" and such.
-                cur->type = TOKEN_string_literal;
-                
-                b32 no_end = false;
-                
-                u8 _ = *at++;
-                assert(_ == '"');
-                
-                while(true){
-                    if(at[0] == '\\'){
-                        if(at[1] == '\r' && at[2] == '\n'){
-                            at += 3;
-                            line += 1;
-                        }else{
-                            line += (at[1] == '\n');
-                            at += 2; // Skip the escaped character, whatever it is.
-                        }
-                    }else if(at[0] == '\"'){
-                        at += 1; // eat the end quote
-                        break;
-                    }else if(!*at || at[0] == '\n'){
-                        no_end = true;
-                        break;
-                    }else{
-                        at += 1;
-                    }
-                }
-                
-                column += at - start;
-                
-                if(no_end){
-                    cur->data = start;
-                    cur->size = 8;
-                    report_error(context, cur, "Unterminated string literal.");
-                }
-            }break;
-            
-            case 'L':
-            case 'U':{
-                if(at[1] == '"'){
-                    at++;
-                    goto string_literal_case;
-                }else if(at[1] == '\''){
-                    at++;
-                    goto character_literal_case;
-                }else{
-                    goto identifier_case;
-                }
-            }break;
-            
-            case 'u':{
-                if(at[1] == '"'){
-                    at++;
-                    goto string_literal_case;
-                }else if(at[1] == '\''){
-                    at++;
-                    goto character_literal_case;
-                }else if(at[1] == '8' && at[2] == '"'){
-                    at += 2;
-                    goto string_literal_case;
-                }else{
-                    goto identifier_case;
-                }
-            }break;
-            
-            case '0':{
-                if((at[1]|32) == 'x'){
-                    at += 2;
-                    
-                    while(u8_is_hex_number(*at) || *at == '\'') at++;
-                    
-                    if(*at == '.'){
-                        
-                        at += 1;
-                        
-                        while(u8_is_hex_number(*at) || *at == '\'') at++;
-                        
-                        if((*at | 32) == 'p'){
-                            at++;
-                            
-                            if(*at == '-' || *at == '+'){   
-                                at++;
-                            }
-                        }
-                        while(u8_is_valid_in_c_ident(*at)) at++; // suffix
-                        
-                        next_token__internal(TOKEN_float_hex_literal, at - start);
-                    }else if((*at|32) == 'p'){
-                        // @copy and paste from above
-                        at++;
-                        
-                        if(*at == '-' || *at == '+') at++;
-                        
-                        while(u8_is_valid_in_c_ident(*at)) at++; // suffix
-                        
-                        next_token__internal(TOKEN_float_hex_literal, at - start);
-                    }else{
-                        while(u8_is_valid_in_c_ident(*at)) at++; // suffix
-                        
-                        next_token__internal(TOKEN_hex_literal, at - start);
-                    }
-                }else if((at[1]|32) == 'b'){
-                    at += 2;
-                    
-                    while(*at == '0' || *at == '1' || *at == '\'') at++;
-                    
-                    while(u8_is_valid_in_c_ident(*at)) at++; // suffix
-                    
-                    next_token__internal(TOKEN_binary_literal, at - start);
-                }else if((at[1]|32) == 'o'){
-                    at += 2;
-                    
-                    while(('0' <= *at && *at <= '7') || *at == '\'') at++;
-                    
-                    while(u8_is_valid_in_c_ident(*at)) at++; // suffix
-                    
-                    next_token__internal(TOKEN_octal_literal, at - start);
-                }else{
-                    
-                    if('0' <= at[1] && at[1] <= '9'){
-                        at++;
-                        
-                        enum token_type token_type = TOKEN_octal_literal;
-                        
-                        // handle all numbers before the dot
-                        while(u8_is_number(*at) || *at == '\'') at++;
-                        
-                        if(*at == '.'){
-                            token_type = TOKEN_float_literal;
-                            at++;
-                            
-                            // eat all the numbers after the dot
-                            while(u8_is_number(*at) || *at == '\'') at++;
-                        }
-                        
-                        if((*at | 32) == 'e'){
-                            token_type = TOKEN_float_literal;
-                            at++;
-                            
-                            if(*at == '-' || *at == '+'){   
-                                at++;
-                            }
-                            
-                            while(u8_is_number(*at) || *at == '\'') at++;
-                        }
-                        
-                        while(u8_is_valid_in_c_ident(*at)) at++; // suffix
-                        
-                        next_token__internal(token_type, at - start);
-                    }else{
-                        // This could be either a base10 literal or a float number.
-                        goto handle_numbers;
-                    }
-                }
-            }break;
-            case '1':case '2':case '3':case '4':case '5':case '6':case '7':case '8':case '9':{
-                handle_numbers:;
-                enum token_type token_type = TOKEN_base10_literal;
-                
-                // handle all numbers before the dot
-                while(u8_is_number(*at) || *at == '\'') at++;
-                
-                if(*at == '.'){
-                    token_type = TOKEN_float_literal;
-                    at++;
-                    
-                    // eat all the numbers after the dot
-                    while(u8_is_number(*at) || *at == '\'') at++;
-                }
-                
-                if((*at | 32) == 'e'){
-                    token_type = TOKEN_float_literal;
-                    at++;
-                    
-                    if(*at == '-' || *at == '+'){   
-                        at++;
-                    }
-                    
-                    while(u8_is_number(*at) || *at == '\'') at++;
-                }
-                
-                // suffix
-                while(u8_is_valid_in_c_ident(*at)) at++;
-                next_token__internal(token_type, at - start);
-            }break;
-            default:{
-                //
-                // @note: we know that the byte is a valid c identifier start, 
-                //        as we have excluded all invalid bytes in the first case.
-                //
-                
-                identifier_case: // We jump here for cases like 'L' if its not 'L""'.
-                
-                u64 string_hash = (5381 << 5) + 5381 + *at;
-                
-                while(u8_is_valid_in_c_ident(*++at)){
-                    string_hash = (string_hash << 5) + string_hash + *at;
-                }
-                
-                next_token__internal(TOKEN_identifier, at - start);
-                
-                cur->string_hash = string_hash;
-                
-                // assert(string_hash == string_djb2_hash(create_string(start, at - start)));
-            }break;
-        }
-        
-        cur->data = start;
-        cur->size = (at - start);
-        
-        assert(cur->type < TOKEN_count);
+        out += (info1 >> 7) & 1; tokens[out].size += 1; tokens[out].type = (u8)(info1 & 0x3f); out += (info1 >> 6) & 1;
+        out += (info2 >> 7) & 1; tokens[out].size += 1; tokens[out].type = (u8)(info2 & 0x3f); out += (info2 >> 6) & 1;
+        out += (info3 >> 7) & 1; tokens[out].size += 1; tokens[out].type = (u8)(info3 & 0x3f); out += (info3 >> 6) & 1;
+        out += (info4 >> 7) & 1; tokens[out].size += 1; tokens[out].type = (u8)(info4 & 0x3f); out += (info4 >> 6) & 1;
+        out += (info5 >> 7) & 1; tokens[out].size += 1; tokens[out].type = (u8)(info5 & 0x3f); out += (info5 >> 6) & 1;
+        out += (info6 >> 7) & 1; tokens[out].size += 1; tokens[out].type = (u8)(info6 & 0x3f); out += (info6 >> 6) & 1;
+        out += (info7 >> 7) & 1; tokens[out].size += 1; tokens[out].type = (u8)(info7 & 0x3f); out += (info7 >> 6) & 1;
+        out += (info8 >> 7) & 1; tokens[out].size += 1; tokens[out].type = (u8)(info8 & 0x3f); out += (info8 >> 6) & 1;
     }
     
-    struct token_array token_array = {
+    for(; s < end; s += 1){
+        u8 c = s[0];
+        u32 next_state = dfa[c][state];
+        u32 state_info = dfa_info[c][state];
+        state = next_state;
+        
+        out += (state_info >> 7) & 1; 
+        tokens[out].size += 1; 
+        tokens[out].type = (u8)(state_info & 0x3f); 
+        out += (state_info >> 6) & 1;
+    }
+    
+    if(tokens[out].type){
+        out += 1;
+    }
+    
+    struct raw_token_array token_array = {
         .data = tokens,
-        .size = amount_of_tokens,
+        .size = out,
     };
     
-    context->emit_arena.current = (u8 *)(tokens + amount_of_tokens);
-    
-    // minus one as lines are one based
-    if(lines) *lines = line - 1;
+    context->arena->current = (u8 *)(tokens + out);
     
     end_counter(context, tokenize_raw);
     return token_array;
 }
 
-func void eat_whitespace_and_comments(struct context *context){
-    smm did_something;
-    do{
-        did_something  = (smm)peek_token_eat_raw(context, TOKEN_whitespace);
-        did_something |= (smm)peek_token_eat_raw(context, TOKEN_comment);
-    }while(did_something);
-}
-
-func void eat_whitespace_comments_and_newlines(struct context *context){
-    smm did_something;
-    do{
-        did_something  = (smm)peek_token_eat_raw(context, TOKEN_whitespace);
-        did_something |= (smm)peek_token_eat_raw(context, TOKEN_comment);
-        did_something |= (smm)peek_token_eat_raw(context, TOKEN_newline);
-    }while(did_something);
-}
-
-
-func struct token *expand_define(struct context *context, struct token *token_to_expand, struct define_node *define, struct token *macro_expansion_site){
+func struct token *expand_define(struct context *context, struct token *token_to_expand, struct define_node *define, struct macro_expansion_record *macro_expansion_record){
     
     if(define->is_builtin){
         
@@ -1793,12 +1329,12 @@ func struct token *expand_define(struct context *context, struct token *token_to
             case BUILTIN_DEFINE__pragma:{
                 // :microsoft_extension
                 // for now unsupported, just skip all the tokens, such that they do not get emitted
-                eat_whitespace_and_comments(context);
-                struct token *open_paren = expect_token_raw(context, token_to_expand, TOKEN_open_paren, "Expected a '(' after builtin macro '__pragma'.");
+                eat_whitespace_and_comments_define(context);
+                struct token *open_paren = expect_token_define(context, token_to_expand, TOKEN_open_paren, "Expected a '(' after builtin macro '__pragma'.");
                 if(!open_paren) return null;
                 
-                eat_whitespace_and_comments(context);
-                struct token *pragma_directive = expect_token_raw(context, token_to_expand, TOKEN_identifier, "Expected a directive after '__pragma('.");
+                eat_whitespace_and_comments_define(context);
+                struct token *pragma_directive = expect_token_define(context, token_to_expand, TOKEN_identifier, "Expected a directive after '__pragma('.");
                 
                 if(atoms_match(pragma_directive->atom, globals.pragma_pack)){
                     
@@ -1810,7 +1346,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     
                     u64 count = 1;
                     while(true){
-                        struct token *token = next_token_raw(context);
+                        struct token *token = next_token_define(context);
                         
                         if(token->type == TOKEN_invalid){
                             // :Error this should report the beginning and the end
@@ -1830,7 +1366,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     struct token_array token_array = {.data = base, .size = size };
                     push_to_token_stack(context, token_array, 0, null);
                 }else{
-                    skip_until_tokens_are_balanced_raw(context, open_paren, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' after '__pragma('.");
+                    skip_until_tokens_are_balanced_define(context, open_paren, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' after '__pragma('.");
                     report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsuported __pragma ignored.");
                 }
                 
@@ -1844,24 +1380,27 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 // if it is, disable '<macro>', push a token stack node with the '<macro>' or '(<macro>)' 
                 // and return the 'defined' token.
                 //                                                                                      14.06.2022
-                eat_whitespace_and_comments(context);
-                struct token *open_paren = peek_token_eat_raw(context, TOKEN_open_paren);
                 
-                eat_whitespace_and_comments(context);
-                struct token *identifier = peek_token_eat_raw(context, TOKEN_identifier);
+                eat_whitespace_and_comments_define(context);
+                struct token *open_paren = peek_token_eat_define(context, TOKEN_open_paren);
+                
+                eat_whitespace_and_comments_define(context);
+                struct token *identifier = peek_token_eat_define(context, TOKEN_identifier);
                 if(!identifier){
-                    tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Builtin macro 'defined' expected an identifier following it. Possible invokations are 'defined <identifier>' and 'defined(<identifer>)'.");
+                    report_error(context, token_to_expand, "Builtin macro 'defined' expected an identifier following it. Possible invokations are 'defined <identifier>' and 'defined(<identifer>)'.");
                     return token_to_expand;
                 }
+                
+                assert(string_djb2_hash(identifier->string) == identifier->string_hash);
                 
                 struct token *tokens = null;
                 smm amount_of_tokens = 0;
                 
                 if(open_paren){
-                    eat_whitespace_and_comments(context);
-                    struct token *closed_paren = peek_token_eat_raw(context, TOKEN_closed_paren);
+                    eat_whitespace_and_comments_define(context);
+                    struct token *closed_paren = peek_token_eat_define(context, TOKEN_closed_paren);
                     if(!closed_paren){
-                        tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Builtin macro 'defined' expected exactly one identifier in its argument list. Possible invokations are 'defined <identifier>' and 'defined(<identifier>)'.");
+                        report_error(context, token_to_expand, "Builtin macro 'defined' expected exactly one identifier in its argument list. Possible invokations are 'defined <identifier>' and 'defined(<identifier>)'.");
                         return token_to_expand;
                     }
                     
@@ -1884,7 +1423,6 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 if(define_to_disable && define_to_disable->is_disabled) define_to_disable = null;
                 
                 if(define_to_disable){
-                    context->define_depth++;
                     define_to_disable->is_disabled = true;
                 }
                 
@@ -1901,16 +1439,20 @@ func struct token *expand_define(struct context *context, struct token *token_to
             case BUILTIN_DEFINE___FILE__:
             case BUILTIN_DEFINE___LINE__:{
                 struct token *token = push_uninitialized_struct(&context->scratch, struct token);
-                *token = *macro_expansion_site;
+                token->string_hash = 0;
+                token->location_index  = macro_expansion_record->macro_expansion_index;
+                
+                u32 file_index = macro_expansion_record->file_index;
                 
                 if(define->builtin_define_type == BUILTIN_DEFINE___FILE__){
-                    struct string file_name = strip_file_path(string_from_cstring(globals.file_table.data[token->file_index]->absolute_file_path));
+                    struct string file_name = strip_file_path(string_from_cstring(globals.file_table.data[file_index]->absolute_file_path));
                     
                     token->type = TOKEN_string_literal;
                     token->string = push_format_string(context->arena, "\"%.*s\"", file_name.size, file_name.data);
                 }else{
-                    token->type = TOKEN_base10_literal;
-                    token->string = push_format_string(context->arena, "%u", token->line);
+                    struct token_location_information location = get_location_for_token(context->arena, context->current_compilation_unit, token);
+                    token->type = TOKEN_integer_literal;
+                    token->string = push_format_string(context->arena, "%u", location.line);
                 }
                 
                 return token;
@@ -1926,15 +1468,15 @@ func struct token *expand_define(struct context *context, struct token *token_to
     
     if(define->is_function_like){
         
-        struct token *open_paren = next_token_raw(context);
+        struct token *open_paren = next_token_define(context);
         assert(open_paren->type == TOKEN_open_paren); // This should have been ensured by the outside.
         
         if(sll_is_empty(define->arguments)){
-            eat_whitespace_and_comments(context);
+            eat_whitespace_and_comments_define(context);
             
-            if(!peek_token_eat_raw(context, TOKEN_closed_paren)){
+            if(!peek_token_eat_define(context, TOKEN_closed_paren)){
                 begin_error_report(context);
-                tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Function-like define takes zero arguments. Expected ')'.");
+                report_error(context, token_to_expand, "Function-like define takes zero arguments. Expected ')'.");
                 report_error(context, define->defined_token, "... Here is the define.");
                 end_error_report(context);
             }
@@ -1953,7 +1495,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
             smm paren_depth = 1;
             
             while(true){
-                struct token *token = next_token_raw(context);
+                struct token *token = next_token_define(context);
                 
                 if(token->type == TOKEN_open_paren){
                     paren_depth += 1;
@@ -1961,7 +1503,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     paren_depth -= 1;
                     if(paren_depth == 0) break;
                 }else if(token->type == TOKEN_invalid){
-                    tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Expected a ')' while collecting arguments for macro expansion.");
+                    report_error(context, token_to_expand, "Expected a ')' while collecting arguments for macro expansion.");
                     return token_to_expand;
                 }
             }
@@ -1995,7 +1537,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
             //
             // Delete leading whitespace of the first argument.
             //
-            eat_whitespace_comments_and_newlines(context); 
+            eat_whitespace_comments_and_newlines_define(context); 
             
             //
             // @WARNING: Daisy-Chain these tokens. This is fine as all arenas are fixed size now.
@@ -2014,7 +1556,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
             }
             
             while(true){
-                struct token *token = next_token_raw(context);
+                struct token *token = next_token_define(context);
                 
                 if(token->type == TOKEN_comma){
                     
@@ -2034,7 +1576,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                             //
                             // Reinitialize the whitespace tracker and delete the leading whitespace of the next argument
                             //
-                            eat_whitespace_comments_and_newlines(context);
+                            eat_whitespace_comments_and_newlines_define(context);
                             last_was_whitespace = null;
                             
                             array  = array + amount;
@@ -2046,7 +1588,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                             // just collect all the arguments into the __VA_ARGS__ argument.
                         }else{
                             begin_error_report(context);
-                            tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Too many arguments in function-like macro invocation.");
+                            report_error(context, token_to_expand, "Too many arguments in function-like macro invocation.");
                             report_error(context, define->defined_token, "... Here is the definition of the macro.");
                             end_error_report(context);
                             return token_to_expand;
@@ -2062,12 +1604,10 @@ func struct token *expand_define(struct context *context, struct token *token_to
                         argument_token_arrays[arg->argument_index].data   = array;
                         argument_token_arrays[arg->argument_index].amount = amount;
                         
-                        
                         if(arg->stringify_index != -1){
                             *push_uninitialized_struct(context->arena, u8) = '"';
                             stringified_arguments[arg->stringify_index] = create_string(argument_stringified_start, arena_current(context->arena) - argument_stringified_start);
                         }
-                        
                         
                         if(arg->next){
                             if(define->is_varargs && !arg->next->next){
@@ -2077,7 +1617,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                             }
                             
                             begin_error_report(context);
-                            tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Too few arguments in function-like macro invocation.");
+                            report_error(context, token_to_expand, "Too few arguments in function-like macro invocation.");
                             report_error(context, define->defined_token, "... Here is the definition of the macro.");
                             end_error_report(context);
                             return token_to_expand;
@@ -2086,13 +1626,13 @@ func struct token *expand_define(struct context *context, struct token *token_to
                         }
                     }
                 }else if(token->type == TOKEN_invalid){
-                    tokenizer_report_error(context, token_to_expand, macro_expansion_site, "Expected a ')' while collecting arguments for macro expansion.");
+                    report_error(context, token_to_expand, "Expected a ')' while collecting arguments for macro expansion.");
                     return token_to_expand;
                 }
                 
                 if(arg->stringify_index != -1){
                     
-                    if(!(token->type == TOKEN_whitespace || token->type == TOKEN_comment || token->type == TOKEN_newline)){
+                    if(!(token->type == TOKEN_whitespace || token->type == TOKEN_newline)){
                         //
                         // If we encounter a non-whitespace token but we had a whitespace token, emit a whitespace
                         //
@@ -2104,7 +1644,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     switch(token->type){
                         
                         // these are handled above
-                        case TOKEN_whitespace: case TOKEN_comment: case TOKEN_newline: break;
+                        case TOKEN_whitespace: case TOKEN_newline: break;
                         
                         case TOKEN_character_literal:
                         case TOKEN_string_literal:{
@@ -2150,12 +1690,16 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 }
                 
                 
-                if(token->type == TOKEN_whitespace || token->type == TOKEN_comment || token->type == TOKEN_newline){
+                if(token->type == TOKEN_whitespace || token->type == TOKEN_newline){
                     last_was_whitespace = token;
                     continue;
                 }else if(last_was_whitespace){
                     amount++;
-                    *push_uninitialized_struct(&context->scratch, struct token) = *last_was_whitespace;
+                    
+                    struct token *whitespace_token = push_uninitialized_struct(&context->scratch, struct token);
+                    *whitespace_token = *last_was_whitespace;
+                    whitespace_token->type = TOKEN_whitespace;
+                    
                     last_was_whitespace = null;
                 }
                 
@@ -2196,7 +1740,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     struct token *array = push_uninitialized_data(&context->scratch, struct token, capacity);
                     
                     while(true){
-                        struct token *token = next_token_raw(context);
+                        struct token *token = next_token_define(context);
                         if(token->type == TOKEN_invalid) break;
                         
                         if(token->type == TOKEN_identifier){
@@ -2206,8 +1750,8 @@ func struct token *expand_define(struct context *context, struct token *token_to
                                 int skip = 0;
                                 
                                 if(define_in_argument->is_function_like){
-                                    eat_whitespace_comments_and_newlines(context); 
-                                    if(!peek_token_raw(context, TOKEN_open_paren)){
+                                    eat_whitespace_comments_and_newlines_define(context); 
+                                    if(!peek_token_define(context, TOKEN_open_paren)){
                                         skip = 1;
                                     }
                                 }
@@ -2239,7 +1783,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                                         new_token->type = TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro;
                                         continue;
                                     }else{
-                                        token = expand_define(context, token, define_in_argument, macro_expansion_site);
+                                        token = expand_define(context, token, define_in_argument, macro_expansion_record);
                                         if(!token) continue; 
                                     }
                                 } 
@@ -2302,9 +1846,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 struct token *string_token = push_uninitialized_struct(&context->scratch, struct token);
                 string_token->type   = TOKEN_string_literal;
                 
-                string_token->column     = macro_expansion_site->column;
-                string_token->line       = macro_expansion_site->line;
-                string_token->file_index = macro_expansion_site->file_index;
+                string_token->location_index = macro_expansion_record->macro_expansion_index;
                 
                 assert(replacement->stringify_index != -1);
                 string_token->data = stringified_arguments[replacement->stringify_index].data;
@@ -2353,7 +1895,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                         
                         for(smm i = last->tokens.amount - 1; i >= 0; i--){
                             struct token *token = last->tokens.data + i;
-                            if(token->type == TOKEN_whitespace || token->type == TOKEN_comment || token->type == TOKEN_newline){
+                            if(token->type == TOKEN_whitespace || token->type == TOKEN_newline){
                                 continue;
                             }
                             
@@ -2399,7 +1941,23 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 //        need to point to something valid
                 struct string concat = string_concatenate(context->arena, prev_string, next_string);
                 
-                struct token_array tokens = tokenize_raw(context, concat, macro_expansion_site->file_index, /* lines */null);
+                struct raw_token_array raw_tokens = tokenize_raw(context, concat);
+                
+                struct token_array tokens = {
+                    .data = push_uninitialized_data(context->arena, struct token, raw_tokens.size),
+                    .size = raw_tokens.size,
+                };
+                
+                for(smm index = 0, offset = 0; index < raw_tokens.size; offset += raw_tokens.data[index].size, index++){
+                    tokens.data[index].type = raw_tokens.data[index].type;
+                    tokens.data[index].location_index = macro_expansion_record->macro_expansion_index;
+                    tokens.data[index].data = concat.data + offset;
+                    tokens.data[index].size = raw_tokens.data[index].size;
+                    
+                    if(tokens.data[index].type == TOKEN_identifier){
+                        tokens.data[index].string_hash = string_djb2_hash(tokens.data[index].string);
+                    }
+                }
                 
                 if(tokens.amount){
                     // @note: amount can be 0 for 
@@ -2450,12 +2008,6 @@ func struct token *expand_define(struct context *context, struct token *token_to
         define->is_disabled = true;
         
         context->token_stack.nodes[define_token_stack_start].define_to_reenable_on_exit = define;
-        
-        if(context->define_depth == 0){
-            assert(!context->macro_expansion_token);
-            context->macro_expansion_token = macro_expansion_site;
-        }
-        context->define_depth++;
     }
     
     return null;
@@ -2646,14 +2198,14 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
         goto end;
     }
     
-    file->file = os_file;
+    file->os_file = os_file;
     file->amount_of_times_included = 0;
     
     // :newline_at_the_end_of_the_file
     // 
     // Put a newline at the very end of the file, this makes sure directives do not have to 
     // worry about end of file.
-    // Put another newline there, so we don't have to wory about backslashes ruining our fun.
+    // Put another newline there, so we don't have to worry about backslashes ruining our fun.
     file_buffer[file_size] = '\n';
     file_buffer[file_size + 1] = '\n';
     
@@ -2675,7 +2227,8 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
         goto end;
     }
     
-    file->tokens = tokenize_raw(context, file_contents, file->file_index, &file->lines);
+    file->contents = file_contents;
+    file->tokens = tokenize_raw(context, file_contents);
     
     end:
     atomic_store(int, file->in_progress, false);
@@ -2733,7 +2286,7 @@ func struct file *get_or_load_file_for_include_string(struct context *context, s
         //
         // First check relative to this file.
         //
-        struct file *parent_file = globals.file_table.data[directive->file_index];
+        struct file *parent_file = globals.file_table.data[token_get_file_index(context->current_compilation_unit, directive)];
         
         // For the purposes of reporting warnings we want to treat ""-includes in system include files the same as system includes.
         if(parent_file->is_system_include) is_system_include = true;
@@ -2929,20 +2482,8 @@ func s64 static_if_evaluate(struct context *context){
             }
         }break;
         
-        case TOKEN_binary_literal:
-        case TOKEN_octal_literal:
-        case TOKEN_hex_literal:
-        case TOKEN_base10_literal:{
-            struct parsed_integer parsed_integer;
-            if(test->type == TOKEN_base10_literal){
-                parsed_integer = parse_base10_literal(context, test);
-            }else if(test->type == TOKEN_hex_literal) {
-                parsed_integer = parse_hex_literal(context, test);
-            }else if(test->type == TOKEN_binary_literal){
-                parsed_integer = parse_binary_literal(context, test);
-            }else{
-                parsed_integer = parse_octal_literal(context, test);
-            }
+        case TOKEN_integer_literal:{
+            struct parsed_integer parsed_integer = parse_integer_literal(context, test);
             
             value = parsed_integer.value;
             
@@ -2977,16 +2518,21 @@ func s64 static_if_evaluate(struct context *context){
                 case NUMBER_KIND_u32: value = (u32)value; is_unsigned = 1; break;
                 case NUMBER_KIND_u64: value = (u64)value; is_unsigned = 1; break;
                 
+                case NUMBER_KIND_float32:
+                case NUMBER_KIND_float64:{
+                    report_error(context, test, "Unexpected token in '#if' operand.");
+                }break;
+                
                 default: break; // We have reported an error in `parse_*_literal`.
             }
         }break;
         
         case TOKEN_identifier:{
             if(string_match(token_get_string(test), string("defined"))){ // @cleanup: atoms match ?
-                eat_whitespace_and_comments(context);
+                eat_whitespace_and_comments_define(context);
                 struct token *got_paren = peek_token_eat(context, TOKEN_open_paren);
                 
-                eat_whitespace_and_comments(context);
+                eat_whitespace_and_comments_define(context);
                 
                 struct token *token = expect_token(context, TOKEN_identifier, "Expected an identifier after 'defined'.");
                 
@@ -2997,10 +2543,10 @@ func s64 static_if_evaluate(struct context *context){
                 value = lookup_define(context, token->atom) != null;
                 is_unsigned = 0;
             }else if(string_match(token_get_string(test), string("__has_include"))){
-                eat_whitespace_and_comments(context);
+                eat_whitespace_and_comments_define(context);
                 struct token *got_paren = peek_token_eat(context, TOKEN_open_paren);
                 
-                eat_whitespace_and_comments(context);
+                eat_whitespace_and_comments_define(context);
                 
                 int is_system_include;
                 struct string file_name = parse_include_string_after_it_has_been_preprocessed(context, test, &is_system_include);
@@ -3342,12 +2888,12 @@ func void maybe_push_file_to_include_stack(struct context *context, struct file 
         //
         // Wait for the file to finish and return the stashed tokens.
         //
-        struct token_array tokens = file->tokens;
+        struct raw_token_array tokens = file->tokens;
         
         atomic_preincrement(&file->amount_of_times_included);
         
         if(tokens.amount){
-            push_to_token_stack(context, tokens, 0, null);
+            push_to_include_stack(context, tokens, file);
         }
     }
 }
@@ -3373,7 +2919,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
         atomic_preincrement(&main_file->amount_of_times_included);
         context->current_compilation_unit->main_file = main_file;
         
-        struct token_array array = main_file->tokens;
+        struct raw_token_array array = main_file->tokens;
         if(context->error || array.size == 0) return (struct token_array)zero_struct;
         
         // 
@@ -3384,24 +2930,24 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
         context->token_stack.blocked_size = 0;
         context->token_stack.nodes = push_uninitialized_data(&context->scratch, struct token_stack_node, 0x100);
         
-        push_to_token_stack(context, array, 0, null);
+        // 
+        // Initialize the include stack.
+        // 
+        context->include_stack.capacity = 0x100;
+        context->include_stack.size = 0;
+        context->include_stack.nodes = push_uninitialized_data(&context->scratch, struct include_stack_node, 0x100);
+        
+        push_to_include_stack(context, array, main_file);
         
         // 
         // Push the predefined tokens as the first thing to be parsed!.
         // 
-        push_to_token_stack(context, globals.predefined_tokens, 0, null);
+        push_to_include_stack(context, globals.predefined_tokens, globals.file_table.invalid_file);
     }
     
     struct memory_arena *scratch = &context->scratch;
     
-#define TOKEN_EMIT_RESERVE_SIZE (mega_bytes(100) * sizeof(struct token))
-#define TOKEN_EMIT_COMMIT_SIZE  (0x10000 * sizeof(struct token))
-    
-    smm reserved_tokens  = TOKEN_EMIT_RESERVE_SIZE / sizeof(struct token);
-    smm committed_tokens = 0;
-    smm emitted_tokens   = 0;
-    struct os_virtual_buffer token_buffer = os_reserve_memory(0, TOKEN_EMIT_RESERVE_SIZE);
-    struct token *emitted_token_buffer = (struct token *)token_buffer.memory;
+    struct token *emitted_token_buffer = push_uninitialized_data(&context->emit_arena, struct token, 0);
     
     struct{
         struct static_if_stack_node *first;  // top    of the stack
@@ -3411,187 +2957,358 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
     b32 have_postponed_directive = false;
     struct postponed_directive{
         struct token *directive;
-        smm saved_emitted_token_count;
+        struct token *saved_postponed_directive_base;
         enum preprocessor_directive directive_kind;
     } postponed_directive = zero_struct;
     
-    if(!token_buffer.memory){
-        report_error(context, null, "Error: Could not allocate token array for file '%.*s'.", initial_absolute_file_path.size, initial_absolute_file_path.data);
-        goto end;
-    }
-    
-    
-    struct token *macro_expansion_site = null;
     b32 got_newline = true;
+    
+    struct compilation_unit *current_compilation_unit = context->current_compilation_unit;
+    
+    u64 macro_expansion_record_capacity = 0x10;
+    current_compilation_unit->macro_expansion_records = push_data(context->arena, struct macro_expansion_record, macro_expansion_record_capacity);
+    current_compilation_unit->amount_of_macro_expansion_records = 0;
     
     while(1){
         
-        // 
-        // Iterate the raw tokens from the `context->token_stack`, expand defines if necessary 
-        // and then copy them out to the `comitted_token_buffer`.
-        // If we encounter a newline token followed by a # and we are not currently expanding a define
-        // (context->define_depth > 0), we break out of this loop and handle the directive.
-        // We are done, when we hit the `TOKEN_invalid`.
-        // 
-        
         while(1){
-            struct token *token = next_token_raw(context);
+            jump_because_a_postponed_directive_was_executed:;
             
-            if(token->type == TOKEN_invalid) goto double_break;
+            struct include_stack_node *include_stack_node = &context->include_stack.nodes[context->include_stack.size-1];
+            struct file *include_file = include_stack_node->file;
+            struct raw_token_array tokens = include_stack_node->tokens;
             
-            if(token->type == TOKEN_hash && got_newline && context->define_depth == 0){
-                // We have to handle the directive!
-                break;
-            }
+            smm offset = include_stack_node->offset;
             
-            if(token->type == TOKEN_identifier){
-                struct define_node *define = lookup_define(context, token->atom);
-                if(define && !define->is_disabled){
+            for(smm token_index = include_stack_node->at; token_index < tokens.size; offset += tokens.data[token_index].size, token_index++){
+                
+                struct raw_token *raw_token = &tokens.data[token_index];
+                
+                if(raw_token->type == TOKEN_whitespace) continue;
+                
+                if(raw_token->type == TOKEN_hash && got_newline){
+                    include_stack_node->at = token_index + 1;
+                    include_stack_node->offset = offset + raw_token->size;
                     
-                    if(context->define_depth == 0) macro_expansion_site = token; // This has to happen before the `eat_whitespace_comments_and_newlines` because it might change the `define_depth`.
+                    goto handle_directive;
+                }
+                
+                smm raw_token_string_hash = 0;
+                
+                if(raw_token->type == TOKEN_identifier){
+                    struct atom raw_token_atom = atom_for_string(create_string(include_file->contents.data + offset, raw_token->size));
+                    raw_token_string_hash = raw_token_atom.string_hash;
                     
-                    int skip = 0;
-                    if(define->is_function_like){
-                        eat_whitespace_comments_and_newlines(context); 
-                        if(!peek_token_raw(context, TOKEN_open_paren)){
-                            skip = 1;
-                        }
-                    }
+                    struct define_node *initial_define = lookup_define(context, raw_token_atom);
                     
-                    if(!skip){
-                        token = expand_define(context, token, define, macro_expansion_site);
+                    if(initial_define){
+                        assert(!initial_define->is_disabled);
                         
-                        // We will only ever return a token for predefined identifiers.
-                        // Otherwise, we will expand the macro push the resulting tokens to the stack for rescanning 
-                        // and then return null.
-                        if(!token) continue;
+                        struct token *token = &(struct token){
+                            .type = raw_token->type,
+                            .location_index = include_file->file_index,
+                            .atom = raw_token_atom,
+                        };
+                        
+                        struct define_node *define = initial_define;
+                        
+                        token_index += 1; // Skip past the identifier.
+                        offset += raw_token->size;
+                        
+                        dynarray_maybe_grow(struct macro_expansion_record, context->arena, current_compilation_unit->macro_expansion_records, current_compilation_unit->amount_of_macro_expansion_records, macro_expansion_record_capacity);
+                        u64 macro_expansion_record_index = current_compilation_unit->amount_of_macro_expansion_records++;
+                        
+                        struct macro_expansion_record *macro_expansion_record = &current_compilation_unit->macro_expansion_records[macro_expansion_record_index];
+                        macro_expansion_record->file_index = include_file->file_index;
+                        macro_expansion_record->macro_expansion_index = (u32)(0x80000000 | macro_expansion_record_index); // @cleanup: Bounds-check?
+                        macro_expansion_record->expanded_token = raw_token_atom.data;
+                        macro_expansion_record->defined_token = define->name.string.data;
+                        
+                        // 
+                        // Rescan Macro loop.
+                        // 
+                        while(token != &globals.invalid_token){
+                            
+                            int skip = 0;
+                            
+                            int is_function_like = define->is_function_like;
+                            
+                            smm identifier_token_index = token_index;
+                            smm identifier_offset = offset;
+                            
+                            if(context->in_static_if_condition){
+                                
+                                if(define->is_builtin && define->builtin_define_type == BUILTIN_DEFINE_defined){
+                                    // Sigh: defined is weird. There are two different ways to use it.
+                                    //       One function like. one non-function like, but still with argument.
+                                    
+                                    struct raw_token *other = &globals.invalid_raw_token;
+                                    for(; token_index < tokens.size; token_index++){
+                                        other = &tokens.data[token_index];
+                                        if(other->type != TOKEN_whitespace && other->type != TOKEN_newline){
+                                            break;
+                                        }
+                                        
+                                        offset += other->size;
+                                    }
+                                    
+                                    if(other->type == TOKEN_open_paren){
+                                        is_function_like = 1;
+                                    }else if(other->type == TOKEN_identifier){
+                                        
+                                        struct token *other_copy = push_struct(&context->scratch, struct token);
+                                        other_copy->type = other->type;
+                                        other_copy->location_index = include_file->file_index;
+                                        other_copy->atom = atom_for_string(create_string(include_file->contents.data + offset, other->size));
+                                        
+                                        struct token_array parameter_tokens = (struct token_array){
+                                            .data = other_copy,
+                                            .size = 1,
+                                        };
+                                        push_to_token_stack(context, parameter_tokens, 0, null);
+                                        
+                                        token_index += 1;
+                                        offset += other->size;
+                                    }
+                                }
+                            }
+                            
+                            if(is_function_like){
+                                eat_whitespace_comments_and_newlines_define(context);
+                                
+                                if(peek_token_define(context, TOKEN_open_paren)){
+                                    // We are good, it's a function-like define.
+                                }else if(peek_token_define(context, TOKEN_invalid)){
+                                    struct raw_token *other = &globals.invalid_raw_token;
+                                    for(; token_index < tokens.size; token_index++){
+                                        other = &tokens.data[token_index];
+                                        if(other->type != TOKEN_whitespace && other->type != TOKEN_newline){
+                                            break;
+                                        }
+                                        
+                                        offset += other->size;
+                                    }
+                                    
+                                    if(other->type != TOKEN_open_paren){
+                                        // This was not the function-like define, undo the last token and continue.
+                                        skip = true;
+                                    }else{
+                                        // 
+                                        // Push the arguments onto the define token stack.
+                                        // 
+                                        
+                                        struct token *parameter_token_start = push_data(&context->scratch, struct token, 0);
+                                        
+                                        smm depth = 0;
+                                        do{
+                                            struct token *pushed = push_struct(&context->scratch, struct token);
+                                            
+                                            struct raw_token *source = &tokens.data[token_index++];
+                                            
+                                            pushed->type = source->type;
+                                            pushed->location_index = include_file->file_index;
+                                            pushed->string = create_string(include_file->contents.data + offset, source->size);
+                                            
+                                            if(pushed->type == TOKEN_identifier){
+                                                pushed->string_hash = string_djb2_hash(pushed->string);
+                                            }
+                                            
+                                            offset += source->size;
+                                            
+                                            if(pushed->type == TOKEN_open_paren){
+                                                depth += 1;
+                                            }else if(pushed->type == TOKEN_closed_paren){
+                                                depth -= 1;
+                                                if(depth == 0) break;
+                                            }
+                                        }while(token_index < tokens.size);
+                                        
+                                        if(depth){
+                                            report_error(context, parameter_token_start, "Function-like define is missing ')' at the end of its parameter list.");
+                                        }
+                                        
+                                        smm parameter_token_size = push_data(&context->scratch, struct token, 0) - parameter_token_start;
+                                        
+                                        struct token_array parameter_tokens = (struct token_array){
+                                            .data = parameter_token_start,
+                                            .size = parameter_token_size,
+                                        };
+                                        
+                                        push_to_token_stack(context, parameter_tokens, 0, null);
+                                    }
+                                }else{
+                                    skip = 1;
+                                    
+                                    token_index = identifier_token_index;
+                                    offset = identifier_offset;
+                                }
+                            }
+                            
+                            if(!skip){
+                                token = expand_define(context, token, define, macro_expansion_record);
+                            }
+                            
+                            if(token){
+                                struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
+                                out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
+                                if(define == initial_define){
+                                    out_token->location_index = include_file->file_index;
+                                }else{
+                                    out_token->location_index = macro_expansion_record->macro_expansion_index;
+                                }
+                                out_token->atom = token->atom;
+                                
+                                if(!have_postponed_directive){
+                                    u64 index = out_token->string_hash & (globals.keyword_table_size - 1);
+                                    if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
+                                        out_token->type = globals.keyword_table[index].type;
+                                    }
+                                } 
+                            }
+                            
+                            for(token = next_token_define(context); token != &globals.invalid_token; token = next_token_define(context)){
+                                
+                                if(token->type == TOKEN_whitespace) continue;
+                                
+                                if(token->type == TOKEN_identifier){
+                                    define = lookup_define(context, token->atom);
+                                    if(define && !define->is_disabled) break;
+                                }
+                                
+                                struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
+                                out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
+                                out_token->location_index = macro_expansion_record->macro_expansion_index; // @cleanup: For argument tokens we could do better than this.
+                                out_token->atom = token->atom;
+                                
+                                if(out_token->type == TOKEN_identifier){
+                                    
+                                    // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
+                                    //        things like defined(__int64) will error.
+                                    if(!have_postponed_directive){
+                                        u64 index = out_token->string_hash & (globals.keyword_table_size - 1);
+                                        if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
+                                            out_token->type = globals.keyword_table[index].type;
+                                        }
+                                    } 
+                                }
+                            } 
+                        }
+                        
+                        token_index -= 1;
+                        offset -= tokens.data[token_index].size;
+                        continue;
                     }
                 }
-            }
-            
-            assert(TOKEN_invalid < token->type && token->type < TOKEN_count);
-            
-            if(token->type == TOKEN_whitespace) continue;
-            if(token->type == TOKEN_comment)    continue;
-            if(token->type == TOKEN_newline){
-                got_newline = true;
                 
-                if(have_postponed_directive && !context->define_depth){
-                    //
-                    // Handle the postponed directive!
-                    // This can be either and '#include' or '#if' or '#elif'.
-                    // The tokens for the directives are 
-                    //     [current_directive->saved_emitted_token_count, emitted_tokens).
-                    // Load these and then evaluate the directive.
-                    //
-                    struct token_array token_array = {
-                        .data = emitted_token_buffer + postponed_directive.saved_emitted_token_count,
-                        .size = emitted_tokens       - postponed_directive.saved_emitted_token_count,
-                    };
-                    assert(token_array.amount >= 0);
+                // 
+                // Non-macro case
+                // 
+                
+                if(raw_token->type == TOKEN_newline){
+                    got_newline = true;
                     
-                    if(!token_array.amount){
-                        report_error(context, postponed_directive.directive, "Expected argument for directive.");
-                        goto end;
-                    }
-                    
-                    begin_token_array(context, token_array);
-                    
-                    //
-                    // We now use the usual (non-raw) version of *_token procedures to evaluate the directive.
-                    //
-                    
-                    // :Error Print what the define expanded to.
-                    
-                    if(postponed_directive.directive_kind == DIRECTIVE_include){
-                        // 
-                        // @copy_and_paste from the non-expanded case.
-                        // 
+                    if(have_postponed_directive){
+                        //
+                        // Handle the postponed directive!
+                        // This can be either and '#include' or '#if' or '#elif'.
+                        // The tokens for the directives are 
+                        //     [current_directive->saved_emitted_token_count, emitted_tokens).
+                        // Load these and then evaluate the directive.
+                        //
+                        struct token_array token_array = {
+                            .data = postponed_directive.saved_postponed_directive_base,
+                            .size = push_data(&context->emit_arena, struct token, 0) - postponed_directive.saved_postponed_directive_base,
+                        };
+                        assert(token_array.amount >= 0);
                         
-                        int is_system_include = false;
-                        struct string file_name = parse_include_string_after_it_has_been_preprocessed(context, postponed_directive.directive, &is_system_include);
-                        
-                        struct file *file = get_or_load_file_for_include_string(context, postponed_directive.directive, file_name, is_system_include);
-                        if(!file){
-                            report_error(context, postponed_directive.directive, "'%.*s' include file not found.", file_name.size, file_name.data);
+                        if(!token_array.amount){
+                            report_error(context, postponed_directive.directive, "Expected argument for directive.");
                             goto end;
                         }
                         
-                        maybe_push_file_to_include_stack(context, file);
-                    }else{
-                        static_if_stack.first->is_true = static_if_evaluate(context) != 0;
-                        if(context->should_exit_statement) goto end;
+                        begin_token_array(context, token_array);
+                        
+                        //
+                        // We now use the usual (non-raw) version of *_token procedures to evaluate the directive.
+                        //
+                        
+                        // :Error Print what the define expanded to.
+                        
+                        if(postponed_directive.directive_kind == DIRECTIVE_include){
+                            // 
+                            // @copy_and_paste from the non-expanded case.
+                            // 
+                            
+                            int is_system_include = false;
+                            struct string file_name = parse_include_string_after_it_has_been_preprocessed(context, postponed_directive.directive, &is_system_include);
+                            
+                            struct file *file = get_or_load_file_for_include_string(context, postponed_directive.directive, file_name, is_system_include);
+                            if(!file){
+                                report_error(context, postponed_directive.directive, "'%.*s' include file not found.", file_name.size, file_name.data);
+                                goto end;
+                            }
+                            
+                            maybe_push_file_to_include_stack(context, file);
+                        }else{
+                            static_if_stack.first->is_true = static_if_evaluate(context) != 0;
+                            if(context->should_exit_statement) goto end;
+                        }
+                        
+                        //
+                        // We have completed the 'postponed_directive', _delete_ the tokens from the array, 
+                        // by reseting the 'emitted_tokens' back to where the 'postponed_directive' started.
+                        //
+                        have_postponed_directive = false;
+                        context->emit_arena.current = (u8 *)postponed_directive.saved_postponed_directive_base;
+                        context->in_static_if_condition = 0;
+                        
+                        if(static_if_stack.first && !static_if_stack.first->is_true){
+                            // If we _just_ disabled the current block, goto the code that searches for the next directive.
+                            goto jump_because_a_postponed_static_if_was_disabled_and_we_should_search_for_the_next_directive;
+                        }
+                        
+                        include_stack_node->at = token_index + 1;
+                        include_stack_node->offset = offset + raw_token->size;
+                        goto jump_because_a_postponed_directive_was_executed;
                     }
                     
-                    //
-                    // We have completed the 'postponed_directive', _delete_ the tokens from the array, 
-                    // by reseting the 'emitted_tokens' back to where the 'postponed_directive' started.
-                    //
-                    have_postponed_directive = false;
-                    emitted_tokens = postponed_directive.saved_emitted_token_count;
-                    context->in_static_if_condition = 0;
+                    continue;
+                }
+                
+                got_newline = false;
+                
+                // 
+                // Copy out token.
+                // 
+                
+                struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
+                out_token->type = (raw_token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : raw_token->type;
+                out_token->location_index = include_file->file_index;
+                out_token->data = include_file->contents.data + offset;
+                out_token->size = raw_token->size;
+                out_token->string_hash = raw_token_string_hash;
+                
+                if(out_token->type == TOKEN_identifier){
                     
-                    if(static_if_stack.first && !static_if_stack.first->is_true){
-                        // If we _just_ disabled the current block, goto the code that searches for the next directive.
-                        goto jump_because_a_postponed_static_if_was_disabled_and_we_should_search_for_the_next_directive;
-                    }
+                    // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
+                    //        things like defined(__int64) will error.
+                    if(!have_postponed_directive){
+                        u64 index = raw_token_string_hash & (globals.keyword_table_size - 1);
+                        if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
+                            out_token->type = globals.keyword_table[index].type;
+                        }
+                    } 
                 }
-                
-                continue; // Don't emit the newline token.
             }
             
-            got_newline = false;
+            context->include_stack.size -= 1;
             
-            if(emitted_tokens == committed_tokens){
-                if(committed_tokens == reserved_tokens){
-                    report_error(context, token, "Compilation exceeds current maximum amount of tokens per compilation unit (%lld).", reserved_tokens);
-                    goto end;
-                }
-                
-                struct os_virtual_buffer committed = os_commit_memory(emitted_token_buffer + committed_tokens, TOKEN_EMIT_COMMIT_SIZE);
-                assert(committed.committed == TOKEN_EMIT_COMMIT_SIZE);
-                assert((struct token *)committed.base == emitted_token_buffer + committed_tokens);
-                
-                committed_tokens += TOKEN_EMIT_COMMIT_SIZE / sizeof(struct token);
-            }
-            
-            assert(emitted_tokens < committed_tokens);
-            struct token *out_token = emitted_token_buffer + emitted_tokens++;
-            if(token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro){
-                out_token->type = TOKEN_identifier;
-            }else{
-                out_token->type = token->type;
-            }
-            
-            // If we expanded this token from a macro, copy the location :copy_expanded_location
-            if(context->macro_expansion_token){
-                out_token->line   = context->macro_expansion_token->line;
-                out_token->column = context->macro_expansion_token->column;
-                out_token->file_index   = context->macro_expansion_token->file_index;
-            }else{
-                out_token->column = token->column;
-                out_token->line   = token->line;
-                out_token->file_index   = token->file_index;
-            }
-            
-            out_token->data = token->data;
-            out_token->size = token->size;
-            
-            if(out_token->type == TOKEN_identifier){
-                out_token->string_hash = token->string_hash;
-                
-                // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
-                //        things like defined(__int64) will error.
-                if(!have_postponed_directive){
-                    u64 index = token->string_hash & (globals.keyword_table_size - 1);
-                    if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
-                        out_token->type = globals.keyword_table[index].type;
-                    }
-                } 
+            if(context->include_stack.size == 0){
+                goto double_break;
             }
         }
         
-        {
+        handle_directive: {
             // 
             // If we get here, we assume the code above found a newline followed by a hash,
             // or in other words a directive. In this case, we should handle this directive.
@@ -3603,24 +3320,21 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
             
             got_newline = false; // Directives do not eat their newlines, this also needs to be here for 'postponed_directives'.
             
-            begin_counter(context, handle_directive);
-            
-            eat_whitespace_and_comments(context);
+            eat_whitespace_and_comments_raw(context);
             
             if(peek_token_raw(context, TOKEN_newline)){
                 // do nothing
                 continue;
             }
             
-            struct token *directive = next_token_raw(context);
-            
-            struct string directive_string = token_get_string(directive);
+            struct token directive = next_token_raw(context);
+            struct string directive_string = directive.string;
             
             enum preprocessor_directive directive_kind = DIRECTIVE_invalid;
             
             {
-                u64 index = directive->string_hash & (globals.directive_table_size - 1);
-                if(atoms_match(globals.directive_table[index].directive, directive->atom)){
+                u64 index = directive.string_hash & (globals.directive_table_size - 1);
+                if(atoms_match(globals.directive_table[index].directive, directive.atom)){
                     directive_kind = globals.directive_table[index].type;
                 }
             }
@@ -3645,16 +3359,16 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         // Only report on invalid preprocessor directives, if we are in active code.
                         // This allows writing arbitrary stuff inside of an `#if 0`-block.
                         // 
-                        report_error(context, directive, "Invalid preprocessor directive.");
+                        report_error(context, &directive, "Invalid preprocessor directive.");
                         goto end;
                     }
                 }break;
                 
                 case DIRECTIVE_if:{
-                    eat_whitespace_and_comments(context);
+                    eat_whitespace_and_comments_raw(context);
                     
                     if(peek_token_raw(context, TOKEN_newline)){
-                        report_error(context, directive, "Expected an argument after '#if'.");
+                        report_error(context, &directive, "Expected an argument after '#if'.");
                         goto end;
                     }
                     
@@ -3665,13 +3379,13 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         //
                         struct static_if_stack_node *node = push_struct(scratch, struct static_if_stack_node);
                         node->is_true = 1;
-                        node->token = directive;
+                        node->token = push_token_copy(&context->scratch, directive);
                         sll_push_front(static_if_stack, node);
                         
                         assert(!have_postponed_directive);
                         have_postponed_directive = true;
-                        postponed_directive.directive = directive;
-                        postponed_directive.saved_emitted_token_count = emitted_tokens;
+                        postponed_directive.directive = node->token;
+                        postponed_directive.saved_postponed_directive_base = push_data(&context->emit_arena, struct token, 0);
                         postponed_directive.directive_kind = directive_kind;
                         context->in_static_if_condition = 1;
                         
@@ -3686,7 +3400,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     // @note: value will always be '0' if this '#if' is contained in a '#if 0' block
                     struct static_if_stack_node *node = push_struct(scratch, struct static_if_stack_node);
                     node->is_true = 0;
-                    node->token = directive;
+                    node->token = push_token_copy(&context->scratch, directive);
                     
                     sll_push_front(static_if_stack, node);
                 }break;
@@ -3695,20 +3409,20 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     
                     struct static_if_stack_node *node = static_if_stack.first;
                     
-                    eat_whitespace_and_comments(context);
+                    eat_whitespace_and_comments_raw(context);
                     if(peek_token_raw(context, TOKEN_newline)){
-                        report_error(context, directive, "Expected an argument after '#elif'.");
+                        report_error(context, &directive, "Expected an argument after '#elif'.");
                         goto end;
                     }
                     
                     if(!node){
-                        report_error(context, directive, "'#elif' without matching '#if'.");
+                        report_error(context, &directive, "'#elif' without matching '#if'.");
                         goto end;
                     }
                     
-                    if(node->token->file_index != directive->file_index){
+                    if(node->token->location_index != directive.location_index){
                         begin_error_report(context);
-                        report_error(context, directive, "'#elif' matches '#%.*s' in different file.", node->token->size, node->token->data);
+                        report_error(context, &directive, "'#elif' matches '#%.*s' in different file.", node->token->size, node->token->data);
                         report_error(context, node->token, "... Here is '#%.*s' it matches.", node->token->size, node->token->data);
                         end_error_report(context);
                         goto end;
@@ -3716,7 +3430,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     
                     if(node->is_else){
                         begin_error_report(context);
-                        report_error(context, directive, "'#elif' after '#else'.");
+                        report_error(context, &directive, "'#elif' after '#else'.");
                         report_error(context, node->token, "... Here is the previous '#else'.");
                         end_error_report(context);
                         goto end;
@@ -3725,7 +3439,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     //
                     // @WARNING: we edit 'node' directly, as the '#if' that it was previously is not needed anymore.
                     //
-                    node->token = directive;
+                    node->token = push_token_copy(&context->scratch, directive);
                     
                     // 
                     // First check whether the current '#if' (node) was not disabled by a outer #if, e.g.:
@@ -3769,8 +3483,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             
                             assert(!have_postponed_directive);
                             have_postponed_directive = true;
-                            postponed_directive.directive = directive;
-                            postponed_directive.saved_emitted_token_count = emitted_tokens;
+                            postponed_directive.directive = push_token_copy(&context->scratch, directive);
+                            postponed_directive.saved_postponed_directive_base = push_data(&context->emit_arena, struct token, 0);
                             postponed_directive.directive_kind = directive_kind;
                             context->in_static_if_condition = 1;
                             
@@ -3790,22 +3504,22 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 }break; 
                 case DIRECTIVE_ifdef:
                 case DIRECTIVE_ifndef:{
-                    eat_whitespace_and_comments(context);
+                    eat_whitespace_and_comments_raw(context);
                     if(!peek_token_raw(context, TOKEN_identifier)){
-                        report_error(context, directive, "Expected an identifier.");
+                        report_error(context, &directive, "Expected an identifier.");
                         goto end;
                     }
-                    struct token *defined_identifier = next_token_raw(context);
+                    struct token defined_identifier = next_token_raw(context);
                     
                     b32 evaluates_to_true = false;
                     if(!static_if_stack.first || static_if_stack.first->is_true){
-                        b32 is_defined = lookup_define(context, defined_identifier->atom) != null;
+                        b32 is_defined = lookup_define(context, defined_identifier.atom) != null;
                         evaluates_to_true = (directive_kind == DIRECTIVE_ifdef) ? is_defined : !is_defined;
                     }
                     
                     struct static_if_stack_node *node = push_struct(scratch, struct static_if_stack_node);
                     node->is_true = evaluates_to_true;
-                    node->token = directive;
+                    node->token = push_token_copy(&context->scratch, directive);
                     
                     sll_push_front(static_if_stack, node);
                 }break;
@@ -3813,13 +3527,13 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     struct static_if_stack_node *node = static_if_stack.first;
                     
                     if(!node){
-                        report_error(context, directive, "'#else' without matching '#if'.");
+                        report_error(context, &directive, "'#else' without matching '#if'.");
                         goto end;
                     }
                     
-                    if(node->token->file_index != directive->file_index){
+                    if(node->token->location_index != directive.location_index){
                         begin_error_report(context);
-                        report_error(context, directive, "'#else' matches '#%.*s' in different file.", node->token->size, node->token->data);
+                        report_error(context, &directive, "'#else' matches '#%.*s' in different file.", node->token->size, node->token->data);
                         report_error(context, node->token, "... Here is '#%.*s' it matches.", node->token->size, node->token->data);
                         end_error_report(context);
                         goto end;
@@ -3827,7 +3541,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     
                     if(node->is_else){
                         begin_error_report(context);
-                        report_error(context, directive, "Double '#else'.");
+                        report_error(context, &directive, "Double '#else'.");
                         report_error(context, node->token, "... Here is the previous '#else'.");
                         end_error_report(context);
                         goto end;
@@ -3837,7 +3551,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     // @WARNING: we edit 'node' directly, as the '#if' that it was previously is not needed anymore.
                     //
                     node->is_else = true; // save that it was an else
-                    node->token = directive;
+                    node->token = push_token_copy(&context->scratch, directive);
                     
                     // if 'node' is a top level '#if' or if the '#if' is active (i.e '#if 1')
                     if(!node->next || node->next->is_true){
@@ -3855,13 +3569,13 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     struct static_if_stack_node *node = static_if_stack.first;
                     
                     if(!node){
-                        report_error(context, directive, "'#endif' without matching '#if'");
+                        report_error(context, &directive, "'#endif' without matching '#if'");
                         goto end;
                     }
                     
-                    if(node->token->file_index != directive->file_index){
+                    if(node->token->location_index != directive.location_index){
                         begin_error_report(context);
-                        report_error(context, directive, "'#endif' matches '#%.*s' in different file.", node->token->size, node->token->data);
+                        report_error(context, &directive, "'#endif' matches '#%.*s' in different file.", node->token->size, node->token->data);
                         report_error(context, node->token, "... Here is '#%.*s' it matches.", node->token->size, node->token->data);
                         end_error_report(context);
                         goto end;
@@ -3873,13 +3587,13 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 case DIRECTIVE_define:{
                     begin_counter(context, define_parsing);
                     
-                    eat_whitespace_and_comments(context);
+                    eat_whitespace_and_comments_raw(context);
                     if(!peek_token_raw(context, TOKEN_identifier)){
-                        report_error(context, directive, "Expected an identifier after '#define'.");
+                        report_error(context, &directive, "Expected an identifier after '#define'.");
                         goto end;
                     }
-                    struct token *defined_identifier = next_token_raw(context);
-                    struct atom name = defined_identifier->atom;
+                    struct token defined_identifier = next_token_raw(context);
+                    struct atom name = defined_identifier.atom;
                     
                     struct define_argument_list arguments = zero_struct;
                     
@@ -3887,11 +3601,11 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     b32 is_varargs = false;
                     if(peek_token_eat_raw(context, TOKEN_open_paren)){
                         is_function_like = true;
-                        eat_whitespace_and_comments(context);
+                        eat_whitespace_and_comments_raw(context);
                         
                         if(!peek_token_eat_raw(context, TOKEN_closed_paren)){
                             do{
-                                eat_whitespace_and_comments(context);
+                                eat_whitespace_and_comments_raw(context);
                                 
                                 if(peek_token_eat_raw(context, TOKEN_dotdotdot)){
                                     is_varargs = true;
@@ -3904,21 +3618,21 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     node->argument_index = arguments.count;
                                     arguments.count += 1;
                                     
-                                    eat_whitespace_and_comments(context); // allow #define UNUSED( ... )
+                                    eat_whitespace_and_comments_raw(context); // allow #define UNUSED( ... )
                                     break;
                                 }else if(!peek_token_raw(context, TOKEN_identifier)){
-                                    report_error(context, defined_identifier, "Expected a parameter in function-like macro definition.");
+                                    report_error(context, &defined_identifier, "Expected a parameter in function-like macro definition.");
                                     goto end;
                                 }
                                 
-                                struct token *define_argument_token = next_token_raw(context);
+                                struct token define_argument_token = next_token_raw(context);
                                 
                                 struct define_argument *node = push_struct(scratch, struct define_argument);
-                                node->argument = define_argument_token->atom;
+                                node->argument = define_argument_token.atom;
                                 node->stringify_index = -1;
                                 for(struct define_argument *old_arg = arguments.first; old_arg; old_arg = old_arg->next){
                                     if(atoms_match(old_arg->argument, node->argument)){
-                                        report_error(context, define_argument_token, "Two arguments have the same identifier.");
+                                        report_error(context, &define_argument_token, "Two arguments have the same identifier.");
                                         goto end;
                                     }
                                 }
@@ -3927,17 +3641,17 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 node->argument_index = arguments.count;
                                 arguments.count += 1;
                                 
-                                eat_whitespace_and_comments(context);
+                                eat_whitespace_and_comments_raw(context);
                             }while(peek_token_eat_raw(context, TOKEN_comma));
                             
-                            expect_token_raw(context, defined_identifier, TOKEN_closed_paren, "Expected ')' at the end of function-like macro definition.");
+                            expect_token_raw(context, &defined_identifier, TOKEN_closed_paren, "Expected ')' at the end of function-like macro definition.");
                         }
                     }
                     
-                    eat_whitespace_and_comments(context); // eat unnecessary leading whitespace.
+                    eat_whitespace_and_comments_raw(context); // eat unnecessary leading whitespace.
                     
                     if(peek_token_raw(context, TOKEN_hashhash)){
-                        report_error(context, get_current_token_raw(context), "'##' at the beginning of a macro replacement list is illegal.");
+                        report_error(context, push_token_copy(&context->scratch, get_current_token_raw(context)), "'##' at the beginning of a macro replacement list is illegal.");
                         goto end;
                     }
                     
@@ -3956,19 +3670,19 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         b32 handled = false;
                         
                         if(peek_token_raw(context, TOKEN_identifier)){
-                            struct token *ident = get_current_token_raw(context);
-                            struct define_argument *arg = lookup_define_argument(arguments, ident);
+                            struct token ident = get_current_token_raw(context);
+                            struct define_argument *arg = lookup_define_argument(arguments, &ident);
                             if(arg){
                                 next_token_raw(context);
                                 handled = true;
-                                eat_whitespace_and_comments(context);
+                                eat_whitespace_and_comments_raw(context);
                                 
                                 struct define_replacement_node *replacement = push_struct(&context->scratch, struct define_replacement_node);
                                 
                                 if(peek_token_raw(context, TOKEN_hashhash)){
-                                    struct token *hashhash = next_token_raw(context);
+                                    struct token hashhash = next_token_raw(context);
                                     
-                                    eat_whitespace_and_comments(context);
+                                    eat_whitespace_and_comments_raw(context);
                                     
                                     replacement->kind = DEFINE_REPLACEMENT_hashhash;
                                     replacement->prefix_argument  = arg->argument_index;
@@ -3977,16 +3691,16 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     token_stack_node_count += 3; // Prefix, merged, postfix.
                                     
                                     if(peek_token_raw(context, TOKEN_newline)){
-                                        report_error(context, hashhash, "'##' at the end of a macro replacement list is illegal.");
+                                        report_error(context, &hashhash, "'##' at the end of a macro replacement list is illegal.");
                                         goto end;
                                     }
                                     
                                     // @note: skip the 'postfix_token' in any case
-                                    struct token *postfix_token = next_token_raw(context);
-                                    replacement->postfix_token = postfix_token;
+                                    struct token postfix_token = next_token_raw(context);
+                                    replacement->postfix_token = push_token_copy(&context->scratch, postfix_token);
                                     
-                                    if(postfix_token->type == TOKEN_identifier){
-                                        struct define_argument *other_arg = lookup_define_argument(arguments, postfix_token);
+                                    if(postfix_token.type == TOKEN_identifier){
+                                        struct define_argument *other_arg = lookup_define_argument(arguments, &postfix_token);
                                         if(other_arg){
                                             replacement->postfix_argument = other_arg->argument_index;
                                         }
@@ -4005,16 +3719,16 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             }
                         }else if(peek_token_raw(context, TOKEN_hash)){
                             handled = true;
-                            struct token *hash = next_token_raw(context);
-                            eat_whitespace_and_comments(context);
+                            struct token hash = next_token_raw(context);
+                            eat_whitespace_and_comments_raw(context);
                             struct define_argument *arg = null;
                             if(peek_token_raw(context, TOKEN_identifier)){
-                                struct token *ident = next_token_raw(context);
-                                arg = lookup_define_argument(arguments, ident);
+                                struct token ident = next_token_raw(context);
+                                arg = lookup_define_argument(arguments, &ident);
                             }
                             
                             if(!arg){
-                                report_error(context, hash, "Expected a formal argument after '#' in macro replacement list for '%.*s'.", defined_identifier->size, defined_identifier->data);
+                                report_error(context, &hash, "Expected a formal argument after '#' in macro replacement list for '%.*s'.", defined_identifier.size, defined_identifier.data);
                                 goto end;
                             }
                             
@@ -4029,10 +3743,10 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             sll_push_back(replacement_list, replacement);
                         }else if(peek_token_raw(context, TOKEN_hashhash)){
                             handled = true;
-                            struct token *hashhash = next_token_raw(context);
-                            eat_whitespace_and_comments(context);
+                            struct token hashhash = next_token_raw(context);
+                            eat_whitespace_and_comments_raw(context);
                             if(peek_token_raw(context, TOKEN_newline)){
-                                report_error(context, hashhash, "'##' at the end of a macro replacement list is illegal.");
+                                report_error(context, &hashhash, "'##' at the end of a macro replacement list is illegal.");
                                 goto end;
                             }
                             
@@ -4043,7 +3757,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             
                             token_stack_node_count += 3; // Prefix, merged, postfix.
                             
-                            replacement->postfix_token = next_token_raw(context);
+                            replacement->postfix_token = push_token_copy(context->arena, next_token_raw(context));
                             
                             if(replacement->postfix_token->type == TOKEN_identifier){
                                 struct token *ident = replacement->postfix_token;
@@ -4093,7 +3807,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             }
                             
                             define_amount++;
-                            *push_uninitialized_struct(&context->scratch, struct token) = *next_token_raw(context);
+                            *push_uninitialized_struct(&context->scratch, struct token) = next_token_raw(context);
                             replacement_list.last->tokens.amount = define_amount;
                         }else{
                             
@@ -4102,7 +3816,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             define_tokens = null;
                         }
                         
-                        eat_whitespace_and_comments(context);
+                        eat_whitespace_and_comments_raw(context);
                     }
                     
                     struct define_node *redecl = lookup_define(context, name);
@@ -4110,7 +3824,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         struct define_node *new_node = push_struct(scratch, struct define_node);
                         new_node->replacement_list   = replacement_list;
                         new_node->name               = name;
-                        new_node->defined_token      = defined_identifier;
+                        new_node->defined_token      = push_token_copy(&context->scratch, defined_identifier);
                         new_node->arguments          = arguments;
                         new_node->stringify_count    = stringify_count;
                         new_node->is_function_like   = is_function_like;
@@ -4121,7 +3835,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     }else{
                         
                         if(redecl->defined_token == &globals.invalid_token){
-                            report_error(context, defined_identifier, "Cannot use '%.*s' as a macro name.", redecl->name.size, redecl->name.data);
+                            report_error(context, &defined_identifier, "Cannot use '%.*s' as a macro name.", redecl->name.size, redecl->name.data);
                             goto end;
                         }
                         
@@ -4155,12 +3869,10 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     
                                     while(true){
                                         while(i < tokens.amount &&
-                                                (tokens.data[i].type == TOKEN_whitespace ||
-                                                tokens.data[i].type == TOKEN_comment)) i++;
+                                                (tokens.data[i].type == TOKEN_whitespace)) i++;
                                         
                                         while(j < redecl_tokens.amount &&
-                                                (redecl_tokens.data[j].type == TOKEN_whitespace ||
-                                                redecl_tokens.data[j].type == TOKEN_comment)) j++;
+                                                (redecl_tokens.data[j].type == TOKEN_whitespace)) j++;
                                         
                                         if(i == tokens.amount || j == redecl_tokens.amount){
                                             if(i != tokens.amount || j != redecl_tokens.amount){
@@ -4235,8 +3947,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         
                         if(!defines_are_equivalent){
                             begin_error_report(context);
-                            report_warning(context, WARNING_incompatible_redefinition_of_macro, defined_identifier, "Redefinition of macro '%.*s'.", name.amount, name.data);
-                            if(redecl->defined_token->file_index == -1){
+                            report_warning(context, WARNING_incompatible_redefinition_of_macro, &defined_identifier, "Redefinition of macro '%.*s'.", name.amount, name.data);
+                            if(redecl->defined_token->location_index == -1){
                                 // @error: Print the actual definition.
                                 report_warning(context, WARNING_incompatible_redefinition_of_macro, redecl->defined_token, "The previous definition was the predefined or a commandline argument.");
                             }else{
@@ -4246,7 +3958,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             
                             redecl->replacement_list   = replacement_list;
                             redecl->name               = name;
-                            redecl->defined_token      = defined_identifier;
+                            redecl->defined_token      = push_token_copy(&context->scratch, defined_identifier);
                             redecl->arguments          = arguments;
                             redecl->stringify_count    = stringify_count;
                             redecl->is_function_like   = is_function_like;
@@ -4258,20 +3970,20 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     end_counter(context, define_parsing);
                 }break;
                 case DIRECTIVE_undef:{
-                    eat_whitespace_and_comments(context);
+                    eat_whitespace_and_comments_raw(context);
                     if(!peek_token_raw(context, TOKEN_identifier)){
-                        report_error(context, directive, "Expected an identifier after '#undef'.");
+                        report_error(context, &directive, "Expected an identifier after '#undef'.");
                         goto end;
                     }
-                    struct token *undef_token = next_token_raw(context);
                     
-                    struct define_node *define = lookup_define(context, undef_token->atom);
+                    struct token undef_token = next_token_raw(context);
+                    struct define_node *define = lookup_define(context, undef_token.atom);
                     
                     if(define){
                         u64 index = define->name.string_hash & context->define_table.mask;
                         dll_remove(context->define_table.lists[index], define);
                     }else{
-                        report_warning(context, WARNING_undef_on_undefined, undef_token, "'#undef' on undefined identifier.");
+                        report_warning(context, WARNING_undef_on_undefined, &undef_token, "'#undef' on undefined identifier.");
                     }
                     
                 }break;
@@ -4280,7 +3992,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 case DIRECTIVE_include:
                 case DIRECTIVE_include_next:{
                     
-                    eat_whitespace_and_comments(context);
+                    eat_whitespace_and_comments_raw(context);
                     
                     // 
                     // If the directive matches '#include "q-char-sequence" newline',
@@ -4294,38 +4006,38 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     if(peek_token_raw(context, TOKEN_string_literal)){
                         is_system_include = false;
                         
-                        file_name = strip_prefix_and_quotes(token_get_string(next_token_raw(context)));
+                        file_name = strip_prefix_and_quotes(next_token_raw(context).string);
                     }else if(peek_token_raw(context, TOKEN_smaller)){
                         is_system_include = true;
                         
-                        struct token *smaller = next_token_raw(context);
+                        struct token smaller = next_token_raw(context);
                         
                         while(!peek_token_raw(context, TOKEN_bigger) && !peek_token_raw(context, TOKEN_newline)){
                             next_token_raw(context);
                         }
                         
                         if(peek_token_raw(context, TOKEN_newline)){
-                            report_error(context, get_current_token_raw(context), "Newline in system include path.");
+                            report_error(context, push_token_copy(&context->scratch, get_current_token_raw(context)), "Newline in system include path.");
                             goto end;
                         }
                         
-                        struct token *bigger = next_token_raw(context);
+                        struct token bigger = next_token_raw(context);
                         
-                        u8 *string_start = smaller->data + 1;
-                        u8 *string_end   = bigger->data;
+                        u8 *string_start = smaller.data + 1;
+                        u8 *string_end   = bigger.data;
                         file_name = create_string(string_start, string_end - string_start);
                         
-                        assert(smaller->type == TOKEN_smaller && smaller->data);
-                        assert(bigger->type  == TOKEN_bigger  && bigger->data);
+                        assert(smaller.type == TOKEN_smaller && smaller.data);
+                        assert(bigger.type  == TOKEN_bigger  && bigger.data);
                     }
                     
                     if(directive_kind == DIRECTIVE_include){
                         if(file_name.data){
                             
                             // We have do handle the junk ourselves, as we will push new tokens.
-                            eat_whitespace_and_comments(context);
+                            eat_whitespace_and_comments_raw(context);
                             if(!peek_token_raw(context, TOKEN_newline)){
-                                report_warning(context, WARNING_junk_after_directive, get_current_token_raw(context), "Junk after '#%.*s'.", directive_string.size, directive_string.data);
+                                report_warning(context, WARNING_junk_after_directive, push_token_copy(&context->scratch, get_current_token_raw(context)), "Junk after '#%.*s'.", directive_string.size, directive_string.data);
                             }
                             
                             while(!peek_token_raw(context, TOKEN_newline)){
@@ -4333,9 +4045,9 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             }
                             got_newline = true;
                             
-                            struct file *file = get_or_load_file_for_include_string(context, directive, file_name, is_system_include);
+                            struct file *file = get_or_load_file_for_include_string(context, &directive, file_name, is_system_include);
                             if(!file){
-                                report_error(context, directive, "'%.*s' include file not found.", file_name.size, file_name.data);
+                                report_error(context, &directive, "'%.*s' include file not found.", file_name.size, file_name.data);
                                 goto end;
                             }
                             
@@ -4348,8 +4060,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             //
                             // Postpone the '#include' as it has to be preprocessed before evaluating it.
                             //
-                            postponed_directive.saved_emitted_token_count = emitted_tokens;
-                            postponed_directive.directive = directive;
+                            postponed_directive.saved_postponed_directive_base = push_data(&context->emit_arena, struct token, 0);
+                            postponed_directive.directive = push_token_copy(&context->scratch, directive);
                             postponed_directive.directive_kind = directive_kind;
                             
                             have_postponed_directive = true;
@@ -4358,15 +4070,15 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     }else if(directive_kind == DIRECTIVE_include_next){
                         
                         if(!file_name.data){
-                            report_error(context, directive, "Expected a \"\"-Include or <>-Include string after #include_next (macros are currently not expanded).");
+                            report_error(context, &directive, "Expected a \"\"-Include or <>-Include string after #include_next (macros are currently not expanded).");
                             goto end;
                         }
                         
-                        struct file *parent_file = globals.file_table.data[directive->file_index];
+                        struct file *parent_file = globals.file_table.data[directive.location_index];
                         
                         struct file *next_include = get_or_load_file_by_walking_system_include_directories(context, file_name, parent_file);
                         if(!next_include){
-                            report_error(context, directive, "'%.*s' include_next file not found.", file_name.size, file_name.data);
+                            report_error(context, &directive, "'%.*s' include_next file not found.", file_name.size, file_name.data);
                             goto end;
                         }
                         
@@ -4375,7 +4087,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         assert(!have_postponed_directive); // @paranoid
                         
                         if(!file_name.data){
-                            report_error(context, directive, "Expected a \"\"-Include or <>-Include string after #embed (macros are currently not expanded).");
+                            report_error(context, &directive, "Expected a \"\"-Include or <>-Include string after #embed (macros are currently not expanded).");
                             goto end;
                         }
                         
@@ -4387,53 +4099,53 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         // #embed "file"
                         // #embed "file" limit(10) prefix(0x01) suffix(,) if_empty(error)
                         // 
-                        eat_whitespace_and_comments(context);
+                        eat_whitespace_and_comments_raw(context);
                         while(peek_token_raw(context, TOKEN_identifier)){
-                            struct token *parameter = next_token_raw(context);
+                            struct token parameter = next_token_raw(context);
                             
-                            eat_whitespace_and_comments(context);
+                            eat_whitespace_and_comments_raw(context);
                             if(!peek_token_eat_raw(context, TOKEN_open_paren)){
-                                report_syntax_error(context, parameter, "Expected a '(' after #embed-parameter.");
+                                report_syntax_error(context, &parameter, "Expected a '(' after #embed-parameter.");
                                 goto end;
                             }
                             
                             struct token_array tokens = zero_struct;
-                            tokens.data = get_current_token_raw(context);
+                            tokens.data = push_data(&context->scratch, struct token, 0);
                             
                             // @cleanup: This should allow for "pp-balanced-token".
                             while(!peek_token_raw(context, TOKEN_closed_paren) && !peek_token_raw(context, TOKEN_newline)){
-                                next_token_raw(context);
+                                *push_struct(&context->scratch, struct token) = next_token_raw(context);
                             }
                             
-                            tokens.size = get_current_token_raw(context) - tokens.data;
+                            tokens.size = push_data(&context->scratch, struct token, 0) - tokens.data;
                             
                             if(!peek_token_eat_raw(context, TOKEN_closed_paren)){
                                 // :Error
-                                report_syntax_error(context, parameter, "Expected a ')' for #embed-parameter.");
+                                report_syntax_error(context, &parameter, "Expected a ')' for #embed-parameter.");
                                 goto end;
                             }
                             
-                            if(string_match(parameter->string, string("prefix")) || string_match(parameter->string, string("__prefix__"))){
+                            if(string_match(parameter.string, string("prefix")) || string_match(parameter.string, string("__prefix__"))){
                                 prefix = tokens;
-                            }else if(string_match(parameter->string, string("suffix")) || string_match(parameter->string, string("__suffix__"))){
+                            }else if(string_match(parameter.string, string("suffix")) || string_match(parameter.string, string("__suffix__"))){
                                 suffix = tokens;
-                            }else if(string_match(parameter->string, string("if_empty")) || string_match(parameter->string, string("__if_empty__"))){
+                            }else if(string_match(parameter.string, string("if_empty")) || string_match(parameter.string, string("__if_empty__"))){
                                 if_empty = tokens;
-                            }else if(string_match(parameter->string, string("limit")) || string_match(parameter->string, string("__limit__"))){
+                            }else if(string_match(parameter.string, string("limit")) || string_match(parameter.string, string("__limit__"))){
                                 // @incomplete: limit.
-                                report_error(context, parameter, "#embed-parameter 'limit' is currently unsupported.");
+                                report_error(context, &parameter, "#embed-parameter 'limit' is currently unsupported.");
                                 goto end;
                             }else{
-                                report_error(context, parameter, "Unknown #embed-parameter.");
+                                report_error(context, &parameter, "Unknown #embed-parameter.");
                                 goto end;
                             }
                         }
                         
-                        struct file *parent_file = globals.file_table.data[directive->file_index];
+                        struct file *parent_file = globals.file_table.data[directive.location_index];
                         
                         if(is_system_include){
                             // @incomplete
-                            report_error(context, directive, "<>-#embed currently not supported.");
+                            report_error(context, &directive, "<>-#embed currently not supported.");
                             goto end;
                         }
                         
@@ -4445,53 +4157,43 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         struct os_file file = load_file_into_arena((char *)absolute_file_path.data, context->arena);
                         
                         if(file.file_does_not_exist){
-                            report_error(context, directive, "File '%.*s' does not exist.", absolute_file_path.size, absolute_file_path.data);
+                            report_error(context, &directive, "File '%.*s' does not exist.", absolute_file_path.size, absolute_file_path.data);
                             goto end;
                         }
                         
-                        smm embed_tokens = prefix.size + suffix.size + (file.size ? 1 : if_empty.size);
-                        
-                        while(emitted_tokens + embed_tokens >= committed_tokens){
-                            if(committed_tokens == reserved_tokens){
-                                report_error(context, directive, "Compilation exceeds current maximum amount of tokens per compilation unit (%lld).", reserved_tokens);
-                                goto end;
-                            }
-                            
-                            struct os_virtual_buffer committed = os_commit_memory(emitted_token_buffer + committed_tokens, TOKEN_EMIT_COMMIT_SIZE);
-                            assert(committed.committed == TOKEN_EMIT_COMMIT_SIZE);
-                            assert((struct token *)committed.base == emitted_token_buffer + committed_tokens);
-                            
-                            committed_tokens += TOKEN_EMIT_COMMIT_SIZE / sizeof(struct token);
-                        }
-                        
+                        smm embed_token_count = prefix.size + suffix.size + (file.size ? 1 : if_empty.size);
+                        smm embed_token_at = 0;
+                        struct token *embed_tokens = push_uninitialized_data(&context->emit_arena, struct token, embed_token_count);
                         
                         if(file.size){
                             
                             for(smm index = 0; index < prefix.size; index++){
-                                if(prefix.data[index].type == TOKEN_whitespace || prefix.data[index].type == TOKEN_comment) continue;
-                                emitted_token_buffer[emitted_tokens++] = prefix.data[index];
+                                if(prefix.data[index].type == TOKEN_whitespace) continue;
+                                embed_tokens[embed_token_at++] = prefix.data[index];
                             }
                             
                             // @hmm: We could consider expanding this into the sequence specified
                             //       If the file size is small.
                             //       This would allow for most use cases for #embed outside of
                             //       character arrays, while also getting the speed-up for large files.
-                            struct token *embed_token = &emitted_token_buffer[emitted_tokens++];
-                            *embed_token = *directive;
+                            struct token *embed_token = &embed_tokens[embed_token_at++];
+                            *embed_token = directive;
                             embed_token->type = TOKEN_embed;
                             embed_token->string.data = file.data;
                             embed_token->string.size = file.size;
                             
                             for(smm index = 0; index < suffix.size; index++){
-                                if(suffix.data[index].type == TOKEN_whitespace || suffix.data[index].type == TOKEN_comment) continue;
-                                emitted_token_buffer[emitted_tokens++] = suffix.data[index];
+                                if(suffix.data[index].type == TOKEN_whitespace) continue;
+                                embed_tokens[embed_token_at++] = suffix.data[index];
                             }
                         }else{
                             for(smm index = 0; index < if_empty.size; index++){
-                                if(if_empty.data[index].type == TOKEN_whitespace || if_empty.data[index].type == TOKEN_comment) continue;
-                                emitted_token_buffer[emitted_tokens++] = if_empty.data[index];
+                                if(if_empty.data[index].type == TOKEN_whitespace) continue;
+                                embed_tokens[embed_token_at++] = if_empty.data[index];
                             }
                         }
+                        
+                        context->emit_arena.current = (u8 *)(embed_tokens + embed_token_at);
                         
                     }else invalid_code_path;
                 }break;
@@ -4500,77 +4202,65 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     //        '#if 0'ed out.
                     struct string_list error_list = zero_struct;
                     while(!peek_token_raw(context, TOKEN_newline)){
-                        struct string token_string = push_token_string(context, next_token_raw(context), true);
+                        // struct string token_string = push_token_string(context, next_token_raw(context), true);
+                        struct string token_string = next_token_raw(context).string; // @cleanup:
                         string_list_postfix(&error_list, &context->scratch, token_string);
                     }
                     
                     struct string flattened = string_list_flatten(error_list, &context->scratch);
                     
-                    report_error(context, directive, "'#error': '%.*s'", flattened.size, flattened.data);
+                    report_error(context, &directive, "'#error': '%.*s'", flattened.size, flattened.data);
                     goto end;
                 }break; 
                 case DIRECTIVE_pragma:{
-                    eat_whitespace_and_comments(context);
+                    eat_whitespace_and_comments_raw(context);
                     
-                    struct token *pragma_directive = expect_token_raw(context, directive, TOKEN_identifier, "Expected a directive after '#pragma'.");
+                    struct token pragma_directive = expect_token_raw(context, &directive, TOKEN_identifier, "Expected a directive after '#pragma'.");
                     
-                    if(atoms_match(pragma_directive->atom, globals.pragma_once)){
+                    if(atoms_match(pragma_directive.atom, globals.pragma_once)){
                         struct pragma_once_list_node *node = push_struct(&context->scratch, struct pragma_once_list_node);
-                        node->file = globals.file_table.data[pragma_directive->file_index];
+                        node->file = globals.file_table.data[pragma_directive.location_index];
                         
                         sll_push_back(context->pragma_once_file_list, node);
-                    }else if(atoms_match(pragma_directive->atom, globals.pragma_pack)){
+                    }else if(atoms_match(pragma_directive.atom, globals.pragma_pack)){
                         
-                        if(emitted_tokens == committed_tokens){
-                            if(committed_tokens == reserved_tokens){
-                                report_error(context, directive, "Compilation exceeds current maximum amount of tokens per compilation unit (%lld).", reserved_tokens);
-                                goto end;
-                            }
-                            
-                            struct os_virtual_buffer committed = os_commit_memory(emitted_token_buffer + committed_tokens, TOKEN_EMIT_COMMIT_SIZE);
-                            assert(committed.committed == TOKEN_EMIT_COMMIT_SIZE);
-                            assert((struct token *)committed.base == emitted_token_buffer + committed_tokens);
-                            
-                            committed_tokens += TOKEN_EMIT_COMMIT_SIZE / sizeof(struct token);
-                        }
-                        
-                        struct token *pragma_pack_token = &emitted_token_buffer[emitted_tokens++];
-                        *pragma_pack_token = *pragma_directive;
+                        struct token *pragma_pack_token = push_uninitialized_struct(&context->emit_arena, struct token);
+                        *pragma_pack_token = pragma_directive;
                         pragma_pack_token->type = TOKEN_pragma_pack;
                         continue;
-                    }else if(atoms_match(pragma_directive->atom, globals.pragma_comment)){
+                    }else if(atoms_match(pragma_directive.atom, globals.pragma_comment)){
                         
                         // 
                         // #pragma comment(<directive>, ...)
                         // 
                         
-                        eat_whitespace_and_comments(context);
-                        expect_token_raw(context, pragma_directive, TOKEN_open_paren, "Expected a '(' after '#pragma comment'.");
+                        eat_whitespace_and_comments_raw(context);
+                        expect_token_raw(context, &pragma_directive, TOKEN_open_paren, "Expected a '(' after '#pragma comment'.");
                         
-                        eat_whitespace_and_comments(context);
-                        struct token *pragma_comment_directive = expect_token_raw(context, pragma_directive, TOKEN_identifier, "Expected a directive after '#pragma comment('.");
+                        eat_whitespace_and_comments_raw(context);
+                        struct token pragma_comment_directive = expect_token_raw(context, &pragma_directive, TOKEN_identifier, "Expected a directive after '#pragma comment('.");
                         
                         struct token *string_literal = null;
                         
-                        eat_whitespace_and_comments(context);
+                        eat_whitespace_and_comments_raw(context);
                         if(peek_token_eat_raw(context, TOKEN_comma)){
                             
-                            eat_whitespace_and_comments(context);
-                            string_literal = expect_token_raw(context, pragma_comment_directive, TOKEN_string_literal, "Expected a string literal after '#pragma comment(lib, '.");
+                            eat_whitespace_and_comments_raw(context);
+                            string_literal = push_token_copy(context->arena, expect_token_raw(context, &pragma_comment_directive, TOKEN_string_literal, "Expected a string literal after '#pragma comment(lib, '."));
                             if(string_literal->type != TOKEN_string_literal) string_literal = null;
                             
-                            eat_whitespace_and_comments(context);
+                            eat_whitespace_and_comments_raw(context);
                         }
                         
-                        expect_token_raw(context, pragma_comment_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma comment(<comment-type>, \"<comment>\"'.");
+                        expect_token_raw(context, &pragma_comment_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma comment(<comment-type>, \"<comment>\"'.");
                         
-                        if(string_match(pragma_comment_directive->string, string("lib"))){
+                        if(string_match(pragma_comment_directive.string, string("lib"))){
                             
                             // e.g.: #pragma comment(lib, "Shell32.lib")
                             
                             // peek_token_eat_raw(context, pragma_comment_directive, TOKEN_comma, "Expected a ',' after '#pragma comment(lib'.")
                             if(!string_literal){
-                                report_error(context, pragma_comment_directive, "Expected a comment argument for #pragma comment(lib, \"<comment-argument>\").");
+                                report_error(context, &pragma_comment_directive, "Expected a comment argument for #pragma comment(lib, \"<comment-argument>\").");
                             }else{
                                 struct string library = strip_prefix_and_quotes(string_literal->string);
                                 
@@ -4581,15 +4271,15 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 static struct ticket_spinlock pragma_comment_lib_spinlock = {0};
                                 ticket_spinlock_lock(&pragma_comment_lib_spinlock);
                                 
-                                add_specified_library(context->arena, library, pragma_comment_directive);
+                                add_specified_library(context->arena, library, push_token_copy(context->arena, pragma_comment_directive));
                                 
                                 ticket_spinlock_unlock(&pragma_comment_lib_spinlock);
                             }
                             
-                        }else if(string_match(pragma_comment_directive->string, string("linker"))){
+                        }else if(string_match(pragma_comment_directive.string, string("linker"))){
                             
                             if(!string_literal){
-                                report_error(context, pragma_comment_directive, "Expected a comment argument for #pragma comment(linker, \"<comment-argument>\").");
+                                report_error(context, &pragma_comment_directive, "Expected a comment argument for #pragma comment(linker, \"<comment-argument>\").");
                             }else{
                                 struct string linker_line = strip_prefix_and_quotes(string_literal->string);
                                 eat_whitespaces(&linker_line);
@@ -4635,26 +4325,26 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 }
                             }
                         }else{
-                            report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsupported '#pragma comment(%.*s, ...)' ignored.", pragma_comment_directive->string.size, pragma_comment_directive->string.data);
+                            report_warning(context, WARNING_unsupported_pragma, &pragma_directive, "Unsupported '#pragma comment(%.*s, ...)' ignored.", pragma_comment_directive.string.size, pragma_comment_directive.string.data);
                         }
-                    }else if(atoms_match(pragma_directive->atom, globals.pragma_compilation_unit)){
+                    }else if(atoms_match(pragma_directive.atom, globals.pragma_compilation_unit)){
                         // 
                         // #pragma compilation_unit("cfile.c")
                         // 
                         
-                        eat_whitespace_and_comments(context);
-                        expect_token_raw(context, pragma_directive, TOKEN_open_paren, "Expected a '(' after '#pragma compilation_unit'.");
+                        eat_whitespace_and_comments_raw(context);
+                        expect_token_raw(context, &pragma_directive, TOKEN_open_paren, "Expected a '(' after '#pragma compilation_unit'.");
                         
-                        eat_whitespace_and_comments(context);
-                        struct token *string_literal = expect_token_raw(context, pragma_directive, TOKEN_string_literal, "Expected a string literal after '#pragma compilation_unit('.");
+                        eat_whitespace_and_comments_raw(context);
+                        struct token string_literal = expect_token_raw(context, &pragma_directive, TOKEN_string_literal, "Expected a string literal after '#pragma compilation_unit('.");
                         
-                        eat_whitespace_and_comments(context);
-                        expect_token_raw(context, pragma_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma compilation_unit(\"<.c>\"'.");
+                        eat_whitespace_and_comments_raw(context);
+                        expect_token_raw(context, &pragma_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma compilation_unit(\"<.c>\"'.");
                         
-                        if(string_literal->type == TOKEN_string_literal){
-                            struct string c_file = strip_prefix_and_quotes(string_literal->string);
+                        if(string_literal.type == TOKEN_string_literal){
+                            struct string c_file = strip_prefix_and_quotes(string_literal.string);
                             
-                            struct file *parent_file = globals.file_table.data[string_literal->file_index];
+                            struct file *parent_file = globals.file_table.data[string_literal.location_index];
                             struct string path = strip_file_name(string_from_cstring(parent_file->absolute_file_path));
                             struct string absolute_file_path = canonicalize_slashes(concatenate_file_paths(&context->scratch, path, c_file));
                             
@@ -4673,7 +4363,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 
                                 struct os_file dummy = os_load_file((char *)absolute_file_path.data, 0, 0);
                                 if(dummy.file_does_not_exist){
-                                    report_error(context, pragma_directive, "File '%.*s' does not exist.", absolute_file_path.size, absolute_file_path.data);
+                                    report_error(context, &pragma_directive, "File '%.*s' does not exist.", absolute_file_path.size, absolute_file_path.data);
                                 }else{
                                     string_list_postfix(&globals.pragma_compilation_units, context->arena, absolute_file_path); // @note: This copies.
                                     
@@ -4715,26 +4405,24 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             next_token_raw(context);
                         }
                         
-                        report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsupported pragma ignored.");
+                        report_warning(context, WARNING_unsupported_pragma, &pragma_directive, "Unsupported pragma ignored.");
                     }
                     
                 }break;
                 case DIRECTIVE_line:{
-                    report_warning(context, WARNING_unsupported_pragma, directive, "#line currently not supported.");
+                    report_warning(context, WARNING_unsupported_pragma, &directive, "#line currently not supported.");
                 }break;
             }
             
             // We get here for any active directive. Report on junk!
-            eat_whitespace_and_comments(context);
+            eat_whitespace_and_comments_raw(context);
             if(!peek_token_raw(context, TOKEN_newline)){
-                report_warning(context, WARNING_junk_after_directive, get_current_token_raw(context), "Junk after '#%.*s'.", directive_string.size, directive_string.data);
+                report_warning(context, WARNING_junk_after_directive, push_token_copy(&context->scratch, get_current_token_raw(context)), "Junk after '#%.*s'.", directive_string.size, directive_string.data);
             }
             
             while(!peek_token_raw(context, TOKEN_newline)){
                 next_token_raw(context);
             }
-            
-            end_counter(context, handle_directive);
             
             if(static_if_stack.first && !static_if_stack.first->is_true){
                 
@@ -4743,27 +4431,26 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 // 
                 // If we are in a diabled static if, we search for a newline into hash.
                 // 
-                begin_counter(context, if0_block);
                 while(true){
                     // no need to expand the token, if we are in a '#if 0' block.
-                    struct token *token = next_token_raw(context);
+                    // @cleanup: put a better loop in here...
+                    struct token token = next_token_raw(context);
                     
-                    if(got_newline && token->type == TOKEN_hash) break;
+                    if(got_newline && token.type == TOKEN_hash) break;
                     
-                    if(token->type == TOKEN_invalid){
+                    if(token.type == TOKEN_invalid){
                         end_counter(context, static_if_skip);
                         goto double_break;
                     }
                     
-                    if(token->type != TOKEN_whitespace && token->type != TOKEN_comment){
-                        if(token->type == TOKEN_newline){
+                    if(token.type != TOKEN_whitespace){
+                        if(token.type == TOKEN_newline){
                             got_newline = true;
                         }else{
                             got_newline = false;
                         }
                     }
                 }
-                end_counter(context, if0_block);
                 
                 goto loop_and_retry_the_next_directive_because_we_are_in_a_disabled_static_if;
             }
@@ -4782,6 +4469,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
     
     end:;
     
-    return (struct token_array){ .data = emitted_token_buffer, .size = emitted_tokens };
+    return (struct token_array){ .data = emitted_token_buffer, .size = push_data(&context->emit_arena, struct token, 0) - emitted_token_buffer};
 }
 

@@ -712,23 +712,25 @@ int main(){
         
         double d;
         d = _u8;
-        assert(d ==  128.0);
+        assert(d ==  128.);
         d = _s8;
-        assert(d == -128.0);
+        assert(d == -128.);
         d = _u16;
-        assert(d ==  32768.0);
+        assert(d ==  32768.);
         d = _s16;
-        assert(d == -32768.0);
+        assert(d == -32768.);
         d = _u32;
-        assert(d ==  2147483648.0);
+        assert(d ==  2147483648.);
         d = _s32;
-        assert(d == -2147483648.0);
+        assert(d == -2147483648.);
         d = _u64;
-        assert(d ==  9223372036854775808.0);
+        assert(d ==  9223372036854775808.);
         d = _s64;
-        assert(d == -9223372036854775808.0);
+        assert(d == -9223372036854775808.);
     }
     
+    assert(0 == 0.);
+    assert(0 == 0.f);
     
     {
         double var_00 = (-1183312983.13);

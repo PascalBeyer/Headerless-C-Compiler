@@ -277,7 +277,9 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                 *push_struct(arena, u16) = /*properties*/0;
                 *push_struct(arena, u32) = /*underlying type*/CV_s32;
                 *push_struct(arena, u32) = fieldlist_type_index;
-                push_zero_terminated_string_copy(arena, ast_enum->identifier->string);
+                
+                struct string identifier = (ast_enum->identifier->type == TOKEN_identifier) ? ast_enum->identifier->string : string("<unnamed-enum>");
+                push_zero_terminated_string_copy(arena, identifier);
                 
                 end_type_record();
             }break;
@@ -311,7 +313,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                         *push_struct(arena, u16) = 0; // size (0 for forward ref)
                         
                         // @cleanup: this could overflow the header length field u16.
-                        push_zero_terminated_string_copy(arena, compound->identifier->string);
+                        push_zero_terminated_string_copy(arena, compound->identifier->string); // @cleanup: can this be unnamed here?
                         end_type_record();
                         current_type->pdb_type_index = predeclaration_type_index;
                     }
@@ -424,7 +426,9 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                     *push_struct(arena, u32) = 0; // vshape
                 }
                 push_unsigned_number_leaf(arena, compound->base.size);
-                push_zero_terminated_string_copy(arena, compound->identifier->string);
+                
+                struct string identifier = (compound->identifier->type == TOKEN_identifier) ? compound->identifier->string : string("<unnamed-tag>");
+                push_zero_terminated_string_copy(arena, identifier);
                 
                 end_type_record();
             }break;
@@ -1020,7 +1024,7 @@ void codeview_push_debug_s_file_checksums(struct memory_arena *arena){
         // We have padded the file size when allocating for it so we can use 'hash_md5_inplace'
         // here instead of 'hash_md5' which would have to allocate.
         // 
-        m128 md5 = hash_md5_inplace(file->file.memory, file->file.size, file->file.size + 128);
+        m128 md5 = hash_md5_inplace(file->os_file.memory, file->os_file.size, file->os_file.size + 128);
         
         struct codeview_file_checksum_header{
             u32 offset_in_stringtable;
@@ -1073,7 +1077,7 @@ void codeview_push_debug_s_lines(struct ast_function *function, struct memory_ar
     }
     
     struct ast_scope *scope = function->scope;
-    u32 file_index = scope->token->file_index;
+    u32 file_index = token_get_file_index(function->compilation_unit, scope->token);
     struct file *file = globals.file_table.data[file_index];
     
     struct codeview_lines_block{
@@ -1084,6 +1088,7 @@ void codeview_push_debug_s_lines(struct ast_function *function, struct memory_ar
     lines_block->offset_in_file_checksums = file->offset_in_f4;
     
     // The lines for the function are in the format:
+    // 
     // struct{
     //    u32 offset;
     //    u32 start_line_number     : 24;
@@ -1098,7 +1103,7 @@ void codeview_push_debug_s_lines(struct ast_function *function, struct memory_ar
     // Emit an initial line for the prologue.
     // 
     *push_struct(arena, u32) = 0;
-    *push_struct(arena, u32) = (u32)(scope->token->line | /*is_statement*/0x80000000);
+    *push_struct(arena, u32) = (u32)(get_location_for_token(null, function->compilation_unit, scope->token).line | /*is_statement*/0x80000000);
     
     for(smm index = 0; index < function->line_information.size; index++){
         struct function_line_information line = function->line_information.data[index];

@@ -1,92 +1,68 @@
 
+#include "c_dfa.c"
+
 // @cleanup: make errors take asts, so we can print whole token ranges
 enum token_type{
-    TOKEN_invalid,
     
-    // tokens only used during preprocessing
-    TOKEN_hash,           // #
-    TOKEN_hashhash,       // ## (for identifier concatenation)
-    TOKEN_newline,        // one of '\n', '\r', '\n\r', '\r\n',
-    TOKEN_whitespace,     // one or more ' ' '\v' '\t' '\f' 
-    // TOKEN_comment = TOKEN_whitespace, // this is really possible but there is almost no speed gain.
-    TOKEN_comment,        // either of // or /* */
+    TOKEN_invalid = 0,
+    TOKEN_error = 1,
+    TOKEN_hash = 2,
+    TOKEN_hashhash = 3,
+    TOKEN_newline = 4,
+    TOKEN_whitespace = 5,
+    TOKEN_integer_literal = 6,
+    TOKEN_float_literal = 7,
+    TOKEN_character_literal = 8,
+    TOKEN_string_literal = 9,
+    TOKEN_identifier = 10,
+    TOKEN_open_paren = 11,
+    TOKEN_closed_paren = 12,
+    TOKEN_open_index = 13,
+    TOKEN_closed_index = 14,
+    TOKEN_open_curly = 15,
+    TOKEN_closed_curly = 16,
+    TOKEN_semicolon = 17,
+    TOKEN_colon = 18,
+    TOKEN_dot = 19,
+    TOKEN_bitwise_not = 20,
+    TOKEN_logical_not = 21,
+    TOKEN_plus = 22,
+    TOKEN_minus = 23,
+    TOKEN_and = 24,
+    TOKEN_or = 25,
+    TOKEN_xor = 26,
+    TOKEN_times = 27,
+    TOKEN_slash = 28,
+    TOKEN_mod = 29,
+    TOKEN_increment = 30,
+    TOKEN_decrement = 31,
+    TOKEN_arrow = 32,
+    TOKEN_right_shift = 33,
+    TOKEN_left_shift = 34,
+    TOKEN_logical_equals = 35,
+    TOKEN_logical_unequals = 36,
+    TOKEN_bigger_equals = 37,
+    TOKEN_smaller_equals = 38,
+    TOKEN_bigger = 39,
+    TOKEN_smaller = 40,
+    TOKEN_equals = 41,
+    TOKEN_and_equals = 42,
+    TOKEN_or_equals = 43,
+    TOKEN_xor_equals = 44,
+    TOKEN_plus_equals = 45,
+    TOKEN_minus_equals = 46,
+    TOKEN_left_shift_equals = 47,
+    TOKEN_right_shift_equals = 48,
+    TOKEN_times_equals = 49,
+    TOKEN_div_equals = 50,
+    TOKEN_mod_equals = 51,
+    TOKEN_logical_and = 52,
+    TOKEN_logical_or = 53,
+    TOKEN_question_mark = 54,
+    TOKEN_comma = 55,
+    TOKEN_dotdotdot = 56,
     
-    TOKEN_at_sign,  // @ - not used by c, but still printable, hence people might put it in there code (in particular, this is used in windows headers).
-    TOKEN_backtick, // ` - not used by c, but still printable, hence people might put it in there code (this was in a #error as a markdown thing).
-    
-    //
-    // primary expression tokens
-    //
-    TOKEN_float_literal,  // 1.0f, 1.0 1e7 1.f
-    TOKEN_float_hex_literal,
-    TOKEN_character_literal, // has ''
-    TOKEN_base10_literal,
-    TOKEN_hex_literal,
-    TOKEN_binary_literal,
-    TOKEN_octal_literal,
-    TOKEN_string_literal, // has ""
-    
-    TOKEN_identifier,
     TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro,
-    
-    
-    TOKEN_open_paren,     // (
-    TOKEN_closed_paren,   // )
-    TOKEN_open_curly,     // {
-    TOKEN_closed_curly,   // }
-    TOKEN_open_index,     // [
-    TOKEN_closed_index,   // ]
-    TOKEN_semicolon,      // ;
-    TOKEN_colon,          // :
-    TOKEN_dot,            // .
-    TOKEN_bitwise_not,    // ~
-    TOKEN_logical_not,    // !
-    
-    TOKEN_plus,           // +
-    TOKEN_minus,          // -
-    TOKEN_and,            // &
-    TOKEN_increment,        // ++
-    TOKEN_decrement,        // --
-    TOKEN_arrow,            // ->
-    
-    // binary ops, no particular order
-    TOKEN_or,          // |
-    TOKEN_xor,         // ^
-    TOKEN_times,       // *
-    TOKEN_slash,       // /
-    TOKEN_mod,         // %
-    TOKEN_right_shift, // >>
-    TOKEN_left_shift,  // <<
-    
-    // compare tokens same order as the AST_*
-    TOKEN_logical_equals,   // ==
-    TOKEN_logical_unequals, // !=
-    TOKEN_bigger_equals,    // >=
-    TOKEN_smaller_equals,   // <=
-    TOKEN_bigger,           // >
-    TOKEN_smaller,          // <
-    
-    // Assignment tokens, same order as AST_*
-    TOKEN_equals,             // =
-    TOKEN_and_equals,         // &=
-    TOKEN_or_equals,          // |=
-    TOKEN_xor_equals,         // ^=
-    TOKEN_plus_equals,        // +=
-    TOKEN_minus_equals,       // -=
-    TOKEN_left_shift_equals,  // <<=
-    TOKEN_right_shift_equals, // >>=
-    TOKEN_times_equals,       // *=
-    TOKEN_div_equals,         // /=
-    TOKEN_mod_equals,         // %=
-    
-    TOKEN_logical_and,      // &&
-    TOKEN_logical_or,       // ||
-    
-    TOKEN_question_mark,  // ?
-    TOKEN_comma,          // ,
-    
-    
-    TOKEN_dotdotdot,      // ... (for varargs)
     
     // keywords
     TOKEN_enum,
@@ -324,9 +300,7 @@ struct atom atom_for_string(struct string string){
 
 struct token{
     enum token_type type;
-    s32 file_index;
-    u32 line;
-    u32 column;
+    s32 location_index;
     
     union{
         struct atom;
@@ -355,7 +329,19 @@ struct token_array{
     };
 };
 
-//////////////////////////
+struct raw_token{
+    enum token_type type;
+    u32 size;
+};
+
+struct raw_token_array{
+    struct raw_token *data;
+    union{
+        smm amount;
+        smm size;
+        smm count;
+    };
+};
 
 enum ast_kind{
     AST_invalid,

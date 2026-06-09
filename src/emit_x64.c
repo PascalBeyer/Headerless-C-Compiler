@@ -4530,7 +4530,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             
             case IR_add_atomic_assignment_bool:
             case IR_subtract_atomic_assignment_bool:{
-                report_internal_compiler_error(null, __FUNCTION__ ": Unhandled compound assignment of variable of type _Atomic _Bool.");
+                report_error(context, current_function->identifier, __FUNCTION__ ": Unhandled compound assignment of variable of type _Atomic _Bool.");
             }break;
             
             case IR_modulo_assignment_s8: case IR_modulo_assignment_s16: case IR_modulo_assignment_s32: case IR_modulo_assignment_s64:
@@ -4667,7 +4667,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 // Cause a _different_ crash for every ir_kind.
                 ((void (*)(void))(0x13371337 + ir_kind * 0x10))();
 #endif
-                report_internal_compiler_error(null, __FUNCTION__ ": Unhandled ast");
+                assert(false);
             }break;
         }
         

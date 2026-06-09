@@ -1522,14 +1522,14 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
         }
     }
     
-    if(!finished && peek_token(context, TOKEN_base10_literal)){
+    if(!finished && peek_token(context, TOKEN_integer_literal)){
         struct token *scale_or_offset = next_token(context);
         if(peek_token_eat(context, TOKEN_times)){
             struct asm_operand reg = asm_maybe_parse_gpr(context);
             if(reg.kind == ASM_ARG_invalid){
                 report_syntax_error(context, get_current_token(context), "Expected a register name after '*' in asm memory operand.");
             }else{
-                scale = parse_base10_literal(context, scale_or_offset).value;
+                scale = parse_integer_literal(context, scale_or_offset).value;
                 index = reg.reg;
                 
                 finished = peek_token_eat(context, TOKEN_plus) || peek_token_eat(context, TOKEN_minus);

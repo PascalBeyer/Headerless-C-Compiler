@@ -1,0 +1,421 @@
+#
+# preprocessing-token:
+#     header-name
+#     identifier
+#     pp-number
+#     character-constant
+#     string-literal
+#     punctuator
+#     whitespace
+#
+# identifier:
+#     identifier-start
+#     identifier identifier-continue
+#
+# identifier-start:
+#     nondigit
+#     XID_Start character
+#     universal-character-name of class XID_Start
+#
+# identifer-continue:
+#     digit
+#     nondigit
+#     XID_Continue character
+#     universal-character-name of class XID_Continue
+#
+# nondigit: one of
+#     _ a b c d e f g h i j k l m
+#       n o p q r s t u v w x y z
+#       A B C D E F G H I J K L M
+#       N O P Q R S T U V W X Y Z
+#
+# digit: one of 
+#     0 1 2 3 4 5 6 7 8 9
+#
+# XID is like we allow utf8 if you want.
+# 
+# Universal-character-name: 
+#     \u hex-quad
+#     \U hex-quad hex-quad
+# 
+# hex-quad:
+#     hexadecimal-digit hexadecimal-digit hexadecimal-digit hexadecimal-digit
+#
+# character-constant:
+#     encoding-prefix ' c-char-sequence '
+#
+# encoding-prefix:
+#     u8 u U L
+#
+# c-char-sequence:
+#     c-char
+#     c-char-sequence c-char
+#
+# c-char:
+#     any member of the source characcter set except ' and \ or new-line
+#     escape sequence
+# 
+# escape-sequence:
+#     simple-escape-sequence
+#     octal-escape-sequence
+#     hexadecimal-escape-sequence
+#     universal-character-name
+#
+# simple-escape-sequence: one of
+#       \' \" \? \\ \a \b \f \n \r \t \v
+# 
+# string-literal:
+#    encoding-prefix " s-char-sequence "
+# 
+# s-char-sequence:
+#    s-char
+#    s-char-sequence s-char
+#
+# s-char:
+#     any member of the source characcter set except ' and \ or new-line
+#     escape sequence
+# 
+# punctiuators: one of
+#     [ ] ( ) { } . -> ++ -- & * + - ~ ! / % << >> < > <= >= != ^ | && || ? : ; ... = *= /= %= += -= <<= >>= &= ^= |= , # ##
+#
+# pp-number:
+#    digit
+#    .digit
+#    pp-number identifier-continue
+#    pp-number ' digit
+#    pp-number ' nondigit
+#    pp-number e sign
+#    pp-number E sign
+#    pp-number p sign
+#    pp-number P sign
+#    pp-number .
+#
+
+tokens {
+    invalid = 0,
+    error,
+    
+    hash,
+    hashhash,
+    
+    newline,
+    whitespace,
+    
+    integer_literal,
+    float_literal,
+    
+    character_literal,
+    string_literal,
+    
+    identifier,
+    
+    open_paren,
+    closed_paren,
+    open_index,
+    closed_index,
+    open_curly,
+    closed_curly,
+    
+    semicolon,
+    colon,
+    dot,
+    
+    bitwise_not,
+    logical_not,
+    
+    plus,
+    minus,
+    and,
+    or,
+    xor,
+    times,
+    slash,
+    mod,
+    
+    increment,
+    decrement,
+    arrow,
+    
+    right_shift,
+    left_shift,
+    
+    logical_equals,
+    logical_unequals,
+    bigger_equals,
+    smaller_equals,
+    bigger,
+    smaller,
+    
+    equals,
+    and_equals,
+    or_equals,
+    xor_equals,
+    plus_equals,
+    minus_equals,
+    left_shift_equals,
+    right_shift_equals,
+    times_equals,
+    div_equals,
+    mod_equals,
+    
+    logical_and,
+    logical_or,
+    
+    question_mark,
+    
+    comma,
+    dotdotdot,
+}
+
+invalid    = [0x00 ... 0x08, 0x0e ... 0x1f, 0x7f]
+utf8       = [0x80 ... 0xff]
+letter = ['a' ... 'z', 'A' ... 'Z', '_', '$']
+
+hex-letter = ['a' ... 'f', 'A' ... 'F']
+
+whitespace = " \t\v\f\r"
+number     = "0123456789"
+newline = "\n"
+
+separator = "\'"
+
+default:
+    "\\"       -> backslash, whitespace
+    whitespace -> whitespace, whitespace
+    
+    newline -> default, newline, out
+    
+    "@"  -> default, error, out
+    "`"  -> default, error, out
+    "("  -> default, open_paren, out
+    ")"  -> default, closed_paren, out
+    "{"  -> default, open_curly, out
+    "}"  -> default, closed_curly, out
+    "["  -> default, open_index, out
+    "]"  -> default, closed_index, out
+    ":"  -> default, colon, out
+    ";"  -> default, semicolon, out
+    ","  -> default, comma, out
+    "~"  -> default, bitwise_not, out
+    "?"  -> default, question_mark, out
+    
+    invalid -> default, error, out
+    
+    "="  -> equal, equals
+    "!"  -> not, logical_not
+    "^"  -> xor, xor
+    "*"  -> times, times
+    "%"  -> mod, mod
+    
+    "/"  -> slash, slash
+    
+    "#" -> hash, hash
+    "." -> dot, dot
+    
+    ">" -> bigger, bigger
+    "<" -> smaller, smaller
+    
+    "+" -> plus, plus
+    "-" -> minus, minus
+    
+    "&" -> and, and
+    "|" -> or, or
+    
+    "\'" -> char, character_literal
+    "\"" -> string, string_literal
+    
+    "L" -> wide, identifier
+    "U" -> wide, identifier
+    
+    "u" -> utf8_string, identifier
+    
+    "0" -> pp-zero, integer_literal
+    "123456789" -> pp-integer, integer_literal
+    
+    letter v utf8 \ ['L', 'U', 'u'] -> identifier, identifier
+    
+whitespace:
+    whitespace -> whitespace
+    "\\" -> backslash
+    _ -> @default, whitespace
+    
+backslash:
+    whitespace -> backslash
+    newline -> whitespace
+    _ -> @default, whitespace
+
+equal:
+    "=" -> default, logical_equals, out
+    _ -> @default
+
+not:
+   "=" -> default, logical_unequals, out
+    _ -> @default
+    
+xor:
+   "=" -> default, xor_equals, out
+    _ -> @default
+
+times:
+   "=" -> default, times_equals, out
+    _ -> @default
+
+mod:
+   "=" -> default, mod_equals, out
+    _ -> @default
+
+slash:
+   "/" -> line-comment
+   "*" -> block-comment
+   "=" -> default, div_equals, out
+   _ -> @default, slash
+   
+line-comment:
+    newline -> default, newline, out
+    _ -> line-comment
+    
+block-comment:
+    "*" -> block-comment-star
+    _ -> block-comment
+
+block-comment-star:
+    "/" -> default, whitespace, out
+    "*" -> block-comment-star
+    _ -> block-comment
+
+hash:
+    "#" -> default, hashhash, out
+    _ -> @default
+
+dot:
+   "." -> dotdot
+   number -> pp-float, float_literal
+   _ -> @default
+
+dotdot:
+   "." -> default, dotdotdot, out
+   _ -> @default
+
+bigger:
+   ">" -> rshift, right_shift
+   "=" -> default, bigger_equals, out
+   _ -> @default
+
+rshift:
+    "=" -> default, right_shift_equals, out
+    _ -> @default
+
+smaller:
+   "<" -> lshift, left_shift
+   "=" -> default, smaller_equals, out
+   _ -> @default
+
+lshift:
+   "=" -> default, left_shift_equals, out
+    _ -> @default
+
+plus:
+   "+" -> default, increment, out
+   "=" -> default, plus_equals, out
+   _ -> @default
+   
+minus:
+   "-" -> default, decrement, out
+   "=" -> default, minus_equals, out
+   ">" -> default, arrow, out
+   _ -> @default
+
+and:
+   "&" -> default, logical_and, out
+   "=" -> default, and_equals, out
+   _ -> @default
+   
+   
+or:
+   "|" -> default, logical_or, out
+   "=" -> default, or_equals, out
+   _ -> @default
+
+char:
+   "\\" -> char-escaped
+   "'" -> default, character_literal, out
+   newline -> default, error, out
+   _ -> char
+   
+char-escaped:
+    "\r" -> char-escaped
+    _ -> char
+
+string:
+   "\\" -> string-escaped
+   "\"" -> default, string_literal, out
+   newline -> default, error, out
+   _ -> string
+   
+string-escaped:
+    "\r" -> string-escaped
+    _ -> string
+
+wide:
+    "\"" -> string
+    "\'" -> char
+    letter v utf8 v number -> identifier, identifier
+    _ -> @default, identifier
+
+utf8_string:
+    "8" -> utf8_string_u8, identifier
+    "\"" -> string
+    "\'" -> char
+    letter v utf8 v number \ "8" -> identifier, identifier
+    _ -> @default
+    
+utf8_string_u8:
+    "\"" -> string
+    "\'" -> char
+    letter v utf8 v number -> identifier, identifier
+    _ -> @default
+
+pp-zero:
+    "xX"   -> pp-hex
+    number -> pp-integer
+    "."    -> pp-float, float_literal
+    "eE"   -> pp-float-ep, float_literal
+    letter\"xXeE" -> pp-integer
+    separator -> pp-integer
+    _ -> @default, integer_literal
+
+pp-integer:
+    number -> pp-integer
+    separator -> pp-integer
+    letter \ "eE" -> pp-integer
+    "." -> pp-float, float_literal
+    "eE" -> pp-float-ep, float_literal
+    _ -> @default, integer_literal
+    
+pp-hex:
+    number -> pp-hex
+    separator -> pp-hex
+    letter \ "pP" -> pp-hex
+    "." -> pp-float, float_literal
+    "pP" -> pp-float-ep, float_literal
+    _ -> @default, integer_literal
+    
+pp-float:
+    number -> pp-float
+    separator -> pp-float
+    "." -> pp-float
+    "eEpP" -> pp-float-ep
+    letter \ "eEpP" -> pp-float
+    _ -> @default, float_literal
+    
+pp-float-ep:
+    "+-" -> pp-float
+    letter v number -> pp-float
+    separator -> pp-float
+    "." -> pp-float
+    _ -> @default, float_literal
+
+identifier:
+    letter v utf8 v number -> identifier
+    _ -> @default, identifier
+

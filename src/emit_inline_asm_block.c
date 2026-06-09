@@ -1428,8 +1428,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             }break;
             
             default:{
-                report_internal_compiler_error(inst->token, "Unimplemented instruction '%.*s'.", inst->token->size, inst->token->data);
-                // os_panic(1337);
+                report_error(context, inst->token, "INTERNAL_ERROR: Unimplemented instruction '%.*s'.", inst->token->size, inst->token->data);
             }break;
         }
         

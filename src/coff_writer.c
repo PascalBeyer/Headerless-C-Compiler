@@ -350,7 +350,7 @@ struct msf_stream{
 // "Old stream table"-stream. Furthermore, everything past the first 3 pages 
 // is potentially "interrupted", by the later pages of the Free Page Maps.
 // 
-int write_msf(char *file_name, struct msf_stream *streams, u32 amount_of_streams){
+int write_msf(struct memory_arena *arena, char *file_name, struct msf_stream *streams, u32 amount_of_streams){
     
     // 
     // Figure out the size the on-disk size of the specified streams.
@@ -409,8 +409,8 @@ int write_msf(char *file_name, struct msf_stream *streams, u32 amount_of_streams
     // 
     // Create "extra streams" for the stream table stream and the stream table stream page list.
     // 
-    u32 *stream_table_stream    = malloc(stream_table_stream_size);
-    u32 *stream_table_page_list = malloc(stream_table_page_list_size);
+    u32 *stream_table_stream    = (u32 *)push_data(arena, u8, stream_table_stream_size);
+    u32 *stream_table_page_list = (u32 *)push_data(arena, u8, stream_table_page_list_size);
     
     u32 stream_table_page_list_size_in_pages = (u32)((stream_table_page_list_size + 0xfff)/0x1000);
     
@@ -1214,7 +1214,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 
                 char *string = push_cstring_from_string(arena, dll_node->name);
                 import->name_rva = make_relative_virtual_address(rdata_section_start, string);
-               
+                
                 // 
                 // "The last entry is set to zero (NULL) to indicate the end of the table"
                 // 
@@ -1340,7 +1340,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             debug->time_date_stamp = 0;
             debug->major_version = 0; // @note: version seems to be 0.0
             debug->minor_version = 0;
-
+            
             debug->type = /*IMAGE_DEBUG_TYPE_CODEVIEW*/2;
             debug->size_of_data = to_u32(debug_info_end - debug_info_begin);
             debug->address_of_raw_data = make_relative_virtual_address(rdata_section_start, debug_info_begin);
@@ -1374,7 +1374,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     
                     // :string_kind_is_element_size
                     smm element_size = (smm)lit->string_kind;
-
+                    
                     struct string string_literal = lit->value;
                     
                     u64 hash = string_djb2_hash(string_literal);
@@ -1685,10 +1685,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     smm source_location = f->relative_virtual_address;
                     *cast(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
                 }else{
-                    if(source_kind != IR_string_literal){
-                        report_internal_compiler_error(null, "Not a string literal, but %d\n", *patch->source);
-                        continue;
-                    }
+                    assert(source_kind == IR_string_literal);
                     
                     struct ir_string_literal *lit = cast(struct ir_string_literal *)patch->source;
                     
@@ -2402,15 +2399,14 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             if(!node->token) continue;
             struct ast_compound_type *type = (struct ast_compound_type *)node->ast;
             
-            assert(type->identifier->file_index != -1); // In the future maybe there will be predefined compounds, not sure.
-            struct file *file = globals.file_table.data[type->identifier->file_index];
+            struct file *file = globals.file_table.data[token_get_file_index(type->compilation_unit, type->identifier)];
             
             begin_id_record(0x1607);  // LF_UDT_MOD_SRC_LINE
             
             struct codeview_udt_mod_src_line *udt_mod_src_line = push_struct_(&ipi_stream, sizeof(struct codeview_udt_mod_src_line) - 2, 1);
             udt_mod_src_line->type_index = type->base.pdb_type_index;
             udt_mod_src_line->file_name_offset_in_names = file->offset_in_names;
-            udt_mod_src_line->line_number = type->identifier->line;
+            udt_mod_src_line->line_number = get_location_for_token(arena, type->compilation_unit, type->identifier).line;
             udt_mod_src_line->module_index = 1; // type->compilation_unit->index + 1;
             
             end_id_record();  // LF_UDT_MOD_SRC_LINE
@@ -2423,14 +2419,14 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct ast_declaration *decl = (struct ast_declaration *)it->value;
             struct ast_type *type = decl->type;
             
-            struct file *file = globals.file_table.data[decl->identifier->file_index];
+            struct file *file = globals.file_table.data[token_get_file_index(decl->compilation_unit, decl->identifier)];
             
             begin_id_record(0x1607);  // LF_UDT_MOD_SRC_LINE
             
             struct codeview_udt_mod_src_line *udt_mod_src_line = push_struct_(&ipi_stream, sizeof(struct codeview_udt_mod_src_line) - 2, 1);
             udt_mod_src_line->type_index = type->pdb_type_index;
             udt_mod_src_line->file_name_offset_in_names = file->offset_in_names;
-            udt_mod_src_line->line_number = decl->identifier->line;
+            udt_mod_src_line->line_number = get_location_for_token(arena, decl->compilation_unit, decl->identifier).line;
             udt_mod_src_line->module_index = 1; // decl->compilation_unit->index + 1;
             
             end_id_record();  // LF_UDT_MOD_SRC_LINE
@@ -3484,13 +3480,15 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     char *pdb_name = (char *)pdb_full_path.data;
     
-    // @note: The 0-th stream is added by the write_msf function implicitly.
-    int success = write_msf(pdb_name, streams + 1, STREAM_count - 1);
-    if(success){
-        if(!globals.cli_options.quiet) print("Wrote file: '%s'\n", pdb_name);
-    }else{
-        print("Error: Unable to write file '%s'.\n", pdb_name);
-        globals.an_error_has_occurred = true;
+    if(!globals.cli_options.dont_print_the_files){
+        // @note: The 0-th stream is added by the write_msf function implicitly.
+        int success = write_msf(arena, pdb_name, streams + 1, STREAM_count - 1);
+        if(success){
+            if(!globals.cli_options.quiet) print("Wrote file: '%s'\n", pdb_name);
+        }else{
+            print("Error: Unable to write file '%s'.\n", pdb_name);
+            globals.an_error_has_occurred = true;
+        }
     }
     
     return;

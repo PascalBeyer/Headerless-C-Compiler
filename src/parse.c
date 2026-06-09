@@ -1450,8 +1450,11 @@ func enum ast_kind ast_stack_current(struct context *context){
 
 // :function_line_information
 void function_maybe_add_line_information(struct context *context, struct token *token){
-    if(token->file_index == context->function_file_index && token->line != context->last_line_pushed){
-        context->last_line_pushed = token->line;
+    
+    struct token_location_information location = get_location_for_token(context->arena, context->current_compilation_unit, token);
+    
+    if(location.file_index == context->function_file_index && location.line != context->last_line_pushed){
+        context->last_line_pushed = location.line;
         
         struct ast_function *current_function = context->current_function;
         
@@ -1461,13 +1464,13 @@ void function_maybe_add_line_information(struct context *context, struct token *
             // @note: If the last statement did not produce code, we update the line.
             
             struct function_line_information *last_entry = current_function->line_information.data + current_function->line_information.size - 1;
-            last_entry->line = token->line;
+            last_entry->line = location.line;
         }else{
             dynarray_maybe_grow(struct function_line_information, context->arena, current_function->line_information.data, current_function->line_information.size, current_function->line_information.capacity);
             
             struct function_line_information *new_entry = current_function->line_information.data + current_function->line_information.size++;
             
-            new_entry->line   = token->line;
+            new_entry->line   = location.line;
             new_entry->offset = offset;
         }
         
@@ -1532,18 +1535,8 @@ void parse_and_process_pragma_pack(struct context *context){
                 }
             }break;
             
-            case TOKEN_binary_literal:
-            case TOKEN_hex_literal:
-            case TOKEN_base10_literal:{
-                struct parsed_integer parsed_integer;
-                if(token->type == TOKEN_base10_literal){
-                    parsed_integer = parse_base10_literal(context, token);
-                }else if(token->type == TOKEN_hex_literal) {
-                    parsed_integer = parse_hex_literal(context, token);
-                }else{
-                    parsed_integer = parse_binary_literal(context, token);
-                }
-                
+            case TOKEN_integer_literal:{
+                struct parsed_integer parsed_integer = parse_integer_literal(context, token);
                 have_value = 1;
                 value = parsed_integer.value;
             }break;
@@ -2434,7 +2427,11 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     char *structure_or_union = (compound->base.kind == AST_struct) ? "structure" : "union";
                     
                     begin_error_report(context);
-                    report_error(context, site, "Too many initializers for %s '%.*s'.", structure_or_union, compound->identifier->size, compound->identifier->data);
+                    if(compound->identifier->type == TOKEN_identifier){
+                        report_error(context, site, "Too many initializers for %s '%.*s'.", structure_or_union, compound->identifier->size, compound->identifier->data);
+                    }else{
+                        report_error(context, site, "Too many initializers for unnamed %s.", structure_or_union);
+                    }
                     report_error(context, compound->identifier, "... Here was the %s defined.", structure_or_union);
                     end_error_report(context);
                 }else{
@@ -3254,7 +3251,11 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
             
             // @cleanup: Check the 'defined_type'?
             string_list_postfix_no_copy(pretty_print_list, &context->scratch, argument_type->kind == AST_struct ? string("(struct ") : string("(union "));
-            string_list_postfix_no_copy(pretty_print_list, &context->scratch, root_compound->identifier->string);
+            if(root_compound->identifier->type != TOKEN_identifier){
+                string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("<unnamed-tag>"));
+            }else{
+                string_list_postfix_no_copy(pretty_print_list, &context->scratch, root_compound->identifier->string);
+            }
         }
         
         string_list_postfix_no_copy(pretty_print_list, &context->scratch, (depth_or_minus_one == -1) ? string("){") : string("){\n"));
@@ -4519,7 +4520,7 @@ case NUMBER_KIND_##type:{ \
 }break
         
         
-        case TOKEN_base10_literal:{
+        case TOKEN_integer_literal:{
             struct token *lit_token = next_token(context);
             
             if(lit_token->size == 1 && lit_token->data[0] == '0'){
@@ -4532,180 +4533,168 @@ case NUMBER_KIND_##type:{ \
             struct ir_integer_literal *lit = push_uninitialized_struct(&context->ir_arena, struct ir_integer_literal);
             lit->base.kind = IR_integer_literal;
             
-            struct parsed_integer parsed_integer = parse_base10_literal(context, lit_token);
-            u64 val = parsed_integer.value;
-            
-            // "The type of an integer constant is the first of the corresponding list
-            //  in which its value can be represented."
-            
-            
-            operand.ir = &lit->base;
-            operand.token = lit_token;
-            
-            switch(parsed_integer.number_kind){
-                case NUMBER_KIND_invalid:{
-                    assert(context->should_exit_statement);
-                    lit->type = &globals.typedef_s32;
-                    return (struct expr){.ir = &lit->base, lit_token, &globals.typedef_s32};
-                }break;
+            if(lit_token->data[0] == '0'){
+                struct parsed_integer parsed_integer = parse_integer_literal(context, lit_token);
                 
-                explicit_number_kind_case(s8, i8);
-                explicit_number_kind_case(s16, i16);
-                explicit_number_kind_case(s32, i32);
-                explicit_number_kind_case(s64, i64);
-                explicit_number_kind_case(u8, ui8);
-                explicit_number_kind_case(u16, ui16);
-                explicit_number_kind_case(u32, ui32);
-                explicit_number_kind_case(u64, ui64);
+                u64 val = parsed_integer.value;
                 
-                case NUMBER_KIND_long: // @cleanup: if we do long vs int think about this
-                case NUMBER_KIND_int:{
-                    if(val <= max_s32){
-                        enum ast_kind *defined_type = 0;
-                        
-                        if(val <= max_u8) defined_type = &globals.typedef_u8.kind;
-                        else if(val <= max_u16) defined_type = &globals.typedef_u16.kind;
-                        
-                        lit->_s32 = (s32)val;
-                        operand.resolved_type = &globals.typedef_s32;
-                        operand.defined_type  = defined_type;
-                        break;
-                    }
-                } // fallthrough
-                case NUMBER_KIND_long_long:{
-                    if(val <= max_s64){
-                        lit->_s64 = (s64)val;
-                        operand.resolved_type = &globals.typedef_s64;
-                        operand.defined_type  = null;
-                        break;
-                    }
-                    lit->_u64 = (u64)val;
-                    operand.resolved_type = &globals.typedef_u64;
-                    operand.defined_type  = null;
-                    report_warning(context, WARNING_integer_literal_too_large_to_be_signed, lit_token, "Integer literal exceeds the maximum value representable as a signed integer and is interpreted as unsigned.");
-                }break;
-                case NUMBER_KIND_unsigned_long: // @cleanup: long vs int
-                case NUMBER_KIND_unsigned:{
-                    if(val <= max_u32){
-                        lit->_u32 = (u32)val;
-                        operand.resolved_type = &globals.typedef_u32;
-                        operand.defined_type  = null;
-                    }else{
-                        lit->_u64 = (u64)val;
-                        operand.resolved_type = &globals.typedef_u64;
-                        operand.defined_type  = null;
-                    }
-                } break;
-                case NUMBER_KIND_unsigned_long_long:{
-                    lit->_u64 = val;
-                    operand.resolved_type = &globals.typedef_u64;
-                    operand.defined_type  = null;
-                }break;
-                invalid_default_case();
-            }
-            
-            lit->type = operand.resolved_type;
-            context->in_lhs_expression = false;
-        }break;
-        
-        case TOKEN_octal_literal:
-        case TOKEN_binary_literal:
-        case TOKEN_hex_literal:{
-            struct token *lit_token = next_token(context);
-            struct ir_integer_literal *lit = push_uninitialized_struct(&context->ir_arena, struct ir_integer_literal);
-            lit->base.kind = IR_integer_literal;
-            
-            struct parsed_integer parsed_integer;
-            if(lit_token->type == TOKEN_hex_literal){
-                parsed_integer = parse_hex_literal(context, lit_token);
-            }else if(lit_token->type == TOKEN_binary_literal){
-                parsed_integer = parse_binary_literal(context, lit_token);
-            }else{
-                parsed_integer = parse_octal_literal(context, lit_token);
-            }
-            
-            u64 val = parsed_integer.value;
-            
-            operand.ir = &lit->base;
-            operand.token = lit_token;
-            
-            switch(parsed_integer.number_kind){
-                case NUMBER_KIND_invalid:{
-                    assert(context->should_exit_statement);
-                    lit->type = &globals.typedef_s32;
-                    return (struct expr){ .ir = &lit->base, lit_token, &globals.typedef_s32};
-                }break;
+                operand.ir = &lit->base;
+                operand.token = lit_token;
                 
-                explicit_number_kind_case(s8, i8);
-                explicit_number_kind_case(s16, i16);
-                explicit_number_kind_case(s32, i32);
-                explicit_number_kind_case(s64, i64);
-                explicit_number_kind_case(u8, ui8);
-                explicit_number_kind_case(u16, ui16);
-                explicit_number_kind_case(u32, ui32);
-                explicit_number_kind_case(u64, ui64);
-                
-#undef explicit_number_kind_case
-                
-                case NUMBER_KIND_long:
-                case NUMBER_KIND_int:{
+                switch(parsed_integer.number_kind){
+                    case NUMBER_KIND_invalid:{
+                        assert(context->should_exit_statement);
+                        lit->type = &globals.typedef_s32;
+                        return (struct expr){ .ir = &lit->base, lit_token, &globals.typedef_s32};
+                    }break;
                     
-                    if(val <= max_s32){
+                    explicit_number_kind_case(s8, i8);
+                    explicit_number_kind_case(s16, i16);
+                    explicit_number_kind_case(s32, i32);
+                    explicit_number_kind_case(s64, i64);
+                    explicit_number_kind_case(u8, ui8);
+                    explicit_number_kind_case(u16, ui16);
+                    explicit_number_kind_case(u32, ui32);
+                    explicit_number_kind_case(u64, ui64);
+                    
+                    case NUMBER_KIND_long:
+                    case NUMBER_KIND_int:{
                         
-                        enum ast_kind *defined_type = 0;
-                        if(val <= max_u8) defined_type = &globals.typedef_u8.kind;
-                        else if(val <= max_u16) defined_type = &globals.typedef_u16.kind;
-                        
-                        lit->_s32 = (s32)val;
-                        operand.resolved_type = &globals.typedef_s32;
-                        operand.defined_type  = defined_type;
-                    }else if(val <= max_u32){
-                        lit->_u32 = (u32)val;
-                        operand.resolved_type = &globals.typedef_u32;
-                        operand.defined_type  = null;
-                    }else if(val <= max_s64){
-                        lit->_s64 = (s64)val;
-                        operand.resolved_type = &globals.typedef_s64;
-                        operand.defined_type  = null;
-                    }else{
-                        lit->_u64 = (u64)val;
-                        operand.resolved_type = &globals.typedef_u64;
-                        operand.defined_type  = null;
-                    }
-                }break;
-                case NUMBER_KIND_long_long:{
-                    if(val <= max_s64){
-                        lit->_s64 = (s64)val;
-                        operand.resolved_type = &globals.typedef_s64;
-                        operand.defined_type  = null;
-                    }else{
-                        lit->_u64 = (u64)val;
-                        operand.resolved_type = &globals.typedef_u64;
-                        operand.defined_type  = null;
-                    }
-                }break;
-                case NUMBER_KIND_unsigned_long:
-                case NUMBER_KIND_unsigned:{
-                    if(val <= max_u32){
-                        lit->_u32 = (u32)val;
-                        operand.resolved_type = &globals.typedef_u32;
-                        operand.defined_type  = null;
-                    }else{
+                        if(val <= max_s32){
+                            
+                            enum ast_kind *defined_type = 0;
+                            if(val <= max_u8) defined_type = &globals.typedef_u8.kind;
+                            else if(val <= max_u16) defined_type = &globals.typedef_u16.kind;
+                            
+                            lit->_s32 = (s32)val;
+                            operand.resolved_type = &globals.typedef_s32;
+                            operand.defined_type  = defined_type;
+                        }else if(val <= max_u32){
+                            lit->_u32 = (u32)val;
+                            operand.resolved_type = &globals.typedef_u32;
+                            operand.defined_type  = null;
+                        }else if(val <= max_s64){
+                            lit->_s64 = (s64)val;
+                            operand.resolved_type = &globals.typedef_s64;
+                            operand.defined_type  = null;
+                        }else{
+                            lit->_u64 = (u64)val;
+                            operand.resolved_type = &globals.typedef_u64;
+                            operand.defined_type  = null;
+                        }
+                    }break;
+                    case NUMBER_KIND_long_long:{
+                        if(val <= max_s64){
+                            lit->_s64 = (s64)val;
+                            operand.resolved_type = &globals.typedef_s64;
+                            operand.defined_type  = null;
+                        }else{
+                            lit->_u64 = (u64)val;
+                            operand.resolved_type = &globals.typedef_u64;
+                            operand.defined_type  = null;
+                        }
+                    }break;
+                    case NUMBER_KIND_unsigned_long:
+                    case NUMBER_KIND_unsigned:{
+                        if(val <= max_u32){
+                            lit->_u32 = (u32)val;
+                            operand.resolved_type = &globals.typedef_u32;
+                            operand.defined_type  = null;
+                        }else{
+                            lit->_u64 = val;
+                            operand.resolved_type = &globals.typedef_u64;
+                            operand.defined_type  = null;
+                        }
+                    }break;
+                    case NUMBER_KIND_unsigned_long_long:{
                         lit->_u64 = val;
                         operand.resolved_type = &globals.typedef_u64;
                         operand.defined_type  = null;
-                    }
-                }break;
-                case NUMBER_KIND_unsigned_long_long:{
-                    lit->_u64 = val;
-                    operand.resolved_type = &globals.typedef_u64;
-                    operand.defined_type  = null;
-                }break;
-                invalid_default_case();
+                    }break;
+                    invalid_default_case();
+                }
+                
+                lit->type = operand.resolved_type;
+                context->in_lhs_expression = false;
+            }else{
+                
+                struct parsed_integer parsed_integer = parse_base10_literal(context, lit_token);
+                u64 val = parsed_integer.value;
+                
+                // "The type of an integer constant is the first of the corresponding list
+                //  in which its value can be represented."
+                
+                
+                operand.ir = &lit->base;
+                operand.token = lit_token;
+                
+                switch(parsed_integer.number_kind){
+                    case NUMBER_KIND_invalid:{
+                        assert(context->should_exit_statement);
+                        lit->type = &globals.typedef_s32;
+                        return (struct expr){.ir = &lit->base, lit_token, &globals.typedef_s32};
+                    }break;
+                    
+                    explicit_number_kind_case(s8, i8);
+                    explicit_number_kind_case(s16, i16);
+                    explicit_number_kind_case(s32, i32);
+                    explicit_number_kind_case(s64, i64);
+                    explicit_number_kind_case(u8, ui8);
+                    explicit_number_kind_case(u16, ui16);
+                    explicit_number_kind_case(u32, ui32);
+                    explicit_number_kind_case(u64, ui64);
+                    
+#undef explicit_number_kind_case
+                    
+                    case NUMBER_KIND_long: // @cleanup: if we do long vs int think about this
+                    case NUMBER_KIND_int:{
+                        if(val <= max_s32){
+                            enum ast_kind *defined_type = 0;
+                            
+                            if(val <= max_u8) defined_type = &globals.typedef_u8.kind;
+                            else if(val <= max_u16) defined_type = &globals.typedef_u16.kind;
+                            
+                            lit->_s32 = (s32)val;
+                            operand.resolved_type = &globals.typedef_s32;
+                            operand.defined_type  = defined_type;
+                            break;
+                        }
+                    } // fallthrough
+                    case NUMBER_KIND_long_long:{
+                        if(val <= max_s64){
+                            lit->_s64 = (s64)val;
+                            operand.resolved_type = &globals.typedef_s64;
+                            operand.defined_type  = null;
+                            break;
+                        }
+                        lit->_u64 = (u64)val;
+                        operand.resolved_type = &globals.typedef_u64;
+                        operand.defined_type  = null;
+                        report_warning(context, WARNING_integer_literal_too_large_to_be_signed, lit_token, "Integer literal exceeds the maximum value representable as a signed integer and is interpreted as unsigned.");
+                    }break;
+                    case NUMBER_KIND_unsigned_long: // @cleanup: long vs int
+                    case NUMBER_KIND_unsigned:{
+                        if(val <= max_u32){
+                            lit->_u32 = (u32)val;
+                            operand.resolved_type = &globals.typedef_u32;
+                            operand.defined_type  = null;
+                        }else{
+                            lit->_u64 = (u64)val;
+                            operand.resolved_type = &globals.typedef_u64;
+                            operand.defined_type  = null;
+                        }
+                    } break;
+                    case NUMBER_KIND_unsigned_long_long:{
+                        lit->_u64 = val;
+                        operand.resolved_type = &globals.typedef_u64;
+                        operand.defined_type  = null;
+                    }break;
+                    invalid_default_case();
+                }
+                
+                lit->type = operand.resolved_type;
+                context->in_lhs_expression = false;
             }
-            
-            lit->type = operand.resolved_type;
-            context->in_lhs_expression = false;
         }break;
         
         case TOKEN_string_literal:{
@@ -4806,7 +4795,6 @@ case NUMBER_KIND_##type:{ \
             context->in_lhs_expression = true;
         }break;
         
-        case TOKEN_float_hex_literal:
         case TOKEN_float_literal:{
             struct token *float_token = next_token(context);
             struct ir_float_literal *f = push_uninitialized_struct(&context->ir_arena, struct ir_float_literal);
@@ -7981,10 +7969,7 @@ case TOKEN_##type_name:{                                                 \
                     if(name){
                         compound->identifier = name;
                     }else{
-                        struct token *hacky_token = push_uninitialized_struct(context->arena, struct token);
-                        *hacky_token = *token;
-                        hacky_token->atom = globals.unnamed_tag;
-                        compound->identifier = hacky_token;
+                        compound->identifier = token;
                     }   
                     
                     smm size = 0;
@@ -8249,7 +8234,6 @@ case TOKEN_##type_name:{                                                 \
                                         register_compound_member(context, compound, member->name, member->type, offset_in_type + member->offset_in_type, next_member_increment);
                                     }
                                 }
-                                
                             }
                         }while(peek_token_eat(context, TOKEN_comma));
                         
@@ -8324,10 +8308,7 @@ case TOKEN_##type_name:{                                                 \
                     if(name){
                         ast_enum->identifier = name;
                     }else{
-                        struct token *hacky_token = push_uninitialized_struct(context->arena, struct token);
-                        *hacky_token = *token;
-                        hacky_token->atom = globals.unnamed_enum;
-                        ast_enum->identifier = hacky_token;
+                        ast_enum->identifier = token;
                     }   
                     
                     if(!context->sleeping_ident && name) context->sleeping_ident = name;

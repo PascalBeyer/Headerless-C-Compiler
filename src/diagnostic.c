@@ -64,8 +64,15 @@ struct error_report_node{
     u32 compilation_unit_index;
     enum compile_stage compile_stage;
     
-    struct token *token;
     struct string error;
+    
+    struct token *token;
+    
+    struct token_location_information{
+        u32 line;
+        u32 column;
+        s32 file_index;
+    } location;
 };
 
 func int error_node_smaller_function(struct error_report_node *it, struct error_report_node *piveot){
@@ -83,26 +90,20 @@ func int error_node_smaller_function(struct error_report_node *it, struct error_
     
     enum compile_stage compile_stage = it->compile_stage;
     
-    //
-    // List errors that do not have associated tokens *first*
-    //
-    if(!piveot->token) return false;
-    if(!it->token)     return true;
-    
     switch(compile_stage){
         case COMPILE_STAGE_tokenize_files:{
             // @hmm: we could have an 'error_index' that we increment every time we emit an error.
             //       but adjusting much for preprocessor errors seems wrong.
             
             // The tokens were copied... Just compare file_index, line and column
-            if(it->token->file_index < piveot->token->file_index) return true;
-            if(it->token->file_index > piveot->token->file_index) return false;
+            if(it->location.file_index < piveot->location.file_index) return true;
+            if(it->location.file_index > piveot->location.file_index) return false;
             
-            if(it->token->line < piveot->token->line) return true;
-            if(it->token->line > piveot->token->line) return false;
+            if(it->location.line < piveot->location.line) return true;
+            if(it->location.line > piveot->location.line) return false;
             
-            if(it->token->column < piveot->token->column) return true;
-            if(it->token->column > piveot->token->column) return false;
+            if(it->location.column < piveot->location.column) return true;
+            if(it->location.column > piveot->location.column) return false;
             
             // is this impossible?
             return false;
@@ -133,16 +134,16 @@ func void print_one_error_node(struct error_report_node *node){
     assert(node->kind < array_count(error_kind_string));
     
     if(token){
-        assert(token->line && token->column);
+        assert(node->location.line && node->location.column);
         
         struct string str = token_get_string(token);
         if(token->type == TOKEN_embed) str = string("<embeded-data>");
         
         // @note: -1 is okay as we have a special file there that tells us * predefined token * as absolute file path.
-        assert(token->file_index == -1 || token->file_index < array_count(globals.file_table.data));
+        assert(node->location.file_index == -1 || node->location.file_index < array_count(globals.file_table.data));
         
-        char *path = globals.file_table.data[token->file_index]->absolute_file_path;
-        print("%s(%u,%u): %s ", path, token->line, token->column, error_kind_string[node->kind]);
+        char *path = globals.file_table.data[node->location.file_index]->absolute_file_path;
+        print("%s(%u,%u): %s ", path, node->location.line, node->location.column, error_kind_string[node->kind]);
         
         if(node->warning_type != WARNING_none){
             print("%d ", node->warning_type);
@@ -178,7 +179,89 @@ func void debug_print_error(struct context *context, struct token *token, char *
     };
     
     print_one_error_node(&node);
+}
+
+
+func s32 token_get_file_index(struct compilation_unit *compilation_unit, struct token *token){
     
+    if(token->location_index != -1 && (token->location_index & 0x80000000)){
+        u32 macro_expansion_index = token->location_index & 0x7fffffff;
+        struct macro_expansion_record *record = &compilation_unit->macro_expansion_records[macro_expansion_index];
+        return record->file_index;
+    }
+    
+    return token->location_index;
+}
+
+
+func struct token_location_information get_location_for_token(struct memory_arena *arena, struct compilation_unit *compilation_unit, struct token *token){
+    
+    struct token_location_information ret = {0};
+    
+    if(token->location_index == -1){
+        ret.file_index = -1;
+        ret.column = 1;
+        ret.line = 1;
+        return ret;
+    }
+    
+    u8 *token_data = token->data;
+    
+    if((token->location_index & 0x80000000)){
+        
+        u32 macro_expansion_index = token->location_index & 0x7fffffff;
+        
+        struct macro_expansion_record *record = &compilation_unit->macro_expansion_records[macro_expansion_index];
+        ret.file_index = record->file_index;
+        token_data = record->expanded_token;
+    }else{
+        ret.file_index = token->location_index;
+    }
+    
+    struct file *file = globals.file_table.data[ret.file_index];
+    
+    if(!file->line_table){
+        
+        struct string string = {
+            .data = file->contents.data,
+            .size = file->contents.size,
+        };
+        
+        u8 **line_table = push_struct(arena, u8 *);
+        
+        *line_table = string.data;
+        
+        for(smm index = 0; index < string.size; index++){
+            if(string.data[index] == '\n'){
+                *push_struct(arena, u8 *) = &string.data[index + 1];
+            }
+        }
+        
+        *push_struct(arena, u8 *) = string.data + string.size;
+        
+        file->lines = push_data(arena, u8 *, 0) - line_table;
+        file->line_table = line_table;
+    }
+    
+    u64 lines = file->lines;
+    u8 **line_table = file->line_table;
+    
+    u64 min = 0, max = lines-2;
+    while(min <= max){
+        u64 mid = (min + max) / 2;
+        
+        if(line_table[mid] <=  token_data && token_data < line_table[mid+1]){
+            ret.line = (u32)mid + 1;
+            ret.column = (u32)(token_data - line_table[mid]) + 1;
+            break;
+        }else if(line_table[mid] < token_data){
+            min = mid + 1;
+        }else{
+            max = mid - 1;
+        }
+    }
+    
+    return ret;
 }
 
 
@@ -199,21 +282,35 @@ func void push_error_node_to_context(struct context *context, struct token *toke
     node->compile_stage = stage;
     
     if(token){
-        switch(stage){
-            case COMPILE_STAGE_tokenize_files:{
-                // while tokenizing copy the tokens, as they might be tempoary
-                struct token *copied_token = push_uninitialized_struct(context->arena, struct token);
-                *copied_token = *token;
-                node->token = copied_token;
-            }break;
-            case COMPILE_STAGE_parse_global_scope_entries:
-            case COMPILE_STAGE_emit_code:
-            case COMPILE_STAGE_parse_function:{
-                // we don't need to copy the tokens here (and don't want to), as they are the preprocessed tokens!
-                node->token = token;
-            }break;
-            invalid_default_case();
+        
+        struct compilation_unit *compilation_unit = context->current_compilation_unit;
+        
+        if(stage == COMPILE_STAGE_tokenize_files){
+            // while tokenizing copy the tokens, as they might be tempoary
+            struct token *copied_token = push_uninitialized_struct(context->arena, struct token);
+            *copied_token = *token;
+            token = copied_token;
+        }else if(token->location_index != -1 && token->location_index & 0x80000000){
+            // 
+            // If the token was generated by a define, we need to figure out the compilation unit,
+            // to find the `macro_expansion_record` in `get_location_of_token`.
+            // 
+            
+            if(compilation_unit->tokens.data <= token && token < compilation_unit->tokens.data + compilation_unit->tokens.size){
+                // We are fine, this token is part of the current compilation unit.
+            }else{
+                for(compilation_unit = globals.compilation_units.first; compilation_unit; compilation_unit = compilation_unit->next){
+                    if(compilation_unit->tokens.data <= token && token < compilation_unit->tokens.data + compilation_unit->tokens.size){
+                        break;
+                    }
+                }
+            }
+            
+            assert(compilation_unit);
         }
+        
+        node->token = token;
+        node->location = get_location_for_token(context->arena, compilation_unit, token);
     }
     
     va_list copied_va;
@@ -239,7 +336,7 @@ func void push_error_node_to_context(struct context *context, struct token *toke
 
 
 func int should_report_warning_for_token(struct context *context, struct token *token){
-    return globals.cli_options.report_warnings_in_system_includes || context->in_error_report || !token || !globals.file_table.data[token->file_index]->is_system_include;
+    return globals.cli_options.report_warnings_in_system_includes || context->in_error_report || !token || !globals.file_table.data[token_get_file_index(context->current_compilation_unit, token)]->is_system_include;
 }
 
 PRINTLIKE __declspec(noinline) func void report_warning(struct context *context, enum warning_type warning, struct token *token, char *format, ...){
@@ -363,42 +460,6 @@ func b32 maybe_report_error_for_stack_exhaustion(struct context *context, char *
         return true;
     }
     return false;
-}
-
-PRINTLIKE __declspec(noinline) func void report_internal_compiler_error(struct token *token, char *format, ...){
-    //
-    // @note: be careful here, we might use this for asserts eventually.
-    //
-    if(token && token->file_index < array_count(globals.file_table.data)){
-        char *file_path = globals.file_table.data[token->file_index]->absolute_file_path;
-        print("%s(%u,%u): ", file_path, token->line, token->column);
-    }
-    
-#ifdef FUZZING
-    ((void (*)(void))format)(); // try to call the format string, which will give us a _unique_ crash.
-#endif
-    
-    if(token){
-        struct string string = token_get_string(token);
-        print("Internal Compiler Error at '%.*s': ", string.size, string.data);
-    }else{
-        print("Internal Compiler Error: ");
-    }
-    
-    char buffer[0x200];
-    
-    va_list va;
-    va_start(va, format);
-    int length = vsnprintf(buffer, sizeof(buffer), format, va);
-    va_end(va);
-    
-    os_print_string(buffer, length);
-    
-    print("\n");
-    
-    
-    os_debug_break();
-    os_panic(1);
 }
 
 void print_warning_or_error_reports(struct context *context){

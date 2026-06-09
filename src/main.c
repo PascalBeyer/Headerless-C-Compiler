@@ -250,7 +250,8 @@ func enum ast_kind *ast_table_get(struct ast_table *table, struct atom atom){
 //_____________________________________________________________________________________________________________________
 
 struct file{
-    struct os_file file;
+    struct os_file os_file; // Used for hashing
+    struct string contents;
     char *absolute_file_path;
     
     s32 file_index;
@@ -258,10 +259,11 @@ struct file{
     
     int in_progress;
     
+    u8 **line_table;
     smm lines;
     smm amount_of_times_included; // not counting pragma(once)
     
-    struct token_array tokens;
+    struct raw_token_array tokens;
     
     // pdb debug info
     u32 offset_in_names;
@@ -388,6 +390,17 @@ static struct{
                 smm capacity;
             } is_token_static_table;
             
+            struct token_array tokens;
+            
+            struct macro_expansion_record{
+                s32 file_index;
+                s32 macro_expansion_index;
+                
+                u8 *expanded_token;
+                u8 *defined_token;
+            } *macro_expansion_records;
+            u64 amount_of_macro_expansion_records;
+            
         }  hacky_global_compilation_unit;
         
         struct{
@@ -407,7 +420,7 @@ static struct{
         struct compilation_unit *last;
     } compilation_units;
     
-    struct token_array predefined_tokens;
+    struct raw_token_array predefined_tokens;
     
     struct{
         struct dll_node *first;
@@ -510,8 +523,6 @@ static struct{
     
     struct atom keyword__VA_ARGS__;
     
-    struct atom unnamed_tag;
-    struct atom unnamed_enum;
     struct atom invalid_identifier;
     
     // :hlc_extensions
@@ -596,6 +607,7 @@ static struct{
     struct ir guard_ast;
     struct token *invalid_identifier_token;
     struct token invalid_token;
+    struct raw_token invalid_raw_token;
     struct ast_declaration *poison_declaration;
     
     struct ast_declaration *tls_index_declaration;
@@ -681,7 +693,6 @@ struct jump_context{
 
 //_____________________________________________________________________________________________________________________
 
-
 struct pragma_once_list_node{
     struct pragma_once_list_node *next;
     struct file *file;
@@ -724,8 +735,23 @@ struct context{
         smm size;
         smm blocked_size; // For argument expansion, we want to use the same stack, but "block" the previous tokens from being accessed.
         smm capacity;
-        
     } token_stack;
+    
+    struct{
+        struct include_stack_node{
+            // WARNING: We explicitly initialize all of the members of this struct in some places instead of zero initializing it. Initialize with `push_to_include_stack`.
+            struct raw_token_array tokens;
+            struct file *file;
+            smm at;
+            
+            // u32 line;
+            smm offset;
+            // smm last_newline;
+        } *nodes;
+        
+        smm size;
+        smm capacity;
+    } include_stack;
     
     struct static_if_evaluate_stack_node{
         enum static_if_evaluate_operation operation;
@@ -735,9 +761,6 @@ struct context{
         int should_skip_undefined_identifier;
     } static_if_evaluate_stack[1024];
     smm static_if_stack_at;
-    
-    struct token *macro_expansion_token;
-    smm define_depth;
     
     b32 static_if_evaluate_should_skip_undefined_identifier; // used to not report errors for example for '#if defined(_MSC_VER) && _MSC_VER > 1337'
     b32 in_static_if_condition; // used to not process defined as a macro outside of a #if condition.
@@ -1008,13 +1031,7 @@ func void add_specified_library(struct memory_arena *arena, struct string librar
 
 
 func struct string push_token_string(struct context *context, struct token *token, b32 print_whitespace_and_comments){
-    if(token->type == TOKEN_comment){
-        if(print_whitespace_and_comments){
-            return push_format_string(&context->scratch, "%.*s", token->size, token->data);
-        }else{
-            return string(" ");
-        }
-    }else if(token->type == TOKEN_whitespace){
+    if(token->type == TOKEN_whitespace){
         if(print_whitespace_and_comments){
             return push_format_string(&context->scratch, "%.*s", token->size, token->data);
         }else{
@@ -1095,7 +1112,11 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
         }break;
         case AST_union: case AST_struct: case AST_enum:{
             struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
-            string_list_prefix(list, scratch, compound->identifier->string);
+            if(compound->identifier->type == TOKEN_identifier){
+                string_list_prefix(list, scratch, compound->identifier->string);
+            }else{
+                string_list_prefix(list, scratch, string("<unnamed>"));
+            }
             char *prefix = "enum ";
             if(compound->base.kind == AST_union)  prefix = "union ";
             if(compound->base.kind == AST_struct) prefix = "struct ";
@@ -1526,9 +1547,7 @@ func struct token *push_dummy_token(struct memory_arena *arena, struct atom toke
     struct token *token = push_struct(arena, struct token);
     token->type   = token_type;
     token->atom   = token_atom;
-    token->file_index = -1; // invalid file index.
-    token->line   = 1;
-    token->column = 1;
+    token->location_index = -1; // invalid file index.
     
     return token;
 }
@@ -2126,6 +2145,8 @@ func void register_compound_type(struct context *context, struct ast_type *type,
         report_error(context, new_identifier, "[%lld] Mismatching redeclaration of type.", new->compilation_unit->index);
         report_error(context, old_identifier, "[%lld] ... Here was the previous declaration.", old->compilation_unit->index);
         
+#if 0
+        // @cleanup: This wont work anymore.
         if(new_identifier->file_index == old_identifier->file_index && new_identifier->line == old_identifier->line && new_identifier->column == old_identifier->column){
             // 
             // This is the same token in two different compilation units.
@@ -2159,6 +2180,7 @@ func void register_compound_type(struct context *context, struct ast_type *type,
                 }
             }
         }
+#endif
         
         end_error_report(context);
         return;
@@ -2709,6 +2731,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         has_include_builtin->name = atom_for_string(string("__has_include"));
         has_include_builtin->builtin_define_type = BUILTIN_DEFINE_has_include;
         has_include_builtin->is_builtin = 1;
+        has_include_builtin->is_function_like = 1;
         has_include_builtin->defined_token = &globals.invalid_token;
         register_define(context, has_include_builtin);
         
@@ -2716,6 +2739,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         defined___pragma->name = atom_for_string(string("__pragma"));
         defined___pragma->builtin_define_type = BUILTIN_DEFINE__pragma;
         defined___pragma->is_builtin  = 1;
+        defined___pragma->is_function_like  = 1;
         defined___pragma->defined_token = &globals.invalid_token;
         register_define(context, defined___pragma);
         
@@ -2723,6 +2747,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         defined__Pragma->name = atom_for_string(string("_Pragma"));
         defined__Pragma->builtin_define_type = BUILTIN_DEFINE__pragma;
         defined__Pragma->is_builtin  = 1;
+        defined__Pragma->is_function_like  = 1;
         defined__Pragma->defined_token = &globals.invalid_token;
         register_define(context, defined__Pragma);
         
@@ -2747,6 +2772,8 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
     struct token_array tokenized_file = file_tokenize_and_preprocess(context, work_tokenize_file->absolute_file_path, work_tokenize_file->file_size);
     end_counter(context, tokenize_and_preprocess);
     
+    context->current_compilation_unit->tokens = tokenized_file;
+    
     if(context->error) return;
     if(tokenized_file.amount == 0) return; // nothing to do if the file is empty
     
@@ -2761,32 +2788,38 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
             WriteFile(stderr, buffer, (u32)length, &chars_written, 0);
         }
         
+        struct token_location_information last_location = {
+            .line = 1,
+            .column = 1,
+            .file_index = -1,
+        };
         struct token *last_token = &globals.invalid_token;
         
         char *preprocessed_file_start = (char *)arena_current(&context->scratch);
         
         for(smm token_index = 0; token_index < tokenized_file.amount; token_index++){
             struct token *token = &tokenized_file.data[token_index];
+            struct token_location_information location = get_location_for_token(context->arena, context->current_compilation_unit, token);
             
-            if(token->line != last_token->line || token->file_index != last_token->file_index){ 
+            if(location.line != last_location.line || location.file_index != last_location.file_index){ 
                 
                 *push_uninitialized_struct(&context->scratch, char) = '\n';
-                if(token->line != last_token->line + 1){
+                if(location.line != last_location.line + 1){
                     *push_uninitialized_struct(&context->scratch, char) = '\n';
                     // @cleanup: lines are still not correct...
                 }
                 
-                if(token->file_index != last_token->file_index){
-                    char *filename = globals.file_table.data[token->file_index]->absolute_file_path;
-                    struct string line_directive = push_format_string(&context->scratch, "#line %u \"%s\"\n", token->line, filename);
+                if(location.file_index != last_location.file_index){
+                    char *filename = globals.file_table.data[location.file_index]->absolute_file_path;
+                    struct string line_directive = push_format_string(&context->scratch, "#line %u \"%s\"\n", location.line, filename);
                     
                     // @hack: remove the zero-terminator.
                     assert(context->scratch.current == line_directive.data + line_directive.size + 1);
                     context->scratch.current -= 1;
                 }
                 
-                if(token->column){
-                    smm amount_of_spaces = token->column-1; // @note: column is one-based;
+                if(location.column){
+                    smm amount_of_spaces = location.column-1; // @note: column is one-based;
                     memset(push_uninitialized_data(&context->scratch, char, amount_of_spaces), ' ', amount_of_spaces);
                 }
             }else{
@@ -2794,9 +2827,11 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 
                 if(TOKEN_first_keyword <= last_token->type && last_token->type < TOKEN_one_past_last_keyword && token->type == TOKEN_open_paren) skip = 1;
                 if(TOKEN_first_keyword <= last_token->type && last_token->type < TOKEN_one_past_last_keyword && token->type == TOKEN_closed_paren) skip = 1;
-                if(TOKEN_float_literal <= last_token->type && last_token->type < TOKEN_string_literal && token->type == TOKEN_open_paren) skip = 1;
-                if(TOKEN_float_literal <= last_token->type && last_token->type < TOKEN_string_literal && token->type == TOKEN_closed_paren) skip = 1;
-                if(TOKEN_float_literal <= last_token->type && last_token->type < TOKEN_string_literal && token->type == TOKEN_comma) skip = 1;
+                
+                if(TOKEN_integer_literal <= last_token->type && last_token->type <= TOKEN_string_literal && token->type == TOKEN_open_paren) skip = 1;
+                if(TOKEN_integer_literal <= last_token->type && last_token->type <= TOKEN_string_literal && token->type == TOKEN_closed_paren) skip = 1;
+                if(TOKEN_integer_literal <= last_token->type && last_token->type <= TOKEN_string_literal && token->type == TOKEN_comma) skip = 1;
+                
                 if(last_token->type == TOKEN_identifier && token->type == TOKEN_open_paren) skip = 1;
                 if(last_token->type == TOKEN_identifier && token->type == TOKEN_closed_paren) skip = 1;
                 
@@ -2827,7 +2862,9 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 struct string pragma = string("#pragma ");
                 memcpy(push_uninitialized_data(&context->scratch, char, pragma.size), pragma.data, pragma.size);
             }
+            
             last_token = token;
+            last_location = location;
             
             memcpy(push_uninitialized_data(&context->scratch, char, token->string.size), token->string.data, token->string.size);
         }
@@ -3255,7 +3292,7 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
         // for struct this might be a struct declaration, in which case  we are done.
         if(lhs_type->kind == AST_struct || lhs_type->kind == AST_union){
             struct ast_compound_type *compound = cast(struct ast_compound_type *)lhs_type;
-            if(atoms_match(globals.unnamed_tag, compound->identifier->atom)){
+            if(compound->identifier->type != TOKEN_identifier){
                 // @cleanup: does this report the error in the wrong spot, if we have:
                 //     typedef struct {} asd;
                 //     asd;
@@ -3314,8 +3351,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         smm amount_of_lines = 8;
         struct token *first_token = parse_work->tokens.data;
         struct token *last_token = parse_work->tokens.data + parse_work->tokens.size - 1;
-        if(first_token->file_index == last_token->file_index){
-            amount_of_lines = last_token->line - first_token->line + 1;
+        if(first_token->location_index == last_token->location_index){
+            amount_of_lines = get_location_for_token(context->arena, context->current_compilation_unit, last_token).line - get_location_for_token(context->arena, context->current_compilation_unit, first_token).line + 1;
         }
         
         function->line_information.data = push_uninitialized_data(context->arena, struct function_line_information, amount_of_lines);
@@ -3326,7 +3363,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         // 
         context->last_line_pushed = -1;
         context->last_offset_pushed = -1;
-        context->function_file_index = first_token->file_index;
+        context->function_file_index = token_get_file_index(context->current_compilation_unit, first_token);
     }
     
     struct ast_scope *scope = function->scope;
@@ -4306,14 +4343,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 if(globals.output_file_type == OUTPUT_FILE_obj){
                     string_list_postfix_no_copy(&predefines, arena, string("#define __HLC_COMPILE_TO_OBJECT__ 1\n"));
                 }
-                
-                
             }
             
             struct string predefines_string = string_list_flatten(predefines, arena);
-            
-            struct token_array tokens = tokenize_raw(context, predefines_string, (u32)globals.invalid_file.file_index, /*out lines*/null);
-            globals.predefined_tokens = tokens;
+            globals.file_table.invalid_file->contents = predefines_string;
+            globals.predefined_tokens = tokenize_raw(context, predefines_string);
         }
         
         globals.keyword_dllimport   = atom_for_string(string("dllimport"));
@@ -4340,8 +4374,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         globals.keyword__VA_ARGS__ = atom_for_string(string("__VA_ARGS__"));
         
-        globals.unnamed_tag  = atom_for_string(string("<unnamed-tag>"));
-        globals.unnamed_enum = atom_for_string(string("<unnamed-enum>"));
         globals.invalid_identifier = atom_for_string(string("<invalid identifier>"));
         
         // :hlc_extension
@@ -4596,7 +4628,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct token *token = push_dummy_token(arena, atom_for_string(string("_AddressOfReturnAddress")), TOKEN_identifier);
             
             struct ast_function_type *type = parser_type_push(context, function_type);
-            type->return_type = &globals.typedef_void_pointer.base;;
+            type->return_type = &globals.typedef_void_pointer.base;
             
             register_intrinsic_function_declaration(context, token, type);
         }
@@ -4608,7 +4640,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct token *token = push_dummy_token(arena, atom_for_string(string("_ReturnAddress")), TOKEN_identifier);
             
             struct ast_function_type *type = parser_type_push(context, function_type);
-            type->return_type = &globals.typedef_void_pointer.base;;
+            type->return_type = &globals.typedef_void_pointer.base;
             
             register_intrinsic_function_declaration(context, token, type);
         }
@@ -4652,6 +4684,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             register_intrinsic_function_declaration(context, token, type);
         }
         
+        globals.invalid_token.location_index = -1;
         globals.invalid_identifier_token = push_dummy_token(arena, globals.invalid_identifier, TOKEN_identifier);
         
         struct declarator_return poison_declarator = {.ident = globals.invalid_identifier_token, .type = &globals.typedef_poison };
@@ -5643,7 +5676,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     if(*ast == AST_function){
                         struct ast_function *function = (struct ast_function *)ast;
                         
-                        if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)){
+                        if(!(function->as_decl.flags & (DECLARATION_FLAGS_is_reachable_from_entry | DECLARATION_FLAGS_is_intrinsic))){
                             if(function->scope){
                                 report_warning(context, WARNING_function_defined_but_unreachable, function->identifier, "Function was defined but unreachable.");
                             }else{
@@ -5743,12 +5776,14 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     smm amount_of_lines_preprocessed = 0;
     smm amount_of_lines = 0;
+    smm amount_of_bytes = 0;
     for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
         struct file *it = globals.file_table.data[file_index];
         if(!it) continue;
         
         amount_of_lines += it->lines;
         amount_of_lines_preprocessed += it->lines * it->amount_of_times_included;
+        amount_of_bytes += it->contents.size;
     }
     
     if(globals.an_error_has_occurred){
@@ -5758,7 +5793,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     f64 end_time = os_get_time_in_seconds();
     f64 time_in_seconds = (end_time - begin_time);
-    if(!globals.cli_options.quiet) print("\nTotal Lines: %lld | Total Lines Preprocessed %lld | Time: %.3fs\n", amount_of_lines, amount_of_lines_preprocessed, time_in_seconds);
+    
+    if(!globals.cli_options.quiet) print("\nTotal Lines: %lld | Total Lines Preprocessed %lld | Total Bytes %$$lldB | Time: %.3fs\n", amount_of_lines, amount_of_lines_preprocessed, amount_of_bytes, time_in_seconds);
     
     f64 overhead = time_in_seconds - (stage_one_tokenize_and_preprocess_time + stage_two_parsing_time + stage_three_emit_code_time + stage_four_linking);
     if(!globals.cli_options.quiet) print("preprocessing %.3fs (%.3f%%) | compiling %.3fs (%.3f%%) | code gen %.3fs (%.3f%%) | linking %.3fs (%.3f%%) | overhead %.3fs (%.3f%%)\n", 

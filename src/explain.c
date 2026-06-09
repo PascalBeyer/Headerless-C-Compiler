@@ -451,7 +451,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         // This works fine, because we do this before we emit code for functions.
         // 
         
-        if(!globals.file_table.data[declaration->identifier->file_index]->is_system_include){ // @note: Manually shut this warning up, as we are currently in a big error_report.
+        if(!globals.file_table.data[token_get_file_index(declaration->compilation_unit, declaration->identifier)]->is_system_include){ // @note: Manually shut this warning up, as we are currently in a big error_report.
             // @cleanup: I currently don't see a way of how we can get the name of the library or dll.
             report_warning(context, WARNING_function_is_implicitly_dllimport, declaration->identifier, "%s is treated as dllimport, but was not declared '__declspec(dllimport)'.", Function_or_Declaration);
         }
