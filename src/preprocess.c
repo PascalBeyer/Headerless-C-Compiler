@@ -3114,18 +3114,14 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                         
                                         smm depth = 0;
                                         do{
-                                            struct token *pushed = push_struct(&context->scratch, struct token);
-                                            
                                             struct raw_token *source = &tokens.data[token_index++];
                                             
+                                            struct token *pushed = push_uninitialized_struct(&context->scratch, struct token);
                                             pushed->type = source->type;
                                             pushed->location_index = include_file->file_index;
                                             pushed->data = include_file->contents.data + offset;
                                             pushed->size = (u32)source->size;
-                                            
-                                            if(pushed->type == TOKEN_identifier){
-                                                pushed->string_hash = (u32)string_djb2_hash(token_get_string(pushed));
-                                            }
+                                            pushed->string_hash = (pushed->type == TOKEN_identifier) ? (u32)string_djb2_hash(token_get_string(pushed)) : 0;
                                             
                                             offset += source->size;
                                             
