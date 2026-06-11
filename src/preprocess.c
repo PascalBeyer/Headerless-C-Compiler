@@ -1087,8 +1087,6 @@ func struct parsed_integer parse_octal_literal(struct context *context, struct t
     smm start = 1;
     if(lit_token->data[1] == 'o' || lit_token->data[1] == 'O'){
         start = 2;
-    }else{
-        report_warning(context, WARNING_octal_constant_used, lit_token, "Octal constant used, use 0o<octal> to squelch this warning.");
     }
     
     if(lit_token->size == start){
@@ -1119,6 +1117,16 @@ func struct parsed_integer parse_octal_literal(struct context *context, struct t
     
     if(report_overflow){
         report_warning(context, WARNING_compile_time_overflow, lit_token, "Compile time overflow.");
+    }
+    
+    if(warning_enabled[WARNING_octal_constant_used]){
+        for(; start < lit_token->size; start++){
+            if(lit_token->data[start] != '0') break;
+        }
+        
+        if(start + 1 < suffix_start){
+            report_warning(context, WARNING_octal_constant_used, lit_token, "Octal constant used, use 0o<octal> to squelch this warning.");
+        }
     }
     
     struct string suffix = create_string(lit_token->data + suffix_start, lit_token->size - suffix_start);
