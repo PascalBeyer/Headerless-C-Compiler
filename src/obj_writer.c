@@ -265,7 +265,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                     *push_struct(arena, u16) = /*attributes*/3;
                     *push_struct(arena, u16) = /*LF_LONG*/0x8003; // @cleanup: push_signed_number_leaf();
                     *(u32 *)push_data(arena, u8, sizeof(u32)) = (u32)member->enum_value;
-                    push_zero_terminated_string_copy(arena, member->name->string);
+                    push_zero_terminated_string_copy(arena, token_get_string(member->name));
                     push_f3f2f1_align(arena, sizeof(u32));
                 }
                 
@@ -278,7 +278,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                 *push_struct(arena, u32) = /*underlying type*/CV_s32;
                 *push_struct(arena, u32) = fieldlist_type_index;
                 
-                struct string identifier = (ast_enum->identifier->type == TOKEN_identifier) ? ast_enum->identifier->string : string("<unnamed-enum>");
+                struct string identifier = (ast_enum->identifier->type == TOKEN_identifier) ? token_get_string(ast_enum->identifier) : string("<unnamed-enum>");
                 push_zero_terminated_string_copy(arena, identifier);
                 
                 end_type_record();
@@ -313,7 +313,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                         *push_struct(arena, u16) = 0; // size (0 for forward ref)
                         
                         // @cleanup: this could overflow the header length field u16.
-                        push_zero_terminated_string_copy(arena, compound->identifier->string); // @cleanup: can this be unnamed here?
+                        push_zero_terminated_string_copy(arena, token_get_string(compound->identifier)); // @cleanup: can this be unnamed here?
                         end_type_record();
                         current_type->pdb_type_index = predeclaration_type_index;
                     }
@@ -409,7 +409,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                     *push_struct(arena, u16) = /*attributes*/3;
                     *push_struct(arena, u32) = member->type->pdb_type_index;
                     push_unsigned_number_leaf(arena, member->offset_in_type);
-                    push_zero_terminated_string_copy(arena, member->name->string);
+                    push_zero_terminated_string_copy(arena, token_get_string(member->name));
                     push_f3f2f1_align(arena, sizeof(u32));
                 }
                 
@@ -427,7 +427,7 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                 }
                 push_unsigned_number_leaf(arena, compound->base.size);
                 
-                struct string identifier = (compound->identifier->type == TOKEN_identifier) ? compound->identifier->string : string("<unnamed-tag>");
+                struct string identifier = (compound->identifier->type == TOKEN_identifier) ? token_get_string(compound->identifier) : string("<unnamed-tag>");
                 push_zero_terminated_string_copy(arena, identifier);
                 
                 end_type_record();
@@ -817,14 +817,14 @@ void codeview_emit_debug_information_for_function__recursive(struct ast_function
                 u32 type_index;
                 u16 register_index;
                 u8 identifier[];
-            } *regrel = push_struct_(arena, offset_in_type(struct codeview_regrel32, identifier) + decl->identifier->string.size + 1, /*alignment*/4);
+            } *regrel = push_struct_(arena, offset_in_type(struct codeview_regrel32, identifier) + decl->identifier->size + 1, /*alignment*/4);
             
             regrel->kind = /*S_REGREL32*/0x1111;
             regrel->offset_of_register = (s32)(-decl->offset_on_stack);
             regrel->type_index = decl->type->pdb_type_index;
             regrel->register_index = /*CV_AMD64_RBP*/334;
-            memcpy(regrel->identifier, decl->identifier->string.data, decl->identifier->string.size);
-            regrel->identifier[decl->identifier->string.size] = 0;
+            memcpy(regrel->identifier, decl->identifier->data, decl->identifier->size);
+            regrel->identifier[decl->identifier->size] = 0;
             
             push_f3f2f1_align(arena, sizeof(u32));
             regrel->length = (u16)(arena_current(arena) - (u8 *)&regrel->kind);
@@ -1174,9 +1174,9 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
     
     for(struct alternate_name *alternate_name = globals.alternate_names.first; alternate_name; alternate_name = alternate_name->next){
         string_list_postfix_no_copy(&directives, scratch, string("/ALTERNATENAME:"));
-        string_list_postfix_no_copy(&directives, scratch, alternate_name->source.string);
+        string_list_postfix_no_copy(&directives, scratch, atom_get_string(alternate_name->source));
         string_list_postfix_no_copy(&directives, scratch, string("="));
-        string_list_postfix_no_copy(&directives, scratch, alternate_name->destination.string);
+        string_list_postfix_no_copy(&directives, scratch, atom_get_string(alternate_name->destination));
         string_list_postfix_no_copy(&directives, scratch, string(" "));
     }
     
@@ -2010,7 +2010,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct(arena, u16) = /*LF_FUNC_ID*/0x1601;
             *push_struct(arena, u32) = /*parent scope*/0; // @incomplete: look at a language with local procedures.
             *push_struct(arena, u32) = function->type->base.pdb_type_index;
-            push_zero_terminated_string_copy(arena, function->identifier->string);
+            push_zero_terminated_string_copy(arena, token_get_string(function->identifier));
             push_f3f2f1_align(arena, sizeof(u32));
             *length = (u16)(arena_current(arena) - (u8 *)(length + 1)); // @cleanup: overflow.
         }
@@ -2170,7 +2170,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                     u16 section_id;
                     u8 procedure_flags;
                     u8 procedure_name[];
-                } *proc_symbol = push_struct_(arena, offset_in_type(struct codeview_proc, procedure_name) + (function->identifier->length + 1), 4);
+                } *proc_symbol = push_struct_(arena, offset_in_type(struct codeview_proc, procedure_name) + (function->identifier->size + 1), 4);
                 proc_symbol->pointer_to_parent  = 0;
                 proc_symbol->pointer_to_end     = 0;
                 proc_symbol->pointer_to_next    = 0;
@@ -2181,8 +2181,8 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                 proc_symbol->offset_in_section  = 0; // Filled in by a relocation
                 proc_symbol->section_id         = 0; // Filled in by a relocation
                 proc_symbol->procedure_flags    = 0;
-                memcpy(proc_symbol->procedure_name, function->identifier->data, function->identifier->length);
-                proc_symbol->procedure_name[function->identifier->length] = 0;
+                memcpy(proc_symbol->procedure_name, function->identifier->data, function->identifier->size);
+                proc_symbol->procedure_name[function->identifier->size] = 0;
                 
                 push_f3f2f1_align(arena, sizeof(u32));
                 *proc32_length = (u16)(arena_current(arena) - (u8 *)(proc32_length + 1));
@@ -2248,7 +2248,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         *push_struct(arena, u16) = /*S_CONSTANT*/0x1107;
                         *push_struct(arena, u32) = enum_type_index;
                         push_unsigned_number_leaf(arena, value);
-                        push_zero_terminated_string_copy(arena, decl->identifier->string);
+                        push_zero_terminated_string_copy(arena, token_get_string(decl->identifier));
                         push_f3f2f1_align(arena, sizeof(u32));
                         *length = (u16)(arena_current(arena)- (u8 *)(length + 1));
                         continue;
@@ -2263,7 +2263,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                         u16 *length = push_struct(arena, u16);
                         *push_struct(arena, u16) = /*S_UDT*/0x1108;
                         *push_struct(arena, u32) = decl->type->pdb_type_index;
-                        push_zero_terminated_string_copy(arena, decl->identifier->string);
+                        push_zero_terminated_string_copy(arena, token_get_string(decl->identifier));
                         push_f3f2f1_align(arena, sizeof(u32));
                         *length = (u16)(arena_current(arena)- (u8 *)(length + 1));
                     }
@@ -2288,13 +2288,13 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
                             u32 offset_in_section;
                             u16 section_id;
                             u8  identifier[];
-                        } *data_symbol = push_struct_(arena, offset_in_type(struct codeview_data32, identifier) + (decl->identifier->length + 1), 4);
+                        } *data_symbol = push_struct_(arena, offset_in_type(struct codeview_data32, identifier) + (decl->identifier->size + 1), 4);
                         
                         u16 kind = ((decl->flags & DECLARATION_FLAGS_is_thread_local) ? /*S_LTHREAD32*/0x1112 : /* S_LDATA32 */ 0x110c) + ((decl->flags & DECLARATION_FLAGS_is_static) != 0);
                         data_symbol->kind = kind;
                         data_symbol->type_index = decl->type->pdb_type_index;
-                        memcpy(data_symbol->identifier, decl->identifier->data, decl->identifier->length);
-                        data_symbol->identifier[decl->identifier->length] = 0;
+                        memcpy(data_symbol->identifier, decl->identifier->data, decl->identifier->size);
+                        data_symbol->identifier[decl->identifier->size] = 0;
                         
                         struct debug_symbols_relocation_info *relocation = push_struct(scratch, struct debug_symbols_relocation_info);
                         relocation->destination_offset = (u32)((u8 *)&data_symbol->offset_in_section - debug_symbols_base);
@@ -2450,7 +2450,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             
             struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
             
-            struct string name = function->identifier->string;
+            struct string name = token_get_string(function->identifier);
             
             if(name.size <= 8){
                 memcpy(record->short_name, name.data, name.size);
@@ -2518,7 +2518,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         
         struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
         
-        struct string name = function->identifier->string;
+        struct string name = token_get_string(function->identifier);
         if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
             name = push_format_string(scratch, "__imp_%.*s", name.size, name.data);
         }
@@ -2544,7 +2544,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
             // Hence, we make a symbol table entry for it here which we can use for relocations.
             // 
             record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
-            name = function->identifier->string;
+            name = token_get_string(function->identifier);
             
             if(name.size <= 8){
                 memcpy(record->short_name, name.data, name.size);
@@ -2567,7 +2567,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         
         struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
         
-        struct string name = decl->identifier->string;
+        struct string name = token_get_string(decl->identifier);
         if(decl->flags & DECLARATION_FLAGS_is_dllimport){
             name = push_format_string(scratch, "__imp_%.*s", name.size, name.data);
         }
@@ -2592,7 +2592,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         
         struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
         
-        struct string name = decl->identifier->string;
+        struct string name = token_get_string(decl->identifier);
         if(decl->flags & DECLARATION_FLAGS_is_dllimport){
             name = push_format_string(scratch, "__imp_%.*s", name.size, name.data);
         }
@@ -2617,7 +2617,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         decl->symbol_table_index = (arena_current(arena) - (u8 *)symbol_table_base)/18;
         
         struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
-        struct string name = decl->identifier->string;
+        struct string name = token_get_string(decl->identifier);
         
         if(name.size <= 8){
             memcpy(record->short_name, name.data, name.size);
@@ -2639,7 +2639,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         decl->symbol_table_index = (arena_current(arena) - (u8 *)symbol_table_base)/18;
         
         struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
-        struct string name = decl->identifier->string;
+        struct string name = token_get_string(decl->identifier);
         
         if(name.size <= 8){
             memcpy(record->short_name, name.data, name.size);
@@ -2681,7 +2681,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         decl->symbol_table_index = (arena_current(arena) - (u8 *)symbol_table_base)/18;
         
         struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
-        struct string name = decl->identifier->string;
+        struct string name = token_get_string(decl->identifier);
         
         if(name.size <= 8){
             memcpy(record->short_name, name.data, name.size);
@@ -2707,7 +2707,7 @@ void print_obj(struct string output_file_path, struct memory_arena *arena, struc
         decl->symbol_table_index = (arena_current(arena) - (u8 *)symbol_table_base)/18;
         struct coff_symbol_table_record *record = (struct coff_symbol_table_record *)push_data(arena, u8, 18);
         
-        struct string name = decl->identifier->string;
+        struct string name = token_get_string(decl->identifier);
         
         if(name.size <= 8){
             memcpy(record->short_name, name.data, name.size);

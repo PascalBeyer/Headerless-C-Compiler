@@ -1113,7 +1113,7 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
         case AST_union: case AST_struct: case AST_enum:{
             struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
             if(compound->identifier->type == TOKEN_identifier){
-                string_list_prefix(list, scratch, compound->identifier->string);
+                string_list_prefix(list, scratch, token_get_string(compound->identifier));
             }else{
                 string_list_prefix(list, scratch, string("<unnamed>"));
             }
@@ -2590,7 +2590,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                             //                                                        23.11.2023
                             struct ir_embed *embed = (struct ir_embed *)rhs;
                             
-                            struct string file_data = embed->token->string;
+                            struct string file_data = token_get_string(embed->token);
                             assert(offset + file_data.size <= data_size); // Make sure it fits.
                             
                             memcpy(data + offset, file_data.data, file_data.size);
@@ -2866,7 +2866,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
             last_token = token;
             last_location = location;
             
-            memcpy(push_uninitialized_data(&context->scratch, char, token->string.size), token->string.data, token->string.size);
+            memcpy(push_uninitialized_data(&context->scratch, char, token->size), token->data, token->size);
         }
         *push_uninitialized_struct(&context->scratch, char) = '\n';
         
@@ -3127,7 +3127,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                     if(context->pragma_pack_stack.first) report_error(context, context->pragma_pack_stack.first->token, "... This is the pragma responsible for the new top.");
                     end_error_report(context);
                 }
-                    
+                
                 if(count){
                     report_error(context, start_token, "Unmatched '{' at global scope.");
                 }
@@ -3452,7 +3452,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         }
         
         if(!found){
-            report_error(context, ast_goto->token, "'goto' to undefined label '%.*s'.", ast_goto->ident.amount, ast_goto->ident.data);
+            report_error(context, ast_goto->token, "'goto' to undefined label '%.*s'.", ast_goto->ident.size, ast_goto->ident.data);
             return;
         }
     }
@@ -3603,14 +3603,14 @@ func struct ast_function *get_entry_point_or_error(struct context *context){
     struct ast_function *function = cast(struct ast_function *)ast_table_get(&globals.global_declarations, entry_point);
     
     if(!function){
-        report_error(context, null, "Error: Specified entry point '%.*s' not found.", entry_point.length, entry_point.data);
+        report_error(context, null, "Error: Specified entry point '%.*s' not found.", entry_point.size, entry_point.data);
         globals.an_error_has_occurred = true;
         os_debug_break();
         return null;
     }
     
     if(function->kind != IR_function){
-        report_error(context, function->identifier, "Specified entry point '%.*s' is not a function.", entry_point.length, entry_point.data);
+        report_error(context, function->identifier, "Specified entry point '%.*s' is not a function.", entry_point.size, entry_point.data);
         globals.an_error_has_occurred = true;
         return null;
     }
@@ -4491,13 +4491,13 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 struct keyword_table_entry *table = push_data(arena, struct keyword_table_entry, size);
                 b32 should_continue = false;
                 for(u32 i = 0; i < array_count(keywords); i++){
-                    u64 hash = string_djb2_hash(keywords[i]);
+                    u32 hash = (u32)string_djb2_hash(keywords[i]);
                     if(table[hash & (size - 1)].keyword.data){
                         end_temporary_memory(temp);
                         should_continue = true;
                         break;
                     }
-                    table[hash & (size - 1)].keyword = (struct atom){ .string = keywords[i], .string_hash = hash };
+                    table[hash & (size - 1)].keyword = (struct atom){ .data = keywords[i].data, .size = (u32)keywords[i].size, .string_hash = hash };
                     table[hash & (size - 1)].type   = keyword_table_entries[i].token_kind;
                 }
                 if(should_continue) continue;
@@ -4524,13 +4524,13 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 struct directive_table_entry *table = push_data(arena, struct directive_table_entry, size);
                 b32 should_continue = false;
                 for(u32 i = 0; i < array_count(directives); i++){
-                    u64 hash = string_djb2_hash(directives[i]);
+                    u32 hash = (u32)string_djb2_hash(directives[i]);
                     if(table[hash & (size - 1)].directive.data){
                         end_temporary_memory(temp);
                         should_continue = true;
                         break;
                     }
-                    table[hash & (size - 1)].directive = (struct atom){ .string = directives[i], .string_hash = hash };
+                    table[hash & (size - 1)].directive = (struct atom){ .data = directives[i].data, .size = (u32)directives[i].size, .string_hash = hash };
                     table[hash & (size - 1)].type   = directive_table_entries[i].kind;
                 }
                 if(should_continue) continue;
@@ -5039,12 +5039,12 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     // #pragma comment(linker, "/ALTERNATENAME:strdup=_strdup").
     for(struct alternate_name *alternate_name = globals.alternate_names.first; alternate_name; alternate_name = alternate_name->next){
-        struct ast_declaration *source = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->source);
-        
+        struct ast_declaration *source      = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->source);
         struct ast_declaration *destination = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->destination);
+        
         if(warning_enabled[WARNING_ALTERNATENAME_type_mismatch] && source && destination){
             if(!types_are_equal(source->type, destination->type)){
-                struct string source_type = push_type_string(context->arena, &context->scratch, source->type);
+                struct string source_type      = push_type_string(context->arena, &context->scratch, source->type);
                 struct string destination_type = push_type_string(context->arena, &context->scratch, destination->type);
                 
                 begin_error_report(context);
@@ -5105,7 +5105,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             if(attempted_entry_point_string_list.amount_of_strings){
                 string_list_postfix(&attempted_entry_point_string_list, arena, string(", "));
             }
-            string_list_postfix(&attempted_entry_point_string_list, arena, atom.string);
+            string_list_postfix(&attempted_entry_point_string_list, arena, atom_get_string(atom));
             
             
             if(!globals.cli_options.entry.data){
@@ -5184,7 +5184,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             break;
         }
         
-        if(!globals.entry_point_name.string.data){
+        if(!globals.entry_point_name.data){
             if(globals.cli_options.entry.data){
                 // The entry point was not a canonical one, but it was specified on the command line.
                 globals.entry_point_name = atom_for_string(globals.cli_options.entry);
@@ -5296,7 +5296,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             }
             
             struct dll_import_node *import_node = push_struct(arena, struct dll_import_node);
-            import_node->import_name = atom.string;
+            import_node->import_name = atom_get_string(atom);
             sll_push_back(vcruntime->import_list, import_node);
             vcruntime->import_list.count += 1;
             

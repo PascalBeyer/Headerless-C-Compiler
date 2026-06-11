@@ -275,7 +275,7 @@ int try_to_extract_simple_declaration_from_object_file(struct coff_file_header *
     
     struct coff_section_header *section_headers = (void *)(coff_file_header + 1);
     
-    struct string identifier = declaration->identifier->string;
+    struct string identifier = token_get_string(declaration->identifier);
     
     char *string_table = (char*)coff_file_header + coff_file_header->pointer_to_symbol_table + coff_file_header->number_of_symbols * 18;
     
@@ -330,11 +330,10 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     
     struct atom identifier = declaration->identifier->atom;
     
-    
     while(true){
         for(struct library_node *library = globals.libraries.first; library; library = library->next){
             
-            struct ar_symbol_lookup found = ar_lookup_symbol(library, identifier.string);
+            struct ar_symbol_lookup found = ar_lookup_symbol(library, atom_get_string(identifier));
             if(found.lookup_result == AR_SYMBOL_LOOKUP_failed) continue;
             
             if(found.lookup_result == AR_SYMBOL_LOOKUP_import_header){
@@ -434,7 +433,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     //        lookup table.
     
     struct dll_import_node *import_node = push_uninitialized_struct(context->arena, struct dll_import_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
-    import_node->import_name  = identifier.string;
+    import_node->import_name  = atom_get_string(identifier);
     import_node->ordinal_hint = ar_import_header->ordinal_hint;
     if(ar_import_header->name_type == /*IMPORT_OBJECT_ORDINAL*/0) import_node->import_by_ordinal = 1;
     

@@ -278,7 +278,7 @@ func struct token get_current_token_raw(struct context *context){
         };
         
         if(ret.type == TOKEN_identifier){
-            ret.string_hash = string_djb2_hash(ret.string);
+            ret.string_hash = (u32)string_djb2_hash((struct string){.data = ret.data, .size = (u32)ret.size});
         }
         
         return ret;
@@ -1135,7 +1135,7 @@ func struct parsed_integer parse_octal_literal(struct context *context, struct t
 func struct parsed_integer parse_hex_literal(struct context *context, struct token *lit_token){
     struct parsed_integer ret = zero_struct;
     
-    struct string literal = lit_token->string;
+    struct string literal = token_get_string(lit_token);
     
     assert(literal.data[0] == '0' && (literal.data[1]|32) == 'x');
     
@@ -1391,8 +1391,6 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     return token_to_expand;
                 }
                 
-                assert(string_djb2_hash(identifier->string) == identifier->string_hash);
-                
                 struct token *tokens = null;
                 smm amount_of_tokens = 0;
                 
@@ -1447,12 +1445,19 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 if(define->builtin_define_type == BUILTIN_DEFINE___FILE__){
                     struct string file_name = strip_file_path(string_from_cstring(globals.file_table.data[file_index]->absolute_file_path));
                     
+                    struct string quoted_format_string = push_format_string(context->arena, "\"%.*s\"", file_name.size, file_name.data);
+                    
                     token->type = TOKEN_string_literal;
-                    token->string = push_format_string(context->arena, "\"%.*s\"", file_name.size, file_name.data);
+                    token->data = quoted_format_string.data;
+                    token->size = (u32)quoted_format_string.size;
                 }else{
                     struct token_location_information location = get_location_for_token(context->arena, context->current_compilation_unit, token);
+                    
+                    struct string integer_literal_string = push_format_string(context->arena, "%u", location.line);
+                    
                     token->type = TOKEN_integer_literal;
-                    token->string = push_format_string(context->arena, "%u", location.line);
+                    token->data = integer_literal_string.data;
+                    token->size = (u32)integer_literal_string.size;
                 }
                 
                 return token;
@@ -1850,7 +1855,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 
                 assert(replacement->stringify_index != -1);
                 string_token->data = stringified_arguments[replacement->stringify_index].data;
-                string_token->size = stringified_arguments[replacement->stringify_index].size;                
+                string_token->size = (u32)stringified_arguments[replacement->stringify_index].size;                
                 string_token->string_hash = 0;
                 
                 struct token_array token_array = {.data = string_token, .size = 1};
@@ -1955,7 +1960,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     tokens.data[index].size = raw_tokens.data[index].size;
                     
                     if(tokens.data[index].type == TOKEN_identifier){
-                        tokens.data[index].string_hash = string_djb2_hash(tokens.data[index].string);
+                        tokens.data[index].string_hash = (u32)string_djb2_hash(token_get_string(&tokens.data[index]));
                     }
                 }
                 
@@ -2993,7 +2998,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     goto handle_directive;
                 }
                 
-                smm raw_token_string_hash = 0;
+                u32 raw_token_string_hash = 0;
                 
                 if(raw_token->type == TOKEN_identifier){
                     struct atom raw_token_atom = atom_for_string(create_string(include_file->contents.data + offset, raw_token->size));
@@ -3022,7 +3027,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         macro_expansion_record->file_index = include_file->file_index;
                         macro_expansion_record->macro_expansion_index = (u32)(0x80000000 | macro_expansion_record_index); // @cleanup: Bounds-check?
                         macro_expansion_record->expanded_token = raw_token_atom.data;
-                        macro_expansion_record->defined_token = define->name.string.data;
+                        macro_expansion_record->defined_token = define->name.data;
                         
                         // 
                         // Rescan Macro loop.
@@ -3107,10 +3112,11 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                             
                                             pushed->type = source->type;
                                             pushed->location_index = include_file->file_index;
-                                            pushed->string = create_string(include_file->contents.data + offset, source->size);
+                                            pushed->data = include_file->contents.data + offset;
+                                            pushed->size = (u32)source->size;
                                             
                                             if(pushed->type == TOKEN_identifier){
-                                                pushed->string_hash = string_djb2_hash(pushed->string);
+                                                pushed->string_hash = (u32)string_djb2_hash(token_get_string(pushed));
                                             }
                                             
                                             offset += source->size;
@@ -3328,7 +3334,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
             }
             
             struct token directive = next_token_raw(context);
-            struct string directive_string = directive.string;
+            struct string directive_string = token_get_string(&directive);
             
             enum preprocessor_directive directive_kind = DIRECTIVE_invalid;
             
@@ -3947,7 +3953,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         
                         if(!defines_are_equivalent){
                             begin_error_report(context);
-                            report_warning(context, WARNING_incompatible_redefinition_of_macro, &defined_identifier, "Redefinition of macro '%.*s'.", name.amount, name.data);
+                            report_warning(context, WARNING_incompatible_redefinition_of_macro, &defined_identifier, "Redefinition of macro '%.*s'.", name.size, name.data);
                             if(redecl->defined_token->location_index == -1){
                                 // @error: Print the actual definition.
                                 report_warning(context, WARNING_incompatible_redefinition_of_macro, redecl->defined_token, "The previous definition was the predefined or a commandline argument.");
@@ -4006,7 +4012,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     if(peek_token_raw(context, TOKEN_string_literal)){
                         is_system_include = false;
                         
-                        file_name = strip_prefix_and_quotes(next_token_raw(context).string);
+                        struct token file_name_token = next_token_raw(context);
+                        file_name = strip_prefix_and_quotes(token_get_string(&file_name_token));
                     }else if(peek_token_raw(context, TOKEN_smaller)){
                         is_system_include = true;
                         
@@ -4125,13 +4132,15 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 goto end;
                             }
                             
-                            if(string_match(parameter.string, string("prefix")) || string_match(parameter.string, string("__prefix__"))){
+                            struct string parameter_string = token_get_string(&parameter);
+                            
+                            if(string_match(parameter_string, string("prefix")) || string_match(parameter_string, string("__prefix__"))){
                                 prefix = tokens;
-                            }else if(string_match(parameter.string, string("suffix")) || string_match(parameter.string, string("__suffix__"))){
+                            }else if(string_match(parameter_string, string("suffix")) || string_match(parameter_string, string("__suffix__"))){
                                 suffix = tokens;
-                            }else if(string_match(parameter.string, string("if_empty")) || string_match(parameter.string, string("__if_empty__"))){
+                            }else if(string_match(parameter_string, string("if_empty")) || string_match(parameter_string, string("__if_empty__"))){
                                 if_empty = tokens;
-                            }else if(string_match(parameter.string, string("limit")) || string_match(parameter.string, string("__limit__"))){
+                            }else if(string_match(parameter_string, string("limit")) || string_match(parameter_string, string("__limit__"))){
                                 // @incomplete: limit.
                                 report_error(context, &parameter, "#embed-parameter 'limit' is currently unsupported.");
                                 goto end;
@@ -4161,6 +4170,10 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             goto end;
                         }
                         
+                        if(file.size >= giga_bytes(4)){
+                            report_error(context, &directive, "File '%.*s' is >= 4GiB. This is currently not supported.", absolute_file_path.size, absolute_file_path.data);
+                        }
+                        
                         smm embed_token_count = prefix.size + suffix.size + (file.size ? 1 : if_empty.size);
                         smm embed_token_at = 0;
                         struct token *embed_tokens = push_uninitialized_data(&context->emit_arena, struct token, embed_token_count);
@@ -4179,8 +4192,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             struct token *embed_token = &embed_tokens[embed_token_at++];
                             *embed_token = directive;
                             embed_token->type = TOKEN_embed;
-                            embed_token->string.data = file.data;
-                            embed_token->string.size = file.size;
+                            embed_token->data = file.data;
+                            embed_token->size = (u32)file.size; // @cleanup: in the future we could maybe use the string hash also to have the high part of the file size, but on windows the executable cannot be more than 4 GiB anyway.
                             
                             for(smm index = 0; index < suffix.size; index++){
                                 if(suffix.data[index].type == TOKEN_whitespace) continue;
@@ -4202,8 +4215,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     //        '#if 0'ed out.
                     struct string_list error_list = zero_struct;
                     while(!peek_token_raw(context, TOKEN_newline)){
-                        // struct string token_string = push_token_string(context, next_token_raw(context), true);
-                        struct string token_string = next_token_raw(context).string; // @cleanup:
+                        struct token token = next_token_raw(context);
+                        struct string token_string = push_token_string(context, &token, true);
                         string_list_postfix(&error_list, &context->scratch, token_string);
                     }
                     
@@ -4240,29 +4253,32 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         eat_whitespace_and_comments_raw(context);
                         struct token pragma_comment_directive = expect_token_raw(context, &pragma_directive, TOKEN_identifier, "Expected a directive after '#pragma comment('.");
                         
-                        struct token *string_literal = null;
+                        struct token string_literal = {0};
                         
                         eat_whitespace_and_comments_raw(context);
                         if(peek_token_eat_raw(context, TOKEN_comma)){
                             
                             eat_whitespace_and_comments_raw(context);
-                            string_literal = push_token_copy(context->arena, expect_token_raw(context, &pragma_comment_directive, TOKEN_string_literal, "Expected a string literal after '#pragma comment(lib, '."));
-                            if(string_literal->type != TOKEN_string_literal) string_literal = null;
+                            string_literal = expect_token_raw(context, &pragma_comment_directive, TOKEN_string_literal, "Expected a string literal after '#pragma comment(lib, '.");
+                            if(string_literal.type != TOKEN_string_literal) string_literal.type = TOKEN_invalid;
                             
                             eat_whitespace_and_comments_raw(context);
                         }
                         
                         expect_token_raw(context, &pragma_comment_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma comment(<comment-type>, \"<comment>\"'.");
                         
-                        if(string_match(pragma_comment_directive.string, string("lib"))){
+                        struct string pragma_comment_directive_string = token_get_string(&pragma_comment_directive);
+                        struct string string_literal_string = token_get_string(&string_literal);
+                        
+                        if(string_match(pragma_comment_directive_string, string("lib"))){
                             
                             // e.g.: #pragma comment(lib, "Shell32.lib")
                             
                             // peek_token_eat_raw(context, pragma_comment_directive, TOKEN_comma, "Expected a ',' after '#pragma comment(lib'.")
-                            if(!string_literal){
+                            if(string_literal.type == TOKEN_invalid){
                                 report_error(context, &pragma_comment_directive, "Expected a comment argument for #pragma comment(lib, \"<comment-argument>\").");
                             }else{
-                                struct string library = strip_prefix_and_quotes(string_literal->string);
+                                struct string library = strip_prefix_and_quotes(token_get_string(&string_literal));
                                 
                                 if(!string_match(get_file_extension(library), string(".lib"))){
                                     library = string_concatenate(context->arena, library, string(".lib"));
@@ -4276,29 +4292,29 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 ticket_spinlock_unlock(&pragma_comment_lib_spinlock);
                             }
                             
-                        }else if(string_match(pragma_comment_directive.string, string("linker"))){
+                        }else if(string_match(pragma_comment_directive_string, string("linker"))){
                             
-                            if(!string_literal){
+                            if(string_literal.type == TOKEN_invalid){
                                 report_error(context, &pragma_comment_directive, "Expected a comment argument for #pragma comment(linker, \"<comment-argument>\").");
                             }else{
-                                struct string linker_line = strip_prefix_and_quotes(string_literal->string);
+                                struct string linker_line = strip_prefix_and_quotes(string_literal_string);
                                 eat_whitespaces(&linker_line);
                                 
                                 struct string linker_switch = eat_until_char(&linker_line, ':', /*eat_delimiter*/1);
                                 if(!string_match_case_insensitive(linker_switch, string("/ALTERNATENAME:"))){
-                                    report_warning(context, WARNING_unsupported_pragma, string_literal, "Unsupported linker switch %.*s ignored.", linker_switch.size, linker_switch.data);
+                                    report_warning(context, WARNING_unsupported_pragma, &string_literal, "Unsupported linker switch %.*s ignored.", linker_switch.size, linker_switch.data);
                                 }else{
                                     eat_whitespaces(&linker_line);
                                     
                                     struct atom identifier = atom_for_string(eat_identifier(&linker_line));
                                     if(!linker_line.size || linker_line.data[0] != '='){
-                                        report_error(context, string_literal, "Could not find '=' after '%.*s' in /ALTERNATENAME linker switch.", identifier.size, identifier.data);
+                                        report_error(context, &string_literal, "Could not find '=' after '%.*s' in /ALTERNATENAME linker switch.", identifier.size, identifier.data);
                                     }else{
                                         string_eat_front(&linker_line, 1);
                                         
                                         struct atom alias = atom_for_string(eat_identifier(&linker_line));
                                         if(linker_line.size){
-                                            report_warning(context, WARNING_unsupported_pragma, string_literal, "Junk '%.*s' after linker switch %.*s%.*s=%.*s ignored.", linker_line.size, linker_line.data, linker_switch.size, linker_switch.data, identifier.size, identifier.data, alias.size, alias.data);
+                                            report_warning(context, WARNING_unsupported_pragma, &string_literal, "Junk '%.*s' after linker switch %.*s%.*s=%.*s ignored.", linker_line.size, linker_line.data, linker_switch.size, linker_switch.data, identifier.size, identifier.data, alias.size, alias.data);
                                         }
                                         
                                         static struct ticket_spinlock pragma_comment_linker_spinlock = {0};
@@ -4313,7 +4329,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                         
                                         if(!name){
                                             name = push_struct(context->arena, struct alternate_name);
-                                            name->token = string_literal;
+                                            name->token = push_token_copy(context->arena, string_literal);
                                             name->source = identifier;
                                             name->destination = alias;
                                             
@@ -4325,7 +4341,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 }
                             }
                         }else{
-                            report_warning(context, WARNING_unsupported_pragma, &pragma_directive, "Unsupported '#pragma comment(%.*s, ...)' ignored.", pragma_comment_directive.string.size, pragma_comment_directive.string.data);
+                            report_warning(context, WARNING_unsupported_pragma, &pragma_directive, "Unsupported '#pragma comment(%.*s, ...)' ignored.", pragma_comment_directive.size, pragma_comment_directive.data);
                         }
                     }else if(atoms_match(pragma_directive.atom, globals.pragma_compilation_unit)){
                         // 
@@ -4342,7 +4358,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         expect_token_raw(context, &pragma_directive, TOKEN_closed_paren, "Expected a ')' after '#pragma compilation_unit(\"<.c>\"'.");
                         
                         if(string_literal.type == TOKEN_string_literal){
-                            struct string c_file = strip_prefix_and_quotes(string_literal.string);
+                            struct string c_file = strip_prefix_and_quotes(token_get_string(&string_literal));
                             
                             struct file *parent_file = globals.file_table.data[string_literal.location_index];
                             struct string path = strip_file_name(string_from_cstring(parent_file->absolute_file_path));

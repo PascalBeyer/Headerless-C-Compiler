@@ -2303,7 +2303,7 @@ struct alloca_patch_node{
 
 func struct emit_location *emit_intrinsic(struct context *context, struct ast_function *function, struct ir_function_call *call, struct emit_location **argument_locations){
     (void)call; // @cleanup: How is this not used?
-    struct string identifier = function->identifier->string;
+    struct string identifier = token_get_string(function->identifier);
     
     if(string_match(identifier, string("_alloca"))){
         // 

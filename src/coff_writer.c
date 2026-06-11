@@ -1477,8 +1477,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
 #define function_node_smaller(a, b) \
             string_lexically_smaller( \
-                    ((struct ast_function *)a->value)->identifier->string, \
-                    ((struct ast_function *)b->value)->identifier->string)
+                    token_get_string(((struct ast_function *)a->value)->identifier), \
+                    token_get_string(((struct ast_function *)b->value)->identifier))
             
             sll_sort(dllexports, scratch, function_node_smaller);
 #undef function_node_smaller
@@ -1492,7 +1492,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 assert(function->relative_virtual_address); // The function better be emitted!
                 
                 
-                char *function_name = push_cstring_from_string(arena, function->identifier->string);
+                char *function_name = push_cstring_from_string(arena, token_get_string(function->identifier));
                 name_pointer_table[i] = make_relative_virtual_address(rdata_section_start, function_name);
                 export_address_table[i] = to_u32(function->relative_virtual_address);
                 ordinal_table[i] = to_u16((smm)i);
@@ -2442,7 +2442,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             
             *push_struct(&ipi_stream, u32) = /*parent scope*/0; // @incomplete: look at a language with local procedures.
             *push_struct(&ipi_stream, u32) = function->type->base.pdb_type_index;
-            push_zero_terminated_string_copy(&ipi_stream, function->identifier->string);
+            push_zero_terminated_string_copy(&ipi_stream, token_get_string(function->identifier));
             
             end_id_record();
         }
@@ -2669,7 +2669,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 u16 section_id;
                 u8 procedure_flags;
                 u8 procedure_name[];
-            } *proc_symbol = push_struct_(&module_stream, offset_in_type(struct codeview_proc, procedure_name) + (function->identifier->length + 1), 4);
+            } *proc_symbol = push_struct_(&module_stream, offset_in_type(struct codeview_proc, procedure_name) + (function->identifier->size + 1), 4);
             proc_symbol->pointer_to_parent  = 0;
             proc_symbol->pointer_to_end     = 0;
             proc_symbol->pointer_to_next    = 0;
@@ -2680,8 +2680,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             proc_symbol->offset_in_section  = (u32)function->offset_in_text_section;
             proc_symbol->section_id         = text_section_id;
             proc_symbol->procedure_flags    = 0; // Flags, somehow never present.
-            memcpy(proc_symbol->procedure_name, function->identifier->data, function->identifier->length);
-            proc_symbol->procedure_name[function->identifier->length] = 0;
+            memcpy(proc_symbol->procedure_name, function->identifier->data, function->identifier->size);
+            proc_symbol->procedure_name[function->identifier->size] = 0;
             
             end_symbol_record();
             
@@ -3051,10 +3051,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 *push_struct(&symbol_record_stream, u32) = 0;                                          // sumName < this appears to always be 0
                 *push_struct(&symbol_record_stream, u32) = function->debug_symbol_offset;              // offset in the module symbol stream
                 *push_struct(&symbol_record_stream, u16) = 1;                                          // module index of the stream containing the symbol
-                push_zero_terminated_string_copy(&symbol_record_stream, function->identifier->string); // name (not sure if this is mangled or not)
+                push_zero_terminated_string_copy(&symbol_record_stream, token_get_string(function->identifier)); // name (not sure if this is mangled or not)
             }end_symbol_record();
             
-            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, function->relative_virtual_address, function->identifier->string);
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, function->relative_virtual_address, token_get_string(function->identifier));
             gsi_amount_of_global_symbols += 1;
             
             if(!(function->decl_flags & DECLARATION_FLAGS_is_static)){
@@ -3065,10 +3065,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                     *push_struct(&symbol_record_stream, u32) = 2;                                          // flags (is_function)
                     *push_struct(&symbol_record_stream, u32) = (u32)function->offset_in_text_section;           // offset in segment
                     *push_struct(&symbol_record_stream, u16) = text_section_id;                            // segment
-                    push_zero_terminated_string_copy(&symbol_record_stream, function->identifier->string); // name
+                    push_zero_terminated_string_copy(&symbol_record_stream, token_get_string(function->identifier)); // name
                 }end_symbol_record();
                 
-                psi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(psi_hash_table, scratch, ref_offset, function->relative_virtual_address, function->identifier->string);
+                psi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(psi_hash_table, scratch, ref_offset, function->relative_virtual_address, token_get_string(function->identifier));
                 psi_amount_of_global_symbols += 1;
             }
         }
@@ -3097,7 +3097,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             struct ast_function *function = (struct ast_function *)it->value;
             struct dll_import_node *dll_import_node = function->dll_import_node;
             
-            struct string name = function->identifier->string;
+            struct string name = token_get_string(function->identifier);
             u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
             
             smm rva = dll_import_node->stub_relative_virtual_address;
@@ -3128,10 +3128,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 begin_symbol_record(0x1107);{ // S_CONSTANT
                     *push_struct(&symbol_record_stream, u32) = ast_enum->base.pdb_type_index;
                     push_signed_number_leaf(&symbol_record_stream, value);
-                    push_zero_terminated_string_copy(&symbol_record_stream, member->name->string);
+                    push_zero_terminated_string_copy(&symbol_record_stream, token_get_string(member->name));
                 }end_symbol_record();
                 
-                gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, 0, member->name->string);
+                gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, 0, token_get_string(member->name));
                 gsi_amount_of_global_symbols += 1;
             }
         }
@@ -3150,10 +3150,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 *push_struct(&symbol_record_stream, u32) = decl->type->pdb_type_index; // type_index
                 *push_struct(&symbol_record_stream, u32) = to_u32(rva - bss->virtual_address); // offset in section
                 *push_struct(&symbol_record_stream, u16) = bss_section_id;             // section id
-                push_zero_terminated_string_copy(&symbol_record_stream, decl->identifier->string);
+                push_zero_terminated_string_copy(&symbol_record_stream, token_get_string(decl->identifier));
             }end_symbol_record();
             
-            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, rva, decl->identifier->string);
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, rva, token_get_string(decl->identifier));
             gsi_amount_of_global_symbols += 1;
         }
         
@@ -3170,10 +3170,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 *push_struct(&symbol_record_stream, u32) = decl->type->pdb_type_index; // type_index
                 *push_struct(&symbol_record_stream, u32) = to_u32(rva - data->virtual_address); // offset in section
                 *push_struct(&symbol_record_stream, u16) = data_section_id;             // section id
-                push_zero_terminated_string_copy(&symbol_record_stream, decl->identifier->string);
+                push_zero_terminated_string_copy(&symbol_record_stream, token_get_string(decl->identifier));
             }end_symbol_record();
             
-            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, rva, decl->identifier->string);
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, rva, token_get_string(decl->identifier));
             gsi_amount_of_global_symbols += 1;
         }
         
@@ -3185,10 +3185,10 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);
             begin_symbol_record(0x1108);{ // S_UDT
                 *push_struct(&symbol_record_stream, u32) = decl->type->pdb_type_index;
-                push_zero_terminated_string_copy(&symbol_record_stream, decl->identifier->string);
+                push_zero_terminated_string_copy(&symbol_record_stream, token_get_string(decl->identifier));
             } end_symbol_record();
             
-            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, 0, decl->identifier->string);
+            gsi_amount_of_bucket_offsets += global_symbol_stream_hash_table_add(gsi_hash_table, scratch, ref_offset, 0, token_get_string(decl->identifier));
             gsi_amount_of_global_symbols += 1;
         }
         

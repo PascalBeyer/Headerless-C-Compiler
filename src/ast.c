@@ -282,19 +282,16 @@ static struct{
 };
 
 struct atom{
-    u64 string_hash;
-    
-    union{
-        struct string string;
-        struct string;
-    };
+    u32 string_hash;
+    u32 size;
+    u8 *data;
 };
 
 struct atom atom_for_string(struct string string){
     return (struct atom){
         .data = string.data, 
-        .size = string.size, 
-        .string_hash = string_djb2_hash(string),
+        .size = (u32)string.size, 
+        .string_hash = (u32)string_djb2_hash(string),
     };
 }
 
@@ -310,6 +307,10 @@ struct token{
 
 static struct string token_get_string(struct token *token){
     return (struct string){.data = token->atom.data, .size = token->atom.size};
+}
+
+static struct string atom_get_string(struct atom atom){
+    return (struct string){.data = atom.data, .size = atom.size};
 }
 
 static b32 atoms_match(struct atom a, struct atom b){

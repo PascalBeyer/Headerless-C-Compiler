@@ -1697,7 +1697,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
         for(struct ast_label *label = context->label_list.first; label; label = label->next){
             if(atoms_match(label->ident, ident)){
                 begin_error_report(context);
-                report_error(context, token, "Redefinition of label '%.*s'.", ident.amount, ident.data);
+                report_error(context, token, "Redefinition of label '%.*s'.", ident.size, ident.data);
                 report_error(context, label->token, "... Here is the previous definition.");
                 end_error_report(context);
             }
@@ -1749,7 +1749,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                 return wrapper_instruction;
             }
             
-            struct string lit = byte_token->string;
+            struct string lit = token_get_string(byte_token);
             if(lit.size >= 2 && lit.data[0] == '0' && (lit.data[1]|32) == 'x'){
                 lit.size -= 2;
                 lit.data += 2;

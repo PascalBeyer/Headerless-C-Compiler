@@ -55,7 +55,7 @@ func struct string report_type_mismatch__internal(struct context *context, char 
         if(*defined_type == IR_typedef){
             struct ast_declaration *decl = cast(struct ast_declaration *)defined_type;
             struct string lhs_string = push_type_string(context->arena, &context->scratch, decl->type);
-            ret = push_format_string(&context->scratch, "%s '%.*s' (aka %.*s)", prefix, decl->identifier->amount, decl->identifier->data, lhs_string.amount, lhs_string.data);
+            ret = push_format_string(&context->scratch, "%s '%.*s' (aka %.*s)", prefix, decl->identifier->size, decl->identifier->data, lhs_string.amount, lhs_string.data);
             handled = true;
         }else if(*defined_type == AST_enum){
             struct string lhs_string = push_type_string(context->arena, &context->scratch, cast(struct ast_type *)defined_type);
@@ -1520,7 +1520,7 @@ void parse_and_process_pragma_pack(struct context *context){
         
         switch(token->type){
             case TOKEN_identifier:{
-                struct string identifier = token->string;
+                struct string identifier = token_get_string(token);
                 if(string_match(identifier, string("push"))){
                     operation = PRAGMA_PACK_push;
                     show_token = token;
@@ -2478,7 +2478,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
             // Currently, we are only allowing initializing 'char[]' and 'unsigned char[]'.
             // 
             struct token *embed = next_token(context);
-            struct string file_data = embed->string;
+            struct string file_data = token_get_string(embed);
             struct designator_node *designator_node = designator_stack.first;
             struct ast_array_type *array_type = (struct ast_array_type *)designator_node->lhs_type;
             
@@ -3254,7 +3254,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
             if(root_compound->identifier->type != TOKEN_identifier){
                 string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("<unnamed-tag>"));
             }else{
-                string_list_postfix_no_copy(pretty_print_list, &context->scratch, root_compound->identifier->string);
+                string_list_postfix_no_copy(pretty_print_list, &context->scratch, token_get_string(root_compound->identifier));
             }
         }
         
@@ -3334,7 +3334,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
                     dot->member = &compound->members[node->member_at];
                     
                     string_list_postfix_no_copy(pretty_print_list, &context->scratch, string("."));
-                    string_list_postfix_no_copy(pretty_print_list, &context->scratch, dot->member->name->string);
+                    string_list_postfix_no_copy(pretty_print_list, &context->scratch, token_get_string(dot->member->name));
                     
                     ir = &dot->base;
                     
@@ -3458,7 +3458,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
         while(true){
             if(expr.ir->kind == IR_identifier){
                 struct ir_identifier *ident = (struct ir_identifier *)expr.ir;
-                string_list_postfix(&pretty_print_list, &context->scratch, ident->decl->identifier->string);
+                string_list_postfix(&pretty_print_list, &context->scratch, token_get_string(ident->decl->identifier));
                 string_list_postfix(&pretty_print_list, &context->scratch, string(" = "));
             }
             
@@ -3759,7 +3759,7 @@ static void parse_call_to_printlike_function_arguments(struct context *context, 
                         
                         if(defined_type && *defined_type == IR_typedef){
                             struct ast_declaration *ast_typedef = (struct ast_declaration *)defined_type;
-                            type_string = ast_typedef->identifier->string;
+                            type_string = token_get_string(ast_typedef->identifier);
                         }
                         
                         if(length_modifier == 'j'){
@@ -5411,12 +5411,13 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 if(function_type->flags & FUNCTION_TYPE_FLAGS_is_seh_intrinsic){
-                    if(!context->in_exception_filter && (string_match(operand.token->string, string("_exception_info")) || string_match(operand.token->string, string("_exception_code")))){
-                        report_error(context, operand.token, "Cannot use '%.*s' outside of an exception filter.", operand.token->string.size, operand.token->string.data);
+                    struct string operand_string = token_get_string(operand.token);
+                    if(!context->in_exception_filter && (string_match(operand_string, string("_exception_info")) || string_match(operand_string, string("_exception_code")))){
+                        report_error(context, operand.token, "Cannot use '%.*s' outside of an exception filter.", operand_string.size, operand_string.data);
                     }
                     
-                    if(!context->in_finally_block && string_match(operand.token->string, string("_abnormal_termination"))){
-                        report_error(context, operand.token, "Cannot use '%.*s' outside of a __finally-block.", operand.token->string.size, operand.token->string.data);    
+                    if(!context->in_finally_block && string_match(operand_string, string("_abnormal_termination"))){
+                        report_error(context, operand.token, "Cannot use '%.*s' outside of a __finally-block.", operand_string.size, operand_string.data);    
                     }
                 }
                 
@@ -9603,7 +9604,7 @@ func void parse_statement(struct context *context){
                 for(struct ast_label *label = context->label_list.first; label; label = label->next){
                     if(atoms_match(label->ident, ident)){
                         begin_error_report(context);
-                        report_error(context, initial_token, "Redefinition of label '%.*s'.", ident.amount, ident.data);
+                        report_error(context, initial_token, "Redefinition of label '%.*s'.", ident.size, ident.data);
                         report_error(context, label->token, "... Here is the previous definition.");
                         end_error_report(context);
                         return;
