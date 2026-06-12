@@ -59,7 +59,7 @@ struct error_report_node{
     struct error_report_node *sub_error; 
     enum error_report_node_kind kind;
     
-    enum warning_type warning_type; // used if its a warning
+    enum warning warning_type; // used if its a warning
     
     u32 compilation_unit_index;
     enum compile_stage compile_stage;
@@ -266,7 +266,7 @@ func struct token_location_information get_location_for_token(struct memory_aren
 
 
 // errors are accumulated in context->error_list and then reported by the main thread
-func void push_error_node_to_context(struct context *context, struct token *token, enum error_report_node_kind kind, enum warning_type warning_type, char *format, va_list va){
+func void push_error_node_to_context(struct context *context, struct token *token, enum error_report_node_kind kind, enum warning warning_type, char *format, va_list va){
     
     assert(token != &globals.invalid_token); // @note: token can be zero!
     
@@ -339,7 +339,7 @@ func int should_report_warning_for_token(struct context *context, struct token *
     return globals.cli_options.report_warnings_in_system_includes || context->in_error_report || !token || !globals.file_table.data[token_get_file_index(context->current_compilation_unit, token)]->is_system_include;
 }
 
-PRINTLIKE __declspec(noinline) func void report_warning(struct context *context, enum warning_type warning, struct token *token, char *format, ...){
+PRINTLIKE __declspec(noinline) func void report_warning(struct context *context, enum warning warning, struct token *token, char *format, ...){
     if(context->should_exit_statement) return;
     if(context->should_sleep) return;
     if(!warning_enabled[warning]) return;

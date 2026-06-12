@@ -340,7 +340,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 command_file.size = as_utf8.size;
                 command_file.data = as_utf8.data;
             }
-            struct parsed_command_line parsed_command_line = windows_parse_command_line((char *)command_file.data);
+            struct parsed_command_line parsed_command_line = parse_command_line((char *)command_file.data);
             int cli_parse_options_success = cli_parse_options(cli_options, arena, parsed_command_line.argc, parsed_command_line.argv);
             if(!cli_parse_options_success) return 0;
             

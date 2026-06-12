@@ -23,7 +23,7 @@
 
 #define SKIP_pragmas 1
 
-#define DEBUG_BREAK_ON_ERROR   1
+#define DEBUG_BREAK_ON_ERROR   0
 #define DEBUG_BREAK_ON_WARNING 0
 
 #define LOCAL_ATOM_TABLE 0

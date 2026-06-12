@@ -1,12 +1,18 @@
 
 #include "std.c"
+
+#ifdef _WIN32
 #include "windows.c"
+#else
+#include "linux.c"
+#endif
 
 #include "options.h"
 
 #include "timing.c"
 #include "ast.c"
 #include "cli.c"
+#include "instruction_table.h"
 
 struct parse_work{
     struct token_array tokens;
@@ -148,7 +154,7 @@ func void maybe_grow_ast_table__internal(struct ast_table *table){
                 break;
             }
         }
-        os_free_memory(old_nodes);
+        os_free_memory_all(old_nodes, old_capacity * sizeof(*old_nodes));
         
         // print_ast_table(table);
     }
@@ -356,6 +362,10 @@ static struct{
     
     // :options (don't change after initialization!)
     struct cli_options cli_options;
+    
+    // @note: These are used for the PDB, so they have Windows slashes on windows.
+    struct string working_directory;
+    struct string compiler_path;
     
     struct thread_info *thread_infos;
     smm thread_count;
@@ -742,25 +752,18 @@ struct context{
             // WARNING: We explicitly initialize all of the members of this struct in some places instead of zero initializing it. Initialize with `push_to_include_stack`.
             struct raw_token_array tokens;
             struct file *file;
-            smm at;
             
-            // u32 line;
+            smm at;
             smm offset;
-            // smm last_newline;
         } *nodes;
         
         smm size;
         smm capacity;
     } include_stack;
     
-    struct static_if_evaluate_stack_node{
-        enum static_if_evaluate_operation operation;
-        int is_unsigned;
-        u64 value;
-        struct token *token;
-        int should_skip_undefined_identifier;
-    } static_if_evaluate_stack[1024];
+    struct static_if_evaluate_stack_node *static_if_evaluate_stack;
     smm static_if_stack_at;
+    smm static_if_stack_capacity;
     
     b32 static_if_evaluate_should_skip_undefined_identifier; // used to not report errors for example for '#if defined(_MSC_VER) && _MSC_VER > 1337'
     b32 in_static_if_condition; // used to not process defined as a macro outside of a #if condition.
@@ -1045,6 +1048,7 @@ func struct string push_token_string(struct context *context, struct token *toke
 }
 
 //_____________________________________________________________________________________________________________________
+
 #include "ar.c"
 //_____________________________________________________________________________________________________________________
 
@@ -1250,8 +1254,10 @@ func void work_queue_append_list(struct work_queue *queue, struct work_queue_ent
     end:;
     
     if(queue_was_empty && globals.wake_event){
+#if _WIN32
         SetEvent(globals.wake_event);
         ResetEvent(globals.wake_event);
+#endif
     }
 }
 
@@ -1401,7 +1407,7 @@ func void sleeper_table_maybe_grow(struct sleeper_table *table){
                     }
                 }
                 
-                os_free_memory(old_nodes);
+                os_free_memory_all(old_nodes, old_capacity * sizeof(*old_nodes));
             }
             
             // unlock
@@ -1539,6 +1545,7 @@ func void wake_up_sleepers(struct sleeper_table *sleeper_table, struct token *sl
 }
 
 //_____________________________________________________________________________________________________________________
+
 #include "preprocess.c"
 //_____________________________________________________________________________________________________________________
 
@@ -2671,6 +2678,9 @@ func void init_context(struct context *context, struct thread_info *info, struct
     context->ast_serializer = (s32)(thread_index << 24);
     
     context->pragma_alignment = 16;
+    
+    context->static_if_stack_capacity = 0x10;
+    context->static_if_evaluate_stack = push_data(arena, struct static_if_evaluate_stack_node, context->static_if_stack_capacity);
 }
 
 func void reset_context(struct context *context){
@@ -2783,9 +2793,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
             char buffer[0x100];
             int length = snprintf(buffer, sizeof(buffer), "%.*s\n", (int)work_tokenize_file->absolute_file_path.size, work_tokenize_file->absolute_file_path.data);
             
-            DWORD chars_written;
-            HANDLE stderr = GetStdHandle(STD_ERROR_HANDLE);
-            WriteFile(stderr, buffer, (u32)length, &chars_written, 0);
+            os_file_write(stderr, buffer, (u32)length);
         }
         
         struct token_location_information last_location = {
@@ -2872,7 +2880,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         
         smm preprocessed_file_size = (char *)arena_current(&context->scratch) - preprocessed_file_start;
         
-        WriteFile(globals.preprocessed_file_handle, preprocessed_file_start, (DWORD)preprocessed_file_size, NULL, NULL);
+        os_write_file(globals.preprocessed_file_handle, preprocessed_file_start, preprocessed_file_size);
         return;
     }
     
@@ -3564,7 +3572,7 @@ func u32 work_thread_proc(void *param){
             int should_continue = worker_work(context, stage_data[stage].queue, stage_data[stage].worker);
             
             if(!should_continue){
-                WaitForSingleObject(globals.wake_event, INFINITE);
+                os_wait_for_event(globals.wake_event);
             }
         }
     }
@@ -3649,57 +3657,6 @@ func struct ast_function *get_entry_point_or_error(struct context *context){
 }
 
 
-func struct string hacky_find_newest_system_include_path(struct memory_arena *arena, char *path){
-    WIN32_FIND_DATAA find_data;
-    char c_file_name[sizeof(find_data.cFileName)];
-    
-    // @cleanup:
-    // "The order in which the search returns the files, such as alphabetical order, 
-    //  is not guaranteed, and is dependent on the file system. 
-    //  If the data must be sorted, the application must do the ordering 
-    //  after obtaining all the results."
-    
-    smm finds = 0;
-    
-    HANDLE search_handle = FindFirstFileA(path, &find_data);
-    if(search_handle != INVALID_HANDLE_VALUE){
-        do{
-            u32 FILE_ATTRIBUTE_DIRECTORY = 0x10;
-            if(find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY){
-                b32 consists_only_of_dots_and_numbers = true;
-                char *it = find_data.cFileName;
-                
-                while(*it){
-                    // @note: only the best validation.
-                    if('0' <= *it && *it <= '9'){it++; continue;}
-                    if(*it == '.'){it++; continue;}
-                    consists_only_of_dots_and_numbers = false;
-                    break;
-                }
-                if(consists_only_of_dots_and_numbers){
-                    // Take the last one, they are lexically sorted, so the last one _should_ be most recent.
-                    memcpy(c_file_name, find_data.cFileName, sizeof(find_data.cFileName));
-                    finds++;
-                }
-            }
-        }while(FindNextFileA(search_handle, &find_data));
-        
-        FindClose(search_handle);
-    }
-    
-    if(finds < 3){ // @note: There always is '.' and '..'
-        print("Warning: Implicit system include path '%s' was not found.\n", path);
-        print("         This means that some system includes will not be found.\n");
-        print("         You can specify system includes manually via '-SI <dir>'\n");
-        print("         and get rid of this warning by using '-nostdlib'.\n");
-        print("                (Sorry CRT support still needs some work).\n");
-        return (struct string)zero_struct;
-    }
-    
-    smm length = cstring_length(path);
-    return push_format_string(arena, "%.*s/%s", length - 2, path, c_file_name);
-}
-
 func void add_system_include_directory(struct memory_arena *arena, struct string absolute, struct string relative, b32 user_specified){
     
     struct string directory_path = concatenate_file_paths(arena, absolute, relative);
@@ -3728,6 +3685,7 @@ __declspec(dllimport) u32 RegQueryValueExA(HANDLE key, char *value_name, u32 *re
 __declspec(dllimport) u32 RegEnumKeyExA(HANDLE key, u32 index, char *out_sub_key_name, u32 *in_out_sub_key_name_size, u32 *reserved, char *opt_in_out_class, u32 *opt_in_out_class_size, void *last_write_time);
 __declspec(dllimport) u32 RegCloseKey(HANDLE key);
 
+#if _WIN32
 // 
 // https://learn.microsoft.com/en-us/cpp/porting/upgrade-your-code-to-the-universal-crt?view=msvc-170
 // 
@@ -3834,9 +3792,9 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
     for(u32 index = 0; index < 4; index++) sdk_version[index] = highest_version[index];
     return push_zero_terminated_string_copy(arena, create_string(buffer, length));
 }
+#endif
 
-
-int system(char *);
+int system(const char *);
 
 // :main
 int main(int argc, char *argv[]){
@@ -3865,18 +3823,14 @@ int main(int argc, char *argv[]){
     
     context->arena = arena;
     
-    struct string working_directory = zero_struct;
-    // GetCurrentDirectory with 0 returns the size of the buffer including the null terminator
-    working_directory.size = GetCurrentDirectoryA(0, null) - 1;
-    working_directory.data = push_uninitialized_data(arena, u8, working_directory.length + 1); // @cleanup: What about utf-8?
-    GetCurrentDirectoryA(cast(u32)working_directory.length + 1, working_directory.data);
-    canonicalize_slashes(working_directory); // @cleanup: not sure where to put this
+    struct string working_directory = os_get_working_directory(arena);
     
-    u8 compiler_path_buffer[MAX_PATH + 1];
-    struct string compiler_path = zero_struct;
-    compiler_path.size = GetModuleFileNameA(null, (char *)compiler_path_buffer, MAX_PATH + 1); // @cleanup: What is even happening here? This seems wrong.
-    compiler_path.data = compiler_path_buffer;
-    GetModuleFileNameA(null, (char *)compiler_path.data, (u32)(compiler_path.size + 1));
+    globals.working_directory = push_string_copy(arena, working_directory);
+    canonicalize_slashes(working_directory);
+    
+    struct string compiler_path = os_get_executable_path(arena);
+    
+    globals.compiler_path = push_string_copy(arena, compiler_path);
     canonicalize_slashes(compiler_path);
     
     // 
@@ -3974,10 +3928,9 @@ int main(int argc, char *argv[]){
             // If there is a wildcard, include all files that match the wildcard.
             // 
             
-            WIN32_FIND_DATAA find_data;
-            HANDLE search_handle = FindFirstFileA((char *)path.data, &find_data);
+            struct os_file_iterator file_iterator = os_file_iterator_initialize((char *)path.data);
             
-            if(search_handle == INVALID_HANDLE_VALUE){
+            if(!os_file_iterator_valid(&file_iterator)){
                 print("Error: Specified path '%.*s' does not exist.\n", path.size, path.data);
                 return 1;
             }
@@ -3987,7 +3940,7 @@ int main(int argc, char *argv[]){
             struct string path_without_file = strip_file_name(path);
             
             do{
-                struct string file_name = string_from_cstring(find_data.cFileName);
+                struct string file_name = os_file_iterator_get(&file_iterator);
                 struct string file_path = concatenate_file_paths(arena, path_without_file, file_name);
                 
                 if(path_is_directory((char *)file_path.data)) continue;
@@ -4014,9 +3967,7 @@ int main(int argc, char *argv[]){
                 sll_push_back(files_to_parse, work_entry);
                 files_to_parse.amount += 1;
                 
-            }while(FindNextFileA(search_handle, &find_data));
-            
-            FindClose(search_handle);
+            }while(os_file_iterator_next(&file_iterator));
         }else{
             
 #ifdef FUZZING
@@ -4133,6 +4084,9 @@ int main(int argc, char *argv[]){
     
     add_system_include_directory(arena, strip_file_name(compiler_path), string("/implicit/include"), false);
     
+    
+#if _WIN32
+    
     u64 sdk_version[4];
     struct string windows_kits_path = find_windows_kits_root_and_sdk_version(arena, sdk_version);
     
@@ -4191,6 +4145,8 @@ int main(int argc, char *argv[]){
     add_system_include_directory(arena, windows_kits_include_base, string("/winrt"),  false);
     
     if(!no_standard_library) add_system_include_directory(arena, windows_kits_include_base, string("/ucrt"),   false);
+    
+#endif // _WIN32
     
 #ifdef PRINT_SYSTEM_INCLUDE_PATHS
     if(!globals.cli_options.quiet){
@@ -4329,16 +4285,29 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 if(globals.cli_options.MT || globals.cli_options.MTd || globals.cli_options.MD || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _MT 1\n"));
                 if(globals.cli_options.MTd || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _DEBUG 1\n"));
                 
-                SYSTEMTIME LocalTime;
-                GetLocalTime(&LocalTime); // @cleanup: local time?
-                
                 const char months[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+                
+#if _WIN32
+                SYSTEMTIME LocalTime;
+                GetLocalTime(&LocalTime);
+                
                 struct string date_define = push_format_string(arena, "#define __DATE__ \"%s %.2d %.4d\"\n", months[LocalTime.wMonth-1], LocalTime.wDay, LocalTime.wYear);
                 
                 string_list_postfix_no_copy(&predefines, arena, date_define);
                 
                 struct string time_define = push_format_string(arena, "#define __TIME__ \"%.2d:%.2d:%.2d\"\n", LocalTime.wHour, LocalTime.wMinute, LocalTime.wSecond); 
                 string_list_postfix_no_copy(&predefines, arena, time_define);
+#else
+                time_t unix_time = time(NULL);
+                struct tm *tm = localtime(&unix_time);
+                
+                struct string date_define = push_format_string(arena, "#define __DATE__ \"%s %.2d %.4d\"\n", months[tm->tm_mon-1], tm->tm_mday, tm->tm_year);
+                
+                string_list_postfix_no_copy(&predefines, arena, date_define);
+                
+                struct string time_define = push_format_string(arena, "#define __TIME__ \"%.2d:%.2d:%.2d\"\n", tm->tm_hour, tm->tm_min, tm->tm_sec); 
+                string_list_postfix_no_copy(&predefines, arena, time_define);
+#endif
                 
                 if(globals.output_file_type == OUTPUT_FILE_obj){
                     string_list_postfix_no_copy(&predefines, arena, string("#define __HLC_COMPILE_TO_OBJECT__ 1\n"));
@@ -4541,7 +4510,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 break;
             }
         }
-
+        
         end_counter(context, create_perfect_keyword_tables);
         
         for(struct ast_type *basic_type = &globals.typedef_void; basic_type <= &globals.typedef_f64; basic_type++){
@@ -4560,7 +4529,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         seh_filter_function_type->flags |= FUNCTION_TYPE_FLAGS_is_seh_filter;
         globals.seh_filter_funtion_type = seh_filter_function_type;
         
-        globals.wake_event = CreateEventA(0, true, 0, 0);
+        globals.wake_event = os_create_event();
         
         globals.declaration_sleeper_table = sleeper_table_create(1 << 8);
         globals.compound_sleeper_table = sleeper_table_create(1 << 8);
@@ -4757,18 +4726,15 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 SearchBuffer[directory_path.size + 1] = '*';
                 SearchBuffer[directory_path.size + 2] = 0;
                 
-                WIN32_FIND_DATAA FindData = {0};
-                HANDLE FindHandle = FindFirstFileA(SearchBuffer, &FindData);
-                if(FindHandle == INVALID_HANDLE_VALUE) continue; // I don't think this can happen.
+                struct os_file_iterator file_iterator = os_file_iterator_initialize(SearchBuffer);
+                
+                if(!os_file_iterator_valid(&file_iterator)) continue; // I don't think this can happen.
                 
                 do{
-                    char *FileName       = FindData.cFileName;
-                    DWORD FileAttributes = FindData.dwFileAttributes;
+                    struct string file_name = os_file_iterator_get(&file_iterator);
                     
-                    smm file_name_length = cstring_length(FileName);
-                    
-                    if(FileAttributes & /*FILE_ATTRIBUTE_DIRECTORY*/0x10){
-                        if(cstring_match(FileName, ".") || cstring_match(FileName, "..")){
+                    if(os_file_iterator_is_directory(&file_iterator)){
+                        if(string_match(file_name, string(".")) || string_match(file_name, string(".."))){
                             continue;
                         }
                         
@@ -4778,7 +4744,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         // 
                         
                         struct file_path_entry *new_directory_entry = push_struct(arena, struct file_path_entry);
-                        new_directory_entry->file_path = push_format_string(arena, "%.*s/%.*s", directory_path.size, directory_path.data, file_name_length, FileName);
+                        new_directory_entry->file_path = push_format_string(arena, "%.*s/%.*s", directory_path.size, directory_path.data, file_name.size, file_name.data);
                         new_directory_entry->next = directory_list;
                         directory_list = new_directory_entry;
                         
@@ -4813,7 +4779,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         capacity *= 2;
                     }
                     
-                    struct string absolute_file_path = push_format_string(arena, "%.*s/%.*s", directory_path.size, directory_path.data, file_name_length, FileName);
+                    struct string absolute_file_path = push_format_string(arena, "%.*s/%.*s", directory_path.size, directory_path.data, file_name.size, file_name.data);
                     struct string include_string     = create_string(absolute_file_path.data + (node->string.amount + 1), absolute_file_path.size - (node->string.amount + 1));
                     
                     hacky_canonicalize_file_for_case_insensitivity(&include_string);
@@ -4826,7 +4792,10 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         if(!entries[index].absolute_file_path){
                             entries[index].include_string     = include_string;
                             entries[index].absolute_file_path = (char *)absolute_file_path.data;
-                            entries[index].file_size          = ((smm)FindData.nFileSizeHigh << 32) | FindData.nFileSizeLow;
+                            
+#if _WIN32
+                            entries[index].file_size          = ((smm)file_iterator.find_data.nFileSizeHigh << 32) | file_iterator.find_data.nFileSizeLow;
+#endif
                             count++;
                             break;
                         }
@@ -4835,9 +4804,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         if(string_match(entries[index].include_string, include_string)) break;
                     }
                     
-                } while(FindNextFileA(FindHandle, &FindData));
-                
-                FindClose(FindHandle);
+                } while(os_file_iterator_next(&file_iterator));
             }
         }
         
@@ -4853,12 +4820,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
         return 1;
     }
     
-    SYSTEM_INFO system_info;
-    GetSystemInfo(&system_info); // this cannot fail apperantly
+    int number_of_processors = os_get_number_of_processors();
     
     if(globals.cli_options.thread_count_specified){
         thread_count = globals.cli_options.thread_count;
-        if(thread_count > 10 * system_info.dwNumberOfProcessors){
+        if(thread_count > 10 * number_of_processors){
             print("Error: /thread_count option specifies a thread count of more than 10 times the number of processors on the system.\n");
             return 1;
         }
@@ -4867,7 +4833,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
     if(globals.cli_options.MP){
         // For not limit the amount of threads to the amount of compilation units.
         // This is maybe wrong, but right now it prevents some race conditions when compiling with CMAKE that require big refactors to fix.
-        thread_count = (files_to_parse.amount < system_info.dwNumberOfProcessors) ? files_to_parse.amount : system_info.dwNumberOfProcessors;
+        thread_count = (files_to_parse.amount < number_of_processors) ? files_to_parse.amount : number_of_processors;
     }
     
     if(globals.cli_options.EP || globals.cli_options.P){
@@ -4881,9 +4847,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 return 1;
             }
             
-            globals.preprocessed_file_handle = CreateFileA((char *)output_file_name.data, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, NULL);
+            globals.preprocessed_file_handle = os_open_file((char *)output_file_name.data);
         }else{
-            globals.preprocessed_file_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+            globals.preprocessed_file_handle = stdout;
         }
         thread_count = 1;
     }
@@ -4982,14 +4948,12 @@ globals.typedef_##postfix = (struct ast_type){                                  
         char buffer[0x100];
         for(struct alternate_name *name = globals.alternate_names.first; name; name = name->next){
             int length = snprintf(buffer, sizeof(buffer), "#pragma comment(linker, \"/ALTERNATENAME:%.*s=%.*s\")\n", (int)name->source.size, name->source.data, (int)name->destination.size, name->destination.data);
-            DWORD chars_written;
-            WriteFile(globals.preprocessed_file_handle, buffer, (u32)length, &chars_written, 0);
+            os_file_write(globals.preprocessed_file_handle, buffer, (u32)length);
         }
         
         for(struct specified_library *library = globals.specified_libraries.first; library; library = library->next){
             int length = snprintf(buffer, sizeof(buffer), "#pragma comment(lib, \"%.*s\")\n", (int)library->library_path.size, library->library_path.data);
-            DWORD chars_written;
-            WriteFile(globals.preprocessed_file_handle, buffer, (u32)length, &chars_written, 0);
+            os_file_write(globals.preprocessed_file_handle, buffer, (u32)length);
         }
         
         return 0;
@@ -5237,8 +5201,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
     // MSVC makes this actually necessary, as a dead function might call a dll-import which is not linked against.
     
     globals.compile_stage = COMPILE_STAGE_parse_function;
+    
+#if _WIN32
     SetEvent(globals.wake_event);
     ResetEvent(globals.wake_event);
+#endif
     
     while(globals.work_queue_parse_functions.work_entries_in_flight > 0){
         worker_work(context, &globals.work_queue_parse_functions, worker_parse_function);
@@ -5772,7 +5739,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     // signal all the threads to sleep, this right now is only here to time the threads
     globals.threads_should_exit = true;
+    #if _WIN32
     SetEvent(globals.wake_event);
+    #endif
     
     smm amount_of_lines_preprocessed = 0;
     smm amount_of_lines = 0;
@@ -5826,7 +5795,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     // dump_timing_data(&timing_context, "timing.dump");
 #endif
-    
 }
 
 

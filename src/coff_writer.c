@@ -524,10 +524,10 @@ int write_msf(struct memory_arena *arena, char *file_name, struct msf_stream *st
     u8 ones_buffer[0x1000]; // Used to write free page maps.
     memset(ones_buffer, 0xff, 0x1000);
     
-    HANDLE file_handle = CreateFileA(file_name, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, NULL);
-    if(file_handle == INVALID_HANDLE_VALUE) return 0;
+    HANDLE file_handle = os_open_file(file_name);
+    if(file_handle == 0) return 0;
     
-    WriteFile(file_handle, msf_header, 0x1000, 0, 0);
+    os_file_write(file_handle, msf_header, 0x1000);
     
     u64 write_offset = 0x1000;
     u64 next_free_page_maps = 0x1000;
@@ -556,11 +556,11 @@ int write_msf(struct memory_arena *arena, char *file_name, struct msf_stream *st
                 if(range_end <= amount_of_pages){
                     // If the range covered by this free page map is entirely in the file,
                     // write all zeros (all allocated).
-                    WriteFile(file_handle, zero_buffer, 0x1000, 0, 0);
+                    os_file_write(file_handle, zero_buffer, 0x1000);
                 }else if(amount_of_pages < range_start){
                     // If the range covered by this free page map is entirely outside the file,
                     // write all ones (all free).
-                    WriteFile(file_handle, ones_buffer, 0x1000, 0, 0);
+                    os_file_write(file_handle, ones_buffer, 0x1000);
                 }else{
                     u8 buffer[0x1000] = {0};
                     
@@ -573,10 +573,10 @@ int write_msf(struct memory_arena *arena, char *file_name, struct msf_stream *st
                         
                         buffer[byte_index] |= (u8)(1 << bit_index);
                     }
-                    WriteFile(file_handle, buffer, 0x1000, 0, 0);
+                    os_file_write(file_handle, buffer, 0x1000);
                 }
                 
-                WriteFile(file_handle, zero_buffer, 0x1000, 0, 0); // Ignored free page map.
+                os_file_write(file_handle, zero_buffer, 0x1000); // Ignored free page map.
                 
                 write_offset += 0x2000;
                 next_free_page_maps += 0x1000 * 0x1000;
@@ -588,11 +588,11 @@ int write_msf(struct memory_arena *arena, char *file_name, struct msf_stream *st
                 size_to_write = (u32)(next_free_page_maps - write_offset);
             }
             
-            WriteFile(file_handle, stream.data + offset_in_stream, size_to_write, 0, 0);
+            os_file_write(file_handle, stream.data + offset_in_stream, size_to_write);
             
             if(size_to_write & 0xfff){
                 u32 size_to_zero = 0x1000 - (size_to_write & 0xfff);
-                WriteFile(file_handle, zero_buffer, size_to_zero, 0, 0); // Ignored free page map.
+                os_file_write(file_handle, zero_buffer, size_to_zero); // Ignored free page map.
                 size_to_write += size_to_zero;
             }
             
@@ -601,7 +601,7 @@ int write_msf(struct memory_arena *arena, char *file_name, struct msf_stream *st
         }
     }
     
-    CloseHandle(file_handle);
+    os_close_handle(file_handle);
     return 1;
 }
 
@@ -854,7 +854,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     // Everything else is zero for now and will be filled in incrementally.
     coff_file_header->machine = 0x8664; // x64
-    coff_file_header->time_date_stamp = get_unix_time();
+    coff_file_header->time_date_stamp = os_get_unix_time();
     coff_file_header->file_characteristics = /*EXECUTABLE_IMAGE*/2 | /*LARGE_ADDRESS_AWARE*/0x20;
     
     if(globals.cli_options.no_dynamic_base) coff_file_header->file_characteristics |= /*RELOCATIONS_STRIPPED*/1;
@@ -1056,6 +1056,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     
     // Crappy guid
     u8 pdb_guid[16];{
+        
+#if _WIN32
         //
         // Unique enough!
         //
@@ -1063,6 +1065,12 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         GetSystemTime((PSYSTEMTIME)pdb_guid);
         ((u64 *)pdb_guid)[0] ^= __rdtsc();
         ((u64 *)pdb_guid)[1] ^= GetTickCount64();
+#else
+        uint8_t random_bytes[16];
+        int fd = open("/dev/random", O_RDONLY);
+        ssize_t n = read(fd, random_bytes, sizeof(random_bytes));
+        close(fd);
+#endif
     }
     
     
@@ -1871,25 +1879,12 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             u8 *buffer = exe_base_address;
             smm buffer_size = size;
             
-            //u32 FILE_FLAG_NO_BUFFERING = 0x20000000;
-            u32 FILE_FLAG_NO_BUFFERING = 0;
+            HANDLE file_handle = os_open_file(exe_name);
             
-            HANDLE file_handle = CreateFileA(exe_name, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_FLAG_NO_BUFFERING, NULL);
+            success = os_file_write(file_handle, buffer, buffer_size);
             
-            // ignore FILE_ALREADY_EXISTS
-            if(GetLastError() == 183) SetLastError(0);
-            //if(GetLastError()) print("Warning: GetLastError in create file: %d\n", GetLastError());
-            
-            DWORD bytes_written;
-            
-            success = WriteFile(file_handle, buffer, save_truncate_smm_to_s32(buffer_size), &bytes_written, 0);
-            
-            success = success && (bytes_written == buffer_size);
-            
-            begin_counter(context, virus_scanner);
             // @note: this apparently invokes the anti virus scanner or something thus it takes 200ms...
-            CloseHandle(file_handle);
-            end_counter(context, virus_scanner);
+            os_close_handle(file_handle);
         }
         
         if(success){
@@ -2452,30 +2447,22 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // 
         
         {
-            u32 working_directiory_symbol = id_index_at;
+            u32 working_directory_symbol = id_index_at;
             {
                 begin_id_record(0x1605); // LF_STRING_ID
                 
                 *push_struct(&ipi_stream, u32) = 0; // "ID to list of sub-string IDs"
-                
-                // GetCurrentDirectory with 0 returns the size of the buffer including the null terminator
-                smm CurrentWorkingDirectoryLength = GetCurrentDirectoryA(0, null); // @cleanup: What about utf-8?
-                u8 *CurrentWorkingDirectory = push_uninitialized_data(&ipi_stream, u8, CurrentWorkingDirectoryLength);
-                GetCurrentDirectoryA((DWORD)CurrentWorkingDirectoryLength, CurrentWorkingDirectory);
+                push_zero_terminated_string_copy(&ipi_stream, globals.working_directory);
                 
                 end_id_record();
             }
             
-            u32 compiler_name_symbol = id_index_at;
+            u32 compiler_path_symbol = id_index_at;
             {
                 begin_id_record(0x1605); // LF_STRING_ID
                 
                 *push_struct(&ipi_stream, u32) = 0; // "ID to list of sub-string IDs"
-                
-                char *ModuleFileName = push_uninitialized_data(&ipi_stream, char, MAX_PATH + 1);
-                smm ModuleFileNameLength = GetModuleFileNameA(null, ModuleFileName, MAX_PATH + 1); // @cleanup: What about utf-8?
-                ModuleFileName[ModuleFileNameLength] = 0;
-                ipi_stream.current -= (MAX_PATH + 1) - ModuleFileNameLength;
+                push_zero_terminated_string_copy(&ipi_stream, globals.compiler_path);
                 
                 end_id_record();
             }
@@ -2495,7 +2482,14 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 begin_id_record(0x1605); // LF_STRING_ID
                 
                 *push_struct(&ipi_stream, u32) = 0; // "ID to list of sub-string IDs"
-                push_zero_terminated_string_copy(&ipi_stream, string_from_cstring(GetCommandLineA())); // @cleanup: What about utf-8?
+                
+                #if _WIN32
+                struct string command_line = string_from_cstring(GetCommandLineA());
+                #else
+                struct string command_line = string("@incomplete: Currently not implemented on linux!");
+                #endif
+                
+                push_zero_terminated_string_copy(&ipi_stream, command_line); // @cleanup: What about utf-8?
                 
                 end_id_record();
             }
@@ -2505,8 +2499,8 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
                 begin_id_record(0x1603); // LF_BUILDINFO
                 
                 *push_struct(&ipi_stream, u16) = 5; // Count
-                *push_struct_unaligned(&ipi_stream, u32) = working_directiory_symbol;
-                *push_struct_unaligned(&ipi_stream, u32) = compiler_name_symbol;
+                *push_struct_unaligned(&ipi_stream, u32) = working_directory_symbol;
+                *push_struct_unaligned(&ipi_stream, u32) = compiler_path_symbol;
                 *push_struct_unaligned(&ipi_stream, u32) = main_file_ipi;
                 *push_struct_unaligned(&ipi_stream, u32) = pdb_symbol;
                 *push_struct_unaligned(&ipi_stream, u32) = command_line_symbol;

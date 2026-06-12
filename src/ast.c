@@ -155,6 +155,19 @@ enum token_type{
 
 #define AMOUNT_OF_BASIC_TYPES (TOKEN_one_past_last_basic_type - TOKEN_first_basic_type)
 
+struct escaped_string{
+    struct string string;
+    
+    enum string_kind{
+        // @warning: we use that the string_kind is just the element size.
+        // :string_kind_is_element_size
+        STRING_KIND_invalid,
+        STRING_KIND_utf8  = 1,  //  u8"", ""
+        STRING_KIND_utf16 = 2, //  u16"", L"", u""
+        STRING_KIND_utf32 = 4, //  u32"", U""
+    } string_kind;
+};
+
 static struct{
     struct string keyword;
     enum token_type token_kind;
@@ -606,13 +619,13 @@ struct ast_bitfield_type{
     u32 width;
 };
 
-inline smm get_declaration_alignment(struct ast_declaration *decl){
+static smm get_declaration_alignment(struct ast_declaration *decl){
     smm alignment = decl->type->alignment;
     if(decl->overwrite_alignment) alignment = decl->overwrite_alignment;
     return alignment;
 }
 
-inline smm get_declaration_size(struct ast_declaration *decl){
+static smm get_declaration_size(struct ast_declaration *decl){
     smm size = decl->type->size;
     if(decl->assign_expr && decl->assign_expr->kind == IR_compound_literal){
         struct ir_compound_literal *compound_literal = (struct ir_compound_literal *)decl->assign_expr;

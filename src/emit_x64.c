@@ -407,40 +407,6 @@ enum TWO_BYTE_OPCODES{ // these are of the form 0x0F opcode
     C7_COMPARE_EXCHANGE_REGM128 = 1,
 };
 
-#define register_is_extended(reg) ((reg) & 0xF8)
-enum register_encoding{
-    INVALID_REGISTER = -1, // used to say that there is no index register (remove me once we are relative to emit_locations)
-    REGISTER_A  = 0, // accumulatior
-    REGISTER_C  = 1, // count
-    REGISTER_D  = 2, // data
-    
-    REGISTER_B  = 3, // base pointer to data
-    REGISTER_SP = 4, // stack pointer
-    REGISTER_BP = 5, // stack base pointer
-    REGISTER_SI = 6, // source index or pointer to data
-    REGISTER_DI = 7, // destination index or pointer to data
-    
-    REGISTER_R8  = 8 + 0,
-    REGISTER_R9  = 8 + 1,
-    REGISTER_R10 = 8 + 2,
-    REGISTER_R11 = 8 + 3,
-    REGISTER_R12 = 8 + 4,
-    REGISTER_R13 = 8 + 5,
-    REGISTER_R14 = 8 + 6,
-    REGISTER_R15 = 8 + 7,
-    
-    REGISTER_XMM0 = 0,
-    REGISTER_XMM1 = 1,
-    REGISTER_XMM2 = 2,
-    REGISTER_XMM3 = 3,
-    REGISTER_XMM4 = 4,
-    REGISTER_XMM5 = 5,
-    REGISTER_XMM6 = 6,
-    REGISTER_XMM7 = 7,
-    
-    REGISTER_SIB_EXTENSION = REGISTER_SP,
-};
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define emit(val)     emit_bytes(context, 1, val)
@@ -4530,7 +4496,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             
             case IR_add_atomic_assignment_bool:
             case IR_subtract_atomic_assignment_bool:{
-                report_error(context, current_function->identifier, __FUNCTION__ ": Unhandled compound assignment of variable of type _Atomic _Bool.");
+                report_error(context, current_function->identifier, "Internal Compiler Error: Unhandled compound assignment of variable of type _Atomic _Bool.");
             }break;
             
             case IR_modulo_assignment_s8: case IR_modulo_assignment_s16: case IR_modulo_assignment_s32: case IR_modulo_assignment_s64:

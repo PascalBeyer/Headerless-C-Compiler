@@ -442,20 +442,6 @@ func b32 u8_is_valid_in_c_ident(u8 a){
     return table[a]; // u8_is_alpha_numeric(a) || (a == '$') || (a & 0x80);
 }
 
-struct escaped_string{
-    struct string string;
-    
-    enum string_kind{
-        // @warning: we use that the string_kind is just the element size.
-        // :string_kind_is_element_size
-        STRING_KIND_invalid,
-        STRING_KIND_utf8  = 1,  //  u8"", ""
-        STRING_KIND_utf16 = 2, //  u16"", L"", u""
-        STRING_KIND_utf32 = 4, //  u32"", U""
-    } string_kind;
-};
-
-
 static u64 parse_hex_string_to_u64(struct string *characters, int *overflow){
     
     smm length = characters->size;
@@ -2181,6 +2167,12 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
     // 
     // @WARNING: We have to add 128 padding bytes as we are using 'hash_md5_inplace' in coff_writer.c
     // 
+    
+#ifndef _WIN32
+    // On linux file_size was not set yet, because the file iterator does not set it...
+    file_size = os_load_file(absolute_file_path, 0, 0).size;
+#endif
+    
     smm pad_size = 128;
     smm padded_file_size = file_size + pad_size;
     
@@ -2414,8 +2406,16 @@ enum static_if_evaluate_operation{
     STATIC_IF_EVALUATE_operation_count,
 };
 
+struct static_if_evaluate_stack_node{
+    enum static_if_evaluate_operation operation;
+    int is_unsigned;
+    u64 value;
+    struct token *token;
+    int should_skip_undefined_identifier;
+};
+
 func struct static_if_evaluate_stack_node *static_if_stack_current(struct context *context){
-    assert(0 <= context->static_if_stack_at && context->static_if_stack_at < array_count(context->static_if_evaluate_stack));
+    assert(0 <= context->static_if_stack_at && context->static_if_stack_at < context->static_if_stack_capacity);
     return context->static_if_evaluate_stack + context->static_if_stack_at;
 }
 
@@ -2427,10 +2427,8 @@ func struct static_if_evaluate_stack_node *static_if_stack_pop(struct context *c
 }
 
 func void static_if_stack_push(struct context *context, struct token *token, enum static_if_evaluate_operation operation, s64 value, int is_unsigned){
-    if(context->static_if_stack_at + 1 >= array_count(context->static_if_evaluate_stack)){
-        report_error(context, token, "Expression in '#if' nests too deep.");
-        return;
-    }
+    
+    dynarray_maybe_grow(struct static_if_evaluate_stack_node, context->arena, context->static_if_evaluate_stack, context->static_if_stack_at + 1, context->static_if_stack_capacity);
     
     // @note pre incremented
     struct static_if_evaluate_stack_node *node = context->static_if_evaluate_stack + ++context->static_if_stack_at;

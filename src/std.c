@@ -8,7 +8,6 @@
 
 #if defined(__clang__) || defined(__GNUC__)
 
-
 #include <stdint.h>
 #include <stddef.h>
 
@@ -174,7 +173,7 @@ static void *                   os_allocate_memory(smm size){
     return buf.memory;
 }
 
-static void           os_free_memory(void *memory_to_free);
+static void           os_free_memory_all(void *memory_to_free, u64 size);
 static struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size); // @sigh cstrings
 static b32            os_write_file(char *file_name, void *buffer, smm buffer_size); // zero terminated
 static NO_RETURN void os_panic(u32 exit_code);
@@ -538,7 +537,6 @@ func s64 to_s64(smm number) { assert(s64_min <=  (number) && (number) <= s64_max
 
 #if defined(__clang__) || defined(__HLC__)
 
-extern __int64 _InterlockedExchangeAdd64(__int64 volatile * _Addend, __int64 _Value);
 extern void _mm_pause();
 
 void *memset(void *mem, int val, size_t amount){
@@ -559,12 +557,12 @@ void *memcpy(void *dest, const void *source, size_t amount){
     return dest;
 }
 
-int memcmp(void *_string1, void *_string2, size_t amount){
+int memcmp(const void *_string1, const void *_string2, size_t amount){
     
     if(amount == 0) return 0;
     
-    char *string1 = _string1;
-    char *string2 = _string2;
+    char *string1 = (char *)_string1;
+    char *string2 = (char *)_string2;
     
     while(--amount && *string1 == *string2){
         string1 += 1;
@@ -764,7 +762,7 @@ func struct memory_arena create_memory_arena(smm size, f32 exp_grow, u32 constan
 #define push_struct_copy(arena, type, x) ((type *)memcpy(push_struct(arena, type), (type *)x, sizeof(type)))
 
 #define dynarray_maybe_grow(type, arena, array, amount, capacity){ \
-    if(*&(amount) == *&(capacity)){                                \
+    if((amount) == *&(capacity)){                                \
         capacity <<= 1;                                            \
         type *new_array = push_uninitialized_data(arena, type, capacity); \
         memcpy(new_array, array, (amount) * sizeof(*array));       \

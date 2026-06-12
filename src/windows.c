@@ -130,6 +130,10 @@ __declspec(dllimport) DWORD __stdcall GetLastError(void);
 
 ////// CONSOLE
 
+HANDLE stdout;
+HANDLE stdin;
+HANDLE stderr;
+
 __declspec(dllimport) HANDLE __stdcall GetStdHandle(DWORD nStdHandle);
 #define INVALID_HANDLE_VALUE ((HANDLE)(LONG_PTR)-1)
 #define STD_INPUT_HANDLE  (DWORD)-10
@@ -256,18 +260,32 @@ struct string os_file_iterator_get(struct os_file_iterator *iterator){
     return string_from_cstring(iterator->find_data.cFileName);
 }
 
+int os_file_iterator_is_directory(struct os_file_iterator *iterator){
+    return (iterator->find_data.dwFileAttributes & /*FILE_ATTRIBUTE_DIRECTORY*/0x10);
+}
+
 void os_file_iterator_free(struct os_file_iterator *iterator){
-    CloseHandle(iterator->handle); // @cleanup: "When the search handle is no longer needed, close it by using the FindClose function, not CloseHandle."
+    FindClose(iterator->handle);
     iterator->handle = INVALID_HANDLE_VALUE;
 }
 
 // @cleanup: should maybe return an 'os_file' structure not sure
 // returns the file_name, i.e 'file' for 'C:/path/to/file'
-void os_file_iterator_next(struct os_file_iterator *iterator){
+int os_file_iterator_next(struct os_file_iterator *iterator){
+    int ret = 1;
     if(!FindNextFileA(iterator->handle, &iterator->find_data)){
         os_file_iterator_free(iterator);
+        ret = 0;
     }
+    return ret;
 }
+
+int os_get_number_of_processors(void){
+    SYSTEM_INFO system_info;
+    GetSystemInfo(&system_info); // this cannot fail apperantly
+    return system_info.dwNumberOfProcessors;
+}
+
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -566,7 +584,8 @@ static struct os_virtual_buffer os_commit_memory(void *_desired_base, smm commit
 }
 
 
-static void os_free_memory(void *memory_to_free){
+static void os_free_memory_all(void *memory_to_free, u64 size){
+    (void)size;
     DWORD MEM_RELEASE = 0x00008000;
     VirtualFree(memory_to_free, 0, MEM_RELEASE);
 }
@@ -602,7 +621,6 @@ func smm atomic_compare_and_swap_smm(smm *dest, smm source, smm comparand){
 func u64 atomic_compare_and_swap_u64(u64 *dest, u64 source, u64 comparand){
     return _InterlockedCompareExchange64((s64 *)dest, (s64)source, (s64)comparand);
 }
-
 
 // returns 1 on success
 // returns 0 on fail and overrides *comparand with *dest
@@ -696,7 +714,7 @@ u64 file_time_to_percise_unix_time(FILETIME *ft){
 }
 
 __declspec(dllimport) BOOL SystemTimeToFileTime(SYSTEMTIME *lpSystemTime, FILETIME *lpFileTime);
-u32 get_unix_time(void){
+u32 os_get_unix_time(void){
     SYSTEMTIME st;
     GetSystemTime(&st);
     
@@ -766,6 +784,38 @@ func b32 path_is_directory(char *path){
     return (file_attributes != INVALID_FILE_ATTRIBUTES) && (file_attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+static HANDLE os_open_file(char *file_name){
+    HANDLE file_handle = CreateFileA(file_name, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, NULL);
+    if (file_handle == INVALID_HANDLE_VALUE) return 0;
+    return file_handle;
+}
+
+static int os_file_write(HANDLE file_handle, void *buffer, smm buffer_size){
+    
+    smm chunks = buffer_size >> 30;
+    DWORD chunk_size = (1 << 30);
+    
+    for(smm chunk_index = 0; chunk_index < chunks; chunk_index++){
+        DWORD bytes_written;
+        if(!WriteFile(file_handle, (u8 *)buffer + chunk_size * chunk_index, chunk_size, &bytes_written, 0) || (bytes_written != chunk_size)){
+            return false;
+        }
+    }
+    
+    DWORD last_chunk_size = buffer_size & ((1 << 30) - 1);
+    
+    DWORD bytes_written;
+    if(!WriteFile(file_handle, (u8 *)buffer + chunk_size * chunks, last_chunk_size, &bytes_written, 0) || (bytes_written != last_chunk_size)){
+        return false;
+    }
+    
+    return true;
+}
+
+static void os_close_handle(HANDLE file_handle){
+    CloseHandle(file_handle);
+}
+
 static b32 os_write_file(char *file_name, void *buffer, smm buffer_size){
     HANDLE file_handle = CreateFileA(file_name, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, NULL);
     if (file_handle == INVALID_HANDLE_VALUE) return false;
@@ -791,13 +841,6 @@ static __declspec(noreturn) void os_panic(u32 exit_code){
 }
 
 static u32 os_print_string(char *string, smm length){
-    HANDLE stdout = GetStdHandle(STD_OUTPUT_HANDLE);
-#if 0
-    if(stdout == INVALID_HANDLE_VALUE){
-        win32_init_console();
-        stdout = GetStdHandle(STD_OUTPUT_HANDLE);
-    }
-#endif
     
     DWORD chars_written;
     if(length > 0 && length < u32_max){
@@ -809,6 +852,31 @@ static u32 os_print_string(char *string, smm length){
     return chars_written;
 }
 
+static void os_wait_for_event(HANDLE event){
+    WaitForSingleObject(event, INFINITE);
+}
+
+static struct string os_get_working_directory(struct memory_arena *arena){
+    struct string working_directory = {0};
+    // GetCurrentDirectory with 0 returns the size of the buffer including the null terminator
+    working_directory.size = GetCurrentDirectoryA(0, null) - 1;
+    working_directory.data = push_uninitialized_data(arena, u8, working_directory.length + 1); // @cleanup: What about utf-8?
+    GetCurrentDirectoryA(cast(u32)working_directory.length + 1, working_directory.data);
+    return working_directory;
+}
+
+static struct string os_get_executable_path(struct memory_arena *arena){
+    u8 *module_path_buffer = push_uninitialized_data(arena, u8, MAX_PATH + 1);
+    
+    struct string module_path = zero_struct;
+    module_path.size = GetModuleFileNameA(null, (char *)module_path_buffer, MAX_PATH + 1); // @cleanup: What is even happening here? This seems wrong.
+    module_path.data = module_path_buffer;
+    DWORD ModuleFileNameLength = GetModuleFileNameA(null, (char *)module_path.data, (u32)(module_path.size + 1));
+    module_path_buffer[ModuleFileNameLength] = 0;
+    arena->current -= (MAX_PATH + 1) - (ModuleFileNameLength + 1);
+    
+    return module_path;
+}
 
 struct parsed_command_line{
     int argc;
@@ -924,7 +992,7 @@ func smm windows_parse_command_line__internal(char *command_line, smm command_li
     return amount_of_arguments;
 }
 
-func struct parsed_command_line windows_parse_command_line(char *command_line){
+func struct parsed_command_line parse_command_line(char *command_line){
     smm command_line_size = cstring_length(command_line);
 
     char *preped_command_line = (char *)GlobalAlloc(GMEM_FIXED, command_line_size + 1);
@@ -954,9 +1022,18 @@ int main(int argument_count, char **argument_values);
 __declspec(noreturn) void _start(void) {
     CHAR * command_line = GetCommandLineA();
     
-    struct parsed_command_line parsed_command_line = windows_parse_command_line(command_line);
+    stderr = GetStdHandle(STD_ERROR_HANDLE);
+    stdin  = GetStdHandle(STD_INPUT_HANDLE);
+    stdout = GetStdHandle(STD_OUTPUT_HANDLE);
+    
+    struct parsed_command_line parsed_command_line = parse_command_line(command_line);
     
     int exit_code = main(parsed_command_line.argc, parsed_command_line.argv);
     ExitProcess((u32)exit_code);
+}
+
+
+HANDLE os_create_event(void){
+    return CreateEventA(0, true, 0, 0);
 }
 
