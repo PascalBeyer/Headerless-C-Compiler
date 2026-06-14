@@ -533,14 +533,12 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
                 [IR_TYPE_s8] [IR_TYPE_s32] = IR_sign_extend_s8_to_s32,
                 [IR_TYPE_s16][IR_TYPE_s32] = IR_sign_extend_s16_to_s32,
                 [IR_TYPE_s8] [IR_TYPE_s64] = IR_sign_extend_s8_to_s64,
-                [IR_TYPE_s16][IR_TYPE_s32] = IR_sign_extend_s16_to_s32,
                 [IR_TYPE_s16][IR_TYPE_s64] = IR_sign_extend_s16_to_s64,
                 [IR_TYPE_s32][IR_TYPE_s64] = IR_sign_extend_s32_to_s64,
                 [IR_TYPE_s8] [IR_TYPE_u16] = IR_sign_extend_s8_to_s16,
                 [IR_TYPE_s8] [IR_TYPE_u32] = IR_sign_extend_s8_to_s32,
                 [IR_TYPE_s16][IR_TYPE_u32] = IR_sign_extend_s16_to_s32,
                 [IR_TYPE_s8] [IR_TYPE_u64] = IR_sign_extend_s8_to_s64,
-                [IR_TYPE_s16][IR_TYPE_u32] = IR_sign_extend_s16_to_s32,
                 [IR_TYPE_s16][IR_TYPE_u64] = IR_sign_extend_s16_to_s64,
                 [IR_TYPE_s32][IR_TYPE_u64] = IR_sign_extend_s32_to_s64,
                 
@@ -551,14 +549,12 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
                 [IR_TYPE_u8] [IR_TYPE_s32] = IR_zero_extend_u8_to_u32,
                 [IR_TYPE_u16][IR_TYPE_s32] = IR_zero_extend_u16_to_u32,
                 [IR_TYPE_u8] [IR_TYPE_s64] = IR_zero_extend_u8_to_u64,
-                [IR_TYPE_u16][IR_TYPE_s32] = IR_zero_extend_u16_to_u32,
                 [IR_TYPE_u16][IR_TYPE_s64] = IR_zero_extend_u16_to_u64,
                 [IR_TYPE_u32][IR_TYPE_s64] = IR_zero_extend_u32_to_u64,
                 [IR_TYPE_u8] [IR_TYPE_u16] = IR_zero_extend_u8_to_u16,
                 [IR_TYPE_u8] [IR_TYPE_u32] = IR_zero_extend_u8_to_u32,
                 [IR_TYPE_u16][IR_TYPE_u32] = IR_zero_extend_u16_to_u32,
                 [IR_TYPE_u8] [IR_TYPE_u64] = IR_zero_extend_u8_to_u64,
-                [IR_TYPE_u16][IR_TYPE_u32] = IR_zero_extend_u16_to_u32,
                 [IR_TYPE_u16][IR_TYPE_u64] = IR_zero_extend_u16_to_u64,
                 [IR_TYPE_u32][IR_TYPE_u64] = IR_zero_extend_u32_to_u64,
                 
@@ -7741,8 +7737,9 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             //
             case TOKEN_declspec:{
                 struct token *open  = expect_token(context, TOKEN_open_paren, "Expected '(' after '__declspec'.");
+                struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
                 struct token *directive = next_token(context);
-                        
+                
                 if(directive->type != TOKEN_identifier && !(TOKEN_first_keyword <= directive->type && directive->type <= TOKEN_one_past_last_keyword)){
                     report_error(context, directive, "Expected a directive after '__declspec'.");
                 }
@@ -7809,6 +7806,10 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                 if(!skip){
                     expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__declspec'.");
                 }
+                
+                if(double_open){
+                    expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__attribute__(()'.");
+                }
             }break;
             
 #define case_c_type(type_name)                                \
@@ -7859,9 +7860,9 @@ case TOKEN_##type_name:{                                                 \
                 b32 is_intrin_type = false;
                 b32 is_packed = false;
                 b32 has_declspec_alignment = false;
-                while(peek_token(context, TOKEN_declspec)){
-                    next_token(context);
+                while(peek_token_eat(context, TOKEN_declspec)){
                     struct token *open = expect_token(context, TOKEN_open_paren, "Expected '(' to follow '__declspec'.");
+                    struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
                     
                     struct token *declspec = expect_token(context, TOKEN_identifier, "Expected an identifier after '__declspec'.");
                     b32 unsupported = false;
@@ -7911,6 +7912,10 @@ case TOKEN_##type_name:{                                                 \
                     if(unsupported){
                         report_warning(context, WARNING_unsupported_declspec, declspec, "Unsupported '__declspec' ignored.");
                         skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
+                    }
+                    
+                    if(double_open){
+                        expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__attribute__(()'.");
                     }
                 }
                 
@@ -8465,31 +8470,43 @@ case TOKEN_##type_name:{                                                 \
             case C_TYPE_char:     specifiers.type_specifier = &globals.typedef_s8; break;
             case C_TYPE_short:    specifiers.type_specifier = &globals.typedef_s16; break;
             case C_TYPE_int:      specifiers.type_specifier = &globals.typedef_s32; break;
+            
+#ifdef _WIN32
             case C_TYPE_long:     specifiers.type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_unsigned | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s32; break;
+#else
+            case C_TYPE_long:     specifiers.type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_unsigned | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
+#endif
             
             case (C_TYPE_short | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s16; break;
-            case (C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s32; break;
             case (C_TYPE_long  | C_TYPE_long_long): specifiers.type_specifier = &globals.typedef_s64; break;
             case (C_TYPE_long  | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
             
             case (C_TYPE_unsigned | C_TYPE_char):  specifiers.type_specifier = &globals.typedef_u8; break;
             case (C_TYPE_unsigned | C_TYPE_short): specifiers.type_specifier = &globals.typedef_u16; break;
             case (C_TYPE_unsigned | C_TYPE_int):   specifiers.type_specifier = &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_u32; break;
             case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long): specifiers.type_specifier = &globals.typedef_u64; break;
             
             case (C_TYPE_unsigned | C_TYPE_short | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u16; break;
-            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u32; break;
+            
             case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u64; break;
             
             case (C_TYPE_signed | C_TYPE_char):  specifiers.type_specifier = &globals.typedef_s8; break;
             case (C_TYPE_signed | C_TYPE_short): specifiers.type_specifier = &globals.typedef_s16; break;
             case (C_TYPE_signed | C_TYPE_int):   specifiers.type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_s32; break;
             case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long): specifiers.type_specifier = &globals.typedef_s64; break;
             
             case (C_TYPE_signed | C_TYPE_short | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s16; break;
-            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s32; break;
+            
             case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
             
             case C_TYPE_int8:  specifiers.type_specifier = &globals.typedef_s8; break;
@@ -10363,6 +10380,36 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         if(context->should_exit_statement) return ret;
         
         context->token_at = saved_marker;
+    }
+    
+    if(peek_token(context, TOKEN_asm)){
+        struct token *directive = next_token(context);
+        struct token *open  = expect_token(context, TOKEN_open_paren, "Expected '(' after '__asm__'.");
+        int skip = true;
+        report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__asm__' ignored.");
+        skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__asm__'.");
+        if(!skip){
+            expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__asm__'.");
+        }
+    }
+    
+    while(peek_token_eat(context, TOKEN_declspec)){
+        struct token *open  = expect_token(context, TOKEN_open_paren, "Expected '(' after '__declspec'.");
+        struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
+        struct token *directive = next_token(context);
+        
+        // @cleanup: support declspecs here!
+        int skip = true;
+        report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
+        skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
+        
+        if(!skip){
+            expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__declspec'.");
+        }
+        
+        if(double_open){
+            expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__attribute__(()'.");
+        }
     }
     
     return ret;

@@ -209,6 +209,7 @@ static struct{
     {const_string("switch"),        TOKEN_switch},
     {const_string("goto"),          TOKEN_goto},
     {const_string("__declspec"),    TOKEN_declspec},
+    {const_string("__attribute__"), TOKEN_declspec},
     {const_string("__sptr"),        TOKEN_sptr},
     {const_string("__uptr"),        TOKEN_uptr},
     {const_string("__ptr32"),       TOKEN_ptr32},

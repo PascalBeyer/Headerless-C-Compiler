@@ -655,6 +655,10 @@ func u32 u32_atomic_preincrement(u32 *val){
     return _InterlockedIncrement(cast(long *)val);
 }
 
+func u32 byteswap_u32(u32 value){
+    return (u32)_byteswap_ulong(value);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 #define FUZZ_ME_BUFFER_SIZE mega_bytes(16)
@@ -784,8 +788,31 @@ func b32 path_is_directory(char *path){
     return (file_attributes != INVALID_FILE_ATTRIBUTES) && (file_attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-static HANDLE os_open_file(char *file_name){
-    HANDLE file_handle = CreateFileA(file_name, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, NULL);
+enum os_open_kind{
+    OS_OPEN_read  = 1,
+    OS_OPEN_write = 2,
+    // OS_OPEN_append = 3,
+};
+
+static HANDLE os_open_file(char *file_name, enum os_open_kind kind){
+    
+    DWORD DesiredAccess;
+    DWORD CreateDisposition;
+    
+    switch(kind){
+        case OS_OPEN_read:{
+            DesiredAccess = GENERIC_READ;
+            CreateDisposition = OPEN_EXISTING;
+        }break;
+        case OS_OPEN_write:{
+            DesiredAccess = GENERIC_WRITE;
+            CreateDisposition = CREATE_ALWAYS;
+        }break;
+        default: return null;
+    }
+    
+    
+    HANDLE file_handle = CreateFileA(file_name, DesiredAccess, 0, 0, CreateDisposition, 0, NULL);
     if (file_handle == INVALID_HANDLE_VALUE) return 0;
     return file_handle;
 }

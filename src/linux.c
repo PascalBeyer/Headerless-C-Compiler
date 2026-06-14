@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <wordexp.h>
+#include <errno.h>
 
 typedef int HANDLE;
 
@@ -182,6 +183,9 @@ func s64 atomic_add(s64 *val, s64 to_add){
     return __sync_fetch_and_add(val, to_add);
 }
 
+func u32 byteswap_u32(u32 value){
+    return (u32)__builtin_bswap32(value);
+}
 
 func void *atomic_compare_and_swap(void *dest, void *source, void *comparand){
     return (void *)_InterlockedCompareExchange64((s64 *)dest, (s64)source, (s64)comparand);
@@ -292,8 +296,26 @@ b32 os_write_file(char *file_name, void *buffer, smm buffer_size){
     return (bytes_written == buffer_size);
 }
 
-HANDLE os_open_file(char *file_name){
-    return open(file_name, O_RDONLY, 0);
+enum os_open_kind{
+    OS_OPEN_read  = 1,
+    OS_OPEN_write = 2,
+    // OS_OPEN_append = 3,
+};
+
+HANDLE os_open_file(char *file_name, enum os_open_kind kind){
+    
+    int flags;
+    switch(kind){
+        case OS_OPEN_read:{
+            flags = O_RDONLY;
+        }break;
+        case OS_OPEN_write:{
+            flags = O_WRONLY | O_CREAT | O_TRUNC;
+        }break;
+        default: return null;
+    }
+    
+    return open(file_name, flags, 0644);
 }
 
 int os_file_write(HANDLE file_handle, void *buffer, smm buffer_size){
@@ -305,7 +327,6 @@ int os_file_write(HANDLE file_handle, void *buffer, smm buffer_size){
     // 'buf'          - buffer to write
     // 'count'        - size of buffer to write
     ssize_t bytes_written = write(file_handle, buffer, buffer_size);
-    
     return (bytes_written == buffer_size);
 }
 

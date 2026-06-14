@@ -226,7 +226,6 @@ func void report_errors_for_unresolved_sleepers(struct context *context){
     if(error || context->error){
         assert(!sll_is_empty(context->error_list)); // we better have something to report.
         globals.an_error_has_occurred = true;
-        os_debug_break();
     }
     
     end_temporary_memory(temp);
@@ -323,34 +322,45 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     
     struct string object_file_library_name = {0};
     struct string import_library_name = {0};
+    struct string shared_object_name = {0};
     
     struct ar_import_header *ar_import_header = 0;
     struct coff_file_header *coff_file_header = 0;
     u64 coff_file_size = 0;
+    struct elf_symbol *shared_object_symbol = 0;
     
     struct atom identifier = declaration->identifier->atom;
     
     while(true){
         for(struct library_node *library = globals.libraries.first; library; library = library->next){
             
-            struct ar_symbol_lookup found = ar_lookup_symbol(library, atom_get_string(identifier));
-            if(found.lookup_result == AR_SYMBOL_LOOKUP_failed) continue;
-            
-            if(found.lookup_result == AR_SYMBOL_LOOKUP_import_header){
-                ar_import_header = found.ar_import_header;
-                import_library_name = library->path;
-                break;
-            }else{
-                object_file_library_name = library->path;
-                if(!is_dll_import){
-                    coff_file_header = found.coff_file_header;
-                    coff_file_size = found.file_size;
+            if(library->kind == LIBRARY_NODE_shared_object){
+                struct elf_symbol *symbol = elf_lookup_symbol(library, atom_get_string(identifier));
+                if(!symbol) continue;
+                
+                shared_object_symbol = symbol;
+                shared_object_name = library->path;
+                
+            }else if(library->kind == LIBRARY_NODE_archive){
+                struct ar_symbol_lookup found = ar_lookup_symbol(library, atom_get_string(identifier));
+                if(found.lookup_result == AR_SYMBOL_LOOKUP_failed) continue;
+                
+                if(found.lookup_result == AR_SYMBOL_LOOKUP_import_header){
+                    ar_import_header = found.ar_import_header;
+                    import_library_name = library->path;
                     break;
+                }else{
+                    object_file_library_name = library->path;
+                    if(!is_dll_import){
+                        coff_file_header = found.coff_file_header;
+                        coff_file_size = found.file_size;
+                        break;
+                    }
                 }
             }
         }
         
-        if(!ar_import_header && !object_file_library_name.data){
+        if(!ar_import_header && !object_file_library_name.data && !shared_object_symbol){
             struct alternate_name *alternate_name = globals.alternate_names.first;
             for(; alternate_name; alternate_name = alternate_name->next){
                 if(atoms_match(alternate_name->source, identifier)){ // @cleanup: Cycles?
@@ -365,7 +375,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     }
     
     
-    if(!ar_import_header && !object_file_library_name.data){
+    if(!ar_import_header && !object_file_library_name.data && !shared_object_symbol){
         // We have not found the symbol.
         if(is_dll_import){
             report_error(context, declaration->identifier, "%s is not contained in any of the imported dlls.", Function_or_Declaration);
@@ -388,6 +398,29 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
             report_error(context, declaration->identifier, "%s is defined in library '%.*s', but static linking is currently not supported.", Function_or_Declaration, object_file_library_name.size, object_file_library_name.data);
             report_error(context, token_that_referenced_this_declaration, "... Here the %s was referenced.", function_or_declaration);
         }
+        return;
+    }
+    
+    if(shared_object_symbol){
+        struct shared_object_node *shared_object_node = globals.shared_objects.first;
+        for(; shared_object_node; shared_object_node = shared_object_node->next){
+            if(string_match(shared_object_node->name, shared_object_name)) break;
+        }
+        
+        if(!shared_object_node){
+            shared_object_node = push_uninitialized_struct(context->arena, struct shared_object_node);
+            shared_object_node->name = shared_object_name;
+            
+            sll_push_back(globals.shared_objects, shared_object_node);
+            globals.shared_objects.amount += 1;
+        }
+        
+        struct so_import_node *import_node = push_uninitialized_struct(context->arena, struct so_import_node);
+        import_node->import_name = identifier;
+        
+        sll_push_back(shared_object_node->import_list, import_node);
+        shared_object_node->import_list.count += 1;
+        declaration->flags |= DECLARATION_FLAGS_is_dllimport;
         return;
     }
     

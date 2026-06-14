@@ -18,19 +18,7 @@
 // The third section is optionally '//', the long name data.
 // 
 // returns '1' on error.
-int ar_parse_file(struct string file_name, struct memory_arena *arena){
-    
-    struct os_file file = load_file_into_arena((char *)file_name.data, arena);
-    
-    if(file.file_does_not_exist){
-        print("Error: Library '%s' does not exist.\n", (char *)file_name.data);
-        return 1;
-    }
-    
-    if(file.size < 8 || memcmp(file.data, "!<arch>\n", 8) != 0){
-        print("Error: Library '%s' is not an archive file (.lib, .a, .ar).\n", (char *)file_name.data);
-        return 1;
-    }
+int ar_parse_file(struct os_file file, struct string file_name, struct memory_arena *arena){
     
     u8 *file_at  = file.data + 8;
     u8 *file_end = file.data + file.size;
@@ -102,10 +90,6 @@ int ar_parse_file(struct string file_name, struct memory_arena *arena){
         // 
         file_at += file_size + (file_size & 1);
         
-        // 
-        // @incomplete: Make sure all of this is also correct for System V archives.
-        // 
-        
         if(file_header_index == 0 && string_match(file_identifier, string("/"))){
             // The first file section should be the first linker member.
             big_endian_symbol_index_base = (u8 *)(file_header + 1);
@@ -130,9 +114,133 @@ int ar_parse_file(struct string file_name, struct memory_arena *arena){
         break;
     }
     
-    if(!little_endian_symbol_index_base){
-        print("Error: Failed to parse library '%s', currently only Windows-style import libraries are supported.\n", file_name);
+    if(!little_endian_symbol_index_base && !big_endian_symbol_index_base){
+        print("Error: Failed to parse library '%s'.\n", (char *)file_name.data);
         return 1;
+    }
+    
+    if(!little_endian_symbol_index_base){
+        if(big_endian_symbol_index_size < 4 || big_endian_symbol_index_base[big_endian_symbol_index_size-1] != 0){
+            print("Error: Failed to parse library '%s'.\n", (char *)file_name.data);
+            return 1;
+        }
+        
+        u32 *symbol_index_at  = (u32 *)big_endian_symbol_index_base;
+        u8  *symbol_index_end = (u8  *)big_endian_symbol_index_base + big_endian_symbol_index_size;
+        
+        u32 amount_of_symbols = byteswap_u32(*symbol_index_at++);
+        if(symbol_index_at + amount_of_symbols > (u32 *)symbol_index_end){
+            print("Error: Failed to parse library '%s'.\n", (char *)file_name.data);
+            return 1;
+        }
+        
+        u8 *string_table_at = (u8 *)(symbol_index_at + amount_of_symbols);
+        
+        struct string *string_table = push_uninitialized_data(arena, struct string, amount_of_symbols);
+        u16 *symbol_member_indices = push_uninitialized_data(arena, u16, amount_of_symbols);
+        
+        u32 *member_offsets = push_data(arena, u32, 0);
+        u32 offsets_at = 0;
+        
+        for(u32 index = 0, last_offset = 0; index < amount_of_symbols; index++){
+            if(string_table_at == symbol_index_end){
+                print("Error: Failed to parse library '%s'.\n", (char *)file_name.data);
+                return 1;
+            }
+            
+            u32 offset = byteswap_u32(symbol_index_at[index]);
+            
+            if(offset != last_offset){
+                last_offset = offset;
+                offsets_at += 1;
+                *push_struct(arena, u32) = offset;
+            }
+            
+            string_table[index] = string_from_cstring((char *)string_table_at);
+            symbol_member_indices[index] = (u16)offsets_at;
+            
+            string_table_at += string_table[index].size + 1;
+        }
+        
+        u32 amount_of_members = (u32)(push_data(arena, u32, 0) - member_offsets);
+        
+        {
+            // Quick-sort the strings.
+            
+            u32 left = 0;
+            u32 right = amount_of_symbols-1;
+            
+            u32 *sort_stack = push_uninitialized_data(arena, u32, amount_of_symbols);
+            u32 sort_stack_at = 0;
+            
+            while(true){
+                
+                if(left < right){
+                    struct string piveot = string_table[left];
+                    
+                    u32 right_it = right;
+                    u32 left_it = left;
+                    
+                    while(left_it < right_it){
+                        
+                        while(string_lexically_smaller_equal(string_table[left_it], piveot) && left_it < right_it) left_it++;
+                        while(!string_lexically_smaller_equal(string_table[right_it], piveot)) right_it--;
+                        
+                        if(left_it < right_it){
+                            
+                            struct string temp_string = string_table[left_it];
+                            string_table[left_it] = string_table[right_it];
+                            string_table[right_it] = temp_string;
+                            
+                            u16 temp = symbol_member_indices[left_it];
+                            symbol_member_indices[left_it] = symbol_member_indices[right_it];
+                            symbol_member_indices[right_it] = temp;
+                        }
+                    }
+                    
+                    // Swap the piveot element to the middle.
+                    struct string temp_string = string_table[left];
+                    string_table[left] = string_table[right_it];
+                    string_table[right_it] = temp_string;
+                    
+                    u16 temp = symbol_member_indices[left];
+                    symbol_member_indices[left] = symbol_member_indices[right_it];
+                    symbol_member_indices[right_it] = temp;
+                    
+                    if(left_it < right){
+                        sort_stack[sort_stack_at++] = right;
+                    }
+                    
+                    if(left < (s64)right_it - 1){
+                        sort_stack[sort_stack_at++] = right_it - 1;
+                    }else{
+                        left++;
+                    }
+                }
+                
+                if(sort_stack_at == 0) break;
+                
+                right = sort_stack[--sort_stack_at];
+            }
+            
+            memset(sort_stack, 0, sizeof(*sort_stack) * amount_of_symbols);
+            arena->current = (u8 *)sort_stack;
+        }
+        
+        struct library_node *library_node = push_struct(arena, struct library_node);
+        library_node->kind = LIBRARY_NODE_archive;
+        library_node->path = file_name;
+        library_node->file = file;
+        
+        library_node->archive.amount_of_members     = amount_of_members;
+        library_node->archive.member_offsets        = member_offsets;
+        library_node->archive.amount_of_symbols     = amount_of_symbols;
+        library_node->archive.symbol_member_indices = symbol_member_indices;
+        library_node->archive.import_symbol_string_table = string_table;
+        
+        sll_push_back(globals.libraries, library_node);
+        globals.libraries.amount += 1;
+        return 0;
     }
     
     // 
@@ -187,14 +295,14 @@ int ar_parse_file(struct string file_name, struct memory_arena *arena){
     
     u8 *string_buffer = (u8 *)(symbol_member_indices + amount_of_symbols);
     
-    struct library_import_table_node *string_table = push_data(arena, struct library_import_table_node, 0);
+    struct string *string_table = push_data(arena, struct string, 0);
     u64 amount_of_strings = 0;
     
     for(u8 *it = string_buffer; it < (u8 *)symbol_index_end;){
         struct string string = cstring_to_string((char *)it);
         it += string.size + 1;
         
-        push_struct(arena, struct library_import_table_node)->string = string;
+        *push_struct(arena, struct string) = string;
         
         amount_of_strings++;
     }
@@ -204,24 +312,22 @@ int ar_parse_file(struct string file_name, struct memory_arena *arena){
         return 1;
     }
     
-    u64 amount_of_import_symbols = push_data(arena, struct library_import_table_node, 0) - string_table;
-    if(amount_of_import_symbols == 0){
+    if(amount_of_strings == 0){
         print("Warning: Library '%s' does not export any symbols.\n", (char *)file_name.data);
         return 0;
     }
     
     struct library_node *library_node = push_struct(arena, struct library_node);
+    library_node->kind = LIBRARY_NODE_archive;
     library_node->path = file_name;
     library_node->file = file;
-    library_node->amount_of_members     = amount_of_members;
-    library_node->member_offsets        = member_offsets;
-    library_node->amount_of_symbols     = amount_of_symbols;
-    library_node->symbol_member_indices = symbol_member_indices;
-    library_node->import_symbol_string_table = string_table;
-    library_node->amount_of_import_symbols   = amount_of_import_symbols;
     
-    // @cleanup: In the future, we could thread this part and then this would need to be atomic.
-    //           This will also be true for '#pragma comment(lib, <...>)'.
+    library_node->archive.amount_of_members     = amount_of_members;
+    library_node->archive.member_offsets        = member_offsets;
+    library_node->archive.amount_of_symbols     = amount_of_symbols;
+    library_node->archive.symbol_member_indices = symbol_member_indices;
+    library_node->archive.import_symbol_string_table = string_table;
+    
     sll_push_back(globals.libraries, library_node);
     globals.libraries.amount += 1;
     return 0;
@@ -283,11 +389,11 @@ struct ar_symbol_lookup{
     {
         
         s64 min = 0;
-        s64 max = library_node->amount_of_import_symbols-1;
+        s64 max = library_node->archive.amount_of_symbols-1;
         while(max - min >= 0){
             s64 at = min + (max - min)/2;
             
-            int compare_result = string_compare_lexically(identifier, library_node->import_symbol_string_table[at].string);
+            int compare_result = string_compare_lexically(identifier, library_node->archive.import_symbol_string_table[at]);
             if(compare_result == 0) {
                 import_symbol_index = at;
                 break;
@@ -307,13 +413,14 @@ struct ar_symbol_lookup{
         symbol_index = (u32)import_symbol_index;
     }
     
-    assert(symbol_index < library_node->amount_of_symbols);
+    assert(symbol_index < library_node->archive.amount_of_symbols);
     // @note: These indices are one based for some stupid reason.
-    u16 member_index = library_node->symbol_member_indices[symbol_index];
-    if(member_index == 0 || member_index > library_node->amount_of_members){
+    u16 member_index = library_node->archive.symbol_member_indices[symbol_index];
+    if(member_index == 0 || member_index > library_node->archive.amount_of_members){
         print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
         return ret;
     }
+    
     member_index -= 1;
     
     struct os_file file = library_node->file;
@@ -351,7 +458,7 @@ struct ar_symbol_lookup{
         u8 ending_characters[2];
     };
     
-    u64 member_offset = (u64)library_node->member_offsets[member_index];
+    u64 member_offset = (u64)library_node->archive.member_offsets[member_index];
     if(member_offset + sizeof(struct ar_file_header) > file.size){
         print("Warning: A parse error occurred while looking up '%.*s' in library '%.*s'.\n", identifier.size, identifier.data, library_node->path.size, library_node->path.data);
         return ret;

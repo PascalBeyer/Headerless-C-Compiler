@@ -407,7 +407,6 @@ func struct define_node *lookup_define(struct context *context, struct atom name
 
 //_____________________________________________________________________________________________________________________
 
-
 func b32 u8_is_valid_in_c_ident(u8 a){
     // either ascii alpha numeric, $ or utf8 are allowed
     
@@ -2282,7 +2281,10 @@ func struct file *get_or_load_file_by_walking_system_include_directories(struct 
 func struct file *get_or_load_file_for_include_string(struct context *context, struct token *directive, struct string include_string, int is_system_include){
     
     include_string = push_zero_terminated_string_copy(context->arena, include_string);
+    
+#if _WIN32
     hacky_canonicalize_file_for_case_insensitivity(&include_string);
+#endif
     
     struct file *file = null;
     

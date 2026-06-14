@@ -46,7 +46,7 @@ typedef unsigned __int64 u64;
 typedef unsigned __int64 umm;
 typedef __int64 smm;
 
-#if 0 && defined(__HLC__)
+#if defined(__HLC__)
 #define PRINTLIKE __declspec(printlike)
 #else
 #define PRINTLIKE 
@@ -939,6 +939,67 @@ func void solidify_temporary_memory(struct temporary_memory temp){
 
 ////////////////////////////////////////////////////////////////
 
+func int data_is_utf8(u8 *data, smm length){
+    
+    u8 *s = data;
+    u8 *end = data + length;
+    
+    static u64 utf8_dfa[256] = {
+        0x7fffb9e58600, 0x186186cb, 0x187f865c, 0x190bc6fcf98, 0x190bc7d86e8, 0x186186b4, 0x18618600, 0x18618638, 
+        0x18618600, 0x7fffb9e7b679, 0x7fffb87fce60, 0x18778614, 0x7fffb9f7dec8, 0x18618770, 0x18618600, 0x7fffb9e7af37, 
+        0x18618600, 0x18618600, 0x18618600, 0x1b618609, 0x1e9ceff678, 0x18618610, 0x18618600, 0x18618600, 
+        0x18618600, 0x18618600, 0x18619600, 0x7fffb9f7a6a8, 0x18618600, 0x1a618602, 0x18618600, 0x18618600, 
+        0x18618600, 0x18618600, 0x18618604, 0x18618600, 0x1e9c75e600, 0x18618600, 0x1e9cefff20, 0x190bc6fbfa0, 
+        0x18618600, 0x7fffb9e7a7c0, 0x19018618600, 0x18618600, 0x18618600, 0x190bc6fbfa0, 0x1e9ceff678, 0x18618610, 
+        0x18618600, 0x2000000018618600, 0x18618602, 0x18618600, 0x18618600, 0x18618600, 0x1e9c75e600, 0x1e9ceffe08, 
+        0x1e9c75d650, 0x7fffb9e7a705, 0x18618600, 0x18618600, 0x7fffb9edd600, 0x7fffb9e78e4b, 0x7fffb9f7d7c0, 0x190bc6ffff0, 
+        0x18618600, 0x7ff7bd7fb600, 0x1e9ceff7a0, 0x7fffb9e78fb8, 0x190bc6fbf10, 0x19018618601, 0x1e9cefff20, 0x1e9c75d650, 
+        0x7fffb9f7d7c0, 0x7fffb9f7d710, 0x1e9ceff7a0, 0x7fffb9e5f68a, 0x190bc6fbf10, 0x7fffb9edd660, 0x18618600, 0x18618600, 
+        0x7fffb9f7d7c0, 0x7fffb9f7d710, 0x1861a600, 0x7fffb9edffdf, 0x18618600, 0x1e9ceff7f0, 0x18618601, 0x18618600, 
+        0x18618603, 0x190bc6f8730, 0x18618600, 0x7fffb9ed9669, 0x18618600, 0x18618600, 0x18618600, 0x218618600, 
+        0x1e18618648, 0x1e9c75d650, 0x18618600, 0x7fffb9ede6ad, 0x18618600, 0x190bc6fbf10, 0x18618600, 0x18618601, 
+        0x18618600, 0x18618600, 0x18618600, 0x1e9c75d650, 0x18618600, 0x190bc678600, 0x18618600, 0x7fffb9f386c1, 
+        0x18618600, 0x18618600, 0x18618600, 0x18618600, 0x1e9cefff20, 0x18618600, 0x7fffb9e58600, 0x7fffb9edde73, 
+        0x18618600, 0x7fffb9e58600, 0x18618600, 0x1e9c75e600, 0x18618600, 0x7fffb9edde28, 0x1e9cefff20, 0x18618600, 
+        0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 
+        0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x1f801830601b, 0x1830603b, 
+        0x200183b6018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 
+        0x7ff7bd3f7018, 0x1e9c74f018, 0x18306018, 0x1e9cbffe18, 0x18306018, 0x7fffb9b7f87b, 0x183b601c, 0x1830609a, 
+        0x190bc7fe938, 0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x190bcbd6fd8, 0x18306018, 0x190bcbd6018, 
+        0x190bcbd62b8, 0x18306018, 0x18306038, 0x190bcbd6cd8, 0x18306018, 0x18306018, 0x18306018, 0x18306038, 
+        0x18306018, 0x1830601c, 0x190bc7f6018, 0x1e9cbffb39, 0x1830601a, 0x7fffb9b7f3df, 0x190bcbd6018, 0x18306018, 
+        0x18306018, 0x18306018, 0x18306018, 0x18306018, 0x218306018, 0x18306018, 0x18306018, 0x18306018, 
+        0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x18618606, 
+        0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x1e9ceffff6, 0x18618606, 
+        0x18618607, 0x18618616, 0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x1e9ceffee6, 0x7fffbf75f617, 
+        0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x18618606, 0x1861860e, 0x118618606, 
+        0x1861860c, 0x1861860c, 0x1861860c, 0x1861860c, 0x1861860c, 0x7ff7bd7f9fdf, 0x1901861860c, 0x1861860c, 
+        0x1861860c, 0x1861860c, 0x1861860c, 0x1861860c, 0x1861860c, 0x1861860c, 0x1861860c, 0x1861860d, 
+        0x18618612, 0x1861861f, 0x18618612, 0x18618612, 0x118618612, 0x190bc7d9f9a, 0x190bc7d9f92, 0x190bc6fd61e, 
+        0x1861861c, 0x190bc6fcffe, 0x118618618, 0x190bc6fe77d, 0x190bc6fe778, 0x190bc6fe73c, 0x1861861c, 0x190bc6fe738, 
+    };
+    
+    u64 state = 0;
+    
+    for(; s + 4 < end; s += 4){
+        u8 c1 = s[0];
+        u8 c2 = s[1];
+        u8 c3 = s[2];
+        u8 c4 = s[3];
+        
+        state = (utf8_dfa[c1] >> (state & 63));
+        state = (utf8_dfa[c2] >> (state & 63));
+        state = (utf8_dfa[c3] >> (state & 63));
+        state = (utf8_dfa[c4] >> (state & 63));
+    }
+    
+    for(; s < end; s += 1){
+        state = (utf8_dfa[*s] >> (state & 63));
+    }
+    
+    return (state & 63);
+}
+
 func smm cstring_length(char *c_string){
     if(!c_string) return 0;
     u32 ret = 0;
@@ -1033,6 +1094,17 @@ func b32 string_match(struct string a, struct string b){
     return memcmp(a.data, b.data, a.size) == 0;
 }
 
+
+func b32 string_match_cstring(struct string a, char *c_string){
+    u8 *it = cast(u8 *)c_string;
+    for(smm i = 0; i < a.amount; i++, it++){
+        if(*it == 0) return false;
+        if(a.data[i] != *it) return false;
+    }
+    
+    return (*it == 0);
+}
+
 func b32 string_match_case_insensitive(struct string a, struct string b){
     if(a.length != b.length) return false;
     
@@ -1121,6 +1193,18 @@ func b32 string_lexically_smaller(struct string a, struct string b){
     if(a.size < b.size) return true;
     if(a.size > b.size) return false;
     return false;
+}
+
+func b32 string_lexically_smaller_equal(struct string a, struct string b){
+    smm size = min_of(a.size, b.size);
+    for(smm i = 0; i < size; i++){
+        if(a.data[i] < b.data[i]) return true;
+        if(a.data[i] > b.data[i]) return false;
+    }
+    
+    if(a.size < b.size) return true;
+    if(a.size > b.size) return false;
+    return true;
 }
 
 func int string_compare_lexically(struct string a, struct string b){
@@ -1511,7 +1595,7 @@ func void print_byte_range(u8 *start, smm amount){
 
 func b32 path_is_absolute(struct string path){
     if(path.size < 2) return false;
-    return u8_is_alpha(path.data[0]) && path.data[1] == ':';
+    return (u8_is_alpha(path.data[0]) && path.data[1] == ':') || path.data[0] == '/';
 }
 
 func b32 path_is_relative(struct string path){
@@ -1723,7 +1807,7 @@ func u64 u64_round_up_to_next_power_of_two(u64 v){
 /////////////////////////////////////////////////
 
 
-typedef  union ALIGNED(16){
+typedef union ALIGNED(16){
     struct{
         s64 ptr1;
         s64 ptr2;

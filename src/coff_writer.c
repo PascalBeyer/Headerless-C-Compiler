@@ -524,7 +524,7 @@ int write_msf(struct memory_arena *arena, char *file_name, struct msf_stream *st
     u8 ones_buffer[0x1000]; // Used to write free page maps.
     memset(ones_buffer, 0xff, 0x1000);
     
-    HANDLE file_handle = os_open_file(file_name);
+    HANDLE file_handle = os_open_file(file_name, OS_OPEN_write);
     if(file_handle == 0) return 0;
     
     os_file_write(file_handle, msf_header, 0x1000);
@@ -761,8 +761,11 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
     struct string root_file_name = strip_file_extension(output_file_path);
     struct string exe_full_path = push_format_string(arena, "%.*s",  output_file_path.size, output_file_path.data);
     struct string pdb_full_path = push_format_string(arena, "%.*s.pdb", root_file_name.size, root_file_name.data);
+    
+#ifdef _WIN32
     replace_characters(pdb_full_path, "/", '\\');
     replace_characters(exe_full_path, "/", '\\');
+#endif
     
     /////////////////////////////////////////////////////////////////////////////////////
     //                              start writing the exe                              //
@@ -1484,9 +1487,9 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             image_optional_header->data_directory[0].size = to_u32(arena_current(arena) - edata_start);
             
 #define function_node_smaller(a, b) \
-            string_lexically_smaller( \
-                    token_get_string(((struct ast_function *)a->value)->identifier), \
-                    token_get_string(((struct ast_function *)b->value)->identifier))
+string_lexically_smaller( \
+        token_get_string(((struct ast_function *)a->value)->identifier), \
+        token_get_string(((struct ast_function *)b->value)->identifier))
             
             sll_sort(dllexports, scratch, function_node_smaller);
 #undef function_node_smaller
@@ -1879,7 +1882,7 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
             u8 *buffer = exe_base_address;
             smm buffer_size = size;
             
-            HANDLE file_handle = os_open_file(exe_name);
+            HANDLE file_handle = os_open_file(exe_name, OS_OPEN_write);
             
             success = os_file_write(file_handle, buffer, buffer_size);
             

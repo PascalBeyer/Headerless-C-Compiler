@@ -300,22 +300,55 @@ struct dll_node{
     } import_list;
 };
 
+struct so_import_node{
+    struct so_import_node *next;
+    struct atom import_name;
+};
+
+struct shared_object_node{
+    struct shared_object_node *next;
+    struct string name;
+    
+    struct{
+        struct so_import_node *first;
+        struct so_import_node *last;
+        smm count;
+    }import_list;
+};
+
 struct library_node{
     struct library_node *next;
-    struct string path;
     
+    struct string path;
     struct os_file file;
     
-    u32  amount_of_members;
-    u32 *member_offsets;
-    u32  amount_of_symbols;
-    u16 *symbol_member_indices;
+    enum library_node_kind{
+        LIBRARY_NODE_archive,
+        LIBRARY_NODE_shared_object,
+    } kind;
     
-    u64 amount_of_import_symbols;
+    struct ar_library_node{
+        u32  amount_of_members;
+        u32 *member_offsets;
+        u32  amount_of_symbols;
+        u16 *symbol_member_indices;
+        
+        struct string *import_symbol_string_table;
+    } archive;
     
-    struct library_import_table_node{
-        struct string string;
-    } *import_symbol_string_table;
+    struct so_library_node{
+        u32 *hash_buckets;
+        u32 *hash_chains;
+        u32 hash_bucket_count;
+        
+        
+        u64 dynamic_symbol_count;
+        u64 dynamic_symbol_section_offset;
+        u64 dynamic_symbol_table_entry_size;
+        
+        u8 *string_table;
+        u64 string_table_size;
+    } shared_object;
 };
 
 
@@ -437,6 +470,12 @@ static struct{
         struct dll_node *last;
         smm amount;
     } dlls;
+    
+    struct{
+        struct shared_object_node *first;
+        struct shared_object_node *last;
+        smm amount;
+    } shared_objects;
     
     struct string_list library_paths;
     struct{
@@ -1050,6 +1089,7 @@ func struct string push_token_string(struct context *context, struct token *toke
 //_____________________________________________________________________________________________________________________
 
 #include "ar.c"
+#include "elf.c"
 //_____________________________________________________________________________________________________________________
 
 
@@ -2880,7 +2920,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         
         smm preprocessed_file_size = (char *)arena_current(&context->scratch) - preprocessed_file_start;
         
-        os_write_file(globals.preprocessed_file_handle, preprocessed_file_start, preprocessed_file_size);
+        os_file_write(globals.preprocessed_file_handle, preprocessed_file_start, preprocessed_file_size);
         return;
     }
     
@@ -3679,13 +3719,15 @@ func void add_system_include_directory(struct memory_arena *arena, struct string
     string_list_add_uniquely(&globals.system_include_directories, arena, directory_path);
 }
 
+#if _WIN32
+
 #pragma comment(lib, "Advapi32.lib")
 __declspec(dllimport) u32 RegOpenKeyExA(HANDLE key, char *sub_key, u32 option, u32 desired_access, HANDLE *out_key);
 __declspec(dllimport) u32 RegQueryValueExA(HANDLE key, char *value_name, u32 *reserved, u32 *opt_out_type, u8 *opt_out_data, u32 *opt_out_length);
 __declspec(dllimport) u32 RegEnumKeyExA(HANDLE key, u32 index, char *out_sub_key_name, u32 *in_out_sub_key_name_size, u32 *reserved, char *opt_in_out_class, u32 *opt_in_out_class_size, void *last_write_time);
 __declspec(dllimport) u32 RegCloseKey(HANDLE key);
 
-#if _WIN32
+
 // 
 // https://learn.microsoft.com/en-us/cpp/porting/upgrade-your-code-to-the-universal-crt?view=msvc-170
 // 
@@ -4079,11 +4121,12 @@ int main(int argc, char *argv[]){
     
     if(globals.output_file_type == OUTPUT_FILE_obj) globals.cli_options.no_entry = 1;
     
-    
     int no_standard_library = globals.cli_options.no_stdlib;
     
     add_system_include_directory(arena, strip_file_name(compiler_path), string("/implicit/include"), false);
     
+    globals.library_paths = globals.cli_options.LIBPATH;
+    string_list_add_uniquely(&globals.library_paths, arena, working_directory);
     
 #if _WIN32
     
@@ -4093,22 +4136,14 @@ int main(int argc, char *argv[]){
     struct string um_library_path   = push_format_string(arena, "%.*s\\Lib\\%llu.%llu.%llu.%llu\\um\\x64\\",   windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
     struct string ucrt_library_path = push_format_string(arena, "%.*s\\Lib\\%llu.%llu.%llu.%llu\\ucrt\\x64\\", windows_kits_path.size, windows_kits_path.data, sdk_version[0], sdk_version[1], sdk_version[2], sdk_version[3]);
     
-    
-    globals.library_paths = globals.cli_options.LIBPATH;
-    
     // @note: For now we always add the library paths, even if 'no_standard_library'.
     // @cleanup: There is no reason for library_paths to be global anymore.
-    string_list_add_uniquely(&globals.library_paths, arena, working_directory);
     string_list_add_uniquely(&globals.library_paths, arena, um_library_path);
     string_list_add_uniquely(&globals.library_paths, arena, ucrt_library_path);
     
     // Process the -l options.
     for(struct string_list_node *library_node = globals.cli_options.l.list.first; library_node; library_node = library_node->next){
-        struct string library = library_node->string;
-        if(!string_match(get_file_extension(library), string(".lib"))){
-            library = string_concatenate(arena, library, string(".lib"));
-        }
-        add_specified_library(arena, library, null);
+        add_specified_library(arena, library_node->string, null);
     }
     
     if(globals.output_file_type != OUTPUT_FILE_obj && !no_standard_library){
@@ -4146,7 +4181,32 @@ int main(int argc, char *argv[]){
     
     if(!no_standard_library) add_system_include_directory(arena, windows_kits_include_base, string("/ucrt"),   false);
     
-#endif // _WIN32
+#else // _WIN32
+    
+    string_list_add_uniquely(&globals.library_paths, arena, working_directory);
+    string_list_add_uniquely(&globals.library_paths, arena, string("/usr/local/lib/x86_64-linux-gnu"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/lib/x86_64-linux-gnu"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/usr/lib/x86_64-linux-gnu"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/usr/lib/x86_64-linux-gnu64"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/usr/local/lib64"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/lib64"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/usr/lib64"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/usr/local/lib"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/lib"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/usr/lib"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/usr/x86_64-linux-gnu/lib64"));
+    string_list_add_uniquely(&globals.library_paths, arena, string("/usr/x86_64-linux-gnu/lib"));
+    
+    // Process the -l options.
+    for(struct string_list_node *library_node = globals.cli_options.l.list.first; library_node; library_node = library_node->next){
+        add_specified_library(arena, string_concatenate(arena, string("lib"), library_node->string), null);
+    }
+    
+    add_system_include_directory(arena, string("/usr/local/include"), string(""), false);
+    add_system_include_directory(arena, string("/usr/include/x86_64-linux-gnu"), string(""), false);
+    add_system_include_directory(arena, string("/usr/include"), string(""), false);
+    
+#endif // linux
     
 #ifdef PRINT_SYSTEM_INCLUDE_PATHS
     if(!globals.cli_options.quiet){
@@ -4237,12 +4297,15 @@ globals.typedef_##postfix = (struct ast_type){                                  
             }
             
             if(!globals.cli_options.no_predefines){
-                struct string hardcoded_predefines = string(
+                struct string hardcoded_predefines = string_from_cstring(
                         "#define __HLC__ 1\n"            
                         "#define _M_X64 100\n"
                         "#define _M_AMD64 100\n"
+                        
+        #if _WIN32
                         "#define _WIN64 1\n"
                         "#define _WIN32 1\n"
+        #endif
                         
                         "#define _MSC_EXTENSIONS 1\n"
                         
@@ -4264,6 +4327,17 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         "#define __STDC_NO_THREADS__ 1\n"
                         "#define __STDC_NO_VLA__     1\n"
                         // "#define __STDC_NO_ATOMICS__ 1\n"
+                        
+        #ifndef _WIN32
+                        "#define __STDC_VERSION__ 201112L\n"
+                        "#define __STDC__ 1\n" // @note: Don't define this on Windows as some Microsoft headers work differently if this is specified.
+                        "#define __x86_64__ 1\n"
+                        "#define __x86_64 1\n"
+                        "#define __GNUC_MINOR__ 2\n"
+                        "#define __GNUC_PATCHLEVEL__ 1\n"
+                        "#define __GNUC_STDC_INLINE__ 1\n"
+                        "#define __GNUC__ 4\n"
+        #endif
                         );
                 
                 
@@ -4782,7 +4856,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     struct string absolute_file_path = push_format_string(arena, "%.*s/%.*s", directory_path.size, directory_path.data, file_name.size, file_name.data);
                     struct string include_string     = create_string(absolute_file_path.data + (node->string.amount + 1), absolute_file_path.size - (node->string.amount + 1));
                     
+#if _WIN32
                     hacky_canonicalize_file_for_case_insensitivity(&include_string);
+#endif
                     
                     u64 hash = string_djb2_hash(include_string);
                     
@@ -4847,7 +4923,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 return 1;
             }
             
-            globals.preprocessed_file_handle = os_open_file((char *)output_file_name.data);
+            globals.preprocessed_file_handle = os_open_file((char *)output_file_name.data, OS_OPEN_write);
         }else{
             globals.preprocessed_file_handle = stdout;
         }
@@ -5312,13 +5388,35 @@ globals.typedef_##postfix = (struct ast_type){                                  
             if(path_is_absolute(library)){
                 full_library_path = push_zero_terminated_string_copy(context->arena, library);
             }else{
-                for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
+                for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node; library_path_node = library_path_node->next){
                     struct string file_path = concatenate_file_paths(context->arena, library_path_node->string, library);
-                    struct os_file file = os_load_file((char *)file_path.data, 0, 0);
                     
-                    if(!file.file_does_not_exist){
-                        full_library_path = file_path;
-                        break;
+                    if(!get_file_extension(file_path).size){
+#if _WIN32
+                        static struct string library_file_extensions[] = {const_string(".lib")};
+#else
+                        static struct string library_file_extensions[] = {const_string(".so"), const_string(".a")};
+#endif
+                        
+                        for(u32 file_extension_index = 0; file_extension_index < array_count(library_file_extensions); file_extension_index++){
+                            file_path = string_concatenate(context->arena, file_path, library_file_extensions[file_extension_index]);
+                            
+                            struct os_file file = os_load_file((char *)file_path.data, 0, 0);
+                            
+                            if(!file.file_does_not_exist){
+                                full_library_path = file_path;
+                                break;
+                            }
+                        }
+                        
+                        if(full_library_path.data) break;
+                    }else{
+                        struct os_file file = os_load_file((char *)file_path.data, 0, 0);
+                        
+                        if(!file.file_does_not_exist){
+                            full_library_path = file_path;
+                            break;
+                        }
                     }
                 }
                 
@@ -5327,8 +5425,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     report_error(context, node->pragma_compilation_unit_token, "Error: Could not find specified library '%.*s'.\n", library.size, library.data);
                     
                     report_error(context, null, "Library paths:");
-                    for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node;  library_path_node= library_path_node->next){
-                                report_error(context, null, "    %.*s", library_path_node->string.size, library_path_node->string.data);
+                    for(struct string_list_node *library_path_node = globals.library_paths.list.first; library_path_node; library_path_node = library_path_node->next){
+                        report_error(context, null, "    %.*s", library_path_node->string.size, library_path_node->string.data);
                     }
                     report_error(context, null, "");
                     report_error(context, null, "You can add your own library search paths using /LIBPATH option.");
@@ -5338,11 +5436,146 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 }
             }
             
-            int parse_error = ar_parse_file(full_library_path, context->arena);
-            if(parse_error){
-                report_error(context, null, "Error: Failed to parse library '%.*s'.", full_library_path.size, full_library_path.data);
-                globals.an_error_has_occurred = true;
+            struct string_list library_list = {0};
+            string_list_postfix_no_copy(&library_list, arena, full_library_path);
+            
+            struct string linker_script_file_name = {0}; // We are just going to assume for now (for the error message) that linker script do not refer to other linker scripts.
+            
+            for(struct string_list_node *string_list_node = library_list.list.first; string_list_node; string_list_node = string_list_node->next){
+                full_library_path = string_list_node->string;
+                
+                struct os_file file = load_file_into_arena((char *)full_library_path.data, arena);
+                
+                if(file.file_does_not_exist){
+                    if(linker_script_file_name.data){
+                        report_error(context, null, "Error: Library '%.*s' specified in linker script '%.*s' does not exist.", full_library_path.size, full_library_path.data, linker_script_file_name.size, linker_script_file_name.data);
+                    }else{
+                        report_error(context, null, "Error: Library '%.*s' does not exist.", full_library_path.size, full_library_path.data);
+                    }
+                    globals.an_error_has_occurred = true;
+                    continue;
+                }
+                
+                if(file.size >= 8 && memcmp(file.data, "!<arch>\n", 8) == 0){
+                    int parse_error = ar_parse_file(file, full_library_path, context->arena);
+                    if(parse_error){
+                        report_error(context, null, "Error: Failed to parse library '%.*s'.", full_library_path.size, full_library_path.data);
+                        globals.an_error_has_occurred = true;
+                    }
+                }else if(file.size >= 4 && memcmp(file.data, "\x7f" "ELF", 4) == 0){
+                    int parse_error = elf_parse_file(file, full_library_path, context->arena);
+                    if(parse_error){
+                        report_error(context, null, "Error: Failed to parse shared object file '%.*s'.", full_library_path.size, full_library_path.data);
+                        globals.an_error_has_occurred = true;
+                    }
+                }else if(data_is_utf8(file.data, file.size)){
+                    
+                    linker_script_file_name = full_library_path;
+                    
+                    struct string linker_script = create_string(file.data, file.size);
+                    
+                    struct string *tokens = push_data(arena, struct string, 0);
+                    
+                    while(linker_script.size){
+                        eat_whitespaces_and_newlines(&linker_script);
+                        
+                        if(!linker_script.size) break;
+                        
+                        u8 *start = linker_script.data;
+                        
+                        if(string_front_match(linker_script, "/*")){
+                            while(linker_script.size){
+                                eat_until_char(&linker_script, '*', true);
+                                if(linker_script.size && linker_script.data[0] == '/'){
+                                    string_eat_front(&linker_script, 1);
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
+                        
+                        if(linker_script.data[0] == '#'){
+                            eat_until_char(&linker_script, '\n', true);
+                            continue;
+                        }
+                        
+                        if(linker_script.data[0] == '"'){
+                            string_eat_front(&linker_script, 1);
+                            eat_until_char(&linker_script, '"', true);
+                        }else{
+                            struct string directive_or_file_path = string_eat_characters_front(&linker_script, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.$/\\~=+[]*?-!^:");
+                            if(!directive_or_file_path.size){
+                                // Open parens and stuff.
+                                string_eat_front(&linker_script, 1);
+                            }
+                        }
+                        
+                        u8 *end = linker_script.data;
+                        assert(start != end);
+                        
+                        struct string *out = push_struct(arena, struct string);
+                        out->data = start;
+                        out->size = end - start;
+                    }
+                    
+                    u64 amount_of_tokens = push_data(arena, struct string, 0) - tokens;
+                    
+#define get_token() (token_index < amount_of_tokens) ? tokens[token_index++] : string("")
+                    
+                    for(u64 token_index = 0; token_index < amount_of_tokens;){
+                        
+                        struct string directive = get_token();
+                        if(!string_match(get_token(), string("("))){
+                            report_error(context, null, "Failed to parse linker script '%.*s'. Expected '(' after directive '%.*s' at top level.", full_library_path.size, full_library_path.data, directive.size, directive.data);
+                            break;
+                        }
+                        
+                        if(string_match(directive, string("OUTPUT_FORMAT"))){
+                            for(struct string format = get_token(); token_index < amount_of_tokens; format = get_token()){
+                                if(string_match(format, string(")"))) break;
+                                
+                                // @cleanup: Check the format?
+                            }
+                        }else if(string_match(directive, string("GROUP"))){
+                            for(struct string path_or_as_needed = get_token(); token_index < amount_of_tokens; path_or_as_needed = get_token()){
+                                if(string_match(path_or_as_needed, string(")"))) break;
+                                
+                                if(string_match(path_or_as_needed, string("AS_NEEDED"))){
+                                    
+                                    if(!string_match(get_token(), string("("))){
+                                        report_error(context, null, "Failed to parse linker script '%.*s'. Expected '(' after directive '%.*s' inside '%.*s'.", full_library_path.size, full_library_path.data, path_or_as_needed.size, path_or_as_needed.data, directive.size, directive.data);
+                                        break;
+                                    }
+                                    
+                                    for(struct string path = get_token(); token_index < amount_of_tokens; path = get_token()){
+                                        if(string_match(path, string(")"))) break;
+                                        
+                                        path = push_zero_terminated_string_copy(arena, path);
+                                        string_list_postfix_no_copy(&library_list, arena, path);
+                                    }
+                                }else{
+                                    path_or_as_needed = push_zero_terminated_string_copy(arena, path_or_as_needed);
+                                    string_list_postfix_no_copy(&library_list, arena, path_or_as_needed);
+                                }
+                            }
+                        }else{
+                            print("Warning: Unhandled linker script directive '%.*s' in script '%.*s'\n", directive.size, directive.data, full_library_path.size, full_library_path.data);
+                            
+                            for(struct string format = get_token(); token_index < amount_of_tokens; format = get_token()){
+                                if(string_match(format, string(")"))) break;
+                            }
+                        }
+                        
+                        if(!string_match(tokens[token_index-1], string(")"))){
+                            report_error(context, null, "Failed to parse linker script '%.*s'. Expected ')' ending directive '%.*s' at top level.", full_library_path.size, full_library_path.data, directive.size, directive.data);
+                        }
+                    }
+#undef get_token
+                }else{
+                    print("Linking to unknown file %.*s\n", full_library_path.size, full_library_path.data);
+                }
             }
+            
         }
         
         if(globals.an_error_has_occurred) goto end;
