@@ -388,6 +388,7 @@ enum output_file_type{
     OUTPUT_FILE_dll,
     OUTPUT_FILE_obj,
     OUTPUT_FILE_efi,
+    OUTPUT_FILE_elf,
 };
 
 // :globals
@@ -1242,23 +1243,6 @@ func struct string push_type_string(struct memory_arena *arena, struct memory_ar
     }
     
     return ret;
-}
-
-//_____________________________________________________________________________________________________________________
-
-func void ast_list_append(struct ast_list *list, struct memory_arena *arena, enum ast_kind *ast){
-    struct ast_list_node *new = push_uninitialized_struct(arena, struct ast_list_node);
-    if(list->last){
-        list->last->next = new;
-    }else{
-        list->first = new;
-    }
-    
-    new->value = ast;
-    new->next = 0;
-    list->last = new;
-    
-    list->count++;
 }
 
 //_____________________________________________________________________________________________________________________
@@ -4104,6 +4088,7 @@ int main(int argc, char *argv[]){
             if(string_match(output_extension, string(".dll"))) globals.output_file_type = OUTPUT_FILE_dll;
             if(string_match(output_extension, string(".obj"))) globals.output_file_type = OUTPUT_FILE_obj;
             if(string_match(output_extension, string(".efi"))) globals.output_file_type = OUTPUT_FILE_efi;
+            if(string_match(output_extension, string(".elf"))) globals.output_file_type = OUTPUT_FILE_elf;
         }
         
         // A no_entry file ought to be a dll.
@@ -4733,18 +4718,20 @@ globals.typedef_##postfix = (struct ast_type){                                  
         struct declarator_return poison_declarator = {.ident = globals.invalid_identifier_token, .type = &globals.typedef_poison };
         globals.poison_declaration = push_declaration_for_declarator(context, poison_declarator);
         
-        // 
-        // Special _Linker_ declarations. @cleanup _ImageBase.
-        // 
-        
-        struct declarator_return _tls_index_declarator = {
-            .ident = push_dummy_token(arena, atom_for_string(string("_tls_index")), TOKEN_identifier),
-            .type  = &globals.typedef_u32,
-        };
-        globals.tls_index_declaration = push_declaration_for_declarator(context, _tls_index_declarator);
-        globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_intrinsic;
-        globals.tls_index_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
-        ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->kind, globals.tls_index_declaration->identifier);
+        if(globals.output_file_type != OUTPUT_FILE_elf){
+            // 
+            // Special _Linker_ declarations. @cleanup _ImageBase.
+            // 
+            
+            struct declarator_return _tls_index_declarator = {
+                .ident = push_dummy_token(arena, atom_for_string(string("_tls_index")), TOKEN_identifier),
+                .type  = &globals.typedef_u32,
+            };
+            globals.tls_index_declaration = push_declaration_for_declarator(context, _tls_index_declarator);
+            globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_intrinsic;
+            globals.tls_index_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
+            ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->kind, globals.tls_index_declaration->identifier);
+        }
         
         if(!globals.cli_options.warning_limit_specified) globals.cli_options.warning_limit = 100;
         if(!globals.cli_options.error_limit_specified)   globals.cli_options.error_limit = 100;
@@ -5121,6 +5108,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             char *pre_main_file_envp;
         } table[] = {
             // Table is in order of preference.
+            
             { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("_start")},
             { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main"),     "implicit/pre_main.c",    "implicit/pre_main_no_args.c",  "implicit/pre_main_envp.c"},
             { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain"),    "implicit/pre_wmain.c",   "implicit/pre_wmain_no_args.c", "implicit/pre_wmain_envp.c"},
@@ -5132,6 +5120,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
             { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("_start") },
             { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("efi_main") },
             { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("EfiMain") },
+            
+            { OUTPUT_FILE_elf, SUBSYSTEM_console, const_string("_start")},
+            { OUTPUT_FILE_elf, SUBSYSTEM_console, const_string("main")},
         };
         
         for(u32 index = 0; index < array_count(table); index++){
@@ -5239,8 +5230,12 @@ globals.typedef_##postfix = (struct ast_type){                                  
             }
         }
         
+        #if _WIN32
         // Default to .exe
         if(globals.output_file_type == OUTPUT_FILE_unset) globals.output_file_type = OUTPUT_FILE_exe;
+        #else
+        if(globals.output_file_type == OUTPUT_FILE_unset) globals.output_file_type = OUTPUT_FILE_elf;
+        #endif
     }
     
     // Infer the subsystem by the output file type.
@@ -5250,6 +5245,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
             case OUTPUT_FILE_exe: globals.subsystem = SUBSYSTEM_console; break;
             case OUTPUT_FILE_dll: globals.subsystem = SUBSYSTEM_windows; break;
             case OUTPUT_FILE_efi: globals.subsystem = SUBSYSTEM_efi_application; break;
+            
+            // @hmm:
+            case OUTPUT_FILE_elf: globals.subsystem = SUBSYSTEM_console; break;
             default: invalid_code_path;
         }
     }
@@ -5367,7 +5365,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
     // which we have build while parsing. We walk this graph and queue all functions that are referenced
     // into the 'work_queue_stage_three'.
     // We then emit all of the code for these functions. At any point we could encounter a global identifier
-    // which we have not yet emitted. In this case we emit a 'patch' which then gets filled in during  'print_coff'.
+    // which we have not yet emitted. In this case we emit a 'patch' which then gets filled in during  'write_coff'.
     
     stage_three_emit_code_time = os_get_time_in_seconds();
     
@@ -5604,6 +5602,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 case OUTPUT_FILE_exe: file_type = "file type '.exe'"; break;
                 case OUTPUT_FILE_dll: file_type = "file type '.dll'"; break;
                 case OUTPUT_FILE_efi: file_type = "file type '.efi'"; break;
+                case OUTPUT_FILE_elf: file_type = "file type elf"; break;
                 default: file_type = "???"; break;
             }
             
@@ -5625,7 +5624,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 struct string attempted = string_list_flatten(attempted_entry_point_string_list, arena);
                 report_error(context, null, "       Attempted to find the following: %.*s.", attempted.size, attempted.data);
             }
-            report_error(context, null, "       You can either add a pre-main file from the '%.*s/implicit' directory as a compilation unit,", compiler_path.size, compiler_path.data);
+            
+            struct string compiler_directory = strip_file_name(compiler_path);
+            report_error(context, null, "       You can either add a pre-main file from the '%.*s/implicit' directory as a compilation unit,", compiler_directory.size, compiler_directory.data);
             report_error(context, null, "       or you can specify an entry point for your program using the '/entry:<name>' command line option.");
             
             end_error_report(context);
@@ -5951,6 +5952,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     case OUTPUT_FILE_dll: file_extension = string(".dll"); break;
                     case OUTPUT_FILE_obj: file_extension = string(".obj"); break;
                     case OUTPUT_FILE_efi: file_extension = string(".efi"); break;
+                    case OUTPUT_FILE_elf: file_extension = string(""); break;
                     invalid_default_case();
                 }
                 output_file_path = string_concatenate(arena, output_file_path, file_extension);
@@ -5962,9 +5964,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
         emit_arena.out_of_memory_string = "Error: Maximum executable file size exceeded. Cannot emit a valid executable file.\n"; // :Error
         
         if(globals.output_file_type == OUTPUT_FILE_obj){
-            print_obj(output_file_path, &emit_arena, arena); 
+            write_obj(output_file_path, &emit_arena, arena); 
+        }else if(globals.output_file_type == OUTPUT_FILE_elf){
+            write_elf(output_file_path, &emit_arena, arena);
         }else{
-            print_coff(output_file_path, &emit_arena, arena); 
+            write_coff(output_file_path, &emit_arena, arena); 
         }
     }
     

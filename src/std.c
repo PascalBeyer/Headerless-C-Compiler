@@ -1145,6 +1145,17 @@ func b32 string_front_match_eat(struct string *a, char *c_string){
     }
 }
 
+func int string_contains(struct string haystack, struct string needle){
+    if(haystack.size < needle.size) return 0;
+    
+    for(smm index = 0; index <= haystack.size - needle.size; index++){
+        struct string slice = create_string(haystack.data + index, needle.size);
+        if(string_match(slice, needle)) return 1;
+    }
+    
+    return 0;
+}
+
 //@note: this should probably return 'front'
 func struct string string_eat_front(struct string *a, smm amount){
     struct string ret = create_string(a->data, amount);

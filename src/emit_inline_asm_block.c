@@ -698,6 +698,11 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 emit(operand->value);
             }break;
             
+            case MEMONIC_syscall:{
+                emit(0x0f);
+                emit(0x05);
+            }break;
+            
             case MEMONIC_cmpxchg16b:{
                 asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_A, 8);
                 asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_C, 8);

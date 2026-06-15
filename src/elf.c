@@ -234,3 +234,1048 @@ struct elf_symbol *elf_lookup_symbol(struct library_node *library_node, struct s
     
     return found;
 }
+
+void write_elf(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
+    
+    push_align(arena, 0x1000);
+    
+    u8 *elf_base = arena_current(arena);
+    
+    // 
+    // ELF-layout:
+    // 
+    //    Elf-header
+    //    Program headers
+    //    section headers
+    //    
+    
+    struct elf_header{
+        u8 magic[4];
+        u8 size_value;
+        u8 endianess_value;
+        u8 elf_header_version;
+        u8 abi;
+        u8 abi_version;
+        u8 padding[7];
+        u16 object_file_type;
+        u16 machine_type;
+        u32 elf_version;
+        u64 entry_point;
+        u64 program_header_table_offset;
+        u64 section_header_table_offset;
+        u32 flags;
+        u16 elf_header_size;
+        u16 program_header_table_entry_size;
+        u16 program_header_table_entry_count;
+        u16 section_header_table_entry_size;
+        u16 section_header_table_entry_count;
+        u16 section_name_section_table_index;
+    } *elf_header = push_struct(arena, struct elf_header);
+    
+    elf_header->magic[0] = 0x7f;
+    elf_header->magic[1] = 'E';
+    elf_header->magic[2] = 'L';
+    elf_header->magic[3] = 'F';
+    elf_header->size_value = /*64-bit*/2;
+    elf_header->endianess_value = /*little*/1;
+    elf_header->elf_header_version = 1;
+    elf_header->abi = 3;
+    elf_header->abi_version = 0;
+    elf_header->object_file_type = /*ET_EXEC*/2; // @cleanup: for so /*ET_DYN*/3
+    elf_header->machine_type = /*x64*/0x3E;
+    elf_header->elf_version = 1;
+    elf_header->flags = 0;
+    elf_header->elf_header_size = sizeof(*elf_header);
+    
+    // 
+    // Program headers:
+    // 
+    //    These are sort of the same thing as section headers on windows.
+    //    They declare a mapping between stuff in the file to stuff in the loaded image
+    //    and permissions. They are not supposed to tell you where what data is.
+    //    We have to align for the data after the program headers, and we assume
+    //    (for now) that there are never going to be more program headers than fit into 0x1000.
+    // 
+    
+    push_align(arena, 0x1000);
+    
+    struct elf_program_header{
+        u32 type;
+        u32 flags;
+        u64 offset;
+        u64 virtual_address;
+        u64 physical_address;
+        u64 file_size;
+        u64 memory_size;
+        u64 alignment;
+    } *program_headers = (void *)(elf_header + 1);
+    
+    elf_header->program_header_table_entry_size = sizeof(*program_headers);
+    elf_header->program_header_table_offset = (u8 *)program_headers - elf_base;
+    
+    u64 program_header_at = 0;
+    
+    // 
+    // There is an initial program header covering the elf-header and the program headers.
+    // 
+    // We don't know the size yet!
+    struct elf_program_header *elf_header_program_header = program_headers + program_header_at++;
+    elf_header_program_header->type  = /*PT_LOAD*/1;
+    elf_header_program_header->flags = /*read*/4;
+    elf_header_program_header->offset = 0;
+    elf_header_program_header->virtual_address = 0x400000;
+    elf_header_program_header->physical_address = 0x400000;
+    elf_header_program_header->alignment = 0x1000;
+    
+    // 
+    // We assume for not that there are less than 0x10 program headers.
+    // 
+    
+    struct elf_section_header{
+        u32 name_offset;
+        u32 type;
+        u64 flags;
+        u64 address;
+        u64 offset;
+        u64 size;
+        u32 linked_section;
+        u32 info;
+        u64 alignment;
+        u64 entry_size;
+    } *section_headers = (void *)(program_headers + 0x10);
+    
+    elf_header->section_header_table_entry_size = sizeof(*section_headers);
+    elf_header->section_header_table_offset = (u8 *)section_headers - elf_base;
+    
+    u64 section_header_at = 1; // @note: the first section header is always empty.
+    
+    struct string_list section_name_string_table = {0}; // We gather up the section names and emit them in the end.
+    string_list_postfix_no_copy(&section_name_string_table, scratch, string("\0"));
+    
+    // 
+    // Gather the symbols.
+    // 
+    
+    struct ast_list defined_functions = zero_struct;
+    
+    for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+        
+        struct ast_table *table = &compilation_unit->static_declaration_table;
+        
+        for(u64 table_index = 0; table_index < table->capacity; table_index++){
+            enum ast_kind *ast = table->nodes[table_index].ast;
+            if(!ast) continue;
+            
+            struct ast_declaration *decl = (struct ast_declaration *)ast;
+            
+            // If this is one of the local declaration tables, all members in here should be static.
+            if(table->nodes != globals.global_declarations.nodes) assert(decl->flags & DECLARATION_FLAGS_is_static);
+         
+            
+            switch(*ast){
+                case IR_function:{
+                    struct ast_function *function = (struct ast_function *)ast;
+                    
+                    if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                    if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic)  continue;
+                    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
+                    
+                    ast_list_append(&defined_functions, scratch, &function->kind);
+                }break;
+                invalid_default_case();
+            }
+        }
+    }
+    
+    u8 *text_section_start = arena_current(arena);
+    {
+        
+        for_ast_list(defined_functions){
+            struct ast_function *function = cast(struct ast_function *)it->value;
+            
+            smm function_size = function->byte_size;
+            
+            u8 *memory_for_function = push_uninitialized_data(arena, u8, function_size);
+            memcpy(memory_for_function, function->memory_location, function_size);
+            push_align_initialized_to_specific_value(arena, 16, 0xcc);
+            
+            function->offset_in_text_section   = memory_for_function - text_section_start;
+            function->memory_location          = memory_for_function;
+            // function->relative_virtual_address = make_relative_virtual_address(text_section_start, memory_for_function);
+        }
+    }
+    
+    {
+        // 
+        // Create a program header for the rx memory.
+        // 
+        struct elf_program_header *rx_program_header = program_headers + program_header_at++;
+        u64 section_size = arena_current(arena) - text_section_start;
+        rx_program_header->type  = /*PT_LOAD*/1;
+        rx_program_header->flags = /*rx*/5;
+        rx_program_header->offset = text_section_start - elf_base;
+        rx_program_header->virtual_address = 0x401000;
+        rx_program_header->physical_address = 0x401000;
+        rx_program_header->file_size   = section_size;
+        rx_program_header->memory_size = section_size;
+        rx_program_header->alignment = 0x1000;
+    }
+    
+    {
+        // 
+        // Create a section header for the .text section.
+        // 
+        struct elf_section_header *text_section_header = section_headers + section_header_at++;
+        u64 name_offset = section_name_string_table.total_size;
+        string_list_postfix_no_copy(&section_name_string_table, scratch, string(".text\0"));
+        text_section_header->name_offset = (u32)name_offset;
+        text_section_header->type = /*SHT_PROGBITS*/1;
+        text_section_header->flags = /*SHF_ALLOC|SHF_EXECINSTR*/6;
+        text_section_header->address = 0x401000;
+        text_section_header->offset = text_section_start - elf_base;
+        text_section_header->size = arena_current(arena) - text_section_start;
+        text_section_header->linked_section = 0;
+        text_section_header->info = 0;
+        text_section_header->alignment = 4; // ?
+        text_section_header->entry_size = 0;
+    }
+    
+    u8 *shstrtab_section_start = string_list_flatten(section_name_string_table, arena).data;
+    arena->current -= 1;
+    push_zero_terminated_string_copy(arena, string(".shstrtab"));
+    
+    // 
+    // Create a section header for the .shstrtab section.
+    // 
+    struct elf_section_header *section_header_string_table_section_header = section_headers + section_header_at++;
+    u64 name_offset = section_name_string_table.total_size;
+    string_list_postfix_no_copy(&section_name_string_table, scratch, string(".shstrtab\0"));
+    section_header_string_table_section_header->name_offset = (u32)name_offset;
+    section_header_string_table_section_header->type = /*SHT_STRTAB*/3;
+    section_header_string_table_section_header->flags = 0;
+    section_header_string_table_section_header->address = 0;
+    section_header_string_table_section_header->offset = shstrtab_section_start - elf_base;
+    section_header_string_table_section_header->size = arena_current(arena) - shstrtab_section_start;
+    section_header_string_table_section_header->linked_section = 0;
+    section_header_string_table_section_header->info = 0;
+    section_header_string_table_section_header->alignment = 1;
+    section_header_string_table_section_header->entry_size = 0;
+    
+    elf_header->section_name_section_table_index = (u16)(section_header_string_table_section_header - section_headers);
+    elf_header->section_header_table_entry_count = (u16)section_header_at;
+    elf_header->program_header_table_entry_count = (u16)program_header_at;
+    
+    u64 elf_and_program_header_size = (u8 *)(program_headers + program_header_at) - elf_base;
+    elf_header_program_header->file_size = elf_and_program_header_size;
+    elf_header_program_header->memory_size = elf_and_program_header_size;
+    
+    if(globals.entry_point){
+        elf_header->entry_point = 0x401000; // @cleanup:
+    }
+    
+    u64 elf_size = arena_current(arena) - elf_base;
+    
+    if(!globals.cli_options.dont_print_the_files){
+        char *elf_name = push_cstring_from_string(arena, output_file_path);
+        
+        HANDLE file_handle = os_open_file(elf_name, OS_OPEN_write);
+        
+        int success = os_file_write(file_handle, elf_base, elf_size);
+        
+        os_close_handle(file_handle);
+        
+        if(success){
+            if(!globals.cli_options.quiet) print("Wrote file: '%s'\n", elf_name);
+        }else{
+            print("Error: Unable to write file '%s'.\n", elf_name);
+            globals.an_error_has_occurred = true;
+        }
+    }
+}
+
+
+u64 read_uleb(u8 *data, u64 *inout_offset){
+    
+    u64 offset = *inout_offset;
+    u64 result = 0;
+    u64 shift = 0;
+    
+    u8 byte;
+    do{
+        byte = data[offset++];
+        result |= (byte & 0x7f) << shift;
+        shift += 7;
+    }while((byte & 0x80) != 0);
+    
+    *inout_offset = offset;
+    return result;
+}
+
+s64 read_sleb(u8 *data, u64 *inout_offset){
+    
+    u64 offset = *inout_offset;
+    u64 result = 0;
+    u64 shift = 0;
+    
+    u8 byte;
+    do{
+        byte = data[offset++];
+        result |= (byte & 0x7f) << shift;
+        shift += 7;
+    }while((byte & 0x80) != 0);
+    
+    if(byte & 0x40){
+        result |= (~0ull << shift);
+    }
+    
+    *inout_offset = offset;
+    return result;
+}
+
+int dump_elf(char *cfile_name, struct memory_arena *arena){
+    
+    struct os_file file = load_file_into_arena(cfile_name, arena);
+    struct string file_name = string_from_cstring(cfile_name);
+    
+    struct elf_header{
+        u32 magic;
+        u8 size_value;
+        u8 endianess_value;
+        u8 elf_header_version;
+        u8 abi;
+        u8 abi_version;
+        u8 padding[7];
+        u16 object_file_type;
+        u16 machine_type;
+        u32 elf_version;
+        u64 entry_point;
+        u64 program_header_table_offset;
+        u64 section_header_table_offset;
+        u32 flags;
+        u16 elf_header_size;
+        
+        // The entry_size members can be 0xffff and 0 and the real values are in the initial entry of the section table.
+        // Also similarly for `section_name_section_table_index`.
+        
+        u16 program_header_table_entry_size;
+        u16 program_header_table_entry_count;
+        u16 section_header_table_entry_size;
+        u16 section_header_table_entry_count;
+        u16 section_name_section_table_index;
+    } *elf_header = (void *)file.data;
+    
+    if(file.size < sizeof(*elf_header)){
+        return 1;
+    }
+    
+    print("{#}\n", *elf_header);
+    
+    u64 program_header_table_offset = elf_header->program_header_table_offset;
+    u64 program_header_table_entry_count = elf_header->program_header_table_entry_count;
+    u64 program_header_table_entry_size  = elf_header->program_header_table_entry_size;
+    u64 program_header_table_size = program_header_table_entry_count * program_header_table_entry_size;
+    u64 program_header_table_end = program_header_table_offset + program_header_table_size;
+    
+    if(program_header_table_offset > file.size || program_header_table_end > file.size){
+        print("Error: Shared Object '%.*s' has invalid section header.\n", file_name.size, file_name.data);
+        return 1;
+    }
+    
+    print("\n\nProgram headers (%.16x - %.16x):\n\n", program_header_table_offset, program_header_table_end);
+    
+    //     00000006 (PT_PHDR)         4   (r) 0000000000000040 0000000000400040 0000000000400040 00000000000001f8 00000000000001f8 0000000000000008
+    print("      type                 flags       offset       virtual address  physical address    file size       memory size       alignment\n");
+    
+    struct elf_program_header{
+        u32 type;
+        u32 flags;
+        u64 offset;
+        u64 virtual_address;
+        u64 physical_address;
+        u64 file_size;
+        u64 memory_size;
+        u64 alignment;
+    };
+    
+    if(program_header_table_size < sizeof(struct elf_program_header)){
+        print("Error: Shared Object '%.*s' has invalid program header size.\n", file_name.size, file_name.data);
+        return 1;
+    }
+    
+    for(u64 offset = program_header_table_offset; offset < program_header_table_end; offset += program_header_table_entry_size){
+        struct elf_program_header *program_header = (void *)(file.data + offset);
+        
+        static struct{
+            u32 value;
+            char *name;
+        } program_header_types[] = {
+            {0x00000000, "(PT_NULL)"    }, // Program header table entry unused.
+            {0x00000001, "(PT_LOAD)"    }, // Loadable segment.
+            {0x00000002, "(PT_DYNAMIC)" }, // Dynamic linking information.
+            {0x00000003, "(PT_INTERP)"  }, // Interpreter information.
+            {0x00000004, "(PT_NOTE)"    }, // Auxiliary information.
+            {0x00000005, "(PT_SHLIB)"   }, // Reserved.
+            {0x00000006, "(PT_PHDR)"    }, // Segment containing program header table itself.
+            {0x00000007, "(PT_TLS)"     }, // Thread-Local Storage template.
+            {0x60000000, "(PT_LOOS)"    }, // Reserved inclusive range. Operating system specific.
+            {0x6FFFFFFF, "(PT_HIOS)"    }, 
+            {0x70000000, "(PT_LOPROC)"  }, // Reserved inclusive range. Processor specific.
+            {0x7FFFFFFF, "(PT_HIPROC)"  },
+            
+            // https://refspecs.linuxbase.org/LSB_3.1.1/LSB-Core-generic/LSB-Core-generic/progheader.html
+            {0x6474e550, "(PT_GNU_EH_FRAME)"}, // The array element specifies the location and size of the exception handling information as defined by the .eh_frame_hdr section.
+            {0x6474e551, "(PT_GNU_STACK)"}, // The p_flags member specifies the permissions on the segment containing the stack and is used to indicate wether the stack should be executable. The absense of this header indicates that the stack will be executable.
+            {0x6474e552, "(PT_GNU_RELRO)"}, // The array element specifies the location and size of a segment which may be made read-only after relocation shave been processed.
+            {0x6474e553, "(PT_GNU_PROPERTY)"},
+        };
+        
+        char *type_name = "(???)";
+        for(u32 index = 0; index < array_count(program_header_types); index++){
+            if(program_header_types[index].value == program_header->type){
+                type_name = program_header_types[index].name;
+                break;
+            }
+        }
+        
+        u8 flags[5] = {0};
+        int flags_at = 0;
+        if(program_header->flags){
+            flags[flags_at++] = '(';
+            if(program_header->flags & 4) flags[flags_at++] = 'r';
+            if(program_header->flags & 2) flags[flags_at++] = 'w';
+            if(program_header->flags & 1) flags[flags_at++] = 'x';
+            flags[flags_at++] = ')';
+        }
+        
+        print("%.8x %-17s %x %5s %.16x %.16x %.16x %.16x %.16x %.16x\n", program_header->type, type_name, program_header->flags, flags, program_header->offset, program_header->virtual_address, program_header->physical_address, program_header->file_size, program_header->memory_size, program_header->alignment);
+    }
+    
+    u64 section_header_table_offset = elf_header->section_header_table_offset;
+    u64 section_header_table_entry_count = elf_header->section_header_table_entry_count;
+    u64 section_header_table_entry_size  = elf_header->section_header_table_entry_size;
+    u64 section_header_table_size = section_header_table_entry_count * section_header_table_entry_size;
+    u64 section_header_table_end = section_header_table_offset + section_header_table_size;
+    
+    if(section_header_table_offset > file.size || section_header_table_end > file.size){
+        print("Error: Shared Object '%.*s' has invalid section header.\n", file_name.size, file_name.data);
+        return 1;
+    }
+    
+    u16 section_name_section_table_index = elf_header->section_name_section_table_index;
+    if(section_name_section_table_index >= section_header_table_entry_count){
+        print("Error: Invalid shstrndx\n");
+        return 1;
+    }
+    
+    struct elf_section_header{
+        u32 name_offset;
+        u32 type;
+        u64 flags;
+        u64 address;
+        u64 offset;
+        u64 size;
+        u32 linked_section;
+        u32 info;
+        u64 alignment;
+        u64 entry_size;
+    } *section_name_string_table_section_header = (void *)(file.data + section_header_table_offset + section_name_section_table_index * section_header_table_entry_size);
+    
+    u64 section_name_string_table_section_offset = section_name_string_table_section_header->offset;
+    u64 section_name_string_table_section_size   = section_name_string_table_section_header->size;
+    u64 section_name_string_table_section_end    = section_name_string_table_section_offset + section_name_string_table_section_size;
+    u8 *section_name_string_table = file.data + section_name_string_table_section_offset;
+    
+    if(section_name_string_table_section_offset > file.size || section_name_string_table_section_end > file.size || section_name_string_table[section_name_string_table_section_size-1] != 0){
+        print("Error: Invalid section name string table section header.\n");
+        return 1;
+    }
+    
+    print("\n\nSection headers (%.16x - %.16x):\n\n", section_header_table_offset, section_header_table_end);
+    
+    //                     .interp (0000001b) 00000001      (SHT_PROGBITS) 00000002 0000000000400238 0000000000000238 000000000000000f 00000000 00000000 0000000000000001 0000000000000000
+    print("                  section name              section type             flags  virtual address       offset          size           link     info      alignment        entry size\n");
+    for(u64 offset = section_header_table_offset, section_index = 0; offset < section_header_table_end; offset += section_header_table_entry_size, section_index++){
+        struct elf_section_header *section_header = (void *)(file.data + offset);
+        
+        if(section_header->name_offset >= section_name_string_table_section_size){
+            print("Invalid section header name offset\n");
+            return 1;
+        }
+        
+        u8 *section_name = section_name_string_table + section_header->name_offset;
+        
+        u64 section_offset = section_header->offset;
+        u64 section_size   = section_header->size;
+        u64 section_end    = section_offset + section_size;
+        
+        if(section_header->type != /*SHT_NOBITS*/8){
+            if(section_offset > file.size || section_end > file.size){
+                print("Error: Invalid section bounds for section %s.\n", section_name);
+                return 1;
+            }
+        }
+        
+        static char *section_type_strings[] = {
+            [0x0] = "(SHT_NULL)", // Section header table entry unused
+            [0x1] = "(SHT_PROGBITS)", // Program data
+            [0x2] = "(SHT_SYMTAB)", // Symbol table
+            [0x3] = "(SHT_STRTAB)", // String table
+            [0x4] = "(SHT_RELA)", // Relocation entries with addends
+            [0x5] = "(SHT_HASH)", // Symbol hash table
+            [0x6] = "(SHT_DYNAMIC)", // Dynamic linking information
+            [0x7] = "(SHT_NOTE)", // Notes
+            [0x8] = "(SHT_NOBITS)", // Program space with no data (bss)
+            [0x9] = "(SHT_REL)", // Relocation entries, no addends
+            [0x0A] = "(SHT_SHLIB)", // Reserved
+            [0x0B] = "(SHT_DYNSYM)", // Dynamic linker symbol table
+            [0x0E] = "(SHT_INIT_ARRAY)", // Array of constructors
+            [0x0F] = "(SHT_FINI_ARRAY)", // Array of destructors
+            [0x10] = "(SHT_PREINIT_ARRAY)", // Array of pre-constructors
+            [0x11] = "(SHT_GROUP)", // Section group
+            [0x12] = "(SHT_SYMTAB_SHNDX)", // Extended section indices
+            [0x13] = "(SHT_NUM)", // Number of defined types.
+        };
+        
+        char *type_string = (section_header->type < array_count(section_type_strings)) ? section_type_strings[section_header->type] : "(???)";
+        
+        // For symbol table sections, the sh_info member is the index of the first non-local symbol.
+        
+        print("[%.2u] %20s (%.8x) %.8x %19s %.8x %.16x %.16x %.16x %.8x %.8x %.16x %.16x\n", section_index, section_name, section_header->name_offset, section_header->type, type_string, section_header->flags, section_header->address, section_header->offset, section_header->size, section_header->linked_section, section_header->info, section_header->alignment, section_header->entry_size);
+    }
+    
+    print("\n");
+    
+    for(u64 section_header_offset = section_header_table_offset; section_header_offset < section_header_table_end; section_header_offset += section_header_table_entry_size){
+        struct elf_section_header *section_header = (void *)(file.data + section_header_offset);
+        
+        struct string section_name = string_from_cstring((char *)section_name_string_table + section_header->name_offset);
+        if(section_name.size == 0) continue;
+        
+        u64 section_offset = section_header->offset;
+        u64 section_size   = section_header->size;
+        
+        u8 *section_data = file.data + section_offset;
+        
+        print("%.*s\n", section_name.size, section_name.data);
+        
+        if(string_match(section_name, string(".interp"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        if(string_match(section_name, string(".note.gnu.property"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        if(string_match(section_name, string(".note.gnu.build-id"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        if(string_match(section_name, string(".note.ABI-tag"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        
+        // .gnu.hash
+        
+        if(string_match(section_name, string(".dynsym")) || string_match(section_name, string(".symtab"))){
+            
+            if(section_header->entry_size < sizeof(struct elf_symbol)){
+                print(".dynsym has invalid entry size.\n");
+                return 1;
+            }
+            
+            struct elf_section_header *dynstr_header = (void *)(file.data + section_header_table_offset + section_header->linked_section * section_header_table_entry_size);
+            u8 *dynstr = file.data + dynstr_header->offset;
+            
+            for(u64 symbol_offset = 0, symbol_index = 0; symbol_offset < section_size; symbol_offset += section_header->entry_size, symbol_index++){
+                struct elf_symbol *symbol = (void *)(section_data + symbol_offset);
+                
+                u8 *name = dynstr + symbol->name_offset;
+                u8 info = symbol->info;
+                u8 bind = info >> 4;
+                u8 type = info & 0xf;
+                u8 visibility = symbol->other & 3;
+                
+                u16 section_index = symbol->section_index;
+                u64 value = symbol->value;
+                u64 size  = symbol->size;
+                
+                static char *symbol_bind_strings[] = {
+                    "STB_LOCAL",
+                    "STB_GLOBAL",
+                    "STB_WEAK",
+                };
+                
+                char *bind_string = (bind < array_count(symbol_bind_strings)) ? bind_string = symbol_bind_strings[bind] : "???";
+                
+                static char *symbol_type_strings[] = {
+                    "STT_NOTYPE",
+                    "STT_OBJECT",
+                    "STT_FUNC",
+                    "STT_SECTION",
+                    "STT_FILE",
+                    "STT_COMMON",
+                    "STT_TLS",
+                };
+                char *type_string = (type < array_count(symbol_type_strings)) ? type_string = symbol_type_strings[type] : "???";
+                
+                static char *symbol_visibility_strings[] = {
+                    "STV_DEFAULT",
+                    "STV_INTERNAL",
+                    "STV_HIDDEN",
+                    "STV_PROTECTED",
+                };
+                char *visibility_string = (visibility < array_count(symbol_visibility_strings)) ? visibility_string = symbol_visibility_strings[visibility] : "???";
+                
+                print("[%3u] %.4x %.16x %.16x %.2x %11s %10s %.2x %13s %s\n", symbol_index, section_index, value, size, info, type_string, bind_string, symbol->other, visibility_string, name);
+            }
+        }
+        
+        if(string_match(section_name, string(".dynstr")) || string_match(section_name, string(".strtab")) || string_match(section_name, string(".shstrtab"))){
+            for(u64 offset = 0; offset < section_size; ){
+                char *name = (char *)(section_data + offset);
+                print("[%x] %s\n", offset, name);
+                offset += cstring_length(name) + 1;
+            }
+        }
+        
+        if(string_match(section_name, string(".gnu.version"))){
+            struct elf_section_header *dynsym_header = (void *)(file.data + section_header_table_offset + section_header->linked_section * section_header_table_entry_size);
+            struct elf_section_header *dynstr_header = (void *)(file.data + section_header_table_offset + dynsym_header->linked_section * section_header_table_entry_size);
+            
+            u8 *dynsym = file.data + dynsym_header->offset;
+            u8 *dynstr = file.data + dynstr_header->offset;
+            
+            u64 entry_count = (section_size/2);
+            
+            if(entry_count != dynsym_header->size/dynsym_header->entry_size){
+                print(".gnu.version has wrong number of entries.\n");
+                return 1;
+            }
+            
+            u16 *versions = (u16 *)section_data;
+            
+            for(u64 index = 0; index < entry_count; index++){
+                struct elf_symbol *symbol = (void *)(dynsym + dynsym_header->entry_size * index);
+                u8 *name = dynstr + symbol->name_offset;
+                
+                u16 version = versions[index];
+                char *info = "";
+                if(version == 0) info = "(local)";
+                if(version == 1) info = "(defined)";
+                
+                print("[%3u] %30s version %u %s\n", index, name, version, info);
+            }
+        }
+        
+        if(string_match(section_name, string(".gnu.version_r"))){
+            struct elf_section_header *dynstr_header = (void *)(file.data + section_header_table_offset + section_header->linked_section * section_header_table_entry_size);
+            u8 *dynstr = file.data + dynstr_header->offset;
+            
+            for(u64 offset = 0; offset < section_size;){
+                struct elf_version_requirement{
+                    u16 version;
+                    u16 auxiliary_entry_count;
+                    u32 file_name_offset;
+                    u32 offset_to_auxiliary_entries;
+                    u32 offset_to_next;
+                } *version_requirement = (void *)(section_data + offset);
+                
+                if(offset + sizeof(*version_requirement) > section_size){
+                    print("Invalid .gnu.version_r\n");
+                    return 1;
+                }
+                
+                u16 version = version_requirement->version;
+                u16 count = version_requirement->auxiliary_entry_count;
+                u32 file_name_offset = version_requirement->file_name_offset;
+                u32 offset_to_aux = version_requirement->offset_to_auxiliary_entries;
+                u32 offset_to_next = version_requirement->offset_to_next;
+                
+                print("Version %u\n", version);
+                print("Auxiliary Entry Count %u\n", count);
+                print("File Name %s (%x)\n", dynstr + file_name_offset, file_name_offset);
+                print("Offset to Auxiliary Entries %x\n", offset_to_aux);
+                print("Offset to Next %x\n", offset_to_next);
+                
+                
+                for(u64 aux_offset = offset + offset_to_aux, index = 0; index < count; index++){
+                    struct elf_version_requirement_aux_entry{
+                        u32 hash;
+                        u16 flags;
+                        u16 other;
+                        u32 name_offset;
+                        u32 next_offset;
+                    } *auxiliary_entry = (void *)(section_data + aux_offset);
+                    
+                    u32 hash = auxiliary_entry->hash;
+                    u16 flags = auxiliary_entry->flags;
+                    u16 other = auxiliary_entry->other;
+                    u32 name_offset = auxiliary_entry->name_offset;
+                    u32 next = auxiliary_entry->next_offset;
+                    
+                    print("[%u] offset %x\n", index, aux_offset);
+                    print("     hash %x\n", hash);
+                    print("     flags %x\n", flags);
+                    print("     other %x (Version)\n", other);
+                    print("     name %s (%x)\n", dynstr + name_offset, name_offset);
+                    print("     next_offset %x\n", next);
+                    
+                    aux_offset = aux_offset + next;
+                }
+                
+                if(offset_to_next == 0) break;
+                offset += offset_to_next;
+            }
+        }
+        
+
+        if(string_match(section_name, string(".rela.dyn")) || string_match(section_name, string(".rela.plt"))){
+            
+            // "x86_64 only Elf64_Rela is used".
+            struct elf_relocation_addend{
+                // For ET_REL type binaries, this value denotes an offset within a section. 
+                // For ET_EXEC type binaries this value denotes a virtual address.
+                u64 offset; 
+                u64 info;
+                u64 addend;
+            };
+            
+            
+            if(section_header->entry_size < sizeof(struct elf_relocation_addend)){
+                print("invalid entry size for %.*s\n", section_name.size, section_name.data);
+                return 1;
+            }
+            
+            for(u64 offset = 0; offset < section_size; offset += section_header->entry_size){
+                struct elf_relocation_addend *relocation = (void *)(section_data + offset);
+                
+                u64 info   = relocation->info;
+                
+                u32 symbol_index = info >> 32;
+                u32 type = (u32)info;
+                
+                static char *relocation_type_strings[] = {
+                    [0]  = "R_X86_64_NONE", // None None
+                    [1]  = "R_X86_64_64", // qword S + A
+                    [2]  = "R_X86_64_PC32", // dword S + A - P
+                    [3]  = "R_X86_64_GOT32", // dword G + A
+                    [4]  = "R_X86_64_PLT32", // dword L + A - P
+                    [5]  = "R_X86_64_COPY", // None Value is copied directly from shared object
+                    [6]  = "R_X86_64_GLOB_DAT", // qword S
+                    [7]  = "R_X86_64_JUMP_SLOT", // qword S
+                    [8]  = "R_X86_64_RELATIVE", // qword B + A
+                    [9]  = "R_X86_64_GOTPCREL", // dword G + GOT + A - P
+                    [10] = "R_X86_64_32", // dword S + A
+                    [11] = "R_X86_64_32S", // dword S + A
+                    [12] = "R_X86_64_16", // word S + A
+                    [13] = "R_X86_64_PC16", // word S + A - P
+                    [14] = "R_X86_64_8", // word8 S + A
+                    [15] = "R_X86_64_PC8", // word8 S + A - P
+                    [24] = "R_X86_64_PC64", // qword S + A - P
+                    [25] = "R_X86_64_GOTOFF64", // qword S + A - GOT
+                    [26] = "R_X86_64_GOTPC32", // dword GOT + A - P
+                    [32] = "R_X86_64_SIZE32", // dword Z + A
+                    [33] = "R_X86_64_SIZE64", // qword Z + A
+                };
+                char *relocation_type_string = type < array_count(relocation_type_strings) ? relocation_type_strings[type] : "???";
+                
+                print("%.16llx %16s %.8x %.16llx %.16llx\n", info, relocation_type_string, symbol_index, relocation->offset, relocation->addend);
+            }
+        }
+        
+        if(string_match(section_name, string(".init"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        // .plt
+        
+        if(string_match(section_name, string(".plt.got"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        
+        // .text
+        
+        if(string_match(section_name, string(".fini"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        
+        // .rodata
+        
+        static char *format_string[16] = {
+            [0xf] = "omit",
+            [1] = "uleb128",
+            [2] = "udata2",
+            [3] = "udata4",
+            [4] = "udata8",
+            [9] = "uleb128",
+            [0xa] = "sdata2",
+            [0xb] = "sdata4",
+            [0xc] = "sdata8",
+        };
+        
+        static char *application_strings[16] = {
+            [0xf] = "omit",
+            [0x0] = "absptr",
+            [0x1] = "pcrel",
+            [0x3] = "datarel",
+        };
+        
+        if(string_match(section_name, string(".eh_frame_hdr"))){
+            struct eh_frame_header{
+                u8 version;
+                u8 eh_frame_pointer_encoding;
+                u8 fde_count_encoding;
+                u8 table_encoding;
+            } *eh_frame_header = (void *)section_data;
+            
+            print("   version %u\n", eh_frame_header->version);
+            print("   frame pointer encoding %.2x %s %s\n", eh_frame_header->eh_frame_pointer_encoding, format_string[eh_frame_header->eh_frame_pointer_encoding & 0xf], application_strings[eh_frame_header->eh_frame_pointer_encoding >> 4]);
+            print("   fde count encoding %.2x %s %s\n", eh_frame_header->fde_count_encoding, format_string[eh_frame_header->fde_count_encoding & 0xf], application_strings[eh_frame_header->fde_count_encoding >> 4]);
+            print("   table encoding %.2x %s %s\n", eh_frame_header->table_encoding, format_string[eh_frame_header->table_encoding & 0xf], application_strings[eh_frame_header->table_encoding >> 4]);
+            
+            if(eh_frame_header->eh_frame_pointer_encoding != /*sdata4 pcrel*/0x1b){
+                print("unhandled eh frame pointer encoding.\n");
+                return 1;
+            }
+            
+            if(eh_frame_header->fde_count_encoding != /*udata4 absptr*/0x03){
+                print("Unhandled fde count encoding.\n");
+                return 1;
+            }
+            
+            if(eh_frame_header->table_encoding != /*sdata4 datarel*/0x3b){
+                print("Unhandled eh frame header table encoding.\n");
+                return 1;
+            }
+            
+            u32 *eh_frame_header_section_at = (u32 *)(eh_frame_header + 1);
+            
+            u32 frame_pointer = *eh_frame_header_section_at++;
+            u32 fde_count = *eh_frame_header_section_at++;
+            
+            print("   frame_pointer %x\n", frame_pointer);
+            print("   fde_count %x\n", fde_count);
+            
+            if(fde_count * 8 != section_data + section_size - (u8 *)eh_frame_header_section_at){
+                print("unexpected fde_count %x\n", fde_count);
+                return 1;
+            }
+            
+            for(u32 index = 0; index < fde_count; index++){
+                u32 initial_location = *eh_frame_header_section_at++;
+                u32 address = *eh_frame_header_section_at++;
+                
+                print("       [%u] %x %x\n", index, initial_location, address);
+            }
+        }
+        
+        if(string_match(section_name, string(".eh_frame"))){
+            
+            for(u64 offset = 0; offset < section_size; ){
+                
+                u64 length = *(u32 *)(section_data + offset);
+                offset += 4;
+                
+                u64 root_offset = offset;
+                
+                print("Length %x - ", length);
+                
+                // "If Length contains 0, then this CIE shall be considered a terminator and processing shall end."
+                if(length == 0) break;
+                
+                // "If the Length field contains the value 0xffffffff, then the length is contained in the Exetended Length field."
+                if(length == 0xffffffff){
+                    length = *(u64 *)(section_data + offset);
+                    offset += 8;
+                    
+                    print("Extended Length %llx - \n", length);
+                }
+                
+                u32 cie_offset = *(u32 *)(section_data + offset + 0);
+                offset += 4;
+                
+                if(cie_offset == 0){
+                    
+                    print("CIE:\n");
+                    u8 version = *(section_data + offset);
+                    
+                    print("    CIE ID %x (0 means this is the cie)\n", cie_offset);
+                    print("    Version %x\n", version);
+                    
+                    offset += 1;
+                    
+                    struct string augmentation_string = string_from_cstring((char *)(section_data + offset));
+                    
+                    print("    Augmentation String \"%.*s\"\n", augmentation_string.size, augmentation_string.data);
+                    
+                    offset += augmentation_string.size + 1;
+                    
+                    if(string_contains(augmentation_string, string("eh"))){
+                        u64 eh_data = *(u64 *)(section_data + offset);
+                        print("    EH Data %llx\n", eh_data);
+                        offset += 8;
+                    }
+                    
+                    u64 code_alignment_factor = read_uleb(section_data, &offset);
+                    s64 data_alignment_factor = read_sleb(section_data, &offset);
+                    
+                    print("    Code Alignment Factor %llu\n", code_alignment_factor);
+                    print("    Data Alignment Factor %lld\n", data_alignment_factor);
+                    
+                    // somehow this is not documented? What is the format of this?
+                    u64 return_address_register = read_uleb(section_data, &offset);
+                    
+                    print("    Return Address Register %llu\n", return_address_register);
+                    
+                    if(augmentation_string.size && augmentation_string.data[0] == 'z'){
+                        
+                        u64 augmentation_length = read_uleb(section_data, &offset);
+                        print("    Augmentation Length %llx\n", augmentation_length);
+                        
+                        for(smm index = 1; index < augmentation_string.size; index++){
+                            
+                            if(augmentation_string.data[index] == 'R'){
+                                u8 address_pointer_encoding = section_data[offset++];
+                                print("    Address Pointer Encoding %x %s %s\n", address_pointer_encoding, format_string[address_pointer_encoding & 0xf], application_strings[address_pointer_encoding >> 4]);
+                                
+                                if(address_pointer_encoding != 0x1b){
+                                    print("unhandled Address pointer encoding. Expected sdata4, pcrel\n");
+                                    return 1;
+                                }
+                            }else{
+                                print("Unhandled augmentation string thing %c\n", augmentation_string.data[index]);
+                                return 1;
+                            }
+                        }
+                    }else{
+                        print("Expected Augmentation string to begin with 'z'\n");
+                        return 1;
+                    }
+                    
+                    print("Dwarf data:\n");
+                    print_byte_range(section_data + offset, length - (offset - root_offset));
+                }else{
+                    print("FDE:\n");
+                    
+                    print("    CIE Pointer: %llx\n", cie_offset);
+                    s32 pc_begin = *(s32 *)(section_data + offset + 0); // these are s32 rel because of the address pointer encoding.
+                    s32 pc_range = *(s32 *)(section_data + offset + 4);
+                    offset += 8;
+                    print("    pc_begin %x, pc_range %x\n", pc_begin, pc_range);
+                    
+                    u64 augmentation_length = read_uleb(section_data, &offset);
+                    print("    Augmentation Length %llx\n", augmentation_length);
+                    if(augmentation_length){
+                        print_byte_range(section_data + offset, augmentation_length);
+                        offset += augmentation_length;
+                    }
+                    
+                    print("Dwarf data:\n");
+                    print_byte_range(section_data + offset, length - (offset - root_offset));
+                }
+                
+                offset = root_offset + length;
+            }
+        }
+        
+        if(string_match(section_name, string(".init_array"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        if(string_match(section_name, string(".fini_array"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        // .data.rel.ro
+        
+        if(string_match(section_name, string(".dynamic"))){
+            struct elf_dynamic_section_entry{
+                u64 tag;
+                u64 value;
+            };
+            
+            if(section_header->entry_size < sizeof(struct elf_dynamic_section_entry)){
+                print("invalid entry size for .dynamic\n");
+                return 1;
+            }
+            
+            for(u64 offset = 0; offset < section_size; offset += section_header->entry_size){
+                
+                struct elf_dynamic_section_entry *entry = (void *)(section_data + offset);
+                static char *tag_strings[] = {
+                    "DT_NULL", /* Marks end of dynamic section */
+                    "DT_NEEDED", /* Name of needed library */
+                    "DT_PLTRELSZ", /* Size in bytes of PLT relocs */
+                    "DT_PLTGOT", /* Processor defined value */
+                    "DT_HASH", /* Address of symbol hash table */
+                    "DT_STRTAB", /* Address of string table */
+                    "DT_SYMTAB", /* Address of symbol table */
+                    "DT_RELA", /* Address of Rela relocs */
+                    "DT_RELASZ", /* Total size of Rela relocs */
+                    "DT_RELAENT", /* Size of one Rela reloc */
+                    "DT_STRSZ", /* Size of string table */
+                    "DT_SYMENT", /* Size of one symbol table entry */
+                    "DT_INIT", /* Address of init function */
+                    "DT_FINI", /* Address of termination function */
+                    "DT_SONAME", /* Name of shared object */
+                    "DT_RPATH", /* Library search path (deprecated) */
+                    "DT_SYMBOLIC", /* Start symbol search here */
+                    "DT_REL", /* Address of Rel relocs */
+                    "DT_RELSZ", /* Total size of Rel relocs */
+                    "DT_RELENT", /* Size of one Rel reloc */
+                    "DT_PLTREL", /* Type of reloc in PLT */
+                    "DT_DEBUG", /* For debugging; unspecified */
+                    "DT_TEXTREL", /* Reloc might modify .text */
+                    "DT_JMPREL", /* Address of PLT relocs */
+                    "DT_BIND_NOW", /* Process relocations of object */
+                    "DT_INIT_ARRAY", /* Array with addresses of init fct */
+                    "DT_FINI_ARRAY", /* Array with addresses of fini fct */
+                    "DT_INIT_ARRAYSZ", /* Size in bytes of DT_INIT_ARRAY */
+                    "DT_FINI_ARRAYSZ", /* Size in bytes of DT_FINI_ARRAY */
+                    "DT_RUNPATH", /* Library search path */
+                    "DT_FLAGS", /* Flags for the object being loaded */
+                    "DT_ENCODING", /* Start of encoded range */
+                    "DT_PREINIT_ARRAY", /* Array with addresses of preinit fct*/
+                    "DT_PREINIT_ARRAYSZ", /* size in bytes of DT_PREINIT_ARRAY */
+                    "DT_SYMTAB_SHNDX", /* Address of SYMTAB_SHNDX section */
+                };
+                char *tag_string = entry->tag < array_count(tag_strings) ? tag_strings[entry->tag] : "????";
+                print("%.16x %18s %.16x\n", entry->tag, tag_string, entry->value);
+            }
+        }
+        
+        // .got
+        
+        // .got.plt
+        
+        // .data
+        
+        // .bss
+        
+        if(string_match(section_name, string(".comment"))){
+            print_byte_range(section_data, section_size);
+        }
+        
+        
+        // .debug_info
+        
+        // .debug_abbrev
+        
+        // .debug_line
+        
+        // .debug_str
+        
+        // .debug_addr
+        
+        // .debug_line_str
+        
+        // .debug_str_offsets
+        
+        print("\n");
+    }
+    
+    return 0;
+}
