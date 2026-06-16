@@ -4692,6 +4692,13 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // :stack_space_needed. The amount of stack space needed needs to be aligned to 16.
     function->stack_space_needed = align_up(function->stack_space_needed, 0x10);
     
+    struct ast_function_type *function_type = function->type;
+    struct ast_type *return_type = function_type->return_type;
+    
+    // Set the current code section to the prolog/base of the function.
+    u8 *prolog_start = context->emit_arena.current;
+    context->current_emit_base = prolog_start;
+    function->memory_location = prolog_start;
     // stack layout before we allocate stack memory
     // | arg n | ... |  arg 1  | arg 0 | ret ptr | memory for the function |
     //                [rsp+16]  [rsp+8]   [rsp]  ^rsp
@@ -4699,7 +4706,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     
     // "The first four integer or pointer parameters are passed in the rcx, rdx, r8, and r9 registers."
     // we have to save these in their slots
-
+    
     enum register_encoding argument_registers[REGISTER_KIND_count][4] = {
         [REGISTER_KIND_gpr][0] = REGISTER_C,
         [REGISTER_KIND_gpr][1] = REGISTER_D,
@@ -4715,26 +4722,16 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     
     context->gpr_allocator.rolling_index = REGISTER_C;
     
-    struct ast_type *return_type = function->type->return_type;
-    
-    b32 do_first_loop_for_a_big_return = type_is_returned_by_address(return_type); // :returning_structs
-    
-    // Set the current code section to the prolog/base of the function.
-    u8 *prolog_start = context->emit_arena.current;
-    context->current_emit_base = prolog_start;
-    function->memory_location = prolog_start;
-    
-    // @cleanup: only do this if we have a memcpy, this value is also needed to be known when returning a large struct
-    //           maybe the large struct code should live in the epilog?
-    // @incomplete: we do not honor the calling convention here...
+    // 
     // @WARNING: If you change this code you have to also change the implementation of `_AddressOfReturnAddress`.
-    
+    // 
     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
         emit(0x41); emit(0x55); // push r13
         emit(0x41); emit(0x54); // push r12
         function->pushed_register_mask |= (1 << REGISTER_R12) | (1 << REGISTER_R13);
     }
     
+    // @cleanup: Maybe we should not unconditionally push rdi and rsi.
     emit(PUSH_REGISTER_DI);
     emit(PUSH_REGISTER_SI);
     emit(PUSH_REGISTER_BP);
@@ -4754,60 +4751,81 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     }
     
     {
-        // at this point we have pushed rbp so the memory layout is as follows:
+        // At this point we have pushed rbp so the memory layout is as follows:
         //    | memory for the function | old rbp | saved non-volitiles | ret ptr | arg0 | arg1 | arg2 | ...
         //                           rbp^                                         ^
         //                              ^rsp                                      ^rbp + 16 + 8 * amount_of_saved_registers = rbp - (-16 + 8 * amount_of_saved_registers)
         
         smm stack_at = -(16 + 8 * amount_of_saved_registers); // at offset zero is the return pointer.
         
-        struct ast_list_node *it = function->type->argument_list.first;
-        for(u32 i = 0; i < array_count(*argument_registers) || it; i++){
-            if(!do_first_loop_for_a_big_return && !it && !(function->type->flags & FUNCTION_TYPE_FLAGS_is_varargs)) break;
+        u32 register_at = 0;
+        
+        if(type_is_returned_by_address(return_type)){
+            // If we are returning a struct, the first argument is the address of the struct.
+            // Simply store it in the corresponding slot, we will find it there when we enter 
+            // the function epilog. :returning_structs
             
-            // @cleanup: there must be a better way to factor this...
+            enum register_encoding rcx = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_C);
+            struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
+            struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_gpr, rcx, 8);
+            emit_store(context, dest, source);
             
-            // save the first 4 register if we need them
-            if(i < array_count(*argument_registers)){
-                
-                enum register_kind register_kind = REGISTER_KIND_gpr;
-                if(!do_first_loop_for_a_big_return && it){ // if it is varargs all further arguments are in gprs
-                    struct ast_declaration *decl = (struct ast_declaration *)it->value;
-                    register_kind = get_register_kind_for_type(decl->type);
-                    
-                    if(decl->type->flags & TYPE_FLAG_is_intrin_type){
-                        // intrinsic types are passed by reference.
-                        register_kind = REGISTER_KIND_gpr;
-                    }
-                }
-                
-                enum register_encoding at = argument_registers[register_kind][i];
-                
-                struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
-                
-                struct emit_location *source = emit_location_loaded(context, register_kind,
-                        allocate_specific_register(context, register_kind, at), 8);
-                emit_store(context, dest, source);
+            // :MSVC_function_call_stack_increase
+            stack_at -= 8;
+            register_at += 1;
+        }
+        
+        for(struct ast_list_node *argument = function_type->argument_list.first; argument; argument = argument->next){
+            
+            struct ast_declaration *argument_decl = (struct ast_declaration *)argument->value;
+            struct ast_type *argument_type = argument_decl->type;
+            
+            enum register_kind register_kind = get_register_kind_for_type(argument_type);
+            
+            if(argument_type->flags & TYPE_FLAG_is_intrin_type){
+                // Intrinsic types are passed by reference.
+                register_kind = REGISTER_KIND_gpr;
             }
             
-            if(do_first_loop_for_a_big_return){
-                do_first_loop_for_a_big_return = false;
-            }else if((function->type->flags & FUNCTION_TYPE_FLAGS_is_varargs) && !it){
-                // this is fine, do nothing
-            }else{
-                assert(*it->value == IR_declaration);
-                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
-                decl->offset_on_stack = stack_at;
-                it = it->next;
+            if(register_at < array_count(argument_registers[0])){
+                // The argument was passed in a register.
+                enum register_encoding argument_reg = allocate_specific_register(context, register_kind, argument_registers[register_kind][register_at]);
                 
-                // :PassingStructArguments
-                if(size_is_big_or_oddly_sized(decl->type->size)){
-                    decl->flags |= DECLARATION_FLAGS_is_big_function_argument;
-                }
+                struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
+                struct emit_location *source = emit_location_loaded(context, register_kind, argument_reg, 8);
+                emit_store(context, dest, source);
+                
+                register_at += 1;
+            }
+            
+            // The argument was either passed on the stack or we just put it on the stack.
+            // Remember its location for when we want to access it!
+            argument_decl->offset_on_stack = stack_at;
+            
+            // :PassingStructArguments
+            if(size_is_big_or_oddly_sized(argument_type->size)){
+                argument_decl->flags |= DECLARATION_FLAGS_is_big_function_argument;
             }
             
             // :MSVC_function_call_stack_increase
             stack_at -= 8;
+        }
+        
+        if(register_at < array_count(argument_registers[0]) && (function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs)){
+            
+            // This is a varargs procedure, always put all argument registers on the stack.
+            
+            while(register_at < array_count(argument_registers[0])){
+                enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, argument_registers[REGISTER_KIND_gpr][register_at]);
+                
+                struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
+                struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_gpr, argument_reg, 8);
+                emit_store(context, dest, source);
+                
+                // :MSVC_function_call_stack_increase
+                stack_at -= 8;
+                register_at += 1;
+            }
         }
     }
     
