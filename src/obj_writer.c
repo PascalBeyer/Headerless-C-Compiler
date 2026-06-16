@@ -1122,7 +1122,7 @@ void codeview_push_debug_s_lines(struct ast_function *function, struct memory_ar
     
 }
 
-void print_obj(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
+void write_obj(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
     
     struct memory_arena stack_arena = create_memory_arena(giga_bytes(8), 2.0f, kilo_bytes(10));
     

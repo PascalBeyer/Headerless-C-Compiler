@@ -608,7 +608,7 @@ int write_msf(struct memory_arena *arena, char *file_name, struct msf_stream *st
 //_____________________________________________________________________________________________________________________
 
 
-func void print_coff(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
+func void write_coff(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
     
     
     // 
@@ -752,7 +752,6 @@ func void print_coff(struct string output_file_path, struct memory_arena *arena,
         // 
         ast_list_append(&uninitialized_declarations, scratch, &globals.tls_index_declaration->kind);
     }
-    
     
     assert(globals.output_file_type == OUTPUT_FILE_exe || globals.output_file_type == OUTPUT_FILE_dll || globals.output_file_type == OUTPUT_FILE_efi);
     
@@ -1866,7 +1865,6 @@ string_lexically_smaller( \
     
     push_zero_align(arena, 0x200);
     u8 *exe_end_address = arena_current(arena);
-    
     
     if(!globals.cli_options.dont_print_the_files){
         

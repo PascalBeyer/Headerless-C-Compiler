@@ -513,6 +513,22 @@ struct ast_list{
     smm count;
 };
 
+
+func void ast_list_append(struct ast_list *list, struct memory_arena *arena, enum ast_kind *ast){
+    struct ast_list_node *new = push_uninitialized_struct(arena, struct ast_list_node);
+    if(list->last){
+        list->last->next = new;
+    }else{
+        list->first = new;
+    }
+    
+    new->value = ast;
+    new->next = 0;
+    list->last = new;
+    
+    list->count++;
+}
+
 #define for_ast_list(list) for(struct ast_list_node *it = (list).first; it; it = it->next)
 
 

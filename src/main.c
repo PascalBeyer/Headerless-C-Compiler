@@ -5866,7 +5866,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         if(warning_enabled[WARNING_function_defined_but_unreachable] || warning_enabled[WARNING_function_declared_but_never_defined]){
             
-            
             for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
                 struct ast_table *table = &compilation_unit->static_declaration_table;
                 
