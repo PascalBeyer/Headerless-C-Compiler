@@ -103,6 +103,7 @@ enum memonic{
     MEMONIC_stosq,
     
     MEMONIC_int,
+    MEMONIC_syscall,
     
     //
     // SSE instructions
@@ -391,6 +392,7 @@ static struct{
     [MEMONIC_int3]   = {.memonic = const_string("int3"),   .amount_of_operands = 0 },
     [MEMONIC_ud2]   = {.memonic = const_string("ud2"),   .amount_of_operands = 0 },
     [MEMONIC_ret]    = {.memonic = const_string("ret"),    .amount_of_operands = 0 },
+    [MEMONIC_syscall] = {.memonic = const_string("syscall"), .amount_of_operands = 0},
     
     [MEMONIC_movsb]  = {.memonic = const_string("movsb"), .amount_of_operands = 0 },
     [MEMONIC_movsw]  = {.memonic = const_string("movsw"), .amount_of_operands = 0 },

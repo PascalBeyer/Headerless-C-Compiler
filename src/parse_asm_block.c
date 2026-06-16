@@ -1129,7 +1129,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
         //
         case MEMONIC_pause: case MEMONIC_sfence: case MEMONIC_lfence: case MEMONIC_mfence:
         case MEMONIC_int:   case MEMONIC_int3: case MEMONIC_ret: case MEMONIC_int1: case MEMONIC_ud2:
-        case MEMONIC_cpuid: case MEMONIC_xgetbv:
+        case MEMONIC_syscall: case MEMONIC_cpuid: case MEMONIC_xgetbv:
         case MEMONIC_rdtsc: case MEMONIC_rdtscp:
         case MEMONIC_movsb: case MEMONIC_movsw:                     case MEMONIC_movsq:
         case MEMONIC_stosb: case MEMONIC_stosw: case MEMONIC_stosd: case MEMONIC_stosq:{
