@@ -2520,11 +2520,6 @@ __declspec(inline_asm) int _mm_movemask_pd(__m128d a){
     return eax
 }
 
-__declspec(inline_asm) __m128i _mm_mul_epu32(__m128i a, __m128i b){
-    pmuludq a, b
-    return a
-}
-
 __declspec(inline_asm) __m128d _mm_mul_pd(__m128d a, __m128d b){
     mulpd a, b
     return a
@@ -2552,6 +2547,20 @@ __declspec(inline_asm) __m128i _mm_mullo_epi16(__m128i a, __m128i b){
     return xmm0
 }
 
+__declspec(inline_asm) __m128i _mm_mullo_epi32(__m128i a, __m128i b){
+    pmulld a, b
+    return a
+}
+
+__declspec(inline_asm) __m128i _mm_mul_epu32(__m128i a, __m128i b){
+    pmuludq a, b
+    return a
+}
+
+__declspec(inline_asm) __m128i _mm_mul_epi32(__m128i a, __m128i b){
+    pmuldq a, b
+    return a
+}
 
 __declspec(inline_asm) __m128d _mm_or_pd(__m128d a, __m128d b){
     orpd a, b

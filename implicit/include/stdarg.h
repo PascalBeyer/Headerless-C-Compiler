@@ -1,4 +1,5 @@
 
+#if _WIN32
 // 
 // Windows x64 calling convention has the arguments 
 // linearly each in an 8-byte slot. If an argument
@@ -23,3 +24,26 @@ typedef struct __va_list{
 #define va_copy(dest, src) ((dest) = (src))
 #define va_end(ap) ((void)(ap))
 
+#else
+
+// @incomplete: This is wrong on lunix!
+typedef struct __va_list{
+    __int64 unused;
+} *va_list;
+
+#define va_start(ap, parmN) ((ap) = ((va_list)&(parmN) + 1))
+#define va_arg(ap, type) ((sizeof(type) > 8 || (sizeof(type) & (sizeof(type)-1))) \
+        ? **(type**)(((ap) += 1) - 1) \
+        :  *(type *)(((ap) += 1) - 1))
+#define va_copy(dest, src) ((dest) = (src))
+#define va_end(ap) ((void)(ap))
+
+
+
+#ifndef __GNUC_VA_LIST
+#define __GNUC_VA_LIST
+typedef va_list __gnuc_va_list;
+#endif
+
+
+#endif

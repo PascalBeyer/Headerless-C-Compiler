@@ -26,7 +26,7 @@ typedef intptr_t  smm;
 typedef intptr_t  smem;
 
 
-#define NO_RETURN
+#define NO_RETURN __attribute__ ((__noreturn__))
 #define PRINTLIKE 
 #define ALIGNED(n) __attribute__((aligned (n)))
 
@@ -210,8 +210,8 @@ static NO_RETURN void __do_assert(const char *file, int line, const char *expres
 #define assert(expr) ((expr) ? 0 : (__do_assert(__FILE__,  __LINE__, #expr, __FUNCTION__), 1))
 
 #define debug_only(a) a
-#define not_implemented (__do_assert(__FILE__,  __LINE__, "not implemented!", __FUNCTION__))
-#define invalid_code_path (__do_assert(__FILE__, __LINE__, "invalid code path", __FUNCTION__))
+#define not_implemented __do_assert(__FILE__,  __LINE__, "not implemented!", __FUNCTION__)
+#define invalid_code_path __do_assert(__FILE__, __LINE__, "invalid code path", __FUNCTION__)
 #define invalid_default_case(...) default:{ assert(!"invalid default case"); __VA_ARGS__; } break
 #define prevent_usage(ident) struct { int asd; } ident; (void)ident;
 

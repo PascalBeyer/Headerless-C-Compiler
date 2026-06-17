@@ -10,6 +10,7 @@
 #include <sys/wait.h>
 #include <wordexp.h>
 #include <errno.h>
+#include <sys/eventfd.h>
 
 typedef int HANDLE;
 
@@ -38,7 +39,7 @@ struct parsed_command_line parse_command_line(char *line){
 }
 
 static struct string os_get_working_directory(struct memory_arena *arena){
-    char *cwd = push_uninitialized_data(arena, u8, PATH_MAX);
+    char *cwd = push_uninitialized_data(arena, char, PATH_MAX);
     
     if(getcwd(cwd, PATH_MAX) != NULL){
         struct string ret = cstring_to_string(cwd);
@@ -51,13 +52,13 @@ static struct string os_get_working_directory(struct memory_arena *arena){
 }
 
 static struct string os_get_executable_path(struct memory_arena *arena){
-    char *path = push_uninitialized_data(arena, u8, PATH_MAX + 1);
+    char *path = push_uninitialized_data(arena, char, PATH_MAX + 1);
     
     struct string ret = {0};
     
     ssize_t len = readlink("/proc/self/exe", path, PATH_MAX);
     if (len != -1) {
-        ret.data = path;
+        ret.data = (u8 *)path;
         ret.size = len;
     }
     
@@ -188,22 +189,23 @@ func u32 byteswap_u32(u32 value){
 }
 
 func void *atomic_compare_and_swap(void *dest, void *source, void *comparand){
-    return (void *)_InterlockedCompareExchange64((s64 *)dest, (s64)source, (s64)comparand);
+    return (void *)_InterlockedCompareExchange64((volatile long long *)dest, (long long)source, (long long)comparand);
 }
 
 func smm atomic_compare_and_swap_smm(smm *dest, smm source, smm comparand){
-    return _InterlockedCompareExchange64((s64 *)dest, (s64)source, (s64)comparand);
+    return _InterlockedCompareExchange64((volatile long long *)dest, (long long)source, (long long)comparand);
 }
 
 func u64 atomic_compare_and_swap_u64(u64 *dest, u64 source, u64 comparand){
-    return _InterlockedCompareExchange64((s64 *)dest, (s64)source, (s64)comparand);
+    return _InterlockedCompareExchange64((volatile long long *)dest, (long long)source, (long long)comparand);
 }
 
 // returns 1 on success
 // returns 0 on fail and overrides *comparand with *dest
 func b32 atomic_compare_and_swap_128(m128 *dest, m128 source, m128 *comparand){
     assert(((umm)dest & 15) == 0);
-    return _InterlockedCompareExchange128((__int64 *)dest, source.ptr2, source.ptr1, (__int64 *)comparand);
+    unsigned char _InterlockedCompareExchange128(volatile long long *, long long, long long, long long *);
+    return _InterlockedCompareExchange128((volatile long long *)dest, (long long)source.ptr2, (long long)source.ptr1, (long long *)comparand);
 }
 
 
@@ -312,7 +314,7 @@ HANDLE os_open_file(char *file_name, enum os_open_kind kind){
         case OS_OPEN_write:{
             flags = O_WRONLY | O_CREAT | O_TRUNC;
         }break;
-        default: return null;
+        default: return -1;
     }
     
     return open(file_name, flags, 0644);

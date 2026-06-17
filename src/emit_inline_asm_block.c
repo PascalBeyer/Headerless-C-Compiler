@@ -411,6 +411,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 [MEMONIC_packssdw] = 0x6b,
                 [MEMONIC_punpcklqdq] = 0x6c, [MEMONIC_punpckhqdq] = 0x6d,
                 
+                [MEMONIC_pmulld]  = 0x40,
                 [MEMONIC_pmullw]  = 0xD5,
                 
                 [MEMONIC_psubusb] = 0xD8,
@@ -438,6 +439,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 [MEMONIC_pmaxsw] = 0xEE,
                 [MEMONIC_pxor]   = 0xef,
                 
+                [MEMONIC_pmuldq] = 0x28,
                 [MEMONIC_pmuludq] = 0xF4,
                 [MEMONIC_pmaddwd] = 0xF5,
                 [MEMONIC_psadbw]  = 0xF6,
@@ -1365,6 +1367,8 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             
             
             // 3byte-38-op xmm, xmm128 or ymm, ymm256
+            case MEMONIC_pmulld:
+            case MEMONIC_pmuldq:
             case MEMONIC_aesdec: case MEMONIC_pshufb:
             case MEMONIC_ptest:
             case MEMONIC_vptest:{

@@ -1223,7 +1223,7 @@ struct declaration_specifiers{
 };
 
 func struct expr invalid_ast(struct context *context){
-    struct ir *invalid = push_ir(context, AST_invalid);
+    struct ir *invalid = push_ir(context, IR_invalid);
     return (struct expr){.ir = invalid, get_current_token_for_error_report(context), &globals.typedef_poison};
 }
 
@@ -1838,7 +1838,7 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
     struct ast_type *lhs_type = lhs->resolved_type;
     assert(lhs_type->kind == AST_array_type || lhs_type->kind == AST_pointer_type);
     
-    enum ir_kind subscript_kind = AST_none;
+    enum ir_kind subscript_kind = IR_invalid;
     struct ast_type *dereferenced_resolved_type = null;
     enum ast_kind   *dereferenced_defined_type  = null;
     
