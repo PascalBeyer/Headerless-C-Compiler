@@ -929,6 +929,17 @@ enum register_encoding{
     REGISTER_XMM6 = 6,
     REGISTER_XMM7 = 7,
     
+    REGISTER_XMM8  = 8 + 0,
+    REGISTER_XMM9  = 8 + 1,
+    REGISTER_XMM10 = 8 + 2,
+    REGISTER_XMM11 = 8 + 3,
+    REGISTER_XMM12 = 8 + 4,
+    REGISTER_XMM13 = 8 + 5,
+    REGISTER_XMM14 = 8 + 6,
+    REGISTER_XMM15 = 8 + 7,
+    
     REGISTER_SIB_EXTENSION = REGISTER_SP,
+    
+    
 };
 

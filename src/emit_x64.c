@@ -899,18 +899,7 @@ func enum register_encoding allocate_specific_register(struct context *context, 
     return reg;
 }
 
-
-static enum register_encoding volatile_xmm_registers[] = {
-    REGISTER_XMM0,
-    REGISTER_XMM1,
-    REGISTER_XMM2,
-    REGISTER_XMM3,
-    
-    REGISTER_XMM4,
-    REGISTER_XMM5,
-};
-
-static enum register_encoding volatile_general_purpose_registers[] = {
+static enum register_encoding windows_x64_volatile_general_purpose_registers[] = {
     REGISTER_C,
     REGISTER_D,
     REGISTER_R8,
@@ -921,6 +910,49 @@ static enum register_encoding volatile_general_purpose_registers[] = {
     REGISTER_R11,
 };
 
+static enum register_encoding windows_x64_volatile_xmm_registers[] = {
+    REGISTER_XMM0,
+    REGISTER_XMM1,
+    REGISTER_XMM2,
+    REGISTER_XMM3,
+    
+    REGISTER_XMM4,
+    REGISTER_XMM5,
+};
+
+static enum register_encoding system_V_volatile_general_purpose_registers[] = {
+    REGISTER_DI,
+    REGISTER_SI,
+    REGISTER_D,
+    REGISTER_C,
+    REGISTER_R8,
+    REGISTER_R9,
+    
+    REGISTER_A,
+    REGISTER_R10,
+    REGISTER_R11,
+};
+
+static enum register_encoding system_V_volatile_xmm_registers[] = {
+    REGISTER_XMM0,
+    REGISTER_XMM1,
+    REGISTER_XMM2,
+    REGISTER_XMM3,
+    REGISTER_XMM4,
+    REGISTER_XMM5,
+    REGISTER_XMM6,
+    REGISTER_XMM7,
+    REGISTER_XMM8,
+    REGISTER_XMM9,
+    REGISTER_XMM10,
+    REGISTER_XMM11,
+    REGISTER_XMM12,
+    REGISTER_XMM13,
+    REGISTER_XMM14,
+    REGISTER_XMM15,
+};
+
+
 // this tries to find a 'register_encoding' such that context->register_to_emit_location_map[register] = null
 // otherwise it spills a register that is not locked.
 func enum register_encoding allocate_register(struct context *context, enum register_kind allocator){
@@ -929,12 +961,22 @@ func enum register_encoding allocate_register(struct context *context, enum regi
     smm amount_of_volatile_registers = 0;
     
     if(allocator == REGISTER_KIND_gpr){
-        volatile_registers = volatile_general_purpose_registers;
-        amount_of_volatile_registers = array_count(volatile_general_purpose_registers);
+        if(context->current_function_calling_convention == CALLING_CONVENTION_windows_x64){
+            volatile_registers = windows_x64_volatile_general_purpose_registers;
+            amount_of_volatile_registers = array_count(windows_x64_volatile_general_purpose_registers);
+        }else if(context->current_function_calling_convention == CALLING_CONVENTION_system_V){
+            volatile_registers = system_V_volatile_general_purpose_registers;
+            amount_of_volatile_registers = array_count(system_V_volatile_general_purpose_registers);
+        }else invalid_code_path;
     }else{
         assert(allocator == REGISTER_KIND_xmm);
-        volatile_registers = volatile_xmm_registers;
-        amount_of_volatile_registers = array_count(volatile_xmm_registers);
+        if(context->current_function_calling_convention == CALLING_CONVENTION_windows_x64){
+            volatile_registers = windows_x64_volatile_xmm_registers;
+            amount_of_volatile_registers = array_count(windows_x64_volatile_xmm_registers);
+        }else if(context->current_function_calling_convention == CALLING_CONVENTION_system_V){
+            volatile_registers = system_V_volatile_xmm_registers;
+            amount_of_volatile_registers = array_count(system_V_volatile_xmm_registers);
+        }else invalid_code_path;
     }
     
     struct register_allocator *alloc = context->register_allocators + allocator;
@@ -990,19 +1032,42 @@ func enum register_encoding allocate_register(struct context *context, enum regi
 }
 
 func void spill_all_allocated_volatile_registers(struct context *context){
-    for(u32 i = 0; i < array_count(volatile_general_purpose_registers); i++){
-        enum register_encoding reg = volatile_general_purpose_registers[i];
-        if(context->gpr_allocator.emit_location_map[reg]){
-            spill_register(context, REGISTER_KIND_gpr, reg);
-        }
-    }
     
-    for(u32 i = 0; i < array_count(volatile_xmm_registers); i++){
-        enum register_encoding reg = volatile_xmm_registers[i];
-        if(context->xmm_allocator.emit_location_map[reg]){
-            spill_register(context, REGISTER_KIND_xmm, reg);
+    
+    if(context->current_function_calling_convention == CALLING_CONVENTION_windows_x64){
+        
+        for(u32 i = 0; i < array_count(windows_x64_volatile_general_purpose_registers); i++){
+            enum register_encoding reg = windows_x64_volatile_general_purpose_registers[i];
+            if(context->gpr_allocator.emit_location_map[reg]){
+                spill_register(context, REGISTER_KIND_gpr, reg);
+            }
         }
-    }
+        
+        for(u32 i = 0; i < array_count(windows_x64_volatile_xmm_registers); i++){
+            enum register_encoding reg = windows_x64_volatile_xmm_registers[i];
+            if(context->xmm_allocator.emit_location_map[reg]){
+                spill_register(context, REGISTER_KIND_xmm, reg);
+            }
+        }
+        
+    }else if(context->current_function_calling_convention == CALLING_CONVENTION_system_V){
+        
+        for(u32 i = 0; i < array_count(system_V_volatile_general_purpose_registers); i++){
+            enum register_encoding reg = system_V_volatile_general_purpose_registers[i];
+            if(context->gpr_allocator.emit_location_map[reg]){
+                spill_register(context, REGISTER_KIND_gpr, reg);
+            }
+        }
+        
+        for(u32 i = 0; i < array_count(system_V_volatile_xmm_registers); i++){
+            enum register_encoding reg = system_V_volatile_xmm_registers[i];
+            if(context->xmm_allocator.emit_location_map[reg]){
+                spill_register(context, REGISTER_KIND_xmm, reg);
+            }
+        }
+        
+    }else invalid_code_path;
+    
 }
 
 func void free_emit_location(struct context *context, struct emit_location *loc){
@@ -2149,11 +2214,15 @@ func void assert_that_no_registers_are_allocated(struct context *context){
     }
 }
 
-func b32 type_is_returned_by_address(struct ast_type *type){
-    smm size = type->size;
-    if(type->flags & TYPE_FLAG_is_intrin_type) return false;
-    if(size_is_big_or_oddly_sized(size)) return true;
-    return false;
+func b32 type_is_returned_by_address(enum calling_convention calling_convention, struct ast_type *type){
+    if(calling_convention == CALLING_CONVENTION_windows_x64){
+        smm size = type->size;
+        if(type->flags & TYPE_FLAG_is_intrin_type) return false;
+        if(size_is_big_or_oddly_sized(size)) return true;
+        return false;
+    }else if(calling_convention == CALLING_CONVENTION_system_V){
+        return type->size > 16;
+    }else invalid_code_path;
 }
 
 func void emit_inline_asm_binary_op(struct context *context, struct prefixes prefixes, struct emit_location *lhs, struct emit_location *rhs,
@@ -3327,8 +3396,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct ast_function_type *function_type = call->function_type;
                 struct ast_type *return_type = function_type->return_type;
                 
-                // @incomplete: varargs functions might have argument_count != parameter_count.
-                
                 smm parameter_count = function_type->argument_list.count;
                 smm  argument_count = call->call_arguments_count;
                 
@@ -3357,253 +3424,544 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     }
                 }
                 
-                static enum register_encoding argument_registers[REGISTER_KIND_count][4] = {
-                    [REGISTER_KIND_gpr][0] = REGISTER_C,
-                    [REGISTER_KIND_gpr][1] = REGISTER_D,
-                    [REGISTER_KIND_gpr][2] = REGISTER_R8,
-                    [REGISTER_KIND_gpr][3] = REGISTER_R9,
+                enum calling_convention calling_convention = function_type->calling_convention;
+                
+                if(calling_convention == CALLING_CONVENTION_windows_x64){
                     
-                    [REGISTER_KIND_xmm][0] = REGISTER_XMM0,
-                    [REGISTER_KIND_xmm][1] = REGISTER_XMM1,
-                    [REGISTER_KIND_xmm][2] = REGISTER_XMM2,
-                    [REGISTER_KIND_xmm][3] = REGISTER_XMM3,
-                };
-                
-                // 
-                // :returning_structs
-                // 
-                // If the function returns a big struct, there is an implicit first argument, which is the
-                // address of the return value. We memcpy in 'case AST_return'.
-                b32 returns_big_struct = type_is_returned_by_address(return_type);
-                
-                // Keep track of the maximal amount of function call arguments 
-                // to allocate the correct amount of memory for arguments passed on the stack.
-                context->max_amount_of_function_call_arguments = max_of(context->max_amount_of_function_call_arguments, argument_count + returns_big_struct);
-                
-                // 
-                // Put the arguments into the right slots and prepare
-                // the arguments that have to be altered.
-                // We iterate the argument_locations in reverse order to hopefully
-                // disturb as little arguments as possible.
-                // 
-                
-                for(smm argument_index = argument_count-1; argument_index >= 0; --argument_index){
-                    struct emit_location *argument = argument_locations[argument_index];
+                    static enum register_encoding argument_registers[REGISTER_KIND_count][4] = {
+                        [REGISTER_KIND_gpr][0] = REGISTER_C,
+                        [REGISTER_KIND_gpr][1] = REGISTER_D,
+                        [REGISTER_KIND_gpr][2] = REGISTER_R8,
+                        [REGISTER_KIND_gpr][3] = REGISTER_R9,
+                        
+                        [REGISTER_KIND_xmm][0] = REGISTER_XMM0,
+                        [REGISTER_KIND_xmm][1] = REGISTER_XMM1,
+                        [REGISTER_KIND_xmm][2] = REGISTER_XMM2,
+                        [REGISTER_KIND_xmm][3] = REGISTER_XMM3,
+                    };
                     
-                    if(size_is_big_or_oddly_sized(argument->size)){
-                        // 
-                        // This argument needs to be passed by pointer.
-                        // First copy it to a temporary stack location.
-                        // 
-                        
-                        struct emit_location *copy_into = emit_allocate_temporary_stack_location(context, argument->size, 0x10); // @cleanup: alignment.
-                        
-                        if(argument->state == EMIT_LOCATION_loaded){
-                            // This can happen if we have a function that returns an intrinsic type.
-                            emit_store(context, copy_into, argument);
-                        }else{
-                            emit_memcpy(context, copy_into, argument);
-                            free_emit_location(context, argument); // @hmm: emit_store frees, emit_memcpy does not
-                        }
-                        
-                        argument = emit_load_address(context, copy_into, allocate_register(context, REGISTER_KIND_gpr));
-                    }
+                    // 
+                    // :returning_structs
+                    // 
+                    // If the function returns a big struct, there is an implicit first argument, which is the
+                    // address of the return value. We memcpy in 'case AST_return'.
+                    b32 returns_big_struct = type_is_returned_by_address(calling_convention, return_type);
                     
-                    if(argument_index >= parameter_count){
-                        assert(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs);
+                    // Keep track of the maximal amount of function call arguments 
+                    // to allocate the correct amount of memory for arguments passed on the stack.
+                    context->function_argument_stack_space_needed = max_of(context->function_argument_stack_space_needed, 8 * (argument_count + returns_big_struct));
+                    
+                    // 
+                    // Put the arguments into the right slots and prepare
+                    // the arguments that have to be altered.
+                    // We iterate the argument_locations in reverse order to hopefully
+                    // disturb as little arguments as possible.
+                    // 
+                    
+                    for(smm argument_index = argument_count-1; argument_index >= 0; --argument_index){
+                        struct emit_location *argument = argument_locations[argument_index];
+                        
                         // 
-                        // We are in a varargs function.
-                        // We need to transform floating point arguments to integer arguments using movq.
+                        // Yikes, get the expected register kind. We need that because the `argument` does not know it anymore.
                         // 
                         
-                        if(argument->state == EMIT_LOCATION_loaded && argument->register_kind == REGISTER_KIND_xmm && argument->size < 16){
-                            struct emit_location *float_reg = emit_load_float(context, argument);
+                        enum register_kind expected_register_kind = REGISTER_KIND_gpr;
+                        smm alignment = 0x8;
+                        if(argument_index < parameter_count){
                             
-                            enum register_encoding arg_reg;
-                            if(returns_big_struct + argument_index >= 4){
-                                arg_reg = allocate_register(context, REGISTER_KIND_gpr);
-                            }else{
-                                enum register_encoding expected_register = argument_registers[REGISTER_KIND_gpr][returns_big_struct + argument_index];
-                                arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, expected_register);
+                            struct ast_list_node *node = function_type->argument_list.first;
+                            for(smm index = 0; index < argument_index; index++) node = node->next;
+                            
+                            struct ast_declaration *decl = (struct ast_declaration *)node->value;
+                            struct ast_type *type = decl->type;
+                            
+                            if(type == &globals.typedef_f32 || type == &globals.typedef_f64){
+                                // @note: Intrinsic types get passed on the stack for whatever reason.
+                                expected_register_kind = REGISTER_KIND_xmm;
                             }
-                            struct emit_location *gpr_reg = emit_location_loaded(context, REGISTER_KIND_gpr, arg_reg, 8);
                             
-                            // @cleanup: holy fuck, I really don't understand the prefix convention here...
-                            // prefix to load the _lower_ half (mm|xmm) and we want xmm I guess..
-                            emit_register_op__internal(context, create_prefixes(ASM_PREFIX_NON_PACKED_OP_double), two_byte_opcode(MOVQ_REGM_XMM), float_reg->loaded_register, gpr_reg->loaded_register, 8);
-                            free_emit_location(context, float_reg);
+                            alignment = type->alignment;
+                        }
+                        
+                        if(size_is_big_or_oddly_sized(argument->size)){
+                            // 
+                            // This argument needs to be passed by pointer.
+                            // First copy it to a temporary stack location.
+                            // 
                             
-                            argument = gpr_reg;
+                            struct emit_location *copy_into = emit_allocate_temporary_stack_location(context, argument->size, alignment); 
+                            
+                            if(argument->state == EMIT_LOCATION_loaded){
+                                // This can happen if we have a function that returns an intrinsic type.
+                                emit_store(context, copy_into, argument);
+                            }else{
+                                emit_memcpy(context, copy_into, argument);
+                                free_emit_location(context, argument); // @hmm: emit_store frees, emit_memcpy does not
+                            }
+                            
+                            argument = emit_load_address(context, copy_into, allocate_register(context, REGISTER_KIND_gpr));
                         }
-                    }
-                    
-                    if(returns_big_struct + argument_index >= 4){
-                        // 
-                        // This argument is passed on the stack.
-                        //    
-                        //     rcx: ret,  rdx: arg0, r8: arg1, r9: arg2, [rsp + 0x20]: arg3, [rsp + 0x28]: arg4, ...
-                        //     rcx: arg0, rdx: arg1, r8: arg2, r9: arg3, [rsp + 0x20]: arg4, [rsp + 0x28]: arg5, ...
-                        // 
                         
-                        smm stack_pass_location = (returns_big_struct + argument_index) * 8;
-                        
-                        struct emit_location *store_in = emit_location_register_relative(context, context->register_sp, context->register_sp, stack_pass_location, argument->size);
-                        emit_store(context, store_in, argument);
-                        continue;
-                    }
-                    
-                    // 
-                    // Yikes, get the expected register kind. We need that because the `argument` does not know it anymore.
-                    // 
-                    
-                    enum register_kind expected_register_kind = REGISTER_KIND_gpr;
-                    if(argument_index < parameter_count){
-                        struct ast_list_node *node = function_type->argument_list.first;
-                        for(smm index = 0; index < argument_index; index++) node = node->next;
-                        struct ast_declaration *decl = (struct ast_declaration *)node->value;
-                        
-                        if(decl->type == &globals.typedef_f32 || decl->type == &globals.typedef_f64){
-                            // @note: Intrinsic types get passed on the stack for whatever reason.
-                            expected_register_kind = REGISTER_KIND_xmm;
+                        if(argument_index >= parameter_count){
+                            assert(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs);
+                            // 
+                            // We are in a varargs function.
+                            // We need to transform floating point arguments to integer arguments using movq.
+                            // 
+                            
+                            if(argument->state == EMIT_LOCATION_loaded && argument->register_kind == REGISTER_KIND_xmm && argument->size < 16){
+                                struct emit_location *float_reg = emit_load_float(context, argument);
+                                
+                                enum register_encoding arg_reg;
+                                if(returns_big_struct + argument_index >= 4){
+                                    arg_reg = allocate_register(context, REGISTER_KIND_gpr);
+                                }else{
+                                    enum register_encoding expected_register = argument_registers[REGISTER_KIND_gpr][returns_big_struct + argument_index];
+                                    arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, expected_register);
+                                }
+                                struct emit_location *gpr_reg = emit_location_loaded(context, REGISTER_KIND_gpr, arg_reg, 8);
+                                
+                                // @cleanup: holy fuck, I really don't understand the prefix convention here...
+                                // prefix to load the _lower_ half (mm|xmm) and we want xmm I guess..
+                                emit_register_op__internal(context, create_prefixes(ASM_PREFIX_NON_PACKED_OP_double), two_byte_opcode(MOVQ_REGM_XMM), float_reg->loaded_register, gpr_reg->loaded_register, 8);
+                                free_emit_location(context, float_reg);
+                                
+                                argument = gpr_reg;
+                            }
                         }
-                    }
-                    
-                    enum register_encoding expected_register = argument_registers[expected_register_kind][returns_big_struct + argument_index];
-                    
-                    if(argument->state == EMIT_LOCATION_loaded && argument->loaded_register == expected_register){
-                        // The argument is already in the correct slot.
+                        
+                        if(returns_big_struct + argument_index >= 4){
+                            // 
+                            // This argument is passed on the stack.
+                            //    
+                            //     rcx: ret,  rdx: arg0, r8: arg1, r9: arg2, [rsp + 0x20]: arg3, [rsp + 0x28]: arg4, ...
+                            //     rcx: arg0, rdx: arg1, r8: arg2, r9: arg3, [rsp + 0x20]: arg4, [rsp + 0x28]: arg5, ...
+                            // 
+                            
+                            smm stack_pass_location = (returns_big_struct + argument_index) * 8;
+                            
+                            struct emit_location *store_in = emit_location_register_relative(context, context->register_sp, context->register_sp, stack_pass_location, argument->size);
+                            emit_store(context, store_in, argument);
+                            continue;
+                        }
+                        
+                        enum register_encoding expected_register = argument_registers[expected_register_kind][returns_big_struct + argument_index];
+                        
+                        if(argument->state == EMIT_LOCATION_loaded && argument->loaded_register == expected_register){
+                            // The argument is already in the correct slot.
+                            emit_location_prevent_spilling(context, argument);
+                            argument_locations[argument_index] = argument;
+                            continue;
+                        }
+                        
+                        enum register_encoding arg_reg = allocate_specific_register(context, expected_register_kind, expected_register);
+                        
+                        if(expected_register_kind == REGISTER_KIND_gpr){
+                            argument = emit_load_into_specific_gpr(context, argument, arg_reg);
+                        }else{
+                            argument = emit_load_float_into_specific_register(context, argument, arg_reg);
+                        }
+                        
                         emit_location_prevent_spilling(context, argument);
                         argument_locations[argument_index] = argument;
-                        continue;
                     }
                     
-                    enum register_encoding arg_reg = allocate_specific_register(context, expected_register_kind, expected_register);
+                    {
+                        // Ensure that all volatile registers, that are not parameters to the function call,
+                        // are spilled.
+                        // For the arguments, either the gpr or the xmm register is used.
+                        // @note: the 'volatile_*_registers' are sorted such that the argument registers come first.
+                        
+                        smm register_argument_count = returns_big_struct + argument_count;
+                        if(register_argument_count > 4) register_argument_count = 4;
+                        
+                        for(u32 index = returns_big_struct; index < array_count(windows_x64_volatile_general_purpose_registers); index++){
+                            enum register_encoding reg = windows_x64_volatile_general_purpose_registers[index];
+                            struct emit_location *loc  = context->gpr_allocator.emit_location_map[reg];
+                            
+                            if(index < register_argument_count && argument_locations[index - returns_big_struct] == loc){
+                                continue;
+                            }
+                            
+                            if(loc) spill_register(context, REGISTER_KIND_gpr, reg);
+                        }
+                        
+                        for(smm index = 0; index < array_count(windows_x64_volatile_xmm_registers); index++){
+                            enum register_encoding reg = windows_x64_volatile_xmm_registers[index];
+                            struct emit_location *loc  = context->xmm_allocator.emit_location_map[reg];
+                            
+                            if(index < register_argument_count && argument_locations[index - returns_big_struct] == loc){ // @note: This is somewhat hacky, arguments[-1] is the function location and hence never in an xmm register.
+                                continue;
+                            }
+                            
+                            if(loc) spill_register(context, REGISTER_KIND_xmm, reg);
+                        }
+                    }
                     
-                    if(expected_register_kind == REGISTER_KIND_gpr){
-                        argument = emit_load_into_specific_gpr(context, argument, arg_reg);
+                    // :returning_structs
+                    struct emit_location *stack_return_location = null;
+                    struct emit_location *locked_pointer_to_stack_location = null; 
+                    if(returns_big_struct){
+                        stack_return_location = emit_allocate_temporary_stack_location(context, return_type->size, return_type->alignment);
+                        
+                        locked_pointer_to_stack_location = emit_load_address(context, stack_return_location, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_C));
+                        emit_location_prevent_spilling(context, locked_pointer_to_stack_location); // Just so we dont stomp it in the `EMIT_LOCATION_register_relative` case in the call to a function pointer.
+                    }
+                    
+                    if(function_to_call){
+                        emit(CALL_RELATIVE);
+                        smm patch_offset = emit_bytes(context, sizeof(s32), 0);
+                        emit_patch(context, PATCH_rip_relative, &function_to_call->base, 0, &context->current_function->as_decl, patch_offset, patch_offset + 4);
                     }else{
-                        argument = emit_load_float_into_specific_register(context, argument, arg_reg);
-                    }
-                    
-                    emit_location_prevent_spilling(context, argument);
-                    argument_locations[argument_index] = argument;
-                }
-                
-                {
-                    // Ensure that all volatile registers, that are not parameters to the function call,
-                    // are spilled.
-                    // For the arguments, either the gpr or the xmm register is used.
-                    // @note: the 'volatile_*_registers' are sorted such that the argument registers come first.
-                    
-                    smm register_argument_count = returns_big_struct + argument_count;
-                    if(register_argument_count > 4) register_argument_count = 4;
-                    
-                    for(u32 index = returns_big_struct; index < array_count(volatile_general_purpose_registers); index++){
-                        enum register_encoding reg = volatile_general_purpose_registers[index];
-                        struct emit_location *loc  = context->gpr_allocator.emit_location_map[reg];
                         
-                        if(index < register_argument_count && argument_locations[index - returns_big_struct] == loc){
-                            continue;
+                        if(function_location->size == 0){
+                            // @cleanup: Dll import. This feels hacky.
+                            function_location = function_location->base;
                         }
                         
-                        if(loc) spill_register(context, REGISTER_KIND_gpr, reg);
+                        switch(function_location->state){
+                            case EMIT_LOCATION_register_relative:{
+                                emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_CALL_REGM, function_location);
+                            }break;
+                            case EMIT_LOCATION_loaded:{
+                                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_CALL_REGM, function_location);
+                            }break;
+                            invalid_default_case();
+                        }
+                        free_emit_location(context, function_location);
                     }
                     
-                    for(smm index = 0; index < array_count(volatile_xmm_registers); index++){
-                        enum register_encoding reg = volatile_xmm_registers[index];
-                        struct emit_location *loc  = context->xmm_allocator.emit_location_map[reg];
+                    {   // 
+                        // Free all register argument_locations.
+                        // 
                         
-                        if(index < register_argument_count && argument_locations[index - returns_big_struct] == loc){ // @note: This is somewhat hacky, arguments[-1] is the function location and hence never in an xmm register.
-                            continue;
+                        for(smm argument_index = 0; argument_index < argument_count; argument_index++){
+                            if(argument_index + returns_big_struct >= 4) break;
+                            
+                            emit_location_allow_spilling(context, argument_locations[argument_index]);
+                            free_emit_location(context, argument_locations[argument_index]);
                         }
                         
-                        if(loc) spill_register(context, REGISTER_KIND_xmm, reg);
-                    }
-                }
-                
-                // :returning_structs
-                struct emit_location *stack_return_location = null;
-                struct emit_location *locked_pointer_to_stack_location = null; 
-                if(returns_big_struct){
-                    stack_return_location = emit_allocate_temporary_stack_location(context, return_type->size, return_type->alignment);
-                    
-                    locked_pointer_to_stack_location = emit_load_address(context, stack_return_location, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_C));
-                    emit_location_prevent_spilling(context, locked_pointer_to_stack_location); // Just so we dont stomp it in the `EMIT_LOCATION_register_relative` case in the call to a function pointer.
-                }
-                
-                if(function_to_call){
-                    emit(CALL_RELATIVE);
-                    smm patch_offset = emit_bytes(context, sizeof(s32), 0);
-                    emit_patch(context, PATCH_rip_relative, &function_to_call->base, 0, &context->current_function->as_decl, patch_offset, patch_offset + 4);
-                }else{
-                    
-                    if(function_location->size == 0){
-                        // @cleanup: Dll import. This feels hacky.
-                        function_location = function_location->base;
+                        if(locked_pointer_to_stack_location){
+                            emit_location_allow_spilling(context, locked_pointer_to_stack_location);
+                            free_emit_location(context, locked_pointer_to_stack_location);
+                        }
                     }
                     
-                    switch(function_location->state){
-                        case EMIT_LOCATION_register_relative:{
-                            emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_CALL_REGM, function_location);
-                        }break;
-                        case EMIT_LOCATION_loaded:{
-                            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_CALL_REGM, function_location);
-                        }break;
-                        invalid_default_case();
+                    if(return_type == &globals.typedef_void){
+                        emit_location_stack[emit_location_stack_at++] = null;
+                        break;
                     }
-                    free_emit_location(context, function_location);
-                }
-                
-                {   // 
-                    // Free all register argument_locations.
+                    
+                    // :returning_structs
+                    if(stack_return_location){
+                        assert(!(return_type->flags & TYPE_FLAG_is_intrin_type));
+                        assert(returns_big_struct);
+                        emit_location_stack[emit_location_stack_at++] = stack_return_location;
+                        break;
+                    }
+                    
+                    if(return_type->kind == AST_float_type || (return_type->flags & TYPE_FLAG_is_intrin_type)){
+                        emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, REGISTER_KIND_xmm, REGISTER_XMM0, return_type->size);
+                        break;
+                    }
+                    
+                    if(return_type->kind == AST_struct || return_type->kind == AST_union || return_type->kind == AST_array_type){
+                        // If we are a compound type or whatever we have return a 'register_relative' emit location, 
+                        // so we spill rax to the stack.
+                        // This handles 'struct{u64 a;}' which are returned in 'rax'.
+                        
+                        assert(!returns_big_struct); // Otherwise, it should have already been handled.
+                        struct emit_location *ret = emit_allocate_temporary_stack_location(context, return_type->size, return_type->alignment);
+                        struct emit_location *rax = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
+                        emit_store(context, ret, rax);
+                        emit_location_stack[emit_location_stack_at++] = ret;
+                        break;
+                    }
+                    
+                    assert(return_type->kind == AST_integer_type || return_type->kind == AST_pointer_type);
+                    emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
+                }else if(calling_convention == CALLING_CONVENTION_system_V){
+                    // 
+                    // Parameters to functions are passed in via the registers rdi, rsi, rdx, rcx, r8, and r9.
+                    // Floating-point parameters are passsed in via xmm0 through xmm7.
+                    // Any additional arguments are passed on the stack in reverse order.
+                    // 
+                    // Example:
+                    //     movss   xmm0, dword ptr [rip + .LCPI3_0]
+                    //     movss   xmm1, dword ptr [rip + .LCPI3_1]
+                    //     movss   xmm2, dword ptr [rip + .LCPI3_2]
+                    //     movss   xmm3, dword ptr [rip + .LCPI3_3]
+                    //     movss   xmm4, dword ptr [rip + .LCPI3_4]
+                    //     movss   xmm5, dword ptr [rip + .LCPI3_5]
+                    //     movss   xmm6, dword ptr [rip + .LCPI3_6]
+                    //     movss   xmm7, dword ptr [rip + .LCPI3_7]
+                    //     movss   xmm8, dword ptr [rip + .LCPI3_8]
+                    //     mov     edi, 1
+                    //     mov     esi, 2
+                    //     mov     edx, 3
+                    //     mov     ecx, 4
+                    //     mov     r8d, 5
+                    //     mov     r9d, 6
+                    //     movss   dword ptr [rsp], xmm8
+                    //     mov     dword ptr [rsp + 8], 7
+                    //     mov     dword ptr [rsp + 16], 8
+                    //     mov     dword ptr [rsp + 24], 9
+                    //     call    float_and_int_function(float, float, float, float, float, float, float, float, float, int, int, int, int, int, int, int, int, int)
+                    // 
+                    // It seems the intrinsic types __m128i and such are also passed in floating point registers.
+                    // float and intrinsic types are returned in xmm0.
+                    // 
+                    // Functions preserve the registers rbx, rsp, rbp, r12, r13, r14, r15.
+                    // While rax, rdi, rsi, rdx, rcx, r8, r9, r10, and r11 are scratch registers.
+                    // All floating point registers are scratch.
+                    // 
+                    // The return value is stored in the rax register or if it is a 128-bit value then the
+                    // higher bits go in rdx.
+                    // 
+                    // If the return value does not fit in rax and rdx, then the caller must reserve storage space 
+                    // and pass a pointer in rdi as if it was the first argument. 
+                    // The callee must return the same pointer in rax.
                     // 
                     
-                    for(smm argument_index = 0; argument_index < argument_count; argument_index++){
-                        if(argument_index + returns_big_struct >= 4) break;
+                    static enum register_encoding integer_argument_registers[6] = {
+                        REGISTER_DI,
+                        REGISTER_SI,
+                        REGISTER_D,
+                        REGISTER_C,
+                        REGISTER_R8,
+                        REGISTER_R9,
+                    };
+                    
+                    // 
+                    // Put the arguments into the right slots and prepare
+                    // the arguments that have to be altered.
+                    // We iterate the argument_locations in reverse order to hopefully
+                    // disturb as little arguments as possible.
+                    // 
+                    
+                    u32 integer_register_at = 0;
+                    u32 float_register_at = 0;
+                    
+                    u32 returns_big_struct = type_is_returned_by_address(calling_convention, return_type);
+                    
+                    smm stack_pass_location = 0;
+                    
+                    for(smm argument_index = argument_count-1; argument_index >= 0; --argument_index){
+                        struct emit_location *argument = argument_locations[argument_index];
                         
-                        emit_location_allow_spilling(context, argument_locations[argument_index]);
-                        free_emit_location(context, argument_locations[argument_index]);
+                        // 
+                        // Yikes, get the expected register kind. We need that because the `argument` does not know it anymore.
+                        // 
+                        
+                        enum register_kind expected_register_kind = REGISTER_KIND_gpr;
+                        smm alignment = 0x8;
+                        if(argument_index < parameter_count){
+                            
+                            struct ast_list_node *node = function_type->argument_list.first;
+                            for(smm index = 0; index < argument_index; index++) node = node->next;
+                            
+                            struct ast_declaration *decl = (struct ast_declaration *)node->value;
+                            struct ast_type *type = decl->type;
+                            
+                            if(type->kind == AST_float_type || (type->flags & TYPE_FLAG_is_intrin_type)){
+                                // @note: Intrinsic types get passed on the stack for whatever reason.
+                                expected_register_kind = REGISTER_KIND_xmm;
+                            }
+                            
+                            alignment = type->alignment;
+                        }
+                        
+                        if(argument->state == EMIT_LOCATION_register_relative && argument->size > 8){
+                            // 
+                            // This argument needs to be passed by pointer.
+                            // First copy it to a temporary stack location.
+                            // 
+                            
+                            struct emit_location *copy_into = emit_allocate_temporary_stack_location(context, argument->size, alignment);
+                            
+                            if(argument->state == EMIT_LOCATION_loaded){
+                                // This can happen if we have a function that returns an intrinsic type.
+                                emit_store(context, copy_into, argument);
+                            }else{
+                                emit_memcpy(context, copy_into, argument);
+                                free_emit_location(context, argument); // @hmm: emit_store frees, emit_memcpy does not
+                            }
+                            
+                            argument = emit_load_address(context, copy_into, allocate_register(context, REGISTER_KIND_gpr));
+                        }
+                        
+                        if(argument_index >= parameter_count){
+                            assert(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs);
+                            
+                            // 
+                            // We are in a varargs function.
+                            // We need to transform floating point arguments to integer arguments using movq.
+                            // 
+                            
+                            not_implemented;
+                        }
+                        
+                        if(expected_register_kind == REGISTER_KIND_gpr){
+                            
+                            if(returns_big_struct + integer_register_at < array_count(integer_argument_registers)){
+                                enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_argument_registers[returns_big_struct + integer_register_at]);
+                                argument = emit_load_into_specific_gpr(context, argument, arg_reg);
+                                integer_register_at += 1;
+                            }else{
+                                
+                                // This is passed on the stack!
+                                
+                                struct emit_location *store_in = emit_location_register_relative(context, context->register_sp, context->register_sp, stack_pass_location, argument->size);
+                                emit_store(context, store_in, argument);
+                                
+                                stack_pass_location += 8;
+                                continue;
+                            }
+                        }else if(expected_register_kind == REGISTER_KIND_xmm){
+                            
+                            if(float_register_at < REGISTER_XMM8){
+                                enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                                argument = emit_load_float_into_specific_register(context, argument, arg_reg);
+                                float_register_at += 1;
+                            }else{
+                                
+                                // This is passed on the stack!
+                                
+                                stack_pass_location = align_up(stack_pass_location, alignment);
+                                
+                                struct emit_location *store_in = emit_location_register_relative(context, context->register_sp, context->register_sp, stack_pass_location, argument->size);
+                                emit_store(context, store_in, argument);
+                                
+                                stack_pass_location += argument->size;
+                                continue;
+                            }
+                        }else invalid_code_path;
+                        
+                        emit_location_prevent_spilling(context, argument);
+                        argument_locations[argument_index] = argument;
                     }
                     
-                    if(locked_pointer_to_stack_location){
-                        emit_location_allow_spilling(context, locked_pointer_to_stack_location);
-                        free_emit_location(context, locked_pointer_to_stack_location);
-                    }
-                }
-                
-                if(return_type == &globals.typedef_void){
-                    emit_location_stack[emit_location_stack_at++] = null;
-                    break;
-                }
-                
-                // :returning_structs
-                if(stack_return_location){
-                    assert(!(return_type->flags & TYPE_FLAG_is_intrin_type));
-                    assert(type_is_returned_by_address(return_type));
-                    emit_location_stack[emit_location_stack_at++] = stack_return_location;
-                    break;
-                }
-                
-                if(return_type->kind == AST_float_type || (return_type->flags & TYPE_FLAG_is_intrin_type)){
-                    emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, REGISTER_KIND_xmm, REGISTER_XMM0, return_type->size);
-                    break;
-                }
-                
-                if(return_type->kind == AST_struct || return_type->kind == AST_union || return_type->kind == AST_array_type){
-                    // If we are a compound type or whatever we have return a 'register_relative' emit location, 
-                    // so we spill rax to the stack.
-                    // This handles 'struct{u64 a;}' which are returned in 'rax'.
+                    context->function_argument_stack_space_needed = max_of(context->function_argument_stack_space_needed, stack_pass_location);
                     
-                    assert(!type_is_returned_by_address(return_type)); // Otherwise, it should have already been handled.
-                    struct emit_location *ret = emit_allocate_temporary_stack_location(context, return_type->size, return_type->alignment);
-                    struct emit_location *rax = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
-                    emit_store(context, ret, rax);
-                    emit_location_stack[emit_location_stack_at++] = ret;
-                    break;
+                    {
+                        // Ensure that all volatile registers that are not parameters to the function call are spilled.
+                        
+                        for(u32 register_index = integer_register_at + returns_big_struct; register_index < array_count(system_V_volatile_general_purpose_registers); register_index++){
+                            enum register_encoding reg = system_V_volatile_general_purpose_registers[register_index];
+                            struct emit_location *loc  = context->gpr_allocator.emit_location_map[reg];
+                            
+                            if(loc) spill_register(context, REGISTER_KIND_gpr, reg);
+                        }
+                        
+                        for(u32 register_index = float_register_at; register_index < 16; register_index++){ // @note: I think all float registers are scratch.
+                            struct emit_location *loc  = context->xmm_allocator.emit_location_map[register_index];
+                            if(loc) spill_register(context, REGISTER_KIND_xmm, register_index);
+                        }
+                    }
+                    
+                    // :returning_structs
+                    struct emit_location *stack_return_location = null;
+                    struct emit_location *locked_pointer_to_stack_location = null; 
+                    if(returns_big_struct){
+                        stack_return_location = emit_allocate_temporary_stack_location(context, return_type->size, return_type->alignment);
+                        
+                        locked_pointer_to_stack_location = emit_load_address(context, stack_return_location, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_DI));
+                        emit_location_prevent_spilling(context, locked_pointer_to_stack_location); // Just so we dont stomp it in the `EMIT_LOCATION_register_relative` case in the call to a function pointer.
+                    }
+                    
+                    if(function_to_call){
+                        emit(CALL_RELATIVE);
+                        smm patch_offset = emit_bytes(context, sizeof(s32), 0);
+                        emit_patch(context, PATCH_rip_relative, &function_to_call->base, 0, &context->current_function->as_decl, patch_offset, patch_offset + 4);
+                    }else{
+                        
+                        if(function_location->size == 0){
+                            // @cleanup: Dll import. This feels hacky.
+                            function_location = function_location->base;
+                        }
+                        
+                        switch(function_location->state){
+                            case EMIT_LOCATION_register_relative:{
+                                emit_register_relative_extended(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_CALL_REGM, function_location);
+                            }break;
+                            case EMIT_LOCATION_loaded:{
+                                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_FF), FF_CALL_REGM, function_location);
+                            }break;
+                            invalid_default_case();
+                        }
+                        free_emit_location(context, function_location);
+                    }
+                    
+                    {   // 
+                        // Free all register argument_locations.
+                        // 
+                        
+                        for(smm argument_index = 0; argument_index < argument_count; argument_index++){
+                            if(argument_locations[argument_index]->prevent_spilling){
+                                emit_location_allow_spilling(context, argument_locations[argument_index]);
+                                free_emit_location(context, argument_locations[argument_index]);
+                            }
+                        }
+                        
+                        if(locked_pointer_to_stack_location){
+                            emit_location_allow_spilling(context, locked_pointer_to_stack_location);
+                            free_emit_location(context, locked_pointer_to_stack_location);
+                        }
+                    }
+                    
+                    if(return_type == &globals.typedef_void){
+                        emit_location_stack[emit_location_stack_at++] = null;
+                        break;
+                    }
+                    
+                    // :returning_structs
+                    if(stack_return_location){
+                        assert(!(return_type->flags & TYPE_FLAG_is_intrin_type));
+                        assert(returns_big_struct);
+                        emit_location_stack[emit_location_stack_at++] = stack_return_location;
+                        break;
+                    }
+                    
+                    if(return_type->kind == AST_float_type || (return_type->flags & TYPE_FLAG_is_intrin_type)){
+                        emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, REGISTER_KIND_xmm, REGISTER_XMM0, return_type->size);
+                        break;
+                    }
+                    
+                    if(return_type->kind == AST_struct || return_type->kind == AST_union || return_type->kind == AST_array_type){
+                        // 
+                        // If we are a compound type or whatever we have return a 'register_relative' emit location, 
+                        // so we spill rax to the stack.
+                        // This handles 'struct{u64 a;}' which are returned in 'rax'.
+                        // And also the case where struct{u64 a; u64 b;} is returned in rax/rdx.
+                        // 
+                        
+                        u64 allocation_size = (return_type->size + 7) & ~7;
+                        
+                        assert(!returns_big_struct); // Otherwise, it should have already been handled.
+                        struct emit_location *ret = emit_allocate_temporary_stack_location(context, allocation_size, return_type->alignment);
+                        
+                        if(allocation_size == 8){
+                            struct emit_location *rax = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, 8);
+                            emit_store(context, ret, rax);
+                        }else{
+                            ret->size = 8;
+                            struct emit_location *rax = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, 8);
+                            emit_store(context, ret, rax);
+                            ret->offset += 8;
+                            struct emit_location *rdx = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_D, 8);
+                            emit_store(context, ret, rdx);
+                        }
+                        
+                        ret->size = return_type->size;
+                        
+                        emit_location_stack[emit_location_stack_at++] = ret;
+                        break;
+                    }
+                    
+                    assert(return_type->kind == AST_integer_type || return_type->kind == AST_pointer_type);
+                    emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
                 }
-                
-                assert(return_type->kind == AST_integer_type || return_type->kind == AST_pointer_type);
-                emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_A, return_type->size);
             }break;
             
             case IR_asm_block:{
@@ -3622,7 +3980,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             case IR_return:{
                 ir_arena_at += sizeof(struct ir);
                 
-                struct ast_type *return_type = context->current_function->type->return_type;
+                struct ast_function_type *current_function_type = context->current_function->type;
+                struct ast_type *return_type = current_function_type->return_type;
+                
+                enum calling_convention calling_convention = current_function_type->calling_convention;
                 
                 if(return_type == &globals.typedef_void){
                     // Do nothing.
@@ -3630,17 +3991,16 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     emit_location_stack_at -= 1;
                     struct emit_location *return_location = emit_location_stack[emit_location_stack_at];
                     
-                    if(type_is_returned_by_address(return_type)){
+                    if(type_is_returned_by_address(calling_convention, return_type)){
                         // :returning_structs :function_epilog
-                        // load the address of what we want to copy into rsi, the actual copy will then happen in
-                        // the epilog.
+                        // load the address of what we want to copy into rsi, 
+                        // the actual copy will then happen in the epilog.
                         
                         enum register_encoding rsi = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_SI);
                         struct emit_location *loaded = emit_load_address(context, return_location, rsi);
                         free_emit_location(context, return_location);
                         free_emit_location(context, loaded);
                     }else{
-                        
                         if(return_type->kind == AST_float_type){
                             struct emit_location *loaded = emit_load_float_into_specific_register(context, return_location, REGISTER_XMM0);
                             free_emit_location(context, loaded);
@@ -3648,12 +4008,151 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                             struct emit_location *loaded = emit_load_float_into_specific_register(context, return_location, REGISTER_XMM0);
                             free_emit_location(context, loaded);
                         }else{
-                            struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, REGISTER_A);
-                            free_emit_location(context, loaded);
+                            if(calling_convention == CALLING_CONVENTION_windows_x64){
+                                struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, REGISTER_A);
+                                free_emit_location(context, loaded);
+                            }else if(calling_convention == CALLING_CONVENTION_system_V){
+                                smm return_size = return_location->size;
+                                
+                                enum register_encoding register_to_load_into = REGISTER_A;
+                                
+                                if(return_size > 8){
+                                    return_location->prevent_freeing += 1;
+                                    return_location->size = 8;
+                                    assert(return_location->state == EMIT_LOCATION_register_relative);
+                                    
+                                    struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, REGISTER_A);
+                                    free_emit_location(context, loaded);
+                                    return_location->prevent_freeing -= 1;
+                                    
+                                    register_to_load_into = REGISTER_D;
+                                    return_size -= 8;
+                                    
+                                    return_location->size = return_size;
+                                    return_location->offset += 8;
+                                }
+                                
+                                if(is_power_of_two(return_size)){
+                                    struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
+                                    free_emit_location(context, loaded);
+                                }else{
+                                    return_location->prevent_freeing += 1;
+                                    
+                                    assert(return_location->state == EMIT_LOCATION_register_relative);
+                                    
+                                    if(return_size == 3){
+                                        // movzx ecx, byte [loc + 2]
+                                        // movzx reg, word [loc]
+                                        // shl ecx, 16
+                                        // or reg, ecx
+                                        return_location->offset += 2;
+                                        return_location->size = 1;
+                                        struct emit_location *upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
+                                        
+                                        return_location->offset -= 2;
+                                        return_location->size = 2;
+                                        struct emit_location *lower_part = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
+                                        
+                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+                                        emit(16);
+                                        
+                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+                                        
+                                        free_emit_location(context, upper_part);
+                                        free_emit_location(context, lower_part);
+                                    }else if(return_size == 5){
+                                        // movzx ecx, byte [loc + 4]
+                                        // movzx reg, dword [loc]
+                                        // shl ecx, 32
+                                        // or reg, ecx
+                                        return_location->offset += 4;
+                                        return_location->size = 1;
+                                        struct emit_location *upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
+                                        
+                                        return_location->offset -= 4;
+                                        return_location->size = 4;
+                                        struct emit_location *lower_part = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
+                                        
+                                        lower_part->size = 8;
+                                        upper_part->size = 8;
+                                        
+                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+                                        emit(32);
+                                        
+                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+                                        
+                                        free_emit_location(context, upper_part);
+                                        free_emit_location(context, lower_part);
+                                    }else if(return_size == 6){
+                                        // movzx ecx, word [loc + 4]
+                                        // movzx reg, dword [loc]
+                                        // shl ecx, 32
+                                        // or reg, ecx
+                                        return_location->offset += 4;
+                                        return_location->size = 2;
+                                        struct emit_location *upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
+                                        
+                                        return_location->offset -= 4;
+                                        return_location->size = 4;
+                                        struct emit_location *lower_part = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
+                                        
+                                        lower_part->size = 8;
+                                        upper_part->size = 8;
+                                        
+                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+                                        emit(32);
+                                        
+                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+                                        
+                                        free_emit_location(context, upper_part);
+                                        free_emit_location(context, lower_part);
+                                    }else if(return_size == 7){
+                                        // movzx ecx, word [loc + 4]
+                                        // movzx reg, dword [loc]
+                                        // shl ecx, 32
+                                        // or reg, ecx
+                                        // movzx ecx, byte [loc + 6]
+                                        // shl ecx, 6 * 8
+                                        // or reg, ecx
+                                        
+                                        return_location->offset += 4;
+                                        return_location->size = 2;
+                                        struct emit_location *upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
+                                        
+                                        return_location->offset -= 4;
+                                        return_location->size = 4;
+                                        struct emit_location *lower_part = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
+                                        
+                                        lower_part->size = 8;
+                                        upper_part->size = 8;
+                                        
+                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+                                        emit(32);
+                                        
+                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+                                        
+                                        free_emit_location(context, upper_part);
+                                        
+                                        return_location->offset += 6;
+                                        return_location->size = 1;
+                                        upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
+                                        
+                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+                                        emit(6 * 8);
+                                        
+                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+                                        
+                                        free_emit_location(context, upper_part);
+                                        free_emit_location(context, lower_part);
+                                    }
+                                    
+                                    return_location->prevent_freeing -= 1;
+                                    free_emit_location(context, return_location);
+                                }
+                            }else invalid_code_path;
                         }
                     }
                 }
-                
                 
                 if(ir_arena_at != current_function->end_in_ir_arena){
                     // :function_epilog
@@ -4679,18 +5178,14 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     begin_counter(context, emit_code_for_function);
     
     context->current_function = function;
-    context->max_amount_of_function_call_arguments = 4;
     context->temporary_stack_high_water_mark = 0;
     context->temporary_stack_allocator = 0; // @cleanup: This should be per statement
+    context->function_argument_stack_space_needed = 0;
     
     context->register_sp = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_SP, 8);
     context->gpr_allocator.emit_location_map[REGISTER_SP] = null;
     context->register_bp = emit_location_loaded(context, REGISTER_KIND_gpr, REGISTER_BP, 8);
     context->gpr_allocator.emit_location_map[REGISTER_BP] = null;
-    
-    
-    // :stack_space_needed. The amount of stack space needed needs to be aligned to 16.
-    function->stack_space_needed = align_up(function->stack_space_needed, 0x10);
     
     struct ast_function_type *function_type = function->type;
     struct ast_type *return_type = function_type->return_type;
@@ -4699,139 +5194,266 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     u8 *prolog_start = context->emit_arena.current;
     context->current_emit_base = prolog_start;
     function->memory_location = prolog_start;
-    // stack layout before we allocate stack memory
-    // | arg n | ... |  arg 1  | arg 0 | ret ptr | memory for the function |
-    //                [rsp+16]  [rsp+8]   [rsp]  ^rsp
-    // see below how memory  for the function is layed out. -12.02.2020
     
-    // "The first four integer or pointer parameters are passed in the rcx, rdx, r8, and r9 registers."
-    // we have to save these in their slots
+    enum calling_convention calling_convention = function_type->calling_convention;
+    context->current_function_calling_convention = calling_convention;
     
-    enum register_encoding argument_registers[REGISTER_KIND_count][4] = {
-        [REGISTER_KIND_gpr][0] = REGISTER_C,
-        [REGISTER_KIND_gpr][1] = REGISTER_D,
-        [REGISTER_KIND_gpr][2] = REGISTER_R8,
-        [REGISTER_KIND_gpr][3] = REGISTER_R9,
+    smm amount_of_saved_registers = 0;
+    u32 *stack_space_subtract_address = 0;
+    
+    if(calling_convention == CALLING_CONVENTION_windows_x64){
         
-        // "Floating point arguments are passed in XMM0L, XMM1L, XMM2L, and XMM3L."
-        [REGISTER_KIND_xmm][0] = REGISTER_XMM0,
-        [REGISTER_KIND_xmm][1] = REGISTER_XMM1,
-        [REGISTER_KIND_xmm][2] = REGISTER_XMM2,
-        [REGISTER_KIND_xmm][3] = REGISTER_XMM3,
-    };
-    
-    context->gpr_allocator.rolling_index = REGISTER_C;
-    
-    // 
-    // @WARNING: If you change this code you have to also change the implementation of `_AddressOfReturnAddress`.
-    // 
-    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
-        emit(0x41); emit(0x55); // push r13
-        emit(0x41); emit(0x54); // push r12
-        function->pushed_register_mask |= (1 << REGISTER_R12) | (1 << REGISTER_R13);
-    }
-    
-    // @cleanup: Maybe we should not unconditionally push rdi and rsi.
-    emit(PUSH_REGISTER_DI);
-    emit(PUSH_REGISTER_SI);
-    emit(PUSH_REGISTER_BP);
-    
-    function->pushed_register_mask |= (1 << REGISTER_SI) | (1 << REGISTER_DI) | (1 << REGISTER_BP);
-    
-    s32 amount_of_saved_registers = __popcnt(function->pushed_register_mask) - /*rbp*/1;
-    emit_reg_reg__(context, REXW, MOVE_REG_REGM, REGISTER_BP, REGISTER_SP);
-    
-    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
-        // mov r13, rdx
-        // mov r12, [rdx]
-        // mov r12d, [r12]
-        emit(0x49); emit(0x89); emit(0xcd);
-        emit(0x4c); emit(0x8b); emit(0x21);
-        emit(0x45); emit(0x8b); emit(0x24); emit(0x24);
-    }
-    
-    {
-        // At this point we have pushed rbp so the memory layout is as follows:
-        //    | memory for the function | old rbp | saved non-volitiles | ret ptr | arg0 | arg1 | arg2 | ...
-        //                           rbp^                                         ^
-        //                              ^rsp                                      ^rbp + 16 + 8 * amount_of_saved_registers = rbp - (-16 + 8 * amount_of_saved_registers)
+        context->function_argument_stack_space_needed = 4 * 8;
         
-        smm stack_at = -(16 + 8 * amount_of_saved_registers); // at offset zero is the return pointer.
+        // stack layout before we allocate stack memory
+        // | arg n | ... |  arg 1  | arg 0 | ret ptr | memory for the function |
+        //                [rsp+16]  [rsp+8]   [rsp]  ^rsp
+        // see below how memory  for the function is layed out. -12.02.2020
         
-        u32 register_at = 0;
+        // "The first four integer or pointer parameters are passed in the rcx, rdx, r8, and r9 registers."
+        // we have to save these in their slots
         
-        if(type_is_returned_by_address(return_type)){
-            // If we are returning a struct, the first argument is the address of the struct.
-            // Simply store it in the corresponding slot, we will find it there when we enter 
-            // the function epilog. :returning_structs
+        enum register_encoding argument_registers[REGISTER_KIND_count][4] = {
+            [REGISTER_KIND_gpr][0] = REGISTER_C,
+            [REGISTER_KIND_gpr][1] = REGISTER_D,
+            [REGISTER_KIND_gpr][2] = REGISTER_R8,
+            [REGISTER_KIND_gpr][3] = REGISTER_R9,
             
-            enum register_encoding rcx = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_C);
-            struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
-            struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_gpr, rcx, 8);
-            emit_store(context, dest, source);
-            
-            // :MSVC_function_call_stack_increase
-            stack_at -= 8;
-            register_at += 1;
+            // "Floating point arguments are passed in XMM0L, XMM1L, XMM2L, and XMM3L."
+            [REGISTER_KIND_xmm][0] = REGISTER_XMM0,
+            [REGISTER_KIND_xmm][1] = REGISTER_XMM1,
+            [REGISTER_KIND_xmm][2] = REGISTER_XMM2,
+            [REGISTER_KIND_xmm][3] = REGISTER_XMM3,
+        };
+        
+        context->gpr_allocator.rolling_index = REGISTER_C;
+        
+        // 
+        // @WARNING: If you change this code you have to also change the implementation of `_AddressOfReturnAddress`.
+        // 
+        if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
+            emit(0x41); emit(0x55); // push r13
+            emit(0x41); emit(0x54); // push r12
+            function->pushed_register_mask |= (1 << REGISTER_R12) | (1 << REGISTER_R13);
         }
         
-        for(struct ast_list_node *argument = function_type->argument_list.first; argument; argument = argument->next){
-            
-            struct ast_declaration *argument_decl = (struct ast_declaration *)argument->value;
-            struct ast_type *argument_type = argument_decl->type;
-            
-            enum register_kind register_kind = get_register_kind_for_type(argument_type);
-            
-            if(argument_type->flags & TYPE_FLAG_is_intrin_type){
-                // Intrinsic types are passed by reference.
-                register_kind = REGISTER_KIND_gpr;
-            }
-            
-            if(register_at < array_count(argument_registers[0])){
-                // The argument was passed in a register.
-                enum register_encoding argument_reg = allocate_specific_register(context, register_kind, argument_registers[register_kind][register_at]);
-                
-                struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
-                struct emit_location *source = emit_location_loaded(context, register_kind, argument_reg, 8);
-                emit_store(context, dest, source);
-                
-                register_at += 1;
-            }
-            
-            // The argument was either passed on the stack or we just put it on the stack.
-            // Remember its location for when we want to access it!
-            argument_decl->offset_on_stack = stack_at;
-            
-            // :PassingStructArguments
-            if(size_is_big_or_oddly_sized(argument_type->size)){
-                argument_decl->flags |= DECLARATION_FLAGS_is_big_function_argument;
-            }
-            
-            // :MSVC_function_call_stack_increase
-            stack_at -= 8;
+        // @cleanup: Maybe we should not unconditionally push rdi and rsi.
+        emit(PUSH_REGISTER_DI);
+        emit(PUSH_REGISTER_SI);
+        emit(PUSH_REGISTER_BP);
+        
+        function->pushed_register_mask |= (1 << REGISTER_SI) | (1 << REGISTER_DI) | (1 << REGISTER_BP);
+        
+        amount_of_saved_registers = __popcnt(function->pushed_register_mask) - /*rbp*/1;
+        
+        emit_reg_reg__(context, REXW, MOVE_REG_REGM, REGISTER_BP, REGISTER_SP);
+        
+        if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
+            // mov r13, rdx
+            // mov r12, [rdx]
+            // mov r12d, [r12]
+            emit(0x49); emit(0x89); emit(0xcd);
+            emit(0x4c); emit(0x8b); emit(0x21);
+            emit(0x45); emit(0x8b); emit(0x24); emit(0x24);
         }
         
-        if(register_at < array_count(argument_registers[0]) && (function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs)){
+        {
+            // At this point we have pushed rbp so the memory layout is as follows:
+            //    | memory for the function | old rbp | saved non-volitiles | ret ptr | arg0 | arg1 | arg2 | ...
+            //                           rbp^                                         ^
+            //                              ^rsp                                      ^rbp + 16 + 8 * amount_of_saved_registers = rbp - (-16 + 8 * amount_of_saved_registers)
             
-            // This is a varargs procedure, always put all argument registers on the stack.
+            smm stack_at = -(16 + 8 * amount_of_saved_registers); // at offset zero is the return pointer.
             
-            while(register_at < array_count(argument_registers[0])){
-                enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, argument_registers[REGISTER_KIND_gpr][register_at]);
+            u32 register_at = 0;
+            
+            if(type_is_returned_by_address(calling_convention, return_type)){
+                // If we are returning a struct, the first argument is the address of the struct.
+                // Simply store it in the corresponding slot, we will find it there when we enter 
+                // the function epilog. :returning_structs
                 
+                enum register_encoding rcx = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_C);
                 struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
-                struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_gpr, argument_reg, 8);
+                struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_gpr, rcx, 8);
                 emit_store(context, dest, source);
                 
                 // :MSVC_function_call_stack_increase
                 stack_at -= 8;
                 register_at += 1;
             }
+            
+            for(struct ast_list_node *argument = function_type->argument_list.first; argument; argument = argument->next){
+                
+                struct ast_declaration *argument_decl = (struct ast_declaration *)argument->value;
+                struct ast_type *argument_type = argument_decl->type;
+                
+                enum register_kind register_kind = get_register_kind_for_type(argument_type);
+                
+                if(argument_type->flags & TYPE_FLAG_is_intrin_type){
+                    // Intrinsic types are passed by reference.
+                    register_kind = REGISTER_KIND_gpr;
+                }
+                
+                if(register_at < array_count(argument_registers[0])){
+                    // The argument was passed in a register.
+                    enum register_encoding argument_reg = allocate_specific_register(context, register_kind, argument_registers[register_kind][register_at]);
+                    struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
+                    struct emit_location *source = emit_location_loaded(context, register_kind, argument_reg, 8);
+                    emit_store(context, dest, source);
+                    
+                    register_at += 1;
+                }
+                
+                // The argument was either passed on the stack or we just put it on the stack.
+                // Remember its location for when we want to access it!
+                argument_decl->offset_on_stack = stack_at;
+                
+                // :PassingStructArguments
+                if(size_is_big_or_oddly_sized(argument_type->size)){
+                    argument_decl->flags |= DECLARATION_FLAGS_is_big_function_argument;
+                }
+                
+                // :MSVC_function_call_stack_increase
+                stack_at -= 8;
+            }
+            
+            if(register_at < array_count(argument_registers[0]) && (function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs)){
+                
+                // This is a varargs procedure, always put all argument registers on the stack.
+                
+                while(register_at < array_count(argument_registers[0])){
+                    enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, argument_registers[REGISTER_KIND_gpr][register_at]);
+                    
+                    struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
+                    struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_gpr, argument_reg, 8);
+                    emit_store(context, dest, source);
+                    
+                    // :MSVC_function_call_stack_increase
+                    stack_at -= 8;
+                    register_at += 1;
+                }
+            }
+        }
+        
+        emit_reg_reg__(context, REXW, REG_EXTENDED_OPCODE_REGM_IMMIDIATE, REG_OPCODE_SUB, REGISTER_SP);
+        stack_space_subtract_address = cast(u32 *)context->emit_arena.current;
+        emit_u32(0);
+        
+    }else if(calling_convention == CALLING_CONVENTION_system_V){
+        
+        emit(PUSH_REGISTER_BP);
+        function->pushed_register_mask |= (1 << REGISTER_BP);
+        amount_of_saved_registers = __popcnt(function->pushed_register_mask) - /*rbp*/1;
+        
+        emit_reg_reg__(context, REXW, MOVE_REG_REGM, REGISTER_BP, REGISTER_SP);
+        
+        emit_reg_reg__(context, REXW, REG_EXTENDED_OPCODE_REGM_IMMIDIATE, REG_OPCODE_SUB, REGISTER_SP);
+        stack_space_subtract_address = (u32 *)context->emit_arena.current;
+        emit_u32(0);
+        
+        
+        // At this point we have pushed rbp so the memory layout is as follows:
+        //    | memory for the function | old rbp | saved non-volitiles | ret ptr | stack passed arguments ( > 6 integer or > 8 floating point )
+        //                           rbp^                                         ^
+        //                              ^rsp                                      ^rbp + 16 + 8 * amount_of_saved_registers = rbp - (-16 + 8 * amount_of_saved_registers)
+        
+        smm stack_at = 0;
+        smm stack_argument_at = (16 + 8 * amount_of_saved_registers);
+        
+        u32 integer_register_at = 0;
+        u32 float_register_at = 0;
+        
+        for(struct ast_list_node *argument = function_type->argument_list.first; argument; argument = argument->next){
+            struct ast_declaration *argument_decl = (struct ast_declaration *)argument->value;
+            struct ast_type *argument_type = argument_decl->type;
+            
+            static enum register_encoding integer_argument_registers[6] = {
+                REGISTER_DI,
+                REGISTER_SI,
+                REGISTER_D,
+                REGISTER_C,
+                REGISTER_R8,
+                REGISTER_R9,
+            };
+            
+            if(argument_type->kind == AST_float_type){
+                
+                if(float_register_at < REGISTER_XMM8){
+                    
+                    function->stack_space_needed += 8;
+                    
+                    enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                    struct emit_location *dest = emit_location_stack_relative(context, function->stack_space_needed, 8);
+                    struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_xmm, argument_reg, 8);
+                    emit_store(context, dest, source);
+                    
+                    argument_decl->offset_on_stack = function->stack_space_needed;
+                }else{
+                    // Passed on stack.
+                    argument_decl->offset_on_stack = -stack_argument_at;
+                    stack_argument_at += 8;
+                }
+                
+                float_register_at += 1;
+                
+            }else if(argument_type->flags & TYPE_FLAG_is_intrin_type){
+                
+                if(float_register_at < REGISTER_XMM8){
+                    
+                    smm size = argument_type->size;
+                    function->stack_space_needed = align_up(function->stack_space_needed, argument_type->alignment);
+                    
+                    enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                    struct emit_location *dest = emit_location_stack_relative(context, stack_at, size);
+                    struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_xmm, argument_reg, size);
+                    emit_store(context, dest, source);
+                    
+                    function->stack_space_needed += size;
+                    
+                    argument_decl->offset_on_stack = function->stack_space_needed;
+                }else{
+                    // Passed on stack.
+                    
+                    stack_argument_at = align_up(stack_argument_at, argument_type->alignment);
+                    argument_decl->offset_on_stack = -stack_argument_at;
+                    stack_argument_at += argument_type->size;
+                }
+                
+                float_register_at += 1;
+                
+            }else{
+                // 
+                // The value is in an integer argument. This could be a larger struct or union, in which case it is passed by address.
+                // 
+                
+                if(integer_register_at < array_count(integer_argument_registers)){
+                    
+                    function->stack_space_needed += 8;
+                    
+                    enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_argument_registers[integer_register_at]);
+                    struct emit_location *dest = emit_location_stack_relative(context, function->stack_space_needed, 8);
+                    struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_gpr, argument_reg, 8);
+                    emit_store(context, dest, source);
+                    
+                    argument_decl->offset_on_stack = function->stack_space_needed;
+                }else{
+                    // Passed on stack.
+                    argument_decl->offset_on_stack = -stack_argument_at;
+                    stack_argument_at += 8;
+                }
+                
+                if(argument_type->size > 8){
+                    argument_decl->flags |= DECLARATION_FLAGS_is_big_function_argument;
+                }
+                
+                integer_register_at += 1;
+            }
         }
     }
     
-    emit_reg_reg__(context, REXW, REG_EXTENDED_OPCODE_REGM_IMMIDIATE, REG_OPCODE_SUB, REGISTER_SP);
-    u32 *stack_space_subtract_address = cast(u32 *)context->emit_arena.current;
-    emit_u32(0);
+    
+    // :stack_space_needed. The amount of stack space needed needs to be aligned to 16.
+    function->stack_space_needed = align_up(function->stack_space_needed, 0x10);
     
     function->rsp_subtract_offset = get_bytes_emitted(context);
     
@@ -4867,7 +5489,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     
     // temporary stack memory
     stack_memory_needed += to_u32(context->temporary_stack_high_water_mark);
-    stack_memory_needed += 8 * context->max_amount_of_function_call_arguments;
+    stack_memory_needed += context->function_argument_stack_space_needed;
     
     // "Most structures are aligned to their natural alignment. The primary exceptions are the stack pointer and malloc or alloca memory, which are aligned to 16 bytes in order to aid performance"
     stack_memory_needed = align_up(stack_memory_needed, 16);
@@ -4889,7 +5511,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // we jump to here, instead of returning on the spot, this is so we can get canonical stack framing.
     emit_end_jumps(context, jump_to_function_epilog);
     
-    if(type_is_returned_by_address(return_type)){
+    if(type_is_returned_by_address(calling_convention, return_type)){
         // :returning_structs
         
         // Get the value of the implicit return value, which was passed as an implicit first operand.
@@ -4917,20 +5539,22 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     emit_reg_reg__(context, REXW, MOVE_REG_REGM, REGISTER_SP, REGISTER_BP);
     emit(POP_REGISTER_BP);
     
-    // @cleanup: only do this if we have a memcpy
-    emit(POP_REGISTER_SI);
-    emit(POP_REGISTER_DI);
-    
-    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
-        emit(0x41); emit(0x5c); // push r12
-        emit(0x41); emit(0x5d); // push r13
+    if(calling_convention == CALLING_CONVENTION_windows_x64){
+        // @cleanup: only do this if we have a memcpy
+        emit(POP_REGISTER_SI);
+        emit(POP_REGISTER_DI);
+        
+        if(function->type->flags & FUNCTION_TYPE_FLAGS_is_seh_filter){
+            emit(0x41); emit(0x5c); // push r12
+            emit(0x41); emit(0x5d); // push r13
+        }
     }
     
     emit(NEAR_RET_INSTRUCTION);
     
     if(context->alloca_patch_nodes.first){
         for(struct alloca_patch_node *alloca_patch_node = context->alloca_patch_nodes.first; alloca_patch_node; alloca_patch_node = alloca_patch_node->next){
-            smm call_space_needed = 8 * (context->max_amount_of_function_call_arguments + (context->max_amount_of_function_call_arguments & 1));
+            smm call_space_needed = (context->function_argument_stack_space_needed + (context->function_argument_stack_space_needed & 8));
             *(u32 *)alloca_patch_node->patch_location = (u32)call_space_needed;
         }
         context->alloca_patch_nodes.first = context->alloca_patch_nodes.last = null;

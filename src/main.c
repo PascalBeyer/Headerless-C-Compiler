@@ -664,6 +664,8 @@ static struct{
     
     struct token *seh_used;
     struct ast_function *C_specific_handler_declaration;
+    
+    enum calling_convention default_calling_convention;
 } globals;
 
 //_____________________________________________________________________________________________________________________
@@ -927,7 +929,7 @@ struct context{
     struct ast_function *current_inline_asm_function;
     struct emit_location *asm_block_return;
     
-    smm max_amount_of_function_call_arguments;
+    smm function_argument_stack_space_needed;
     smm temporary_stack_allocator;
     smm temporary_stack_high_water_mark;
     
@@ -946,6 +948,7 @@ struct context{
     struct jump_context *continue_jump_context;
     struct jump_context *jump_to_function_epilog;
     b32 should_not_emit_ret_jump;
+    enum calling_convention current_function_calling_convention;
     
     struct jump_label_information{
         struct jump_context context;
@@ -3375,6 +3378,8 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     assert(function->kind == IR_function);
     context->current_function = function;
     
+    struct ast_function_type *function_type = function->type;
+    
     begin_token_array(context, parse_work->tokens);
     
     {   // 
@@ -3413,22 +3418,21 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     // resolve them here.
     //                                                                      07.02.2023
     
-    maybe_resolve_unresolved_type_or_sleep_or_error(context, &function->type->return_type);
+    maybe_resolve_unresolved_type_or_sleep_or_error(context, &function_type->return_type);
     if(context->error) return;
     
-    for_ast_list(function->type->argument_list){
+    for_ast_list(function_type->argument_list){
         assert(*it->value == IR_declaration);
-        struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
         if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return;
         
         // Allow missing argument names.
         if(decl->identifier != globals.invalid_identifier_token) register_declaration(context, decl);
     }
     
-    
     function->start_in_ir_arena = arena_current(&context->ir_arena);
     
-    if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm){
+    if(function_type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm){
         //
         // Special case for __declspec(inline_asm) in this case we only want a single 'ir_asm_block'
         //
@@ -3441,9 +3445,9 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         parse_asm_block(context, asm_block);
         context->in_inline_asm_function = null;
         
-        if(function->type->return_type != &globals.typedef_void){
+        if(function_type->return_type != &globals.typedef_void){
             if(asm_block->instructions.last == null || asm_block->instructions.last->memonic != MEMONIC_return_from_inline_asm_function){
-                struct string type_string = push_type_string(&context->scratch, &context->scratch, function->type->return_type);
+                struct string type_string = push_type_string(&context->scratch, &context->scratch, function_type->return_type);
                 report_error(context, function->identifier, "__declspec(inline_asm)-function has return type '%.*s' but last instruction was not 'return'.", type_string.size, type_string.data);
             }
             context->current_statement_returns_a_value = 1;
@@ -3451,7 +3455,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         
         scope->asm_block = asm_block;
         
-        for_ast_list(function->type->argument_list){
+        for_ast_list(function_type->argument_list){
             struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
             
             if(decl->_times_referenced == 0 && decl->identifier != globals.invalid_identifier_token){
@@ -3496,7 +3500,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     if(atoms_match(function->identifier->atom, globals.keyword_main)){
         // "If the return type of the 'main' function is a type compatible with int, [...]
         //  reaching the } that terminates the main function returns a value of 0."
-        if(function->type->return_type == &globals.typedef_s32){
+        if(function_type->return_type == &globals.typedef_s32){
             
             context->current_statement_returns_a_value = 1;
             
@@ -3507,14 +3511,14 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     
     if(!context->current_statement_returns_a_value){
         
-        if((function->type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
+        if((function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !(function_type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
             report_warning(context, WARNING_return_in_noreturn_function, get_current_token_for_error_report(context), "Control flow reaching the end of '_Noreturn' function.");
-        }else if(function->type->return_type != &globals.typedef_void){
+        }else if(function_type->return_type != &globals.typedef_void){
             // 
             // We have reached the end of a non-void function, but there was no return.
             // Report a warning.
             // 
-            struct string return_type_string = push_type_string(context->arena, &context->scratch, function->type->return_type);
+            struct string return_type_string = push_type_string(context->arena, &context->scratch, function_type->return_type);
             report_warning(context, WARNING_missing_return, get_current_token_for_error_report(context), "Function of type '%.*s' must return a value.", return_type_string.size, return_type_string.data);
         }
     }
@@ -3847,6 +3851,11 @@ int main(int argc, char *argv[]){
     struct memory_arena _arena = create_memory_arena(giga_bytes(64), 2.0f, mega_bytes(1));
     struct memory_arena *arena = &_arena;
     
+#ifdef __HLC__
+    dump_elf(argv[1], arena);
+    return 1;
+#endif
+    
     context->arena = arena;
     
     struct string working_directory = os_get_working_directory(arena);
@@ -4093,7 +4102,16 @@ int main(int argc, char *argv[]){
         
         // A no_entry file ought to be a dll.
         if(globals.output_file_type == OUTPUT_FILE_unset && globals.cli_options.no_entry) globals.output_file_type = OUTPUT_FILE_dll;
+        
+#ifndef _WIN32
+        if(globals.output_file_type == OUTPUT_FILE_unset) globals.output_file_type = OUTPUT_FILE_elf;
+#endif
     }
+    
+    
+    // Infer the default calling convention from the file type. 
+    // @cleanup: really it should be the operating system.
+    globals.default_calling_convention = (globals.output_file_type == OUTPUT_FILE_elf) ? CALLING_CONVENTION_system_V : CALLING_CONVENTION_windows_x64;
     
     // Try to infer the subsystem.
     globals.subsystem = globals.cli_options.subsystem;
@@ -5230,12 +5248,12 @@ globals.typedef_##postfix = (struct ast_type){                                  
             }
         }
         
-        #if _WIN32
+#if _WIN32
         // Default to .exe
         if(globals.output_file_type == OUTPUT_FILE_unset) globals.output_file_type = OUTPUT_FILE_exe;
-        #else
+#else
         if(globals.output_file_type == OUTPUT_FILE_unset) globals.output_file_type = OUTPUT_FILE_elf;
-        #endif
+#endif
     }
     
     // Infer the subsystem by the output file type.

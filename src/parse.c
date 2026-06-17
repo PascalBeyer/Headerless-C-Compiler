@@ -10143,6 +10143,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             //                                                                 07.02.2023
             
             struct ast_function_type *function = parser_type_push(context, function_type);
+            function->calling_convention = globals.default_calling_convention;
             
             // 
             // parameter-type-list:

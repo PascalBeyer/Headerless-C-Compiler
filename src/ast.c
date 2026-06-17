@@ -731,19 +731,27 @@ struct ast_compound_type{
     u32 current_max_amount_of_members;
 };
 
-#define FUNCTION_TYPE_FLAGS_is_varargs    0x1
-// #define FUNCTION_TYPE_FLAGS_is_intrinsic  0x2
-#define FUNCTION_TYPE_FLAGS_is_printlike  0x4
-#define FUNCTION_TYPE_FLAGS_is_inline_asm 0x8 // @cleanup: This should not be on the type.
-#define FUNCTION_TYPE_FLAGS_is_noreturn   0x10
-#define FUNCTION_TYPE_FLAGS_is_seh_intrinsic  0x20
-#define FUNCTION_TYPE_FLAGS_is_seh_filter  0x40
+
 struct ast_function_type{
     struct ast_type base;
     struct ast_type *return_type;
     enum ast_kind *return_type_defined_type;
     
-    b64 flags;
+    enum ast_function_type_flags{
+        FUNCTION_TYPE_FLAGS_is_varargs = 0x1,
+        FUNCTION_TYPE_FLAGS_is_printlike = 0x2,
+        FUNCTION_TYPE_FLAGS_is_noreturn = 0x4,
+        
+        // @cleanup: These seem like they should not be on the type.
+        FUNCTION_TYPE_FLAGS_is_inline_asm = 0x8,
+        FUNCTION_TYPE_FLAGS_is_seh_intrinsic = 0x10,
+        FUNCTION_TYPE_FLAGS_is_seh_filter = 0x20,
+    } flags;
+    
+    enum calling_convention{
+        CALLING_CONVENTION_windows_x64,
+        CALLING_CONVENTION_system_V,
+    } calling_convention;
     
     struct ast_list argument_list;
 };
@@ -794,8 +802,9 @@ struct ast_function{
     
     smm rsp_subtract_offset;
     
-    smm stack_space_needed; // after parsing this is what we need for declarations, and then in emit 
-    // it gets adjusted to the full thing (including stack spilling usw)
+    // After parsing this is what we need for declarations, and then in emit 
+    // it gets adjusted to the full thing (including stack spilling usw).
+    smm stack_space_needed; 
 
     smm amount_of_jump_labels;
     
