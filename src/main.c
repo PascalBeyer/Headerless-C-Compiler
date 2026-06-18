@@ -5128,10 +5128,10 @@ globals.typedef_##postfix = (struct ast_type){                                  
             // Table is in order of preference.
             
             { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("_start")},
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main"),     "implicit/pre_main.c",    "implicit/pre_main_no_args.c",  "implicit/pre_main_envp.c"},
-            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain"),    "implicit/pre_wmain.c",   "implicit/pre_wmain_no_args.c", "implicit/pre_wmain_envp.c"},
-            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("WinMain"),  "implicit/pre_WinMain.c"  },  // These always need to have args I am pretty sure.
-            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("wWinMain"), "implicit/pre_wWinMain.c" }, // These always need to have args I am pretty sure.
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("main"),     "implicit/Windows/pre_main.c",    "implicit/Windows/pre_main_no_args.c",  "implicit/Windows/pre_main_envp.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_console, const_string("wmain"),    "implicit/Windows/pre_wmain.c",   "implicit/Windows/pre_wmain_no_args.c", "implicit/Windows/pre_wmain_envp.c"},
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("WinMain"),  "implicit/Windows/pre_WinMain.c"  },  // These always need to have args I am pretty sure.
+            { OUTPUT_FILE_exe, SUBSYSTEM_windows, const_string("wWinMain"), "implicit/Windows/pre_wWinMain.c" }, // These always need to have args I am pretty sure.
             
             { OUTPUT_FILE_dll, SUBSYSTEM_windows, const_string("DllMain") },
             
@@ -5140,7 +5140,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             { OUTPUT_FILE_efi, SUBSYSTEM_efi_application, const_string("EfiMain") },
             
             { OUTPUT_FILE_elf, SUBSYSTEM_console, const_string("_start")},
-            { OUTPUT_FILE_elf, SUBSYSTEM_console, const_string("main")},
+            { OUTPUT_FILE_elf, SUBSYSTEM_console, const_string("main"), "implicit/Linux/pre_main.c",    "implicit/Linux/pre_main_no_args.c",  "implicit/Linux/pre_main_envp.c"},
         };
         
         for(u32 index = 0; index < array_count(table); index++){
