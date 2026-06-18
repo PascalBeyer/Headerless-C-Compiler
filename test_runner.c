@@ -6,11 +6,28 @@
 #include <stdarg.h>
 #include <assert.h>
 
-#include <intrin.h>
-
+#if _WIN32
 #define VC_EXTRALEAN
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <intrin.h>
+#else
+
+#include <dirent.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <sys/types.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <wordexp.h>
+#include <errno.h>
+#include <sys/eventfd.h>
+#include <sys/ptrace.h>
+
+#endif
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
@@ -60,7 +77,11 @@ struct memory_arena{
 struct memory_arena create_memory_arena(u64 size_to_reserve){
     struct memory_arena ret = {0};
     ret.reserved = size_to_reserve;
+#if _WIN32
     ret.base = VirtualAlloc(/*DesiredBase*/NULL, size_to_reserve, MEM_RESERVE, PAGE_READWRITE);
+#else
+    ret.base = mmap(NULL, size_to_reserve, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
     if(!ret.base){
         print("Error: Allocation failiure.");
         _exit(1);
@@ -108,11 +129,19 @@ __declspec(noinline) void grow_arena(struct memory_arena *arena, u64 grow_to){
     // 
     // Commit the bytes.
     // 
+#if _WIN32
     void *Success = VirtualAlloc(arena->base, grow_to, MEM_COMMIT, PAGE_READWRITE);
     if(Success != arena->base){
         print("Error: Allocation failiure.");
         _exit(1);
     }
+#else
+    int error = mprotect(arena->base, grow_to, PROT_READ | PROT_WRITE);
+    if(error){
+        print("Error: Allocation failiure.");
+        _exit(1);
+    }
+#endif
     
     arena->committed = grow_to;
 }
@@ -142,6 +171,8 @@ void *memory_arena_allocate_bytes(struct memory_arena *arena, u64 size, u64 alig
     }
     
     arena->allocated = allocated;
+    
+    memset(arena->base + allocation_base, 0, size);
     
     return arena->base + allocation_base;
 }
@@ -331,8 +362,6 @@ struct string load_file(struct memory_arena *arena, char *file_name){
     return ret;
 }
 
-
-
 struct ticket_spinlock{
     s64 tickets_given_out;
     s64 ticket_in_work;
@@ -353,7 +382,6 @@ void ticket_spinlock_lock(struct ticket_spinlock *mutex){
 void ticket_spinlock_unlock(struct ticket_spinlock *mutex){
     _InterlockedIncrement64(&mutex->ticket_in_work);
 }
-
 
 struct work{
     struct test{
@@ -395,6 +423,7 @@ void print_log(struct test *test){
     }
 }
 
+#if _WIN32
 
 static f64 os_get_time_in_seconds(void){
     LARGE_INTEGER performance_frequency;
@@ -468,7 +497,7 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
         // 
         // Make sure there is space in the arena for the next bytes.
         // 
-        if(read_size != bytes_read) push_array(arena, u8, read_size - bytes_read);
+        push_array(arena, u8, read_size - bytes_read);
         
         read_at += bytes_read;
     }
@@ -477,7 +506,7 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
     
     DWORD ExitCode;
     if(!GetExitCodeProcess(ProcessInformation.hProcess, &ExitCode)){
-        print("Error: Failed to get ExitCode.");
+        print("Error: Failed to get ExitCode.\n");
         ExitCode = (DWORD)-1;
     }
     
@@ -489,7 +518,7 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
         
         WaitForSingleObject(ProcessInformation.hProcess, /*.5s*/500);
         if(!GetExitCodeProcess(ProcessInformation.hProcess, &ExitCode)){
-            print("Error: Failed to get ExitCode.");
+            print("Error: Failed to get ExitCode.\n");
             ExitCode = (DWORD)-1;
         }
     }
@@ -506,6 +535,306 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
 }
 
 
+struct string os_get_working_directory(struct memory_arena *arena){
+    struct string working_directory = {0};
+    // GetCurrentDirectory with 0 returns the size of the buffer including the null terminator
+    working_directory.size = GetCurrentDirectoryA(0, null) - 1;
+    working_directory.data = push_array(arena, char, working_directory.length + 1); // @cleanup: What about utf-8?
+    GetCurrentDirectoryA((u32)working_directory.length + 1, working_directory.data);
+    return working_directory;
+}
+
+int os_get_number_of_processors(void){
+    SYSTEM_INFO system_info;
+    GetSystemInfo(&system_info); // this cannot fail apperantly
+    return system_info.dwNumberOfProcessors;
+}
+
+int path_is_directory(char *path){
+    u32 file_attributes = GetFileAttributesA(path);
+    return (file_attributes != INVALID_FILE_ATTRIBUTES) && (file_attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+
+struct os_file_iterator{
+    WIN32_FIND_DATAA find_data;
+    HANDLE handle;
+};
+
+struct os_file_iterator os_file_iterator_initialize(char *search_string){
+    struct os_file_iterator ret = {0};
+    ret.handle = FindFirstFileA(search_string, &ret.find_data);
+    return ret;
+}
+
+// returns a file_iterator that will return 'false' on 'os_file_iterator_valid'
+// and can later be initialized by just overwriting it
+struct os_file_iterator os_file_iterator_invalid(void){
+    struct os_file_iterator ret = {0};
+    ret.handle = INVALID_HANDLE_VALUE;
+    return ret;
+}
+
+int os_file_iterator_valid(struct os_file_iterator *iterator){
+    return (iterator->handle != INVALID_HANDLE_VALUE);
+}
+
+struct string os_file_iterator_get(struct os_file_iterator *iterator){
+    return (struct string){.data = iterator->find_data.cFileName, .size = strlen(iterator->find_data.cFileName)};
+}
+
+int os_file_iterator_is_directory(struct os_file_iterator *iterator){
+    return (iterator->find_data.dwFileAttributes & /*FILE_ATTRIBUTE_DIRECTORY*/0x10);
+}
+
+void os_file_iterator_free(struct os_file_iterator *iterator){
+    FindClose(iterator->handle);
+    iterator->handle = INVALID_HANDLE_VALUE;
+}
+
+int os_file_iterator_next(struct os_file_iterator *iterator){
+    int ret = 1;
+    if(!FindNextFileA(iterator->handle, &iterator->find_data)){
+        os_file_iterator_free(iterator);
+        ret = 0;
+    }
+    return ret;
+}
+
+#else
+
+#define MAX_PATH PATH_MAX
+
+struct os_file_iterator{
+    DIR *directory_handle;
+    struct dirent *directory_entry;
+    char *file_name_wildcard;
+};
+
+void os_file_iterator_free(struct os_file_iterator *iterator){
+    closedir(iterator->directory_handle);
+    iterator->directory_handle = null;
+}
+
+int os_file_iterator_is_directory(struct os_file_iterator *iterator){
+    return (iterator->directory_entry->d_type == DT_DIR);
+}
+
+// stupid recursive version as I do not wanna allocate
+// @cleanup: I vaguely remember this having some bugs...
+int wildcard_cstring_match(char *pattern, char *string){
+    
+    if(*pattern == 0){
+        // empty pattern only matches with empty string
+        if(*string == 0) return true;
+        return false;
+    }
+    
+    if(*string == 0){
+        if(*pattern == '*') return wildcard_cstring_match(pattern + 1, string);
+        return false;
+    }
+    
+    if(pattern[0] == '?' || *pattern == *string){
+        return wildcard_cstring_match(pattern + 1, string + 1);
+    }
+    
+    if(*pattern == '*'){
+        return wildcard_cstring_match(pattern + 1, string) || wildcard_cstring_match(pattern, string + 1);
+    }
+    
+    return false;
+}
+
+int linux_os_file_iterator_next_directory_entry_wildcard_match(struct os_file_iterator *iterator){
+    while(true){
+        struct dirent *directory_entry = readdir(iterator->directory_handle);
+        if(!directory_entry){
+            os_file_iterator_free(iterator);
+            return 0;
+        }
+        
+        if(wildcard_cstring_match(iterator->file_name_wildcard, directory_entry->d_name)){
+            iterator->directory_entry = directory_entry;
+            return 1;
+        }
+    }
+}
+
+struct os_file_iterator os_file_iterator_initialize(char *search_string){
+    struct os_file_iterator ret = {0};
+    
+    s64 length = strlen(search_string);
+    s64 last_slash = -1;
+    for(s64 i = length - 1; i >= 0; i--){
+        if(search_string[i] == '/' || search_string[i] == '\\'){
+            last_slash = i;
+            break;
+        }
+    }
+    assert(last_slash >= 0);
+    
+    // hacky zero termination of the search string 
+    char saved = search_string[last_slash];
+    search_string[last_slash] = 0; 
+    
+    // DIR *opendir(char *filename);
+    // 'return value' - on error NULL else a pointer to a directory stream
+    
+    ret.directory_handle = opendir(search_string);
+    search_string[last_slash] = saved;
+    
+    if(!ret.directory_handle) return ret;
+    
+    ret.file_name_wildcard = search_string + (last_slash + 1);
+    linux_os_file_iterator_next_directory_entry_wildcard_match(&ret);
+    return ret;
+}
+
+struct os_file_iterator os_file_iterator_invalid(){
+    struct os_file_iterator ret = {0};
+    return ret;
+}
+
+int os_file_iterator_valid(struct os_file_iterator *iterator){
+    return (iterator->directory_handle != null);
+}
+
+struct string os_file_iterator_get(struct os_file_iterator *iterator){
+    return (struct string){.data = iterator->directory_entry->d_name, .size = strlen(iterator->directory_entry->d_name)};
+}
+
+// returns the file_name, i.e 'file' for 'C:/path/to/file'
+int os_file_iterator_next(struct os_file_iterator *iterator){
+    return linux_os_file_iterator_next_directory_entry_wildcard_match(iterator);
+}
+
+static int os_get_number_of_processors(){
+    return sysconf(_SC_NPROCESSORS_ONLN);
+}
+
+static f64 os_get_time_in_seconds(void){
+    struct timespec ts;
+    
+    if(clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return -1.0;
+    
+    return (f64)ts.tv_sec + (f64)ts.tv_nsec * 1e-9;
+}
+
+
+struct string execute_command_output(struct memory_arena *arena, char *command_line, char *working_directory, u32 *exit_code){
+    
+    // 
+    // Create a pipe to redirect the input and output.
+    // 
+    int pipefd[2];
+    if(pipe(pipefd) != 0){
+        *exit_code = errno;
+        return string("pipe failed");
+    }
+    
+    // 
+    // fork/exec the executable.
+    // 
+    
+    pid_t pid = fork();
+    
+    if(pid < 0){
+        close(pipefd[0]);
+        close(pipefd[1]);
+        
+        *exit_code = errno;
+        return string("fork failed");
+    }
+    
+    if(pid == 0){
+        
+        // 
+        // We are the child, dup the pipe file descriptors and exec.
+        // 
+        
+        close(pipefd[0]);
+        
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        
+        close(pipefd[1]);
+        
+        if(chdir(working_directory) != 0){
+            _exit(127);
+        }
+        
+        execl("/bin/sh", "sh", "-c", command_line, (char *)NULL);
+        
+        _exit(127);
+    }
+    
+    // 
+    // We are the parent!
+    // We don't need the write handle anymore.
+    // 
+    
+    close(pipefd[1]);
+    
+    // 
+    // Read all output from the child into the arena.
+    // 
+    size_t read_size = 0x100;
+    char *read_buffer = push_array(arena, char, read_size);
+    char *read_at = read_buffer;
+    
+    while(1){
+        ssize_t bytes_read = read(pipefd[0], read_at, read_size);
+        
+        read_at += (size_t)bytes_read;
+        
+        if(bytes_read <= 0) break;
+        
+        push_array(arena, u8, read_size - bytes_read);
+    }
+    
+    close(pipefd[0]);
+    
+    int status;
+    waitpid(pid, &status, 0);
+    
+    if(WIFEXITED(status)){
+        *exit_code = (u32)WEXITSTATUS(status);
+    }else{
+        *exit_code = (u32)-1;
+    }
+    
+    struct string string = {
+        .data = read_buffer,
+        .size = read_at - read_buffer,
+    };
+    
+    return string;
+}
+
+static struct string os_get_working_directory(struct memory_arena *arena){
+    char *cwd = push_array(arena, char, PATH_MAX);
+    
+    if(getcwd(cwd, PATH_MAX) != NULL){
+        struct string ret = {.data = cwd, .size = strlen(cwd)};
+        arena->allocated -= PATH_MAX - (ret.size + 1);
+        return ret;
+    }
+    
+    arena->allocated -= PATH_MAX;
+    return (struct string){0};
+}
+
+int path_is_directory(char *path){
+    struct stat file_info;
+    int stat_error = stat(path, &file_info);
+    if(stat_error < 0) return false; // does not exits or some thing
+    return (file_info.st_mode & S_IFDIR) ? true : false;
+}
+
+#endif
+
+
 unsigned int test_thread_entry(void *thread_parameter){
     
     struct work *work = thread_parameter;
@@ -520,26 +849,15 @@ unsigned int test_thread_entry(void *thread_parameter){
     // Generate a unique file path/name for the output file.
     // 
     
-#if 0
-    DWORD ThreadId = GetCurrentThreadId();
-    char TempBuffer[MAX_PATH + 1];
-    DWORD TempBufferSize = GetTempPathA(sizeof(TempBuffer), TempBuffer);
-    (void)TempBufferSize; // @cleanup: check for errors.
-    
-    char *output_file_name = push_format_cstring(&arena, "%stest_%x", TempBuffer, ThreadId);
-#else
     // @note: We were using the 'GetCurrentThreadId()' function here, but that gives big random indices
     //        and thus we did not overwrite the executables of previous test runs.
     //        Also we are putting the executables in the 'tests' directory, as it is excluded from
     //        Defender, and thus we _might_ gain some perf.
     
-    char TempBuffer[MAX_PATH + 1];
-    DWORD TempBufferSize = GetFullPathNameA("tests", sizeof(TempBuffer), TempBuffer, NULL);
-    (void)TempBufferSize; // @cleanup: check for errors.
+    struct string working_directory = os_get_working_directory(&arena);
     
     long thread_index = _InterlockedIncrement(&work->thread_index_allocator);
-    char *output_file_name = push_format_cstring(&arena, "%s\\test_%x", TempBuffer, thread_index);
-#endif
+    char *output_file_name = push_format_cstring(&arena, "%.*s/tests/test_%x", working_directory.size, working_directory.data, thread_index);
     
     char *out_command = push_format_cstring(&arena, "-out \"%s\"", output_file_name);
     
@@ -557,7 +875,7 @@ unsigned int test_thread_entry(void *thread_parameter){
         struct test *test = &work->tests[test_index];
         char *file_name = test->file_name;
         char *directory = test->directory;
-        char *file_path = push_format_cstring(&arena, "%s\\%s", directory, file_name);
+        char *file_path = push_format_cstring(&arena, "%s/%s", directory, file_name);
         
         {
             f64 start_time = os_get_time_in_seconds();
@@ -760,7 +1078,7 @@ unsigned int test_thread_entry(void *thread_parameter){
             u32 compile_exit_code = 0;
             struct string output = execute_command_output(&arena, compile_command_line, directory, &compile_exit_code);
             
-            push_format_cstring(&log, "%s:\n", compile_command_line);
+            push_format_cstring(&log, "%s> %s:\n", directory, compile_command_line);
             push_format_cstring(&log, "Exited with code 0x%x\n", compile_exit_code);
             push_format_cstring(&log, "%.*s\n", output.size, output.data);
             
@@ -931,10 +1249,8 @@ int main(int argument_count, char *argument_values[]){
         // 
         // Detect the amount of logical processors.
         // 
-        SYSTEM_INFO SystemInfo;
-        GetSystemInfo(&SystemInfo);
         
-        thread_count = SystemInfo.dwNumberOfProcessors/2;
+        thread_count = os_get_number_of_processors()/2;
         if(thread_count < 1) thread_count = 1;
     }
     
@@ -960,13 +1276,9 @@ int main(int argument_count, char *argument_values[]){
     for(int target_index = 0; target_index < amount_of_targets; target_index++){
         char *target = targets[target_index];
         
-        DWORD TargetFileAttributes = GetFileAttributesA(target);
-        if(TargetFileAttributes == INVALID_FILE_ATTRIBUTES){
-            print("Error: Invalid target '%s' specified. Targets must be either a path to a file or a path to a directory.", target);
-            return -1;
-        }
+        int is_directory = path_is_directory(target);
         
-        if(!(TargetFileAttributes & FILE_ATTRIBUTE_DIRECTORY)){
+        if(!is_directory){
             // 
             // If it's a single file, add it to the list.
             // 
@@ -1017,22 +1329,19 @@ int main(int argument_count, char *argument_values[]){
                 continue;
             }
             memcpy(SearchBuffer, directory_path, directory_path_length);
-            SearchBuffer[directory_path_length + 0] = '\\';
+            SearchBuffer[directory_path_length + 0] = '/';
             SearchBuffer[directory_path_length + 1] = '*';
             SearchBuffer[directory_path_length + 2] = 0;
             
-            WIN32_FIND_DATAA FindData = {0};
-            HANDLE FindHandle = FindFirstFileA(SearchBuffer, &FindData);
-            if(FindHandle == INVALID_HANDLE_VALUE) continue; // I don't think this can happen.
+            struct os_file_iterator file_iterator = os_file_iterator_initialize(SearchBuffer);
+            
+            if(!os_file_iterator_valid(&file_iterator)) continue; // I don't think this can happen.
             
             do{
-                char *FileName       = FindData.cFileName;
-                DWORD FileAttributes = FindData.dwFileAttributes;
+                struct string file_name = os_file_iterator_get(&file_iterator);
                 
-                size_t file_name_length = strlen(FileName);
-                
-                if(FileAttributes & FILE_ATTRIBUTE_DIRECTORY){
-                    if(strcmp(FileName, ".") == 0 || strcmp(FileName, "..") == 0){
+                if(os_file_iterator_is_directory(&file_iterator)){
+                    if(strcmp(file_name.data, ".") == 0 || strcmp(file_name.data, "..") == 0){
                         continue;
                     }
                     
@@ -1041,11 +1350,11 @@ int main(int argument_count, char *argument_values[]){
                     // The new path is of the form <directory_path>\<FileName>
                     // 
                     
-                    char *new_directory_path = push_array(&arena, char, directory_path_length + 1 + file_name_length + 1);
+                    char *new_directory_path = push_array(&arena, char, directory_path_length + 1 + file_name.length + 1);
                     memcpy(new_directory_path, directory_path, directory_path_length);
-                    new_directory_path[directory_path_length] = '\\';
-                    memcpy(new_directory_path + directory_path_length + 1, FileName, file_name_length);
-                    new_directory_path[directory_path_length + 1 + file_name_length] = 0;
+                    new_directory_path[directory_path_length] = '/';
+                    memcpy(new_directory_path + directory_path_length + 1, file_name.data, file_name.length);
+                    new_directory_path[directory_path_length + 1 + file_name.length] = 0;
                     
                     struct file_name_entry *new_directory_entry = push_struct(&arena, struct file_name_entry);
                     new_directory_entry->file_name = new_directory_path;
@@ -1058,7 +1367,7 @@ int main(int argument_count, char *argument_values[]){
                 // 
                 // Check that the FileName ends in '.c'.
                 // 
-                if((file_name_length < 2) || (FileName[file_name_length-1] != 'c') || (FileName[file_name_length-2] != '.')){
+                if((file_name.length < 2) || (file_name.data[file_name.length-1] != 'c') || (file_name.data[file_name.length-2] != '.')){
                     continue;
                 }
                 
@@ -1066,9 +1375,9 @@ int main(int argument_count, char *argument_values[]){
                 // Add the file to the 'file_names' list.
                 // 
                 
-                char *new_file_path = push_array(&arena, char, file_name_length + 1);
-                memcpy(new_file_path, FileName, file_name_length);
-                new_file_path[file_name_length] = 0;
+                char *new_file_path = push_array(&arena, char, file_name.length + 1);
+                memcpy(new_file_path, file_name.data, file_name.length);
+                new_file_path[file_name.length] = 0;
                 
                 struct file_name_entry *new_file_entry = push_struct(&arena, struct file_name_entry);
                 new_file_entry->file_name = new_file_path;
@@ -1076,9 +1385,7 @@ int main(int argument_count, char *argument_values[]){
                 new_file_entry->next = file_names;
                 file_names = new_file_entry;
                 
-            }while(FindNextFileA(FindHandle, &FindData));
-            
-            FindClose(FindHandle);
+            }while(os_file_iterator_next(&file_iterator));
         }
     }
     
@@ -1105,6 +1412,7 @@ int main(int argument_count, char *argument_values[]){
         .extra_options = extra_options,
     };
     
+#ifdef _WIN32
     HANDLE *ThreadHandles = push_array(&arena, HANDLE, thread_count);
     
     for(u32 ThreadIndex = 0; ThreadIndex < thread_count; ThreadIndex++){
@@ -1117,6 +1425,23 @@ int main(int argument_count, char *argument_values[]){
     }
     
     WaitForMultipleObjects(thread_count, ThreadHandles, /*WaitAll*/TRUE, INFINITE);
+#else
+    
+    pthread_t *threads = push_array(&arena, pthread_t , thread_count);
+    
+    for(u32 index = 0; index < thread_count; index++){
+        int pthread_error = pthread_create(&threads[index], NULL, (void *(*)(void *))test_thread_entry, &work);
+        if(pthread_error != 0){
+            perror("pthread_create");
+            return -1;
+        }
+    }
+    
+    for(int index = 0; index < thread_count; index++){
+        pthread_join(threads[index], NULL);
+    }
+    
+#endif
     
     if(work.broken_tests){
         print("\n\n");
