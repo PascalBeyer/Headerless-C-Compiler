@@ -3835,6 +3835,10 @@ int main(int argc, char *argv[]){
         return 0;
     }
     
+#ifndef _WIN32
+    if(ptrace(PTRACE_TRACEME, 0, NULL, 0) == -1) __is_debugger_present = 1;
+#endif
+    
     u64 begin_cycle_time = __rdtsc();
     f64 begin_time = os_get_time_in_seconds();
     

@@ -11,6 +11,7 @@
 #include <wordexp.h>
 #include <errno.h>
 #include <sys/eventfd.h>
+#include <sys/ptrace.h>
 
 typedef int HANDLE;
 
@@ -160,8 +161,9 @@ void os_panic(u32 exit_code){
     _exit((int)exit_code);
 }
 
+static int __is_debugger_present;
 void os_debug_break(void){
-    __asm__("int3");
+    if(__is_debugger_present) __asm__("int3");
 }
 
 func s64 atomic_postincrement(s64 *val){
