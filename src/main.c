@@ -4208,6 +4208,8 @@ int main(int argc, char *argv[]){
         add_specified_library(arena, string_concatenate(arena, string("lib"), library_node->string), null);
     }
     
+    add_specified_library(arena, string("libc"), null);
+    
     add_system_include_directory(arena, string("/usr/local/include"), string(""), false);
     add_system_include_directory(arena, string("/usr/include/x86_64-linux-gnu"), string(""), false);
     add_system_include_directory(arena, string("/usr/include"), string(""), false);
@@ -4308,11 +4310,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         "#define _M_X64 100\n"
                         "#define _M_AMD64 100\n"
                         
-        #if _WIN32
-                        "#define _WIN64 1\n"
-                        "#define _WIN32 1\n"
-        #endif
-                        
                         "#define _MSC_EXTENSIONS 1\n"
                         
                         "#define _INTEGRAL_MAX_BITS 64\n"
@@ -4334,18 +4331,31 @@ globals.typedef_##postfix = (struct ast_type){                                  
                         "#define __STDC_NO_VLA__     1\n"
                         // "#define __STDC_NO_ATOMICS__ 1\n"
                         
-        #ifndef _WIN32
-                        "#define __STDC_VERSION__ 201112L\n"
-                        "#define __STDC__ 1\n" // @note: Don't define this on Windows as some Microsoft headers work differently if this is specified.
-                        "#define __x86_64__ 1\n"
-                        "#define __x86_64 1\n"
-                        "#define __GNUC_MINOR__ 2\n"
-                        "#define __GNUC_PATCHLEVEL__ 1\n"
-                        "#define __GNUC_STDC_INLINE__ 1\n"
-                        "#define __GNUC__ 4\n"
-        #endif
                         );
                 
+                
+                if(globals.output_file_type != OUTPUT_FILE_elf){
+                    struct string windows_predefines = string_from_cstring(
+                            "#define _WIN64 1\n"
+                            "#define _WIN32 1\n"
+                            );
+                    string_list_postfix_no_copy(&predefines, arena, windows_predefines);
+                }
+                
+                if(globals.output_file_type == OUTPUT_FILE_elf){
+                    struct string linux_predefines = string_from_cstring(
+                            "#define __STDC_VERSION__ 201112L\n"
+                            "#define __STDC__ 1\n" // @note: Don't define this on Windows as some Microsoft headers work differently if this is specified.
+                            "#define __x86_64__ 1\n"
+                            "#define __x86_64 1\n"
+                            "#define __GNUC_MINOR__ 2\n"
+                            "#define __GNUC_PATCHLEVEL__ 1\n"
+                            "#define __GNUC_STDC_INLINE__ 1\n"
+                            "#define __GNUC__ 4\n"
+                            "#define __extension__\n"
+                            );
+                    string_list_postfix_no_copy(&predefines, arena, linux_predefines);
+                }
                 
                 if(globals.cli_options.std){
                     static struct string version_strings[] = {

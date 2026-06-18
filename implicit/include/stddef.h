@@ -5,6 +5,8 @@
 
 #pragma once
 
+typedef unsigned wchar_t;
+
 typedef __int64 ptrdiff_t;
 typedef unsigned __int64 size_t;
 

@@ -318,10 +318,14 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
         // Allow /, -, and -- as option indicators.
         //
         int is_option = 0;
+#ifdef _WIN32
+        // The '/' character on linux indicates the start of a full path.
         if(*option_cstring == '/'){
             is_option = 1;
             option_cstring++;
-        }else if(*option_cstring == '-'){
+        }else
+#endif
+        if(*option_cstring == '-'){
             is_option = 1;
             option_cstring++;
             if(*option_cstring == '-') option_cstring++;

@@ -222,9 +222,15 @@ __declspec(inline_asm) _Bool __atomic_compare_exchange_int(atomic_int *object, i
 
 __declspec(inline_asm) _Bool __atomic_compare_exchange_long(atomic_long *object, long *expected, long desired){
     
+#ifdef _WIN32
     mov eax, [expected]
     lock cmpxchg [object], desired
     mov [expected], eax
+#else
+    mov rax, [expected]
+    lock cmpxchg [object], desired
+    mov [expected], rax
+#endif
     
     sete al
     return al
@@ -272,9 +278,15 @@ __declspec(inline_asm) _Bool __atomic_compare_exchange_uint(atomic_uint *object,
 
 __declspec(inline_asm) _Bool __atomic_compare_exchange_ulong(atomic_ulong *object, ulong *expected, ulong desired){
     
+#ifdef _WIN32
     mov eax, [expected]
     lock cmpxchg [object], desired
     mov [expected], eax
+#else
+    mov rax, [expected]
+    lock cmpxchg [object], desired
+    mov [expected], rax
+#endif
     
     sete al
     return al

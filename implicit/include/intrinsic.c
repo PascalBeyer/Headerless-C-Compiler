@@ -410,13 +410,13 @@ __declspec(inline_asm) char _InterlockedExchange8(char *target, char value){
     return al
 }
 
-__declspec(inline_asm) short _InterlockedExchange16(short *target, short value){
+__declspec(inline_asm) __int16 _InterlockedExchange16(short *target, __int16 value){
     movzx eax, value
     xchg ax, [target]
     return ax
 }
 
-__declspec(inline_asm) long _InterlockedExchange(long *target, long value){
+__declspec(inline_asm) __int32 _InterlockedExchange(__int32 *target, __int32 value){
     mov eax, value
     xchg eax, [target]
     return eax
@@ -890,7 +890,7 @@ __declspec(inline_asm) short _InterlockedOr16(short volatile *value, short mask)
     return cx
 }
 
-__declspec(inline_asm) long _InterlockedOr(long volatile *value, long mask){
+__declspec(inline_asm) __int32 _InterlockedOr(__int32 volatile *value, __int32 mask){
     
     mov eax, [value]
     
@@ -947,7 +947,7 @@ __declspec(inline_asm) short _InterlockedXor16(short volatile *value, short mask
     return cx
 }
 
-__declspec(inline_asm) long _InterlockedXor(long volatile *value, long mask){
+__declspec(inline_asm) __int32 _InterlockedXor(__int32 volatile *value, __int32 mask){
     
     mov eax, [value]
     
@@ -1005,7 +1005,7 @@ __declspec(inline_asm) short _InterlockedAnd16(short volatile *value, short mask
     return cx
 }
 
-__declspec(inline_asm) long _InterlockedAnd(long volatile *value, long mask){
+__declspec(inline_asm) __int32 _InterlockedAnd(__int32 volatile *value, __int32 mask){
     
     mov eax, [value]
     

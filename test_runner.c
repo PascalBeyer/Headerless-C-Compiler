@@ -497,7 +497,7 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
         // 
         // Make sure there is space in the arena for the next bytes.
         // 
-        push_array(arena, u8, read_size - bytes_read);
+        push_array(arena, u8, bytes_read);
         
         read_at += bytes_read;
     }
@@ -786,11 +786,11 @@ struct string execute_command_output(struct memory_arena *arena, char *command_l
     while(1){
         ssize_t bytes_read = read(pipefd[0], read_at, read_size);
         
-        read_at += (size_t)bytes_read;
-        
         if(bytes_read <= 0) break;
         
-        push_array(arena, u8, read_size - bytes_read);
+        read_at += (size_t)bytes_read;
+        
+        push_array(arena, u8, bytes_read);
     }
     
     close(pipefd[0]);
