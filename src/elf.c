@@ -241,7 +241,17 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     // Gather the symbols.
     // 
     
+    struct ast_list typedefs = zero_struct;
+    
+    struct ast_list dllexports = zero_struct;
+    struct ast_list dll_function_stubs = zero_struct;
+    struct ast_list dll_imports = zero_struct;
+    
     struct ast_list defined_functions = zero_struct;
+    
+    struct ast_list initialized_declarations = zero_struct;
+    struct ast_list uninitialized_declarations = zero_struct;
+    struct ast_list tls_declarations = zero_struct;
     
     for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
         
@@ -256,7 +266,6 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             // If this is one of the local declaration tables, all members in here should be static.
             if(table->nodes != globals.global_declarations.nodes) assert(decl->flags & DECLARATION_FLAGS_is_static);
             
-            
             switch(*ast){
                 case IR_function:{
                     struct ast_function *function = (struct ast_function *)ast;
@@ -265,8 +274,56 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                     if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic)  continue;
                     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
                     
+                    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
+                        assert(function->dll_import_node);
+                        ast_list_append(&dll_imports, scratch, &function->kind);
+                        if(function->as_decl.flags & DECLARATION_FLAGS_need_dllimport_stub_function) ast_list_append(&dll_function_stubs, scratch, &function->kind);
+                        continue;
+                    }
+                    
+                    if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
+                        ast_list_append(&dllexports, scratch, &function->kind);
+                    }
+                    
                     ast_list_append(&defined_functions, scratch, &function->kind);
+                    
+                    for_ast_list(function->static_variables){
+                        struct ast_declaration *static_decl = (struct ast_declaration *)it->value;
+                        
+                        if(static_decl->flags & DECLARATION_FLAGS_is_thread_local){
+                            ast_list_append(&tls_declarations, arena, &static_decl->kind);
+                            continue;
+                        }
+                        
+                        if(static_decl->assign_expr){
+                            ast_list_append(&initialized_declarations, scratch, &static_decl->kind);
+                        }else{
+                            ast_list_append(&uninitialized_declarations, scratch, &static_decl->kind);
+                        }
+                    }
                 }break;
+                
+                case IR_typedef:{
+                    if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                    
+                    ast_list_append(&typedefs, arena, ast);
+                }break;
+                
+                case IR_declaration:{
+                    if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                    
+                    if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                        ast_list_append(&tls_declarations, arena, ast);
+                        continue;
+                    }
+                    
+                    if(decl->assign_expr){
+                        ast_list_append(&initialized_declarations, arena, ast);
+                    }else{
+                        ast_list_append(&uninitialized_declarations, arena, ast);
+                    }
+                }break;
+                
                 invalid_default_case();
             }
         }
@@ -379,6 +436,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     program_header->file_size   = segment_size;                                            \
     program_header->memory_size = segment_size;                                            \
     program_header->alignment = (segment_alignment);                                       \
+    current_virtual_address = current_virtual_address + align_up(segment_size, segment_alignment); \
 }
     
     u64 virtual_image_base = 0x400000;
@@ -469,8 +527,132 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }
     
     if(text_section_start != arena_current(arena)){
-        fill_program_header(rx, PT_LOAD, PF_READ | PF_EXECUTE, 0x1000);
         fill_section_header(text, SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_program_header(rx, PT_LOAD, PF_READ | PF_EXECUTE, 0x1000);
+    }
+    
+    push_align(arena, 0x1000);
+    
+    u8 *rodata_section_start = arena_current(arena);
+    u8 *ro_segment_start = rodata_section_start;
+    
+    // 
+    // @cleanup: Copy and paste.
+    // 
+    
+    // @note: float literals are loaded rip realtive so emit them here in rdata @cleanup: Dedup?
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for(struct ir_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; lit = lit->next){
+            if(lit->literal.type == &globals.typedef_f32){
+                f32 *_float = push_struct(arena, f32);
+                *_float = (f32)lit->literal._f32;
+                lit->relative_virtual_address = make_relative_virtual_address(rodata_section_start, _float);
+            }else{
+                assert(lit->literal.type == &globals.typedef_f64);
+                f64 *_float = push_struct(arena, f64);
+                *_float = lit->literal._f64;
+                lit->relative_virtual_address = make_relative_virtual_address(rodata_section_start, _float);
+            }
+        }
+    }
+    
+    {
+        // 
+        // @note: string literals are loaded rip realtive so emit them here in rdata
+        // 
+        smm amount_of_strings = 0;
+        
+        for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+            struct context *thread_context = globals.thread_infos[thread_index].context;
+            amount_of_strings += thread_context->string_literals.amount_of_strings;
+        }
+        
+        struct temporary_memory temp = begin_temporary_memory(scratch);
+        
+        smm capacity = u64_round_up_to_next_power_of_two((u64)(1.5 * amount_of_strings));
+        struct string *string_table = push_data(scratch, struct string, capacity);
+        
+        for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+            struct context *thread_context = globals.thread_infos[thread_index].context;
+            for(struct ir_string_literal *lit = thread_context->string_literals.first; lit; lit = lit->next){
+                
+                // :string_kind_is_element_size
+                smm element_size = (smm)lit->string_kind;
+                
+                struct string string_literal = lit->value;
+                
+                u64 hash = string_djb2_hash(string_literal);
+                
+                for(smm table_index = 0; table_index < capacity; table_index++){
+                    smm index = (hash + table_index) & (capacity - 1);
+                    
+                    if(string_table[index].data == null){
+                        
+                        push_zero_align(arena, element_size);
+                        u8 *base = push_string_copy(arena, string_literal).data;
+                        push_data(arena, u8, element_size);
+                        
+                        string_table[index].data = base;
+                        string_table[index].size = string_literal.size + element_size;
+                        
+                        lit->relative_virtual_address = make_relative_virtual_address(rodata_section_start, base);
+                        
+                        break;
+                    }
+                    
+                    // 
+                    // The strings match if
+                    //  1) The size is the size plus the null terminator.
+                    //  2) The string is null terminated for element_size bytes.
+                    //  3) The strings minus the null terminator match.
+                    // 
+                    if(string_table[index].size != string_literal.size + element_size) continue;
+                    if(memcmp(string_table[index].data + string_literal.size, (char[]){0, 0, 0, 0}, element_size) != 0) continue;
+                    if(memcmp(string_table[index].data, string_literal.data, string_literal.size) != 0) continue;
+                    
+                    lit->relative_virtual_address = make_relative_virtual_address(rodata_section_start, string_table[index].data);
+                    break;
+                }
+            }
+        }
+        
+        end_temporary_memory(temp);
+    }
+    
+    if(rodata_section_start != arena_current(arena)){
+        fill_section_header(rodata, SHT_PROGBITS, SHF_ALLOC, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_program_header(ro, PT_LOAD, PF_READ, 0x1000);
+    }
+    
+    push_align(arena, 0x1000);
+    
+    u8 *data_section_start = arena_current(arena);
+    u8 *rw_segment_start = data_section_start;
+    
+    for_ast_list(initialized_declarations){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        smm alignment = get_declaration_alignment(decl);
+        smm decl_size = get_declaration_size(decl);
+        
+        push_zero_align(arena, alignment);
+        
+        assert(decl->memory_location);
+        
+        if(decl_size == 0) decl_size = 1; // Ensure even zero-sized declarations have unique addresses.
+        
+        u8 *mem = push_uninitialized_data(arena, u8, decl_size);
+        memcpy(mem, decl->memory_location, decl_size);
+        
+        decl->memory_location = mem;
+        decl->relative_virtual_address = make_relative_virtual_address(data_section_start, mem);
+    }
+    
+    if(arena_current(arena) != data_section_start){
+        fill_section_header(data, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_program_header(rw, PT_LOAD, PF_READ | PF_WRITE, 0x1000);
     }
     
     for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
@@ -483,29 +665,66 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             u8 *memory_location = patch->dest_declaration->memory_location + patch->location_offset_in_dest_declaration;
             
             if(patch->kind == PATCH_rip_relative){
+                assert(patch->dest_declaration->kind == IR_function);
+                assert(patch->rip_at >= 0);
+                
+                smm dest_location = patch->dest_declaration->relative_virtual_address;
+                smm rip_at = dest_location + patch->rip_at;
+                
                 if(source_kind == IR_function || source_kind == IR_declaration){
-                    assert(patch->dest_declaration->kind == IR_function);
-                    assert(patch->rip_at >= 0);
-                    
                     struct ast_declaration *source_declaration = (struct ast_declaration *)patch->source;
                     
-                    smm source_location = source_declaration->relative_virtual_address;
-                    smm dest_location   = patch->dest_declaration->relative_virtual_address;
+                    smm source_location = source_declaration->relative_virtual_address + patch->location_offset_in_source_declaration;
                     
-                    source_location += patch->location_offset_in_source_declaration;
-                    smm rip_at = dest_location + patch->rip_at;
                     *(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
-                }else not_implemented;
+                }else if(source_kind == IR_emitted_float_literal){
+                    struct ir_emitted_float_literal *f = (struct ir_emitted_float_literal *)patch->source;
+                    assert(f->relative_virtual_address);
+                    
+                    smm source_location = f->relative_virtual_address;
+                    *(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
+                }else if(source_kind == IR_string_literal){
+                    struct ir_string_literal *lit = (struct ir_string_literal *)patch->source;
+                    
+                    smm source_location = lit->relative_virtual_address + patch->location_offset_in_source_declaration;
+                    *(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
+                }else invalid_code_path;
+            }else if(patch->kind == PATCH_absolute){
+                assert(patch->dest_declaration->kind == IR_declaration);
+                
+                smm source_location = virtual_image_base + patch->location_offset_in_source_declaration;
+                if(source_kind == IR_function || source_kind == IR_declaration){
+                    struct ast_declaration *decl = (struct ast_declaration *)patch->source;
+                    
+                    if(decl->flags & DECLARATION_FLAGS_is_dllimport){
+                        not_implemented;
+                    }else{
+                        source_location += decl->relative_virtual_address;
+                    }
+                }else if(source_kind == IR_string_literal){
+                    struct ir_string_literal *string_literal = (struct ir_string_literal *)patch->source;
+                    source_location += string_literal->relative_virtual_address;
+                }
+                
+                *(smm *)memory_location = source_location;
+                
+                if(!globals.cli_options.no_dynamic_base){
+                    // @incomplete: currently not implemented.
+                }
             }else not_implemented;
         }
     }
-    
     
     u8 *shstrtab_section_start = string_list_flatten(section_name_string_table, arena).data;
     arena->current -= 1;
     push_zero_terminated_string_copy(arena, string(".shstrtab"));
     
     fill_section_header(shstrtab, SHT_STRTAB, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
+    
+    struct elf_program_header *gnu_stack_program_header = program_headers + program_header_at++;
+    gnu_stack_program_header->type = /*PT_GNU_STACK*/0x6474e551;
+    gnu_stack_program_header->flags = PF_READ | PF_WRITE;
+    gnu_stack_program_header->alignment = 0x10;
     
     // 
     // We are done with filling in the sections.
@@ -1011,27 +1230,27 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                 u32 type = (u32)info;
                 
                 static char *relocation_type_strings[] = {
-                    [0]  = "R_X86_64_NONE", // None None
-                    [1]  = "R_X86_64_64", // qword S + A
-                    [2]  = "R_X86_64_PC32", // dword S + A - P
-                    [3]  = "R_X86_64_GOT32", // dword G + A
-                    [4]  = "R_X86_64_PLT32", // dword L + A - P
-                    [5]  = "R_X86_64_COPY", // None Value is copied directly from shared object
-                    [6]  = "R_X86_64_GLOB_DAT", // qword S
+                    [0]  = "R_X86_64_NONE",      // None None
+                    [1]  = "R_X86_64_64",        // qword S + A
+                    [2]  = "R_X86_64_PC32",      // dword S + A - P
+                    [3]  = "R_X86_64_GOT32",     // dword G + A
+                    [4]  = "R_X86_64_PLT32",     // dword L + A - P
+                    [5]  = "R_X86_64_COPY",      // None Value is copied directly from shared object
+                    [6]  = "R_X86_64_GLOB_DAT",  // qword S
                     [7]  = "R_X86_64_JUMP_SLOT", // qword S
-                    [8]  = "R_X86_64_RELATIVE", // qword B + A
-                    [9]  = "R_X86_64_GOTPCREL", // dword G + GOT + A - P
-                    [10] = "R_X86_64_32", // dword S + A
-                    [11] = "R_X86_64_32S", // dword S + A
-                    [12] = "R_X86_64_16", // word S + A
-                    [13] = "R_X86_64_PC16", // word S + A - P
-                    [14] = "R_X86_64_8", // word8 S + A
-                    [15] = "R_X86_64_PC8", // word8 S + A - P
-                    [24] = "R_X86_64_PC64", // qword S + A - P
-                    [25] = "R_X86_64_GOTOFF64", // qword S + A - GOT
-                    [26] = "R_X86_64_GOTPC32", // dword GOT + A - P
-                    [32] = "R_X86_64_SIZE32", // dword Z + A
-                    [33] = "R_X86_64_SIZE64", // qword Z + A
+                    [8]  = "R_X86_64_RELATIVE",  // qword B + A
+                    [9]  = "R_X86_64_GOTPCREL",  // dword G + GOT + A - P
+                    [10] = "R_X86_64_32",        // dword S + A
+                    [11] = "R_X86_64_32S",       // dword S + A
+                    [12] = "R_X86_64_16",        // word S + A
+                    [13] = "R_X86_64_PC16",      // word S + A - P
+                    [14] = "R_X86_64_8",         // word8 S + A
+                    [15] = "R_X86_64_PC8",       // word8 S + A - P
+                    [24] = "R_X86_64_PC64",      // qword S + A - P
+                    [25] = "R_X86_64_GOTOFF64",  // qword S + A - GOT
+                    [26] = "R_X86_64_GOTPC32",   // dword GOT + A - P
+                    [32] = "R_X86_64_SIZE32",    // dword Z + A
+                    [33] = "R_X86_64_SIZE64",    // qword Z + A
                 };
                 char *relocation_type_string = type < array_count(relocation_type_strings) ? relocation_type_strings[type] : "???";
                 

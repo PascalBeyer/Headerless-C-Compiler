@@ -2589,6 +2589,140 @@ struct emit_location *emit_float_cast(struct context *context, struct emit_locat
     return loaded;
 }
 
+struct emit_location *system_v_load_oddly_sized_type_into_register(struct context *context, struct emit_location *emit_location, enum register_encoding register_to_load_into, enum register_encoding scratch_register){
+    
+    assert(emit_location->state == EMIT_LOCATION_register_relative);
+    
+    emit_location->prevent_freeing += 1;
+    
+    smm odd_size = emit_location->size;
+    
+    struct emit_location *ret = 0;
+    
+    switch(odd_size){
+        case 3:{
+            // movzx ecx, byte [loc + 2]
+            // movzx reg, word [loc]
+            // shl ecx, 16
+            // or reg, ecx
+            emit_location->offset += 2;
+            emit_location->size = 1;
+            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            
+            emit_location->offset -= 2;
+            emit_location->size = 2;
+            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+            
+            lower_part->size = 4;
+            upper_part->size = 4;
+            
+            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+            emit(16);
+            
+            emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+            
+            free_emit_location(context, upper_part);
+            ret = lower_part;
+        }break;
+        case 5:{
+            // movzx ecx, byte [loc + 4]
+            // movzx reg, dword [loc]
+            // shl ecx, 32
+            // or reg, ecx
+            emit_location->offset += 4;
+            emit_location->size = 1;
+            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            
+            emit_location->offset -= 4;
+            emit_location->size = 4;
+            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+            
+            lower_part->size = 8;
+            upper_part->size = 8;
+            
+            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+            emit(32);
+            
+            emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+            
+            free_emit_location(context, upper_part);
+            ret = lower_part;
+        }break; 
+        case 6:{
+            // movzx ecx, word [loc + 4]
+            // movzx reg, dword [loc]
+            // shl ecx, 32
+            // or reg, ecx
+            emit_location->offset += 4;
+            emit_location->size = 2;
+            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            
+            emit_location->offset -= 4;
+            emit_location->size = 4;
+            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+            
+            lower_part->size = 8;
+            upper_part->size = 8;
+            
+            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+            emit(32);
+            
+            emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+            
+            free_emit_location(context, upper_part);
+            ret = lower_part;
+        }break; 
+        case 7:{
+            // movzx ecx, word [loc + 4]
+            // movzx reg, dword [loc]
+            // shl ecx, 32
+            // or reg, ecx
+            // movzx ecx, byte [loc + 6]
+            // shl ecx, 6 * 8
+            // or reg, ecx
+            
+            emit_location->offset += 4;
+            emit_location->size = 2;
+            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            
+            emit_location->offset -= 4;
+            emit_location->size = 4;
+            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+            
+            lower_part->size = 8;
+            upper_part->size = 8;
+            
+            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+            emit(32);
+            
+            emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+            
+            free_emit_location(context, upper_part);
+            
+            emit_location->offset += 6;
+            emit_location->size = 1;
+            upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            
+            lower_part->size = 8;
+            upper_part->size = 8;
+            
+            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
+            emit(6 * 8);
+            
+            emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
+            
+            free_emit_location(context, upper_part);
+            
+            ret = lower_part;
+        }break;
+        invalid_default_case();
+    }
+    
+    emit_location->prevent_freeing -= 1;
+    free_emit_location(context, emit_location);
+    
+    return ret;
+}
 
 //_____________________________________________________________________________________________________________________
 // :emit_code_for_function__internal
@@ -2631,6 +2765,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             }
         }
     }
+    
     smm amount_of_scopes = push_data(&context->scratch, u32 *, 0) - scope_offsets;
     smm scope_at = 0;
     
@@ -3805,8 +3940,14 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         if(expected_register_kind == REGISTER_KIND_gpr){
                             
                             if(returns_big_struct + integer_register_at < array_count(integer_argument_registers)){
-                                enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_argument_registers[returns_big_struct + integer_register_at]);
-                                argument = emit_load_into_specific_gpr(context, argument, arg_reg);
+                                
+                                enum register_encoding register_to_load_into = integer_argument_registers[returns_big_struct + integer_register_at];
+                                if(is_power_of_two(argument->size)){
+                                    enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
+                                    argument = emit_load_into_specific_gpr(context, argument, arg_reg);
+                                }else{
+                                    argument = system_v_load_oddly_sized_type_into_register(context, argument, register_to_load_into, REGISTER_A);
+                                }
                                 integer_register_at += 1;
                             }else{
                                 
@@ -4036,118 +4177,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
                                     free_emit_location(context, loaded);
                                 }else{
-                                    return_location->prevent_freeing += 1;
-                                    
-                                    assert(return_location->state == EMIT_LOCATION_register_relative);
-                                    
-                                    if(return_size == 3){
-                                        // movzx ecx, byte [loc + 2]
-                                        // movzx reg, word [loc]
-                                        // shl ecx, 16
-                                        // or reg, ecx
-                                        return_location->offset += 2;
-                                        return_location->size = 1;
-                                        struct emit_location *upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
-                                        
-                                        return_location->offset -= 2;
-                                        return_location->size = 2;
-                                        struct emit_location *lower_part = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
-                                        
-                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
-                                        emit(16);
-                                        
-                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
-                                        
-                                        free_emit_location(context, upper_part);
-                                        free_emit_location(context, lower_part);
-                                    }else if(return_size == 5){
-                                        // movzx ecx, byte [loc + 4]
-                                        // movzx reg, dword [loc]
-                                        // shl ecx, 32
-                                        // or reg, ecx
-                                        return_location->offset += 4;
-                                        return_location->size = 1;
-                                        struct emit_location *upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
-                                        
-                                        return_location->offset -= 4;
-                                        return_location->size = 4;
-                                        struct emit_location *lower_part = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
-                                        
-                                        lower_part->size = 8;
-                                        upper_part->size = 8;
-                                        
-                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
-                                        emit(32);
-                                        
-                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
-                                        
-                                        free_emit_location(context, upper_part);
-                                        free_emit_location(context, lower_part);
-                                    }else if(return_size == 6){
-                                        // movzx ecx, word [loc + 4]
-                                        // movzx reg, dword [loc]
-                                        // shl ecx, 32
-                                        // or reg, ecx
-                                        return_location->offset += 4;
-                                        return_location->size = 2;
-                                        struct emit_location *upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
-                                        
-                                        return_location->offset -= 4;
-                                        return_location->size = 4;
-                                        struct emit_location *lower_part = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
-                                        
-                                        lower_part->size = 8;
-                                        upper_part->size = 8;
-                                        
-                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
-                                        emit(32);
-                                        
-                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
-                                        
-                                        free_emit_location(context, upper_part);
-                                        free_emit_location(context, lower_part);
-                                    }else if(return_size == 7){
-                                        // movzx ecx, word [loc + 4]
-                                        // movzx reg, dword [loc]
-                                        // shl ecx, 32
-                                        // or reg, ecx
-                                        // movzx ecx, byte [loc + 6]
-                                        // shl ecx, 6 * 8
-                                        // or reg, ecx
-                                        
-                                        return_location->offset += 4;
-                                        return_location->size = 2;
-                                        struct emit_location *upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
-                                        
-                                        return_location->offset -= 4;
-                                        return_location->size = 4;
-                                        struct emit_location *lower_part = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
-                                        
-                                        lower_part->size = 8;
-                                        upper_part->size = 8;
-                                        
-                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
-                                        emit(32);
-                                        
-                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
-                                        
-                                        free_emit_location(context, upper_part);
-                                        
-                                        return_location->offset += 6;
-                                        return_location->size = 1;
-                                        upper_part = emit_load_into_specific_gpr(context, return_location, REGISTER_C);
-                                        
-                                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(SHIFT_OR_ROTATE_REGM_IMMEDIATE8), REG_OPCODE_SHIFT_LEFT, upper_part);
-                                        emit(6 * 8);
-                                        
-                                        emit_register_register(context, no_prefix(), one_byte_opcode(OR_REG_REGM), lower_part, upper_part);
-                                        
-                                        free_emit_location(context, upper_part);
-                                        free_emit_location(context, lower_part);
-                                    }
-                                    
-                                    return_location->prevent_freeing -= 1;
-                                    free_emit_location(context, return_location);
+                                    struct emit_location *loaded = system_v_load_oddly_sized_type_into_register(context, return_location, register_to_load_into, REGISTER_C);
+                                    free_emit_location(context, loaded);
                                 }
                             }else invalid_code_path;
                         }
@@ -5201,6 +5232,8 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     smm amount_of_saved_registers = 0;
     u32 *stack_space_subtract_address = 0;
     
+    smm return_location_stack_offset = 0;
+    
     if(calling_convention == CALLING_CONVENTION_windows_x64){
         
         context->function_argument_stack_space_needed = 4 * 8;
@@ -5271,6 +5304,8 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                 // If we are returning a struct, the first argument is the address of the struct.
                 // Simply store it in the corresponding slot, we will find it there when we enter 
                 // the function epilog. :returning_structs
+                
+                return_location_stack_offset = stack_at;
                 
                 enum register_encoding rcx = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_C);
                 struct emit_location *dest = emit_location_stack_relative(context, stack_at, 8);
@@ -5357,11 +5392,29 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
         //                           rbp^                                         ^
         //                              ^rsp                                      ^rbp + 16 + 8 * amount_of_saved_registers = rbp - (-16 + 8 * amount_of_saved_registers)
         
-        smm stack_at = 0;
+        function->stack_space_needed = align_up(function->stack_space_needed, 8);
+        
         smm stack_argument_at = (16 + 8 * amount_of_saved_registers);
         
         u32 integer_register_at = 0;
         u32 float_register_at = 0;
+        
+        if(type_is_returned_by_address(calling_convention, return_type)){
+            // If we are returning a struct, the first argument is the address of the struct.
+            // Simply store it in the corresponding slot, we will find it there when we enter 
+            // the function epilog. :returning_structs
+            
+            return_location_stack_offset = function->stack_space_needed;
+            
+            enum register_encoding rcx = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_C);
+            struct emit_location *dest = emit_location_stack_relative(context, function->stack_space_needed, 8);
+            struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_gpr, rcx, 8);
+            emit_store(context, dest, source);
+            
+            // :MSVC_function_call_stack_increase
+            function->stack_space_needed += 8;
+            integer_register_at += 1;
+        }
         
         for(struct ast_list_node *argument = function_type->argument_list.first; argument; argument = argument->next){
             struct ast_declaration *argument_decl = (struct ast_declaration *)argument->value;
@@ -5404,7 +5457,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                     function->stack_space_needed = align_up(function->stack_space_needed, argument_type->alignment);
                     
                     enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
-                    struct emit_location *dest = emit_location_stack_relative(context, stack_at, size);
+                    struct emit_location *dest = emit_location_stack_relative(context, function->stack_space_needed, size);
                     struct emit_location *source = emit_location_loaded(context, REGISTER_KIND_xmm, argument_reg, size);
                     emit_store(context, dest, source);
                     
@@ -5517,7 +5570,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
         // Get the value of the implicit return value, which was passed as an implicit first operand.
         // And thus is contained in the first argument location.
         // We should return this again, thus load it into rax.
-        struct emit_location *location_of_rax = emit_location_stack_relative(context, -(16 + 8 * amount_of_saved_registers), 8);
+        struct emit_location *location_of_rax = emit_location_stack_relative(context, return_location_stack_offset, 8);
         enum register_encoding rax = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_A);
         struct emit_location *address_of_return_struct = emit_load_into_specific_gpr(context, location_of_rax, rax);
         struct emit_location *dest = emit_location_register_relative(context, address_of_return_struct, 0, 0, return_type->size);
