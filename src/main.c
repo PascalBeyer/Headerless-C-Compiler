@@ -3497,29 +3497,28 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
     
     function->stack_space_needed = context->current_emit_offset_of_rsp;
     
-    if(atoms_match(function->identifier->atom, globals.keyword_main)){
-        // "If the return type of the 'main' function is a type compatible with int, [...]
-        //  reaching the } that terminates the main function returns a value of 0."
-        if(function_type->return_type == &globals.typedef_s32){
-            
-            context->current_statement_returns_a_value = 1;
-            
-            ast_push_s32_literal(context, 0, null);
-            push_ir(context, IR_return); // @cleanup: is this the correct token?
-        }
-    }
-    
     if(!context->current_statement_returns_a_value){
         
-        if((function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !(function_type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
-            report_warning(context, WARNING_return_in_noreturn_function, get_current_token_for_error_report(context), "Control flow reaching the end of '_Noreturn' function.");
-        }else if(function_type->return_type != &globals.typedef_void){
-            // 
-            // We have reached the end of a non-void function, but there was no return.
-            // Report a warning.
-            // 
-            struct string return_type_string = push_type_string(context->arena, &context->scratch, function_type->return_type);
-            report_warning(context, WARNING_missing_return, get_current_token_for_error_report(context), "Function of type '%.*s' must return a value.", return_type_string.size, return_type_string.data);
+        if(atoms_match(function->identifier->atom, globals.keyword_main)){
+            // "If the return type of the 'main' function is a type compatible with int, [...]
+            //  reaching the } that terminates the main function returns a value of 0."
+            if(function_type->return_type == &globals.typedef_s32){
+                
+                ast_push_s32_literal(context, 0, null);
+                push_ir(context, IR_return);
+            }
+        }else{
+            
+            if((function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !(function_type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
+                report_warning(context, WARNING_return_in_noreturn_function, get_current_token_for_error_report(context), "Control flow reaching the end of '_Noreturn' function.");
+            }else if(function_type->return_type != &globals.typedef_void){
+                // 
+                // We have reached the end of a non-void function, but there was no return.
+                // Report a warning.
+                // 
+                struct string return_type_string = push_type_string(context->arena, &context->scratch, function_type->return_type);
+                report_warning(context, WARNING_missing_return, get_current_token_for_error_report(context), "Function of type '%.*s' must return a value.", return_type_string.size, return_type_string.data);
+            }
         }
     }
     
