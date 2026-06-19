@@ -226,7 +226,6 @@ struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size){
         return ret; // no need to close the fd here.
     }
     
-    
     // int fstat(int fd, struct stat *buf);
     // 'return value' - '0' on success '-1' on error
     // 'fd'           - the file descriptor to get a 'stat' for.
@@ -234,6 +233,12 @@ struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size){
     struct stat file_information;
     int stat_error = fstat(file_descriptor, &file_information);
     if(stat_error != 0){
+        ret.file_does_not_exist = true;
+        goto cleanup;
+    }
+    
+    if(!S_ISREG(file_information.st_mode)){ // @cleanup: Allow everything besides directories?
+        ret.file_does_not_exist = true;
         goto cleanup;
     }
     
@@ -243,7 +248,6 @@ struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size){
     ret.access_time       = file_information.st_atim.tv_sec * 10000000ull + file_information.st_atim.tv_nsec/100;
     ret.modification_time = file_information.st_atim.tv_sec * 10000000ull + file_information.st_atim.tv_nsec/100;
     ret.creation_time     = file_information.st_atim.tv_sec * 10000000ull + file_information.st_atim.tv_nsec/100;
-    
     
     if(buffer_size < ret.size){
         goto cleanup;

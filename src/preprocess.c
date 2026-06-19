@@ -2168,8 +2168,8 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
     // 
     
 #ifndef _WIN32
-    // On linux file_size was not set yet, because the file iterator does not set it...
-    file_size = os_load_file(absolute_file_path, 0, 0).size;
+    // On linux file_size might not be set yet, because the file iterator does not set it...
+    if(!file_size) file_size = os_load_file(absolute_file_path, 0, 0).size;
 #endif
     
     smm pad_size = 128;
