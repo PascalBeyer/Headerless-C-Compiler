@@ -8955,9 +8955,12 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) goto end;
             }
             
-            if(context->current_scope && specifiers.specifier_flags & SPECIFIER_dllimport){
+            if(context->current_scope && (specifiers.specifier_flags & SPECIFIER_dllimport)){
                 // @incomplete: For now disallow __declspec(dllimport) at local scope.
                 report_error(context, decl->identifier, "@incomplete: Currently, __declspec(dllimport) is not allowed inside a function.");
+                goto end;
+            }
+            
             }
             
             // 

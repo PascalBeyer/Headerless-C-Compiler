@@ -494,7 +494,7 @@ enum type_flags{
 struct ast_type{
     enum ast_kind kind;
     enum type_flags flags;
-    // struct token *token;
+    
     smm size;      // @note: these could be u32's probably
     smm alignment; // @note: these could be u32's probably
     
@@ -826,7 +826,7 @@ struct ast_function{
     u32 debug_symbol_offset;
     u32 pushed_register_mask; // (1 << REGISTER_XXX) is set if we pushed that register in the prolog
     
-    struct dll_import_node *dll_import_node;
+    struct import_node *import_node;
     struct seh_exception_handler *seh_exception_handler;
 };
 

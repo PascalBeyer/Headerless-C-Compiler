@@ -979,7 +979,7 @@ func void *push_unwind_information_for_function(struct memory_arena *arena, stru
     }
     
     if(function->seh_exception_handler){
-        smm C_specific_handler_rva = globals.C_specific_handler_declaration->dll_import_node ? globals.C_specific_handler_declaration->dll_import_node->stub_relative_virtual_address : globals.C_specific_handler_declaration->relative_virtual_address;
+        smm C_specific_handler_rva = globals.C_specific_handler_declaration->import_node ? globals.C_specific_handler_declaration->import_node->stub_relative_virtual_address : globals.C_specific_handler_declaration->relative_virtual_address;
         
         *push_struct(arena, u32) = (u32)C_specific_handler_rva; // Address of exception handler (__C_specific_handler)
         u32 *count_dest = push_struct(arena, u32);

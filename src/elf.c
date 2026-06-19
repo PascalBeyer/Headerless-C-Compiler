@@ -275,7 +275,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
                     
                     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
-                        assert(function->dll_import_node);
+                        assert(function->import_node);
                         ast_list_append(&dll_imports, scratch, &function->kind);
                         if(function->as_decl.flags & DECLARATION_FLAGS_need_dllimport_stub_function) ast_list_append(&dll_function_stubs, scratch, &function->kind);
                         continue;

@@ -402,25 +402,36 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     }
     
     if(shared_object_symbol){
-        struct shared_object_node *shared_object_node = globals.shared_objects.first;
+        
+        if(declaration->kind == IR_declaration){
+            report_error(context, declaration->identifier, "@incomplete: Currently no importing for data declarations?");
+            return;
+        }
+        
+        struct import_library_node *shared_object_node = globals.import_libraries.first;
         for(; shared_object_node; shared_object_node = shared_object_node->next){
             if(string_match(shared_object_node->name, shared_object_name)) break;
         }
         
         if(!shared_object_node){
-            shared_object_node = push_uninitialized_struct(context->arena, struct shared_object_node);
+            shared_object_node = push_uninitialized_struct(context->arena, struct import_library_node);
             shared_object_node->name = shared_object_name;
             
-            sll_push_back(globals.shared_objects, shared_object_node);
-            globals.shared_objects.amount += 1;
+            sll_push_back(globals.import_libraries, shared_object_node);
+            globals.import_libraries.amount += 1;
         }
         
-        struct so_import_node *import_node = push_uninitialized_struct(context->arena, struct so_import_node);
+        struct import_node *import_node = push_uninitialized_struct(context->arena, struct import_node);// @note: No need to zero, 'arena' never has any non-zero bytes.
+        import_node->kind = IMPORT_NODE_so;
         import_node->import_name = identifier;
         
         sll_push_back(shared_object_node->import_list, import_node);
         shared_object_node->import_list.count += 1;
         declaration->flags |= DECLARATION_FLAGS_is_dllimport;
+        
+        struct ast_function *function = (struct ast_function *)declaration;
+        function->import_node = import_node;
+        
         return;
     }
     
@@ -448,34 +459,34 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     
     struct string dll_name = cstring_to_string((char *)library_name);
     
-    struct dll_node *dll_node = globals.dlls.first;
+    struct import_library_node *dll_node = globals.import_libraries.first;
     for(; dll_node; dll_node = dll_node->next){
         if(string_match(dll_node->name, dll_name)) break;
     }
     
     if(!dll_node){
-        dll_node = push_uninitialized_struct(context->arena, struct dll_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
+        dll_node = push_uninitialized_struct(context->arena, struct import_library_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
         dll_node->name = dll_name;
         
-        sll_push_back(globals.dlls, dll_node);
-        globals.dlls.amount += 1;
+        sll_push_back(globals.import_libraries, dll_node);
+        globals.import_libraries.amount += 1;
     }
     
     // @note: We should not have to lookup the 'identifier' in the 'dll_node' as otherwise,
     //        we should have already been here and set the 'import_node' member of the
     //        lookup table.
     
-    struct dll_import_node *import_node = push_uninitialized_struct(context->arena, struct dll_import_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
-    import_node->import_name  = atom_get_string(identifier);
+    struct import_node *import_node = push_uninitialized_struct(context->arena, struct import_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
+    import_node->import_name  = identifier;
     import_node->ordinal_hint = ar_import_header->ordinal_hint;
     if(ar_import_header->name_type == /*IMPORT_OBJECT_ORDINAL*/0) import_node->import_by_ordinal = 1;
     
     sll_push_back(dll_node->import_list, import_node);
     dll_node->import_list.count += 1;
     
-    if(is_dll_import){
-        function->dll_import_node = import_node;
-    }else{
+    function->import_node = import_node;
+    
+    if(!is_dll_import){
         // :dllimports_with_missing_declspec
         // 
         // Apparently, MSVC does note require 'dllimport'. 
@@ -489,7 +500,6 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         }
         
         function->as_decl.flags |= DECLARATION_FLAGS_is_dllimport;
-        function->dll_import_node = import_node;
     }
 }
 

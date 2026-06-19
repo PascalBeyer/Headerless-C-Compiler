@@ -671,7 +671,7 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
                     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
                     
                     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
-                        assert(function->dll_import_node);
+                        assert(function->import_node);
                         ast_list_append(&dll_imports, scratch, &function->kind);
                         if(function->as_decl.flags & DECLARATION_FLAGS_need_dllimport_stub_function) ast_list_append(&dll_function_stubs, scratch, &function->kind);
                         continue;
@@ -740,7 +740,7 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
         for_ast_list(thread_context->local_dllimports){
             struct ast_function *function = (struct ast_function *)it->value;
             if(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry){
-                assert(function->dll_import_node);
+                assert(function->import_node);
                 ast_list_append(&dll_imports, scratch, &function->kind);
             }
         }
@@ -1101,7 +1101,7 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
             
             // Emit a stub for every dllimport that needs it.
             struct ast_function *function = cast(struct ast_function *)it->value;
-            struct dll_import_node *dll_import_node = function->dll_import_node;
+            struct import_node *dll_import_node = function->import_node;
             
             u8 *memory_for_stub = push_uninitialized_data(arena, u8, 6);
             
@@ -1165,7 +1165,7 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
         //
         u8 *rdata_section_start = arena_current(arena);
         
-        if(!sll_is_empty(globals.dlls)){ // import directory table
+        if(!sll_is_empty(globals.import_libraries)){ // import directory table
             u8 *import_begin = arena_current(arena);
             
             // Layout:
@@ -1210,7 +1210,7 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
                 // Until the image is bound, this table is identically to the import lookup table.
                 // 
                 u32 import_address_table_rva;
-            } *import_descriptors = push_data(arena, struct image_import_descriptor, globals.dlls.amount + 1);
+            } *import_descriptors = push_data(arena, struct image_import_descriptor, globals.import_libraries.amount + 1);
             
             u8 *import_end = arena_current(arena);
             
@@ -1219,7 +1219,7 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
             image_optional_header->data_directory[1].size = save_truncate_smm_to_u32(import_end - import_begin);
             
             u32 dll_import_index = 0;
-            for(struct dll_node *dll_node = globals.dlls.first; dll_node; dll_node = dll_node->next, dll_import_index++){
+            for(struct import_library_node *dll_node = globals.import_libraries.first; dll_node; dll_node = dll_node->next, dll_import_index++){
                 struct image_import_descriptor *import = import_descriptors + dll_import_index;
                 
                 char *string = push_cstring_from_string(arena, dll_node->name);
@@ -1232,14 +1232,14 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
                 import_address_table[dll_node->import_list.count] = 0;
                 
                 u32 import_address_table_index = 0;
-                for(struct dll_import_node *import_node = dll_node->import_list.first; import_node; import_node = import_node->next){
+                for(struct import_node *import_node = dll_node->import_list.first; import_node; import_node = import_node->next){
                     
                     if(import_node->import_by_ordinal){
                         import_address_table[import_address_table_index] = /*import by ordinal*/0x8000000000000000 | import_node->ordinal_hint;
                     }else{
                         u16 *hint = push_struct(arena, u16);
                         *hint = import_node->ordinal_hint;
-                        push_cstring_from_string(arena, import_node->import_name);
+                        push_cstring_from_string(arena, atom_get_string(import_node->import_name));
                         
                         import_address_table[import_address_table_index] = make_relative_virtual_address(rdata_section_start, hint);
                     }
@@ -1255,11 +1255,11 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
                 import->import_address_table_rva = make_relative_virtual_address(rdata_section_start, import_address_table);
                 import->import_lookup_table_rva  = make_relative_virtual_address(rdata_section_start, import_lookup_table);
             }
-            assert(dll_import_index == globals.dlls.amount);
+            assert(dll_import_index == globals.import_libraries.amount);
             
             for_ast_list(dll_imports){
                 struct ast_function *function = cast(struct ast_function *)it->value;
-                struct dll_import_node *dll_import_node = function->dll_import_node;
+                struct import_node *dll_import_node = function->import_node;
                 
                 u8 *memory_location = dll_import_node->memory_location;
                 smm relative_virtual_address = make_relative_virtual_address(rdata_section_start, memory_location);
@@ -1271,7 +1271,7 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
             
             for_ast_list(dll_function_stubs){
                 struct ast_function *function = cast(struct ast_function *)it->value;
-                struct dll_import_node *dll_import_node = function->dll_import_node;
+                struct import_node *dll_import_node = function->import_node;
                 
                 u32 import_address_table_entry    = (u32)function->relative_virtual_address;
                 u32 stub_relative_virtual_address = dll_import_node->stub_relative_virtual_address;
@@ -1715,7 +1715,7 @@ string_lexically_smaller( \
                     if(decl->flags & DECLARATION_FLAGS_is_dllimport){
                         assert(decl->kind == IR_function);
                         struct ast_function *function = (struct ast_function *)decl;
-                        struct dll_import_node *import_node = function->dll_import_node;
+                        struct import_node *import_node = function->import_node;
                         source_location = import_node->stub_relative_virtual_address + image_optional_header->image_base;
                         source_location += patch->location_offset_in_source_declaration;
                     }else{
@@ -3090,7 +3090,7 @@ string_lexically_smaller( \
         // Emit a 'S_PUB32' for every dllimport stub.
         for_ast_list(dll_function_stubs){
             struct ast_function *function = (struct ast_function *)it->value;
-            struct dll_import_node *dll_import_node = function->dll_import_node;
+            struct import_node *dll_import_node = function->import_node;
             
             struct string name = token_get_string(function->identifier);
             u32 ref_offset = (u32)(symbol_record_stream.current - symbol_record_stream.base);

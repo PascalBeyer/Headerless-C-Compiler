@@ -276,44 +276,34 @@ struct file{
     u32 offset_in_f4;
 };
 
-struct dll_import_node{
-    struct dll_import_node *next;
+struct import_node{
+    struct import_node *next;
     
-    struct string import_name;
-    u8 *memory_location;
+    enum import_node_kind{
+        IMPORT_NODE_so,
+        IMPORT_NODE_dll,
+    } kind; // not sure if we actually need this.
+    
     u16 ordinal_hint;
     u8 import_by_ordinal;
+    
+    struct atom import_name;
+    u8 *memory_location;
     
     // If the declaration has the DECLARATION_FLAGS_need_dllimport_stub_function flag set, we have to emit a stub as well.
     u32 stub_relative_virtual_address;
     u8 *stub_memory_location;
 };
 
-struct dll_node{
-    struct dll_node *next;
+struct import_library_node{
+    struct import_library_node *next;
     struct string name;
     
     struct{
-        struct dll_import_node *first;
-        struct dll_import_node *last;
+        struct import_node *first;
+        struct import_node *last;
         smm count;
     } import_list;
-};
-
-struct so_import_node{
-    struct so_import_node *next;
-    struct atom import_name;
-};
-
-struct shared_object_node{
-    struct shared_object_node *next;
-    struct string name;
-    
-    struct{
-        struct so_import_node *first;
-        struct so_import_node *last;
-        smm count;
-    }import_list;
 };
 
 struct library_node{
@@ -467,16 +457,10 @@ static struct{
     struct raw_token_array predefined_tokens;
     
     struct{
-        struct dll_node *first;
-        struct dll_node *last;
+        struct import_library_node *first;
+        struct import_library_node *last;
         smm amount;
-    } dlls;
-    
-    struct{
-        struct shared_object_node *first;
-        struct shared_object_node *last;
-        smm amount;
-    } shared_objects;
+    } import_libraries;
     
     struct string_list library_paths;
     struct{
@@ -5351,29 +5335,29 @@ globals.typedef_##postfix = (struct ast_type){                                  
             decl->flags |= DECLARATION_FLAGS_need_dllimport_stub_function;
             decl->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
             
-            struct dll_node *vcruntime = null;
+            struct import_library_node *ntdll = null;
             
-            for(struct dll_node *dll = globals.dlls.first; dll; dll = dll->next){
+            for(struct import_library_node *dll = globals.import_libraries.first; dll; dll = dll->next){
                 if(string_match_case_insensitive(dll->name, string("ntdll.dll"))){
-                    vcruntime = dll;
+                    ntdll = dll;
                     break;
                 }
             }
             
-            if(!vcruntime){
-                vcruntime = push_struct(arena, struct dll_node);
-                vcruntime->name = string("ntdll.dll");
-                sll_push_back(globals.dlls, vcruntime);
-                globals.dlls.amount += 1;
+            if(!ntdll){
+                ntdll = push_struct(arena, struct import_library_node);
+                ntdll->name = string("ntdll.dll");
+                sll_push_back(globals.import_libraries, ntdll);
+                globals.import_libraries.amount += 1;
             }
             
-            struct dll_import_node *import_node = push_struct(arena, struct dll_import_node);
-            import_node->import_name = atom_get_string(atom);
-            sll_push_back(vcruntime->import_list, import_node);
-            vcruntime->import_list.count += 1;
+            struct import_node *import_node = push_struct(arena, struct import_node);
+            import_node->import_name = atom;
+            sll_push_back(ntdll->import_list, import_node);
+            ntdll->import_list.count += 1;
             
             if(decl->kind == AST_function){
-                ((struct ast_function *)decl)->dll_import_node = import_node;
+                ((struct ast_function *)decl)->import_node = import_node;
             }
         }
         
