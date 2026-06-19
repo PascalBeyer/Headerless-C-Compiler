@@ -8961,6 +8961,9 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 goto end;
             }
             
+            if(context->current_scope && (specifiers.specifier_flags & SPECIFIER_thread_local) && !(specifiers.specifier_flags & SPECIFIER_static)){
+                report_error(context, decl->identifier, "_Thread_local declaration at local scope needs to be static."); // :Error
+                goto end;
             }
             
             // 

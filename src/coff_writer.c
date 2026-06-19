@@ -685,6 +685,12 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
                     
                     for_ast_list(function->static_variables){
                         struct ast_declaration *static_decl = (struct ast_declaration *)it->value;
+                        
+                        if(static_decl->flags & DECLARATION_FLAGS_is_thread_local){
+                            ast_list_append(&tls_declarations, arena, &static_decl->kind);
+                            continue;
+                        }
+                        
                         if(static_decl->assign_expr){
                             ast_list_append(&initialized_declarations, scratch, &static_decl->kind);
                         }else{
@@ -713,6 +719,12 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
             
             for_ast_list(function->static_variables){
                 struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+                
+                if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                    ast_list_append(&tls_declarations, arena, &decl->kind);
+                    continue;
+                }
+                
                 if(decl->assign_expr){
                     ast_list_append(&initialized_declarations, scratch, &decl->kind);
                 }else{
