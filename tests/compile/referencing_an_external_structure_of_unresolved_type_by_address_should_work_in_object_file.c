@@ -1,4 +1,4 @@
-// compile /c
+// compile -c
 
 extern struct unresolved a;
 

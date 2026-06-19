@@ -1,4 +1,4 @@
-// compile /c
+// compile -c
 
 typedef enum{
     INITIALIZED_ENUM_MEMBER = 1,

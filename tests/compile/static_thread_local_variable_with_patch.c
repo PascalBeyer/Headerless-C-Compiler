@@ -1,4 +1,4 @@
-// compile /obj
+// compile -obj
 
 int arst2;
 

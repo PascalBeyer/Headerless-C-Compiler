@@ -1,4 +1,4 @@
-// compile /c
+// compile -c
 
 static char buffer[] = "hello :)";
 

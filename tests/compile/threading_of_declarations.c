@@ -1,4 +1,4 @@
-// compile /thread-count=8
+// compile -thread-count=8
 
 // Used to fail if thread.
 struct a{};

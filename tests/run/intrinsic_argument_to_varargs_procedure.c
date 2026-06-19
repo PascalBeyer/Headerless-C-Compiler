@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <intrin.h>
 
-#define assert(a) (!(a) ? _exit(1) : (void)0)
+#define assert(a) (!(a) ? _Exit(1) : (void)0)
 
 int varargs(char *format, ...){
     va_list va;

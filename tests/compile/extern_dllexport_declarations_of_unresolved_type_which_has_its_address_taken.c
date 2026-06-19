@@ -1,4 +1,4 @@
-// compile /c
+// compile -c
 
 __declspec(dllexport) extern struct lv_obj_class_t lv_obj_class;
 

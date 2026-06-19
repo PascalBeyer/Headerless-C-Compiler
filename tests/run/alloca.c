@@ -1,6 +1,10 @@
 // run with a pile of arguments please
 
+#ifdef _WIN32
 #include <malloc.h>
+#else
+#include <alloca.h>
+#endif
 #include <string.h>
 
 struct big_return{

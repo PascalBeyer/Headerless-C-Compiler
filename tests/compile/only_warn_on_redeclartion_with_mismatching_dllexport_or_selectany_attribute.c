@@ -1,4 +1,4 @@
-// compile /Wdeclaration_differs_in_attribute
+// compile -Wdeclaration_differs_in_attribute
 // check "'a': [0] Redeclaration differs in __declspec(dllexport) attribute."
 // check "'b': [0] Redeclaration differs in __declspec(dllexport) attribute."
 // check "'c': [0] Redeclaration differs in __declspec(selectany) attribute."
