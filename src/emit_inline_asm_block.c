@@ -44,6 +44,26 @@ struct inline_asm_function_argument{
 func struct emit_location *asm_block_load_registers_which_was_used_by_user(struct context *context, enum register_kind register_kind, enum register_encoding reg, smm size){
     //:inline_asm_user_referenced_registers
     struct emit_location *loc = context->register_allocators[register_kind].emit_location_map[reg];
+    
+    struct ast_type *type = 0;
+    if(register_kind == REGISTER_KIND_gpr){
+        switch(size){
+            case 1: type = &globals.typedef_u8; break;
+            case 2: type = &globals.typedef_u16; break;
+            case 4: type = &globals.typedef_u32; break;
+            case 8: type = &globals.typedef_u64; break;
+            invalid_default_case();
+        }
+    }else{
+        switch(size){
+            case 4: type = &globals.typedef_f32; break;
+            case 8: type = &globals.typedef_f64; break;
+            case 16: type = &globals.typedef_m128; break;
+            case 32: type = &globals.typedef_m256; break;
+            invalid_default_case();
+        }
+    }
+    
     if(loc && loc->inline_asm__was_used_by_user){
         // :asm_block_the_same_register_with_different_sizes
         // 
@@ -53,11 +73,12 @@ func struct emit_location *asm_block_load_registers_which_was_used_by_user(struc
         // Or more specifically it was biting me for
         //     vinsertf128 ymm0, ymm1, xmm0, 1
         // here the xmm0, overwrote the 32-size and it emitted an invalid instruction.
-        loc->size = max_of(size, loc->size);
+        // loc->size = max_of(size, loc->size);
+        loc->type = (type->size > loc->type->size) ? type : loc->type; // I dunno man!
         
         struct emit_location *ret = push_struct(&context->scratch, struct emit_location);
         *ret = *loc;
-        ret->size = size;
+        ret->type = type;
         return ret;
     }
     
@@ -65,9 +86,35 @@ func struct emit_location *asm_block_load_registers_which_was_used_by_user(struc
         spill_register(context, register_kind, reg);
     }
     
-    loc = emit_location_loaded(context, register_kind, reg, size);
+    loc = emit_location_loaded(context, type, reg);
     loc->inline_asm__was_used_by_user = true;
     return loc;
+}
+
+struct ast_type *asm_block_get_type_for_operand(struct asm_operand *operand){
+    struct ast_type *type = 0;
+    if(operand->register_kind_when_loaded == REGISTER_KIND_gpr){
+        switch(operand->size){
+            case 1: type = &globals.typedef_u8; break;
+            case 2: type = &globals.typedef_u16; break;
+            case 4: type = &globals.typedef_u32; break;
+            case 8: type = &globals.typedef_u64; break;
+            
+            // Fuck all of this!
+            case 16: type = &globals.typedef_m128; break;
+            case 32: type = &globals.typedef_m256; break; 
+            invalid_default_case();
+        }
+    }else{
+        switch(operand->size){
+            case 4: type = &globals.typedef_f32; break;
+            case 8: type = &globals.typedef_f64; break;
+            case 16: type = &globals.typedef_m128; break;
+            case 32: type = &globals.typedef_m256; break;
+            invalid_default_case();
+        }
+    }
+    return type;
 }
 
 // @cleanup: if we keep this function, eventually remove the '_' currently here to clean old usages!
@@ -116,7 +163,7 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
                                 report_error(context, instruction->token, "... Here is the instruction that only supports integer literals.");
                                 end_error_report(context);
                                 
-                                integer_location = emit_location_immediate(context, decl->type->size, 0);
+                                integer_location = emit_location_immediate(context, decl->type, 0);
                             }
                             
                             ret = integer_location;
@@ -154,7 +201,9 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
             
             if(operand->kind == ASM_ARG_declaration_dereference){
                 // @cleanup: in the future 'index' might not always be null.
-                ret = emit_location_register_relative(context, ret, null, 0, operand->size);
+                assert(decl->type->kind == AST_pointer_type);
+                struct ast_pointer_type *pointer = (struct ast_pointer_type *)decl->type;
+                ret = emit_location_register_relative(context, pointer->pointer_to, ret, null, 0);
             }
             
             return ret;
@@ -169,7 +218,9 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
                 index = asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, operand->index, 8);
             }
             
-            struct emit_location *ret = emit_location_register_relative(context, base, index, operand->offset, operand->size);
+            struct ast_type *type = asm_block_get_type_for_operand(operand);
+            
+            struct emit_location *ret = emit_location_register_relative(context, type, base, index, operand->offset);
             
             switch(operand->scale){
                 case 1: ret->log_index_scale = 0; break;
@@ -181,7 +232,17 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
             return ret;
         }break;
         case ASM_ARG_immediate:{
-            return emit_location_immediate(context, operand->immediate, operand->size);
+            struct ast_type *type = 0;
+            
+            switch(operand->size){
+                case 1: type = &globals.typedef_u8; break;
+                case 2: type = &globals.typedef_u16; break;
+                case 4: type = &globals.typedef_u32; break;
+                case 8: type = &globals.typedef_u64; break;
+                invalid_default_case();
+            }
+            
+            return emit_location_immediate(context, type, operand->immediate);
         }break;
         
         case ASM_ARG_label:{
@@ -529,28 +590,28 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     //        emit a 'mov eax, 8', and so on (that function does not to be perticular with sizes).
                     //
                     if(rhs->state == EMIT_LOCATION_immediate){
-                        enum x64_OPCODE x64_opcode = (lhs->size == 1) ? MOVE_REG8_IMMEDIATE8 : MOVE_REG_IMMEDIATE;
+                        enum x64_OPCODE x64_opcode = (lhs->type->size == 1) ? MOVE_REG8_IMMEDIATE8 : MOVE_REG_IMMEDIATE;
                         
-                        if(lhs->size == 2) emit(LEGACY_OPERAND_SIZE_OVERRIDE_PREFIX);
+                        if(lhs->type->size == 2) emit(LEGACY_OPERAND_SIZE_OVERRIDE_PREFIX);
                         
                         u8 rex = 0;
-                        if(lhs->size == 8) rex |= REXW;
+                        if(lhs->type->size == 8) rex |= REXW;
                         if(register_is_extended(lhs->loaded_register)) rex |= REXB;
                         if(rex) emit(rex); // this decides wheter 32 or 64 bits in this case
                         
                         emit(x64_opcode + (lhs->loaded_register & 7));
                         
-                        emit_bytes(context, lhs->size, rhs->value);
+                        emit_bytes(context, lhs->type->size, rhs->value);
                     }else if(rhs->state == EMIT_LOCATION_loaded){
-                        enum x64_OPCODE x64_opcode = (lhs->size == 1) ? MOVE_REG8_REGM8 : MOVE_REG_REGM;
+                        enum x64_OPCODE x64_opcode = (lhs->type->size == 1) ? MOVE_REG8_REGM8 : MOVE_REG_REGM;
                         emit_register_register(context, no_prefix(), one_byte_opcode(x64_opcode), lhs, rhs);
                     }else{
-                        enum x64_OPCODE x64_opcode = (lhs->size == 1) ? MOVE_REG8_REGM8 : MOVE_REG_REGM;
+                        enum x64_OPCODE x64_opcode = (lhs->type->size == 1) ? MOVE_REG8_REGM8 : MOVE_REG_REGM;
                         emit_register_relative_register(context, no_prefix(), one_byte_opcode(x64_opcode), lhs->loaded_register, rhs);
                     }
                 }else{
                     assert(lhs->state == EMIT_LOCATION_register_relative);
-                    if(rhs->state == EMIT_LOCATION_immediate) rhs->size = lhs->size; // @clenaup: This was not true. I dunno, this whole stuff should be redone.
+                    if(rhs->state == EMIT_LOCATION_immediate) rhs->type = lhs->type; // @clenaup: This was not true. I dunno, this whole stuff should be redone.
                     emit_store(context, lhs, rhs);
                 }
             }break;
@@ -558,11 +619,11 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             case MEMONIC_movsx: case MEMONIC_movzx:{
                 struct emit_location *loaded = emit_load_without_freeing_gpr(context, lhs);
                 
-                assert(rhs->size == 1 || rhs->size == 2);
+                // assert(rhs->size == 1 || rhs->size == 2);
                 
                 u8 base_opcode = (inst->memonic == MEMONIC_movsx) ? MOVE_WITH_SIGN_EXTENSION_REG_REGM8 : MOVE_WITH_ZERO_EXTENSION_REG_REGM8;
-                struct opcode opcode = (rhs->size == 1) ? two_byte_opcode(base_opcode) : two_byte_opcode(base_opcode + 1);
-                rhs->size = loaded->size;
+                struct opcode opcode = (rhs->type->size == 1) ? two_byte_opcode(base_opcode) : two_byte_opcode(base_opcode + 1);
+                rhs->type = loaded->type;
                 
                 if(rhs->state == EMIT_LOCATION_loaded){
                     emit_register_register(context, no_prefix(), opcode, loaded, rhs);
@@ -609,7 +670,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     
                     if(loaded != rhs) free_emit_location(context, loaded);
                 }else{
-                    emit_binary_op__internal(context, user_prefixes, lhs, rhs, lhs->size, false, REG_OPCODE, OP_REG8_REGM8, OP_REG_REGM);
+                    emit_binary_op__internal(context, user_prefixes, lhs, rhs, lhs->type->size, false, REG_OPCODE, OP_REG8_REGM8, OP_REG_REGM);
                 }
             }break;
             
@@ -713,7 +774,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 
                 assert(operand->state == EMIT_LOCATION_register_relative);
                 // @cleanup: think about what to do about sizeing with this instruction
-                operand->size = 8;
+                operand->type = &globals.typedef_u64;
                 emit_register_relative_extended(context, user_prefixes, two_byte_opcode(0xc7), 1, operand);
             }break;
             
@@ -727,7 +788,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 struct emit_location *loaded = emit_load_gpr(context, rhs);
                 
                 u8 op = memonic_to_opcode[inst->memonic];
-                struct opcode opcode = (lhs->size == 1) ? one_byte_opcode(op) : one_byte_opcode(op + 1);
+                struct opcode opcode = (lhs->type->size == 1) ? one_byte_opcode(op) : one_byte_opcode(op + 1);
                 
                 if(lhs->state == EMIT_LOCATION_register_relative){
                     emit_register_relative_register(context, user_prefixes, opcode, loaded->loaded_register, lhs);
@@ -749,7 +810,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 struct emit_location *loaded = emit_load_without_freeing_gpr(context, rhs);
                 
                 u8 op = memonic_to_opcode[inst->memonic];
-                struct opcode opcode = (lhs->size == 1) ? two_byte_opcode(op) : two_byte_opcode(op + 1);
+                struct opcode opcode = (lhs->type->size == 1) ? two_byte_opcode(op) : two_byte_opcode(op + 1);
                 
                 if(lhs->state == EMIT_LOCATION_register_relative){
                     emit_register_relative_register(context, user_prefixes, opcode, loaded->loaded_register, lhs);
@@ -764,7 +825,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             }break;
             
             case MEMONIC_inc: case MEMONIC_dec:{
-                struct opcode opcode = (operand->size == 1) ? one_byte_opcode(0xfe) : one_byte_opcode(0xff);
+                struct opcode opcode = (operand->type->size == 1) ? one_byte_opcode(0xfe) : one_byte_opcode(0xff);
                 u8 reg_extension = (inst->memonic == MEMONIC_dec) ? 1 : 0;
                 
                 if(operand->state == EMIT_LOCATION_register_relative){
@@ -775,11 +836,11 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             }break;
             
             case MEMONIC_imul: case MEMONIC_mul: case MEMONIC_div: case MEMONIC_neg:{
-                struct opcode opcode = (operand->size == 1) ? one_byte_opcode(0xf6) : one_byte_opcode(0xf7);
+                struct opcode opcode = (operand->type->size == 1) ? one_byte_opcode(0xf6) : one_byte_opcode(0xf7);
                 
                 // @note: All of this sucks!
                 struct emit_location *rdx = null;
-                if(operand->size != 1 && inst->memonic != MEMONIC_neg) rdx = asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_D, operand->size);
+                if(operand->type->size != 1 && inst->memonic != MEMONIC_neg) rdx = asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_D, operand->type->size);
                 
                 u8 reg_extension = memonic_to_opcode[inst->memonic];
                 if(operand->state == EMIT_LOCATION_register_relative){
@@ -792,7 +853,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             case MEMONIC_bswap:{
                 struct emit_location *loaded = emit_load_without_freeing_gpr(context, operand);
                 
-                enum rex_encoding rex = ((operand->size == 8) ? REXW : 0) | (register_is_extended(loaded->loaded_register) ? REXB : 0);
+                enum rex_encoding rex = ((operand->type->size == 8) ? REXW : 0) | (register_is_extended(loaded->loaded_register) ? REXB : 0);
                 if(rex) emit(rex);
                 emit(0x0f);
                 emit(0xc8 + (loaded->loaded_register & 7));
@@ -909,7 +970,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             case MEMONIC_cmpneqpd: case MEMONIC_cmpnltpd: case MEMONIC_cmpnlepd: case MEMONIC_cmpordpd:
             case MEMONIC_cmpps: case MEMONIC_cmppd: case MEMONIC_cmpss: case MEMONIC_cmpsd:{
                 struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
-                assert(loaded->register_kind == REGISTER_KIND_xmm);
+                // assert(loaded->register_kind == REGISTER_KIND_xmm);
                 
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 struct opcode opcode = two_byte_opcode(0xc2);
@@ -1018,6 +1079,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 
                 if(lhs->state == EMIT_LOCATION_loaded){
                     if(rhs->state == EMIT_LOCATION_loaded){
+                        lhs->type = rhs->type; // @cleanup: aweful!
                         emit_register_register(context, prefix, two_byte_opcode(MOVE_UNALIGNED_XMM_REGM), lhs, rhs);
                     }else{
                         assert(rhs->state == EMIT_LOCATION_register_relative);
@@ -1080,7 +1142,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     emit_register_relative_register(context, prefix, opcode, loaded->loaded_register, rhs);
                 }else{
                     assert(rhs->state == EMIT_LOCATION_loaded);
-                    emit_register_op__internal(context, prefix, opcode, loaded->loaded_register, rhs->loaded_register, rhs->size);
+                    emit_register_op__internal(context, prefix, opcode, loaded->loaded_register, rhs->loaded_register, rhs->type->size);
                 }
                 
                 if(loaded != lhs) emit_store(context, lhs, loaded);
@@ -1098,7 +1160,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     emit_register_relative_register(context, prefix, opcode, loaded->loaded_register, lhs);
                 }else{
                     assert(lhs->state == EMIT_LOCATION_loaded);
-                    emit_register_op__internal(context, prefix, opcode, lhs->loaded_register, loaded->loaded_register, lhs->size);
+                    emit_register_op__internal(context, prefix, opcode, lhs->loaded_register, loaded->loaded_register, lhs->type->size);
                 }
                 
                 if(loaded != rhs) free_emit_location(context, loaded);
@@ -1223,7 +1285,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     emit_register_relative_register(context, prefix, opcode, loaded->loaded_register, lhs);
                 }else{
                     assert(lhs->state == EMIT_LOCATION_loaded);
-                    emit_register_op__internal(context, prefix, opcode, loaded->loaded_register, lhs->loaded_register, lhs->size);
+                    emit_register_op__internal(context, prefix, opcode, loaded->loaded_register, lhs->loaded_register, lhs->type->size);
                 }
                 emit(operands[2]->value);
                 
@@ -1243,7 +1305,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     emit_register_relative_register(context, prefix, opcode, loaded->loaded_register, rhs);
                 }else{
                     assert(rhs->state == EMIT_LOCATION_loaded);
-                    emit_register_op__internal(context, prefix, opcode, loaded->loaded_register, rhs->loaded_register, rhs->size);
+                    emit_register_op__internal(context, prefix, opcode, loaded->loaded_register, rhs->loaded_register, rhs->type->size);
                 }
                 emit(operands[2]->value);
                 
@@ -1259,13 +1321,13 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 // 66 0F 7E /r MOVQ r/m64, xmm
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 
-                if(lhs->size < 16){
+                if(lhs->type->size < 16){
                     struct emit_location *loaded = emit_load_float(context, rhs);
                     
                     if(lhs->state == EMIT_LOCATION_register_relative){
                         emit_register_relative_register(context, prefix, two_byte_opcode(0x7E), loaded->loaded_register, lhs);
                     }else{
-                        emit_register_op__internal(context, prefix, two_byte_opcode(0x7E), loaded->loaded_register, lhs->loaded_register, lhs->size);
+                        emit_register_op__internal(context, prefix, two_byte_opcode(0x7E), loaded->loaded_register, lhs->loaded_register, lhs->type->size);
                     }
                     
                     if(loaded != rhs) free_emit_location(context, loaded);
@@ -1275,7 +1337,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     if(rhs->state == EMIT_LOCATION_register_relative){
                         emit_register_relative_register(context, prefix, two_byte_opcode(0x6E), loaded->loaded_register, rhs);
                     }else{
-                        emit_register_op__internal(context, prefix, two_byte_opcode(0x6E), loaded->loaded_register, rhs->loaded_register, lhs->size);
+                        emit_register_op__internal(context, prefix, two_byte_opcode(0x6E), loaded->loaded_register, rhs->loaded_register, lhs->type->size);
                     }
                     
                     if(loaded != lhs) emit_store(context, lhs, loaded);
@@ -1289,7 +1351,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 struct emit_location *second = emit_load_float(context, operands[1]);
                 struct prefixes prefix = create_prefixes(memonic_to_prefix[inst->memonic]);
                 
-                emit_register_op__internal(context, prefix, two_byte_opcode(0xD7), first->loaded_register, second->loaded_register, second->size);
+                emit_register_op__internal(context, prefix, two_byte_opcode(0xD7), first->loaded_register, second->loaded_register, second->type->size);
                 
                 if(second != operands[1]) free_emit_location(context, second);
                 if(first  != operands[0]) emit_store(context, operands[0], first);
@@ -1307,7 +1369,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 // VEX.128.0F.WIG 58 /r VADDPS xmm1, xmm2, xmm3/m128
                 // VEX.256.0F.WIG 58 /r VADDPS ymm1, ymm2, ymm3/m256
                 struct emit_location *first = (operands[0]->state == EMIT_LOCATION_loaded) ? operands[0] : 
-                        emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), operands[0]->size);
+                        emit_location_loaded(context, operands[0]->type, allocate_register(context, REGISTER_KIND_xmm));
                 
                 struct emit_location *vex = emit_load_float(context, operands[1]);
                 prefix.vex_register = vex->loaded_register;
@@ -1315,7 +1377,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 if(operands[2]->state == EMIT_LOCATION_register_relative){
                     emit_register_relative_register(context, prefix, opcode, first->loaded_register, operands[2]);
                 }else{
-                    emit_register_op__internal(context, prefix, opcode, first->loaded_register, operands[2]->loaded_register, operands[0]->size);
+                    emit_register_op__internal(context, prefix, opcode, first->loaded_register, operands[2]->loaded_register, operands[0]->type->size);
                 }
                 if(operands[3]){
                     assert(operands[3]->state == EMIT_LOCATION_immediate);
@@ -1333,7 +1395,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 struct opcode opcode   = three_byte_opcode(memonic_to_prefix[inst->memonic], memonic_to_opcode[inst->memonic]);
                 
                 struct emit_location *first = (operands[0]->state == EMIT_LOCATION_loaded) ? operands[0] : 
-                        emit_location_loaded(context, REGISTER_KIND_xmm, allocate_register(context, REGISTER_KIND_xmm), operands[0]->size);
+                        emit_location_loaded(context, operands[0]->type, allocate_register(context, REGISTER_KIND_xmm));
                 
                 struct emit_location *vex = emit_load_float(context, operands[1]);
                 prefix.vex_register = vex->loaded_register;
@@ -1341,7 +1403,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 if(operands[2]->state == EMIT_LOCATION_register_relative){
                     emit_register_relative_register(context, prefix, opcode, first->loaded_register, operands[2]);
                 }else{
-                    emit_register_op__internal(context, prefix, opcode, first->loaded_register, operands[2]->loaded_register, operands[0]->size);
+                    emit_register_op__internal(context, prefix, opcode, first->loaded_register, operands[2]->loaded_register, operands[0]->type->size);
                 }
                 if(operands[3]){
                     assert(operands[3]->state == EMIT_LOCATION_immediate);
@@ -1361,7 +1423,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     emit_register_relative_register(context, create_prefixes(ASM_PREFIX_F3), two_byte_opcode(0x10), lhs->loaded_register, rhs);
                 }else{
                     assert(rhs->state == EMIT_LOCATION_loaded);
-                    emit_register_op__internal(context, create_prefixes(ASM_PREFIX_F3), two_byte_opcode(0x10), lhs->loaded_register, rhs->loaded_register, rhs->size);
+                    emit_register_op__internal(context, create_prefixes(ASM_PREFIX_F3), two_byte_opcode(0x10), lhs->loaded_register, rhs->loaded_register, rhs->type->size);
                 }
             }break;
             

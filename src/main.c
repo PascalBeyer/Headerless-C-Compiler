@@ -631,6 +631,9 @@ static struct{
     struct ast_pointer_type typedef_f32_pointer;
     struct ast_pointer_type typedef_f64_pointer;
     
+    struct ast_type typedef_m128;
+    struct ast_type typedef_m256;
+    
     struct ast_function_type *seh_filter_funtion_type;
     
     //
@@ -4259,6 +4262,12 @@ globals.typedef_##postfix = (struct ast_type){                                  
         make_const_typedef(f64,  TOKEN_double,   AST_float_type,   "double",             8, 8);
         make_const_typedef(poison, TOKEN_void,   AST_void_type,    "poison",             8, 8);
         
+        // @note: only used during asm.
+        make_const_typedef(m128, TOKEN_struct, AST_void_type, "m128", 16, 16);
+        make_const_typedef(m256, TOKEN_struct, AST_void_type, "m128", 32, 32);
+        globals.typedef_m128.flags |= TYPE_FLAG_is_intrin_type;
+        globals.typedef_m256.flags |= TYPE_FLAG_is_intrin_type;
+        
         globals.invalid_file.absolute_file_path = "*predefined token*";
         globals.invalid_file.file_index = -1;
         globals.file_table.invalid_file = &globals.invalid_file;
@@ -5641,8 +5650,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
             }
             
             struct string compiler_directory = strip_file_name(compiler_path);
-            report_error(context, null, "       You can either add a pre-main file from the '%.*s/implicit' directory as a compilation unit,", compiler_directory.size, compiler_directory.data);
-            report_error(context, null, "       or you can specify an entry point for your program using the '/entry:<name>' command line option.");
+            report_error(context, null, "       You can either add a pre-main file from the '%.*simplicit' directory as a compilation unit,", compiler_directory.size, compiler_directory.data);
+            report_error(context, null, "       or you can specify an entry point for your program using the '-entry:<name>' command line option.");
             
             end_error_report(context);
             globals.an_error_has_occurred = 1;
