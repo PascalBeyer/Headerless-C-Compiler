@@ -333,6 +333,61 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }
     
     // 
+    // Add local functions, these are by definition defined.
+    // 
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for(struct ast_list_node *local_function_node = thread_context->local_functions.first; local_function_node; local_function_node = local_function_node->next){
+            struct ast_function *function = (struct ast_function *)local_function_node->value;
+            
+            if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
+            
+            ast_list_append(&defined_functions, scratch, &function->kind);
+            
+            for_ast_list(function->static_variables){
+                struct ast_declaration *decl = cast(struct ast_declaration *)it->value;
+                
+                if(decl->flags & DECLARATION_FLAGS_is_thread_local){
+                    ast_list_append(&tls_declarations, arena, &decl->kind);
+                    continue;
+                }
+                
+                if(decl->assign_expr){
+                    ast_list_append(&initialized_declarations, scratch, &decl->kind);
+                }else{
+                    ast_list_append(&uninitialized_declarations, scratch, &decl->kind);
+                }
+            }
+        }
+    }
+    
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        // 
+        // Append the declarations for 'global_struct_and_array_literals' to the 'initialized_declarations'.
+        // 
+        
+        for_ast_list(thread_context->global_struct_and_array_literals){
+            ast_list_append(&initialized_declarations, arena, it->value);
+        }
+    }
+    
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for_ast_list(thread_context->local_dllimports){
+            struct ast_function *function = (struct ast_function *)it->value;
+            if(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry){
+                assert(function->import_node);
+                ast_list_append(&imports, scratch, &function->kind);
+            }
+        }
+    }
+    
+    
+    // 
     // Start writing the ELF file
     // 
     // ELF-layout:
@@ -443,7 +498,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     if((u32){segment_type}== PT_LOAD){                                                                 \
         push_align(arena, segment_alignment);                                                          \
         current_segment_start = arena_current(arena);                                                  \
-        current_relative_virtual_address += align_up(segment_size, segment_alignment);                          \
+        current_relative_virtual_address += align_up(segment_size, segment_alignment);                 \
     }                                                                                                  \
 }
     
@@ -451,7 +506,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     if(globals.cli_options.image_base_specified) virtual_image_base = globals.cli_options.image_base;
     
     u64 current_relative_virtual_address = 0;
-    u8 *current_segment_start   = elf_base;
+    u8 *current_segment_start = elf_base;
     
     u8 *program_header_segment_start = (u8 *)program_headers;
     struct elf_program_header *program_header_program_header = program_headers + program_header_at;
@@ -470,6 +525,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         SHT_RELA = 4,
         SHT_HASH = 5,
         SHT_DYNAMIC = 6,
+        SHT_NOBITS = 8,
         SHT_DYNSYM = 11,
     };
     
@@ -799,6 +855,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         fill_section_header(hash, SHT_HASH, SHF_ALLOC, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info*/0, /*entry_size*/4);
         
+        push_align(arena, 8);
         u8 *rela_plt_section_start = arena_current(arena);
         rela_plt_section_rva = make_relative_virtual_address(ro_segment_start, rela_plt_section_start);
         
@@ -845,6 +902,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 import_index++;
             }
         }
+        
         u64 got_section_index = section_header_at;
         fill_section_header(got, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/8);
         
@@ -901,6 +959,9 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         *push_struct(arena, u64) = /*DT_FLAGS*/0x1e;
         *push_struct(arena, u64) = /*DF_BIND_NOW*/8;
         
+        *push_struct(arena, u64) = /*DT_NONE*/0;
+        *push_struct(arena, u64) = 0;
+        
         fill_section_header(dynamic, SHT_DYNAMIC, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/(u32)dynstr_section_index, /*info*/0, /*entry_size*/0x10);
         fill_program_header(dynamic, PT_DYNAMIC, PF_READ | PF_WRITE, /*alignment*/8);
     }
@@ -931,8 +992,50 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         fill_section_header(data, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
     }
     
-    if(arena_current(arena) != rw_segment_start){
-        fill_program_header(rw, PT_LOAD, PF_READ | PF_WRITE, 0x1000);
+    smm bss_size = 0;
+    {
+        push_align(arena, 0x10);
+        u8 *bss_section_start = arena_current(arena);
+        u64 bss_virtual_address_base = current_relative_virtual_address + (bss_section_start - rw_segment_start);
+        
+        for_ast_list(uninitialized_declarations){
+            struct ast_declaration *decl = (struct ast_declaration *)it->value;
+            
+            smm alignment = get_declaration_alignment(decl);
+            smm decl_size = get_declaration_size(decl);
+            
+            if(decl_size) decl_size = 1;
+            
+            bss_size = align_up(bss_size, alignment);
+            decl->relative_virtual_address = bss_virtual_address_base + bss_size;
+            bss_size += decl_size;
+        }
+        
+        if(bss_size){
+            struct elf_section_header *bss_section_header = section_headers + section_header_at;
+            fill_section_header(bss, SHT_NOBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/0x10, /*link*/0, /*info*/0, /*entry_size*/0);
+            
+            bss_section_header->offset = 0;
+            bss_section_header->size = bss_size;
+        }
+    }
+    
+    // 
+    // @warninig: We assume this is the last segment.
+    // 
+    
+    if((arena_current(arena) != rw_segment_start) || bss_size){
+        struct elf_program_header *rw_program_header = program_headers + program_header_at;
+        fill_program_header(rw, 0, PF_READ | PF_WRITE, 0x1000);
+        
+        u64 segment_size = arena_current(arena) - rw_segment_start;
+        
+        rw_program_header->type = PT_LOAD;
+        rw_program_header->file_size = segment_size;
+        rw_program_header->memory_size = segment_size + bss_size;
+        
+        current_segment_start = arena_current(arena);
+        current_relative_virtual_address += align_up(segment_size + bss_size, 0x1000);
     }
     
     for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
