@@ -981,6 +981,26 @@ unsigned int test_thread_entry(void *thread_parameter){
                     error = true;
                 }else if(string_match(command, string("skip"))){
                     skip = true;
+                }else  if(string_match(command, string("os"))){
+                    
+#ifdef _WIN32
+                    struct string current_os = string("windows");
+#else
+                    struct string current_os = string("linux");
+#endif
+                    
+                    int found = 0;
+                    while(line.size){
+                        struct string os_identifier = string_eat_until_whitespace(&line);
+                        if(string_match(os_identifier, current_os)){
+                            found = 1;
+                            break;
+                        }
+                        string_eat_whitespace(&line);
+                    }
+                    
+                    if(!found) skip = true;
+                    
                 }else if(string_match(command, string("dump"))){
                     push_format_cstring(&log, "%s: Error: @incomplete 'dump' not yet implemented.\n", file_path);
                     error = true;

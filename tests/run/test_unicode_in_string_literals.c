@@ -1,6 +1,7 @@
 // run
 
 #include <uchar.h>
+#include <wchar.h>
 #include <string.h>
 
 #define print(...) (printf(__VA_ARGS__), fflush(0))

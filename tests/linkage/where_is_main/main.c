@@ -1,3 +1,4 @@
+// os windows
 // compile other.c
 
 #pragma comment(lib, "kernel32")

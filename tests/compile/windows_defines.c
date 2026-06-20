@@ -1,3 +1,4 @@
+// os windows
 // check "'a': Local variable is never used."
 
 #include <windows.h>

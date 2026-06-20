@@ -1,8 +1,9 @@
+// os windows
 // run
 // check "bug"
 // check "main"
-// check "tests\run\stacktrace.c:77"
-// check "tests\run\stacktrace.c:86"
+// check "tests\run\stacktrace.c:78"
+// check "tests\run\stacktrace.c:87"
 
 #include <windows.h>
 #include <dbghelp.h>

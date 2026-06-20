@@ -1,4 +1,4 @@
-// compile -L kernel32.lib
+// compile
 
 enum plants{
    plant,
@@ -64,6 +64,10 @@ union my_union{
 };
 
 s32 main(){
+    
+    print_number(1);
+    
+    print_string("hello:)");
     
     123;
    
@@ -137,9 +141,11 @@ s32 main(){
    char *hey_there = "hey_there";
    print_string(hey_there);
    
+    #if _WIN32
    u32 stdout = 0xFFFFFFF5;
    void **handle = GetStdHandle(stdout);
-   
+   #endif
+    
    u32 one = 1;
    u32 two = 2;
    
@@ -352,8 +358,8 @@ s32 main(){
    void_ptr my_awesome_pointer;
    string[1] = 'a';
    
-   u64 varargs_sum = varargs_sum_u64(7, 1, 2, 3, 4, 5, 6, 7);
-   if(varargs_sum == 28) print_string("varargs sum");
+   // u64 varargs_sum = varargs_sum_u64(7, 1, 2, 3, 4, 5, 6, 7);
+   // if(varargs_sum == 28) print_string("varargs sum");
    
    
    struct v2 abc;
@@ -384,10 +390,12 @@ s32 main(){
    }
    
    char *str = "whatsup!\n";
-   
+
+    #if _WIN32
    u32 amount_written;
    WriteFile(handle, str, 9, &amount_written, (void *)0);
-   
+   #endif
+    
    int a = 0;
    int b = 0;
    
@@ -459,11 +467,24 @@ typedef float f32;
 typedef double f64;
 typedef s32 b32;
 
+#if _WIN32
 __declspec(dllimport) u32 GetLastError();
 
 __declspec(dllimport) void **GetStdHandle(u32 nStdHandle);
 __declspec(dllimport) s32 WriteFile(void **hFile, char *lpBuffer, u32 nNumberOfBytesToWrite,u32 *lpNumberOfBytesWritten, void *lpOverlapped);
 __declspec(dllimport) void *VirtualAlloc(void *lpAddress, u64 dwSize, u32 flAllocationType, u32 flProtect);
+#else
+
+#define MAP_PRIVATE 2
+#define MAP_ANONYMOUS 0x20
+#define PROT_READ 1
+#define PROT_WRITE 2
+#define PROT_EXEC 4
+
+u64 write(int fd, const void *buf, u64 count);
+void *mmap(void *addr, u64 length, int prot, int flags, int fd, u64 offset);
+
+#endif
 
 typedef void *void_ptr;
 
@@ -493,28 +514,34 @@ void *push_struct(struct memory_arena *arena, u64 size){
       if(grow_to < current_arena_size + size){
          grow_to = current_arena_size + size;
       }
-      
-      u32 megabyte =  1024 * 1024;
-      if(grow_to < (u64)megabyte){
-         grow_to = (u64)megabyte;
-      }
-      u32 MEM_COMMIT  = 0x00001000;
-      u32 MEM_RESERVE = 0x00002000;
-      u32 flags = MEM_COMMIT | MEM_RESERVE;
-      u32 PAGE_EXECUTE_READWRITE = 0x40;
-      u32 allocation_flags = PAGE_EXECUTE_READWRITE;
-      arena->base = VirtualAlloc((void *)0, grow_to, flags, allocation_flags);
-      
-      if((u64)arena->base == 0){
-         u32 error = GetLastError();
-         return (void *)error;
-      }
-      
-      arena->current = arena->base;
-      arena->reserved_size = grow_to;
-      arena->end = arena->base + arena->reserved_size;
-   }
-   
+        
+        u32 megabyte =  1024 * 1024;
+        if(grow_to < (u64)megabyte){
+            grow_to = (u64)megabyte;
+        }
+#if _WIN32
+        u32 MEM_COMMIT  = 0x00001000;
+        u32 MEM_RESERVE = 0x00002000;
+        u32 flags = MEM_COMMIT | MEM_RESERVE;
+        u32 PAGE_EXECUTE_READWRITE = 0x40;
+        u32 allocation_flags = PAGE_EXECUTE_READWRITE;
+        arena->base = VirtualAlloc((void *)0, grow_to, flags, allocation_flags);
+#else
+        arena->base = mmap(
+                0,
+                grow_to,
+                PROT_READ | PROT_WRITE | PROT_EXEC,
+                MAP_PRIVATE | MAP_ANONYMOUS,
+                -1,
+                0
+                );
+#endif
+        
+        arena->current = arena->base;
+        arena->reserved_size = grow_to;
+        arena->end = arena->base + arena->reserved_size;
+    }
+    
    
    void *ret = (void *)arena->current;
    arena->current = arena->current + size;
@@ -566,36 +593,46 @@ u64 strlen(char *a){
 
 
 void print_string_no_newline(char *a){
-   u32 stdout = 0xFFFFFFF5;
-   void **handle = GetStdHandle(stdout);
-   u32 length = (u32)strlen(a);
-   u32 ignored;
-   WriteFile(handle, a, length, &ignored, null);
+#ifdef _WIN32
+    u32 stdout = 0xFFFFFFF5;
+    void **handle = GetStdHandle(stdout);
+    u32 length = (u32)strlen(a);
+    u32 ignored;
+    WriteFile(handle, a, length, &ignored, null);
+#else
+    write(1, a, strlen(a));
+#endif
 }
 
 s64 amount_of_strings_printed;
 
 void print_string(char *a){
-   u32 stdout = 0xFFFFFFF5;
-   void **handle = GetStdHandle(stdout);
-   u32 length = (u32)strlen(a);
-   u32 ignored;
-   WriteFile(handle, a, length, &ignored, null);
-   char *newline = "\n";
-   WriteFile(handle, newline, 1, &ignored, null);
-   amount_of_strings_printed++;
+#ifdef _WIN32
+    u32 stdout = 0xFFFFFFF5;
+    void **handle = GetStdHandle(stdout);
+    u32 length = (u32)strlen(a);
+    u32 ignored;
+    WriteFile(handle, a, length, &ignored, null);
+    char *newline = "\n";
+    WriteFile(handle, newline, 1, &ignored, null);
+#else
+    write(1, a, strlen(a));
+    write(1, "\n", 1);
+#endif
+    
+    amount_of_strings_printed++;
 }
 
 struct v3 global_initializer = {0, 1, 2};
 
 void print_number(u32 n){
-   if(n == 0){
-      print_char('0');
-      return;
-   }
-   u32 asd = n;
-   u32 log = 1;
-   while(asd){
+    if(n == 0){
+        print_char('0');
+        return;
+    }
+    u32 asd = n;
+    u32 log = 1;
+    while(asd){
       log = log * 10;
       asd = asd / 10;
    }
@@ -609,10 +646,14 @@ void print_number(u32 n){
 }
 
 void print_char(char a){
-   u32 stdout = 0xFFFFFFF5;
-   void **handle = GetStdHandle(stdout);
-   u32 amount_written;
-   WriteFile(handle, &a, 1, &amount_written, (void *)0);
+#if _WIN32
+    u32 stdout = 0xFFFFFFF5;
+    void **handle = GetStdHandle(stdout);
+    u32 amount_written;
+    WriteFile(handle, &a, 1, &amount_written, (void *)0);
+#else
+    write(1, &a, 1);
+#endif
 }
 
 typedef char* va_list;

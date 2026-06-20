@@ -1,4 +1,4 @@
-// compile -L ucrt.lib
+// compile
 
 __declspec(dllimport) float floorf(float);
 

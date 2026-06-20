@@ -1,3 +1,4 @@
+// os windows
 // compile
 // check "'GetStdHandle': Function is treated as dllimport, but was not declared '__declspec(dllimport)'."
 // check "'WriteFile': Function is treated as dllimport, but was not declared '__declspec(dllimport)'."

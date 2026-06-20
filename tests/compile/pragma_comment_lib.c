@@ -1,4 +1,4 @@
-
+// os windows
 #pragma comment(lib, "Shell32.lib")
 #pragma comment(lib, "kernel32.lib")
 

@@ -1,3 +1,4 @@
+// os windows
 // run
 // check "Found variable 'three_deep', value: 0x3333333333333333"
 // check "Found variable 'local_scope', value: 0xdeadbeefdeadbabe"

@@ -1,3 +1,4 @@
+// os windows
 // run
 
 __declspec(thread) int thread_local_variable = 1;
