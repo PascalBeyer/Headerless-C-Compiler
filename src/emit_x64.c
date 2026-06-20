@@ -1296,7 +1296,7 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
         // This can happen for zero sized structs, for example 'function(zero_sized_struct)'.
         // Just load the register, but leave its contents uninitialized.
         free_emit_location(context, source);
-        return emit_location_loaded(context, source->type, register_to_load_into);
+        return emit_location_loaded(context, source->type, allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into));
     }
     
     assert(source_size == 1 || source_size == 2 || source_size == 4 || source_size == 8);
@@ -2331,8 +2331,13 @@ struct emit_location *get_emit_location_for_declaration(struct context *context,
         // up in here, because if we call an identifier we never recurse into emit_code_for_ast.
         //                                                                              -08.08.2021
         
-        struct emit_location *address = emit_location_rip_relative(context, &globals.typedef_u64, &decl->base);
-        ret = emit_location_register_relative(context, decl->type, address, 0, 0);
+        if(globals.output_file_type == OUTPUT_FILE_elf && decl->kind == IR_function){
+            // In elf files, all imported functions have a stub that we should use.
+            ret = emit_location_rip_relative(context, decl->type, &decl->base);
+        }else{
+            struct emit_location *address = emit_location_rip_relative(context, &globals.typedef_u64, &decl->base);
+            ret = emit_location_register_relative(context, decl->type, address, 0, 0);
+        }
     }else if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)){
         ret = emit_location_rip_relative(context, decl->type, &decl->base);
     }else{
@@ -2628,6 +2633,10 @@ struct emit_location *system_v_load_oddly_sized_type_into_register(struct contex
     struct emit_location *ret = 0;
     
     switch(odd_size){
+        case 0:{
+            ret = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+        }break;
+        
         case 3:{
             // movzx ecx, byte [loc + 2]
             // movzx reg, word [loc]
