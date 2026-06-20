@@ -1309,7 +1309,9 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
             
             struct opcode opcode;
             if(source_size == 1){
-                opcode = one_byte_opcode(MOVE_REG8_REGM8); // @cleanup: movzx?
+                opcode = two_byte_opcode(0xb6);
+            }else if(source_size == 2){
+                opcode = two_byte_opcode(0xb7);
             }else{
                 opcode = one_byte_opcode(MOVE_REG_REGM);
             }
@@ -1352,9 +1354,12 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
             return emit_location_loaded(context, source->type, register_to_load_into);
         }break;
         case EMIT_LOCATION_register_relative:{
+            
             struct opcode opcode;
             if(source_size == 1){
-                opcode = one_byte_opcode(MOVE_REG8_REGM8);
+                opcode = two_byte_opcode(0xb6);
+            }else if(source_size == 2){
+                opcode = two_byte_opcode(0xb7);
             }else{
                 opcode = one_byte_opcode(MOVE_REG_REGM);
             }
@@ -1806,6 +1811,7 @@ func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct conte
         free_emit_location(context, rhs);
     }else{
         struct emit_location *loaded_rhs = emit_load_gpr(context, rhs);
+        if(rhs->type->size == 1 && 4 <= loaded_rhs->loaded_register && loaded_rhs->loaded_register < 8) emit(0x40); // Avoid AH, CH, DH, BH.
         emit_reg_extended_op(context, no_prefix(), one_byte_opcode(inst), extension, loaded_rhs);
         free_emit_location(context, loaded_rhs);
     }
@@ -4108,7 +4114,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         u64 allocation_size = (return_type->size + 7) & ~7;
                         struct ast_type hack_type = {
                             .size = allocation_size,
-                            .alignment = allocation_size,
+                            .alignment = allocation_size ? allocation_size : 1,
                         };
                         
                         assert(!returns_big_struct); // Otherwise, it should have already been handled.
