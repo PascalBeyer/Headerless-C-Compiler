@@ -1,6 +1,9 @@
 
 int main(int argc, char *argv[], char *envp[]);
 
+__attribute__(noreturn) 
+void __libc_start_main(int (*main_function)(int argc, char *argv[], char *envp[]), int argc, char **argv, void (*init)(void), void (*fini)(void), void (*rtld_fini)(void), void *stack_end);
+
 int _start(){
     
     // Apperantly, the stack is not correctly aligned on entry.
@@ -16,16 +19,10 @@ int _start(){
     
     int argc = stack->argc;
     char **argv = &stack->argv0;
-    char **envp = argv + argc + 1;
     
-    int exit_code = main(argc, argv, envp);
+    static void do_nothing(void){}
     
-    __asm__{
-        mov rax, 60
-        mov edi, exit_code
-        syscall
-    }
+    __libc_start_main(main, argc, argv, do_nothing, do_nothing, do_nothing, stack);
     
-    while(1){}
 }
 

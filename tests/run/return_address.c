@@ -1,6 +1,6 @@
 // run
 
-int _start(){
+int main(){
     
     void *a = _ReturnAddress();
     void *b = *(void **)_AddressOfReturnAddress();

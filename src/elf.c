@@ -740,11 +740,13 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         fill_section_header(rodata, SHT_PROGBITS, SHF_ALLOC, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
     }
     
-    u8 *interp_section_start = arena_current(arena);
-    u8 *interp_segment_start = interp_section_start;
-    push_zero_terminated_string_copy(arena, string("/lib64/ld-linux-x86-64.so.2"));
-    fill_section_header(interp, SHT_PROGBITS, SHF_ALLOC, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
-    fill_program_header(interp, PT_INTERP, PF_READ, /*alignment*/1);
+    if(imports.count){
+        u8 *interp_section_start = arena_current(arena);
+        u8 *interp_segment_start = interp_section_start;
+        push_zero_terminated_string_copy(arena, string("/lib64/ld-linux-x86-64.so.2"));
+        fill_section_header(interp, SHT_PROGBITS, SHF_ALLOC, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_program_header(interp, PT_INTERP, PF_READ, /*alignment*/1);
+    }
     
     u32 dynsym_section_rva = 0;
     

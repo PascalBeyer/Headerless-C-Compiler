@@ -1,6 +1,6 @@
 // run
 
-int _start(){
+int main(){
     
     int ret;
     

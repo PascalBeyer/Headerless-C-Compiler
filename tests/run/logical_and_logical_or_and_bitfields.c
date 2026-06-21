@@ -1,6 +1,6 @@
 // run
 
-int _start(){
+int main(){
     struct {
         int a : 1;
         int b : 1;

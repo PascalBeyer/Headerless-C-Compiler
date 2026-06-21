@@ -1,6 +1,6 @@
 // run
 
-int _start(){
+int main(){
     unsigned int u32 = 0;
     
     //   u32

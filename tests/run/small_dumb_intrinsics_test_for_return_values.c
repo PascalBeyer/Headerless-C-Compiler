@@ -2,7 +2,7 @@
 
 #include <intrin.h>
 
-int _start(){
+int main(){
     
     float f = 1.0f;
     __m128 m = _mm_load_ps1(&f);

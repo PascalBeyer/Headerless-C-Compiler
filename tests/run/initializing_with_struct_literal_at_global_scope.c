@@ -12,7 +12,7 @@ struct arst2{
     (struct arst){4, 5, 6},
 };
 
-int _start(){
+int main(){
     if(arst2.arst.a != 1) return 1;
     if(arst2.arst.b != 2) return 1;
     if(arst2.arst.c != 3) return 1;

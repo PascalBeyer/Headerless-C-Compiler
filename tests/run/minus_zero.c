@@ -1,6 +1,6 @@
 // run
 
-int _start(){
+int main(){
     float f1 = 0.0f;
     float f2 = -0.0f;
     

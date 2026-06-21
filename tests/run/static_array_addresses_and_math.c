@@ -7,7 +7,7 @@ int *b = &array[5] + 5;
 int *c = &array[5] - 5;
 int *d = 5 + &array[5];
 
-int _start(){
+int main(){
     
     if(a != 0) return 1;
     if(b != &array[10]) return 1;

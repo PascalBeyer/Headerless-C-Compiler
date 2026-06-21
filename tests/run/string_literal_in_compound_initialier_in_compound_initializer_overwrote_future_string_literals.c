@@ -11,7 +11,7 @@ struct string array[] = {
     (struct string){.data = "a", .size = 1},
 };
 
-int _start(){
+int main(){
     array;
     char *arst = "hello";
     

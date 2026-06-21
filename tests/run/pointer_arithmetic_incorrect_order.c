@@ -1,6 +1,6 @@
 // run
 
-int _start(){
+int main(){
     if((void*)((char*)(0) + 8) != (void *)8) return 1;
     if((void*)(0 + (char*)(8)) != (void *)8) return 1;
     

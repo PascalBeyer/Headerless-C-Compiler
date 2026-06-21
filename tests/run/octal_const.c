@@ -3,7 +3,7 @@
 
 #define assert(a) if(!(a)) return 1;
 
-int _start(){
+int main(){
     
     int o = 0123;
     assert(0123 == 83 && o == 83);

@@ -857,7 +857,14 @@ unsigned int test_thread_entry(void *thread_parameter){
     struct string working_directory = os_get_working_directory(&arena);
     
     long thread_index = _InterlockedIncrement(&work->thread_index_allocator);
-    char *output_file_name = push_format_cstring(&arena, "%.*s/tests/test_%x", working_directory.size, working_directory.data, thread_index);
+    
+#ifdef _WIN32
+    char *extension = "exe";
+#else
+    char *extension = "elf";
+#endif
+    
+    char *output_file_name = push_format_cstring(&arena, "%.*s/tests/test_%x.%s", working_directory.size, working_directory.data, thread_index, extension);
     
     char *out_command = push_format_cstring(&arena, "-out \"%s\"", output_file_name);
     
@@ -1142,7 +1149,9 @@ unsigned int test_thread_entry(void *thread_parameter){
                     case COMMAND_run:{
                         u32 run_exit_code;
                         
-                        char *run_command_line = push_format_cstring(&arena, "%s.exe%s%.*s", output_file_name, command->data.size ? " " : "", command->data.size, command->data.data);
+                        char *run_command_line = push_format_cstring(&arena, "%s%s%.*s", output_file_name, command->data.size ? " " : "", command->data.size, command->data.data);
+                        
+                        print("run_command_line %s\n", run_command_line);
                         
                         // 
                         // We overwrite output here, this means subsequent 'check' commands check against this output.
@@ -1196,7 +1205,7 @@ unsigned int test_thread_entry(void *thread_parameter){
         
         // Always reset the 'arena', but only reset the 'log' if the test succeeded.
         end_temporary_memory(&arena_temp);
-    }
+    }  
     
     return 0;
 }
@@ -1223,7 +1232,7 @@ int main(int argument_count, char *argument_values[]){
     for(int argument_index = 1; argument_index < argument_count; argument_index++){
         char *argument = argument_values[argument_index];
         
-        if(argument[0] == '-' || argument[0] == '/'){
+        if(argument[0] == '-'){
             argument += 1;
             
             if(strcmp(argument, "threads") == 0){
@@ -1463,39 +1472,41 @@ int main(int argument_count, char *argument_values[]){
     
 #endif
     
-    if(work.broken_tests){
-        print("\n\n");
-        print("broken tests:\n\n");
+    if(amount_of_tests > 1){
+        if(work.broken_tests){
+            print("\n\n");
+            print("broken tests:\n\n");
+            
+            for(int test_index = 0; test_index < amount_of_tests; test_index++){
+                struct test *test = &tests[test_index];
+                if(test->result == TEST_RESULT_broken){
+                    // 
+                    // Print the log!
+                    // 
+                    print_log(test);
+                    print("\n\n");
+                }
+            }
+        }
         
-        for(int test_index = 0; test_index < amount_of_tests; test_index++){
-            struct test *test = &tests[test_index];
-            if(test->result == TEST_RESULT_broken){
-                // 
-                // Print the log!
-                // 
-                print_log(test);
-                print("\n\n");
+        
+        if(work.failed_tests){
+            print("\n\n");
+            print("Failed tests:\n\n");
+            
+            for(int test_index = 0; test_index < amount_of_tests; test_index++){
+                struct test *test = &tests[test_index];
+                if(test->result == TEST_RESULT_fail){
+                    // 
+                    // Print the log!
+                    // 
+                    print_log(test);
+                    print("\n\n");
+                }
             }
         }
     }
-    
-    
-    if(work.failed_tests){
-        print("\n\n");
-        print("Failed tests:\n\n");
         
-        for(int test_index = 0; test_index < amount_of_tests; test_index++){
-            struct test *test = &tests[test_index];
-            if(test->result == TEST_RESULT_fail){
-                // 
-                // Print the log!
-                // 
-                print_log(test);
-                print("\n\n");
-            }
-        }
-    }
-    
     print("\n");
     print("%d tests run.\n", amount_of_tests - work.skipped);
     print("%d tests failed.\n", work.failed_tests);

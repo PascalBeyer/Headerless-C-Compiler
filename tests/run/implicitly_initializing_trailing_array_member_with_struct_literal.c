@@ -7,7 +7,7 @@ struct arst{
 
 struct arst a1 = (struct arst){1, 2, 3, 4, 5};
 
-int _start(){
+int main(){
     
     struct arst a2 = (struct arst){1, 2, 3, 4, 5};
     

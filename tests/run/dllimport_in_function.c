@@ -3,5 +3,5 @@
 
 int main(){
     __declspec(dllimport) int system(char *);
-    system("echo hello system :)");
+    system("echo \"hello system :)\"");
 }
