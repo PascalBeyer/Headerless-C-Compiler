@@ -3,7 +3,13 @@ int main(int argc, char *argv[]);
 
 int _start(){
     
+    // Apperantly, the stack is not correctly aligned on entry.
+    __asm__ { 
+        sub rsp, 8
+    }
+    
     struct{
+        void *return_address;
         int argc;
         char *argv0;
     } *stack = _AddressOfReturnAddress();

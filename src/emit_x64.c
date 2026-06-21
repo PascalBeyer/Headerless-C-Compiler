@@ -4045,6 +4045,15 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         emit_location_prevent_spilling(context, locked_pointer_to_stack_location); // Just so we dont stomp it in the `EMIT_LOCATION_register_relative` case in the call to a function pointer.
                     }
                     
+                    struct emit_location *va_args_flags = null;
+                    if(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs){
+                        
+                        u8 va_flags = (float_register_at == 0) ? 0 : 2;
+                        struct emit_location *immediate = emit_location_immediate(context, &globals.typedef_u8, va_flags);
+                        va_args_flags = emit_load_into_specific_gpr(context, immediate, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_A));
+                        emit_location_prevent_spilling(context, va_args_flags); // Just so we dont stomp it in the `EMIT_LOCATION_register_relative` case in the call to a function pointer.
+                    }
+                    
                     if(function_to_call){
                         emit(CALL_RELATIVE);
                         smm patch_offset = emit_bytes(context, sizeof(s32), 0);
@@ -4082,6 +4091,11 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         if(locked_pointer_to_stack_location){
                             emit_location_allow_spilling(context, locked_pointer_to_stack_location);
                             free_emit_location(context, locked_pointer_to_stack_location);
+                        }
+                        
+                        if(va_args_flags){
+                            emit_location_allow_spilling(context, va_args_flags);
+                            free_emit_location(context, va_args_flags);
                         }
                     }
                     
