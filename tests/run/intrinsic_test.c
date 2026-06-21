@@ -27,6 +27,7 @@ int main(){
     u8 = _addcarry_u32(u8, u32, u32, &u32);
     u8 = _addcarry_u64(u8, u64, u64, &u64);
     
+#ifdef _WIN32
     __addgsbyte(0,  u8);
     __addgsword(0,  u16);
     __addgsdword(0, u32);
@@ -35,6 +36,7 @@ int main(){
     __incgsword(0);
     __incgsdword(0);
     __incgsqword(0);
+#endif
     
     u8 = _BitScanForward(&u32, u32);
     u8 = _BitScanReverse(&u32, u32);

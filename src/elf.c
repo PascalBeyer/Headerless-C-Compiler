@@ -1081,7 +1081,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 if(source_kind == IR_function || source_kind == IR_declaration){
                     struct ast_declaration *decl = (struct ast_declaration *)patch->source;
                     
-                    if(decl->flags & DECLARATION_FLAGS_is_dllimport){
+                    if(source_kind == IR_declaration && decl->flags & DECLARATION_FLAGS_is_dllimport){
+                        // On linux, functions all have a stub, so the decl->relative_virtual_address is fine.
                         not_implemented;
                     }else{
                         source_location += decl->relative_virtual_address;

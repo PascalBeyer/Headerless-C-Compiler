@@ -1318,9 +1318,14 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
             
             allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
             
+            struct ast_type *type = source->type;
+            if(source_size == 2) source->type = &globals.typedef_u32;
             struct emit_location *load_into =  emit_location_loaded(context, source->type, register_to_load_into);
             
             emit_register_register(context, create_prefixes(0), opcode, load_into, source);
+            
+            if(source_size == 2) load_into->type = type;
+            
             free_emit_location(context, source);
             return load_into;
         }break;
@@ -1364,10 +1369,16 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
                 opcode = one_byte_opcode(MOVE_REG_REGM);
             }
             
+            struct ast_type *type = source->type;
+            if(source_size == 2) source->type = &globals.typedef_u32;
+            
             emit_register_relative_register(context, create_prefixes(0), opcode, register_to_load_into, source);
+            
+            if(source_size == 2) source->type = type; // might still be relevant after free, if it was marked to prevent freeing.
+            
             free_emit_location(context, source);
             allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
-            return emit_location_loaded(context, source->type, register_to_load_into);
+            return emit_location_loaded(context, type, register_to_load_into);
         }break;
         case EMIT_LOCATION_conditional:{
             // Usually conditionals are of size 4 (int) by cspec, but for cast to _Bool we load them as size 1.
@@ -4144,6 +4155,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                             ret->offset += 8;
                             struct emit_location *rdx = emit_location_loaded(context, &globals.typedef_u64, REGISTER_D);
                             emit_store(context, ret, rdx);
+                            ret->offset -= 8;
                         }
                         
                         ret->type = return_type;
@@ -5507,15 +5519,13 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                 
                 if(float_register_at < REGISTER_XMM8){
                     
-                    smm size = argument_type->size;
                     function->stack_space_needed = align_up(function->stack_space_needed, argument_type->alignment);
+                    function->stack_space_needed += argument_type->size;
                     
                     enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
                     struct emit_location *dest = emit_location_stack_relative(context, argument_type, function->stack_space_needed);
                     struct emit_location *source = emit_location_loaded(context, argument_type, argument_reg);
                     emit_store(context, dest, source);
-                    
-                    function->stack_space_needed += size;
                     
                     argument_decl->offset_on_stack = function->stack_space_needed;
                 }else{
