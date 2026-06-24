@@ -897,6 +897,9 @@ func enum register_encoding allocate_specific_register(struct context *context, 
     return reg;
 }
 
+//_____________________________________________________________________________________________________________________
+// calling convention stuff.
+
 static enum register_encoding windows_x64_volatile_general_purpose_registers[] = {
     REGISTER_C,
     REGISTER_D,
@@ -917,6 +920,13 @@ static enum register_encoding windows_x64_volatile_xmm_registers[] = {
     REGISTER_XMM4,
     REGISTER_XMM5,
 };
+
+func b32 windows_x64_type_is_returned_by_address(struct ast_type *type){
+    smm size = type->size;
+    if(type->flags & TYPE_FLAG_is_intrin_type) return false;
+    if(size_is_big_or_oddly_sized(size)) return true;
+    return false;
+}
 
 static enum register_encoding system_V_volatile_general_purpose_registers[] = {
     REGISTER_DI,
@@ -949,6 +959,183 @@ static enum register_encoding system_V_volatile_xmm_registers[] = {
     REGISTER_XMM14,
     REGISTER_XMM15,
 };
+
+
+enum system_v_type_classification_kind{
+    SYSTEM_V_TYPE_CLASSIFICATION_none,
+    SYSTEM_V_TYPE_CLASSIFICATION_integer,
+    SYSTEM_V_TYPE_CLASSIFICATION_sse,
+    SYSTEM_V_TYPE_CLASSIFICATION_sse_upper,
+    SYSTEM_V_TYPE_CLASSIFICATION_x87,
+    SYSTEM_V_TYPE_CLASSIFICATION_x87_upper,
+    SYSTEM_V_TYPE_CLASSIFICATION_memory,
+};
+
+enum system_v_type_classification_kind system_v_combine_type_classification(enum system_v_type_classification_kind a, enum system_v_type_classification_kind b){
+    if(a == b) return a;
+    if(a == SYSTEM_V_TYPE_CLASSIFICATION_none) return b;
+    if(b == SYSTEM_V_TYPE_CLASSIFICATION_none) return a;
+    if(a == SYSTEM_V_TYPE_CLASSIFICATION_memory) return SYSTEM_V_TYPE_CLASSIFICATION_memory;
+    if(b == SYSTEM_V_TYPE_CLASSIFICATION_memory) return SYSTEM_V_TYPE_CLASSIFICATION_memory;
+    if(a == SYSTEM_V_TYPE_CLASSIFICATION_integer) return SYSTEM_V_TYPE_CLASSIFICATION_integer;
+    if(b == SYSTEM_V_TYPE_CLASSIFICATION_integer) return SYSTEM_V_TYPE_CLASSIFICATION_integer;
+    if(a == SYSTEM_V_TYPE_CLASSIFICATION_x87) return SYSTEM_V_TYPE_CLASSIFICATION_x87;
+    if(b == SYSTEM_V_TYPE_CLASSIFICATION_x87) return SYSTEM_V_TYPE_CLASSIFICATION_x87;
+    if(a == SYSTEM_V_TYPE_CLASSIFICATION_x87_upper) return SYSTEM_V_TYPE_CLASSIFICATION_x87_upper;
+    if(b == SYSTEM_V_TYPE_CLASSIFICATION_x87_upper) return SYSTEM_V_TYPE_CLASSIFICATION_x87_upper;
+    return SYSTEM_V_TYPE_CLASSIFICATION_sse;
+}
+
+struct system_v_type_classification{
+    enum system_v_type_classification_kind classification[4];
+} system_v_classify_type(struct context *context, struct ast_type *root_type){
+    
+    struct system_v_type_classification ret = {0};
+    if(root_type->kind == AST_void_type){
+        ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_none;
+    }else if(root_type->kind == AST_integer_type || root_type->kind == AST_pointer_type){
+        // "Arguments of types _Bool, char, short, int, long, long long and pointers are INTEGER."
+        ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_integer;
+    }else if(root_type->kind == AST_float_type){
+        // "Arguments of types float, double, _Decimal32, _Decimal64 and __m64 are SSE."
+        ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_sse;
+    }else if(root_type->flags & TYPE_FLAG_is_intrin_type){
+        // * "Arguments of types _float128, _Decimal128, and _m128 are split into two halves.
+        //    The least significant ones belong to the class SSE, the most significat one to class SSEUP."
+        // * "Arguments of type __m256 are split into four eightbyte chunks.
+        //    The least significant one belogs to class SSE and all the others to SSEUP."
+        ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_sse;
+        for(u32 index = 1; index < root_type->size/8; index++){
+            ret.classification[index] = SYSTEM_V_TYPE_CLASSIFICATION_sse_upper;
+        }
+    }else if(root_type->size <= (4 * 8) && !(root_type->flags & TYPE_FLAG_contains_unaligned_type)){
+        assert(root_type->kind == AST_struct || root_type->kind == AST_union);
+        
+        // "Each field of an object is classified recursively so that always two fields are considered.
+        //  The resulting class is calculated according to thelasses of the fields in the eightbyte."
+        
+        struct compound_stack_entry{
+            u64 root_offset;
+            struct ast_type *struct_or_array;
+        } *compound_stack = push_data(&context->scratch, struct compound_stack_entry, 1);
+        
+        compound_stack->struct_or_array = root_type;
+        compound_stack->root_offset = 0;
+        
+        u64 stack_capacity = 1;
+        u64 stack_at = 1;
+        
+        while(stack_at){
+            struct compound_stack_entry *entry = compound_stack + --stack_at;
+            u64 root_offset = entry->root_offset;
+            
+            struct ast_type *struct_or_array = entry->struct_or_array;
+            
+            if(struct_or_array->kind == AST_struct || struct_or_array->kind == AST_union){
+                struct ast_compound_type *compound = (struct ast_compound_type *)struct_or_array;
+                
+                for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
+                    struct compound_member *member = compound->members + member_index;
+                    u64 offset = root_offset + member->offset_in_type;
+                    u64 classification_index = offset/8;
+                    
+                    struct ast_type *type = member->type;
+                    
+                    // @cleanup: maybe this has to think about :member_list_contains_both_linear_and_nested
+                    
+                    if(type->kind == AST_integer_type || type->kind == AST_atomic_integer_type || type->kind == AST_bitfield_type || type->kind == AST_enum || type->kind == AST_pointer_type){
+                        ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_integer);
+                    }else if(type->kind == AST_float_type){
+                        ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
+                    }else if(type->flags & TYPE_FLAG_is_intrin_type){
+                        ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
+                        for(u32 index = 1; index < root_type->size/8; index++){
+                            ret.classification[classification_index + index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse_upper);
+                        }
+                    }else if(type->kind == AST_struct || type->kind == AST_union || type->kind == AST_array_type){
+                        if(stack_at == stack_capacity) push_uninitialized_struct(&context->scratch, struct compound_stack_entry);
+                        
+                        struct compound_stack_entry *new_entry = compound_stack + stack_at++;
+                        new_entry->struct_or_array = type;
+                        new_entry->root_offset = offset;
+                    }else invalid_code_path;
+                }
+            }else{
+                struct ast_array_type *array = (struct ast_array_type *)struct_or_array;
+                
+                struct ast_type *element_type = array->element_type;
+                smm element_type_size = element_type->size;
+                
+                if(element_type->kind == AST_integer_type || element_type->kind == AST_atomic_integer_type || element_type->kind == AST_bitfield_type || element_type->kind == AST_enum || element_type->kind == AST_pointer_type){
+                    
+                    for(u32 element_index = 0; element_index < array->amount_of_elements; element_index++){
+                        u64 offset = root_offset + element_type_size * element_index;
+                        u64 classification_index = offset / 8;
+                        ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_integer);
+                    }
+                }else if(element_type->kind == AST_float_type){
+                    
+                    for(u32 element_index = 0; element_index < array->amount_of_elements; element_index++){
+                        u64 offset = root_offset + element_type_size * element_index;
+                        u64 classification_index = offset / 8;
+                        ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
+                    }
+                    
+                }else if(element_type->flags & TYPE_FLAG_is_intrin_type){
+                    for(u32 element_index = 0; element_index < array->amount_of_elements; element_index++){
+                        u64 offset = root_offset + element_type_size * element_index;
+                        u64 classification_index = offset / 8;
+                        ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
+                        for(u32 index = 1; index < root_type->size/8; index++){
+                            ret.classification[classification_index + index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse_upper);
+                        }
+                    }
+                }else if(element_type->kind == AST_struct || element_type->kind == AST_union || element_type->kind == AST_array_type){
+                    for(u32 element_index = 0; element_index < array->amount_of_elements; element_index++){
+                        u64 offset = root_offset + element_type_size * element_index;
+                        if(stack_at == stack_capacity) push_uninitialized_struct(&context->scratch, struct compound_stack_entry);
+                        
+                        struct compound_stack_entry *new_entry = compound_stack + stack_at++;
+                        new_entry->struct_or_array = element_type;
+                        new_entry->root_offset = offset;
+                    }
+                }else invalid_code_path;
+            }
+        }
+    }else{
+        ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_memory;
+    }
+    
+    // Post merger cleanup:
+    for(u32 index = 0; index < 4; index++){
+        if(ret.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_memory){
+            ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_memory;
+        }
+        
+        if(index && ret.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_x87_upper && ret.classification[index-1] != SYSTEM_V_TYPE_CLASSIFICATION_x87){
+            ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_memory;
+        }
+    }
+    
+    if(root_type->size > 2 * 8){
+        if(ret.classification[0] != SYSTEM_V_TYPE_CLASSIFICATION_sse){
+            ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_memory;
+        }
+        
+        for(u32 index = 1; index < 4; index++){
+            if(ret.classification[0] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_memory;
+            }
+        }
+    }
+    
+    if(ret.classification[0] != SYSTEM_V_TYPE_CLASSIFICATION_sse && ret.classification[1] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+        ret.classification[1] = SYSTEM_V_TYPE_CLASSIFICATION_sse;
+    }
+    
+    return ret;
+}
+
 
 
 // this tries to find a 'register_encoding' such that context->register_to_emit_location_map[register] = null
@@ -2182,7 +2369,14 @@ func struct emit_location *emit_compare_to_zero(struct context *context, struct 
     
     if(get_register_kind_for_type(loaded->type) == REGISTER_KIND_gpr){
         u8 inst = TEST_REGM_REG;
-        if(loaded->type->size == 1) inst = TEST_REGM8_REG8;
+        if(loaded->type->size == 1){
+            inst = TEST_REGM8_REG8;
+            
+            if(4 <= loaded->loaded_register && loaded->loaded_register < 8){
+                // I really have to fix the whole system.
+                emit(0x40);
+            }
+        }
         
         emit_register_register(context, no_prefix(), one_byte_opcode(inst), loaded, loaded);
         free_emit_location(context, loaded);
@@ -2260,17 +2454,6 @@ func void assert_that_no_registers_are_allocated(struct context *context){
             assert(context->register_allocators[a].emit_location_map[i] == 0);
         }
     }
-}
-
-func b32 type_is_returned_by_address(enum calling_convention calling_convention, struct ast_type *type){
-    if(calling_convention == CALLING_CONVENTION_windows_x64){
-        smm size = type->size;
-        if(type->flags & TYPE_FLAG_is_intrin_type) return false;
-        if(size_is_big_or_oddly_sized(size)) return true;
-        return false;
-    }else if(calling_convention == CALLING_CONVENTION_system_V){
-        return type->size > 16;
-    }else invalid_code_path;
 }
 
 func void emit_inline_asm_binary_op(struct context *context, struct prefixes prefixes, struct emit_location *lhs, struct emit_location *rhs,
@@ -3648,7 +3831,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     // 
                     // If the function returns a big struct, there is an implicit first argument, which is the
                     // address of the return value. We memcpy in 'case AST_return'.
-                    b32 returns_big_struct = type_is_returned_by_address(calling_convention, return_type);
+                    b32 returns_big_struct = windows_x64_type_is_returned_by_address(return_type);
                     
                     // Keep track of the maximal amount of function call arguments 
                     // to allocate the correct amount of memory for arguments passed on the stack.
@@ -3929,12 +4112,18 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     // the arguments that have to be altered.
                     // 
                     
-                    u32 integer_register_at = 0;
+                    struct system_v_type_classification return_type_classification = system_v_classify_type(context, return_type);
+                    int returns_on_stack = (return_type_classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_memory);
+                    
+                    u32 integer_register_at = returns_on_stack ? 1 : 0;
                     u32 float_register_at = 0;
                     
-                    u32 returns_big_struct = type_is_returned_by_address(calling_convention, return_type);
-                    
                     smm stack_pass_location = 0;
+                    
+                    struct emit_location *register_locations[REGISTER_XMM8 + array_count(integer_argument_registers)];
+                    u32 register_locations_at = 0;
+                    
+                    struct emit_location *si_di_dc[4];
                     
                     // 
                     // Copy arguments that are passed on the stack.
@@ -3943,97 +4132,195 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         struct emit_location *argument = argument_locations[argument_index];
                         struct ast_type *argument_type = argument->type;
                         
-                        // 
-                        // Yikes, get the expected register kind. We need that because the `argument` does not know it anymore.
-                        // 
+                        struct system_v_type_classification classification = system_v_classify_type(context, argument_type);
+                        u32 eight_byte_count = (u32)(argument_type->size + 7)/8;
                         
-                        smm argument_size = argument_type->size;
+                        int passed_in_memory = false;
                         
-                        if(argument->state == EMIT_LOCATION_register_relative && argument_size > 8){
+                        if(classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_memory){
+                            passed_in_memory = true;
+                        }else{
                             // 
-                            // This argument needs to be passed by pointer.
-                            // First copy it to a temporary stack location.
+                            // First figure out if the argument fit into the remaining registers.
+                            // Otherwise, the type was passed on the stack.
                             // 
+                            u32 needed_integer_registers = 0;
+                            u32 needed_float_registers = 0;
                             
-                            struct emit_location *copy_into = emit_allocate_temporary_stack_location(context, argument_type);
+                            for(u32 index = 0; index < eight_byte_count; index++){
+                                if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
+                                    needed_integer_registers += 1;
+                                }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
+                                    needed_float_registers += 1;
+                                }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                                }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_x87){
+                                    passed_in_memory = true;
+                                }else invalid_code_path;
+                            }
+                            
+                            if(float_register_at + needed_float_registers > REGISTER_XMM8){
+                                passed_in_memory = true;
+                            }
+                            
+                            if(integer_register_at + needed_integer_registers > array_count(integer_argument_registers)){
+                                passed_in_memory = true;
+                            }
+                        }
+                        
+                        if(passed_in_memory){
+                            
+                            stack_pass_location = align_up(stack_pass_location, argument_type->alignment);
+                            stack_pass_location += argument_type->size;
+                            
+                            struct emit_location *copy_into = emit_location_register_relative(context, argument_type, context->register_sp, context->register_sp, stack_pass_location);
                             
                             if(argument->state == EMIT_LOCATION_loaded){
-                                // This can happen if we have a function that returns an intrinsic type.
                                 emit_store(context, copy_into, argument);
                             }else{
                                 emit_memcpy(context, copy_into, argument);
                                 free_emit_location(context, argument); // @hmm: emit_store frees, emit_memcpy does not
                             }
+                        }else{
                             
-                            argument_locations[argument_index] = emit_load_address(context, copy_into, allocate_register(context, REGISTER_KIND_gpr));
-                        }
-                    }
-                    
-                    
-                    for(smm argument_index = 0; argument_index < argument_count; argument_index++){
-                        struct emit_location *argument = argument_locations[argument_index];
-                        struct ast_type *argument_type = argument->type;
-                        
-                        // 
-                        // Yikes, get the expected register kind. We need that because the `argument` does not know it anymore.
-                        // 
-                        
-                        enum register_kind register_kind = get_register_kind_for_type(argument_type);
-                        smm alignment = argument_type->alignment;
-                        smm argument_size = argument_type->size;
-                        
-                        if(register_kind == REGISTER_KIND_gpr){
-                            
-                            if(returns_big_struct + integer_register_at < array_count(integer_argument_registers)){
+                            if(eight_byte_count == 1 || (classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_sse && classification.classification[1] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper)){
+                                // 
+                                // This argument could be in a register.
+                                // 
                                 
-                                enum register_encoding register_to_load_into = integer_argument_registers[returns_big_struct + integer_register_at];
-                                if(is_power_of_two(argument_size)){
-                                    enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
-                                    argument = emit_load_into_specific_gpr(context, argument, arg_reg);
-                                }else{
-                                    argument = system_v_load_oddly_sized_type_into_register(context, argument, register_to_load_into, REGISTER_A);
+                                if(classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
+                                    enum register_encoding register_to_load_into = integer_argument_registers[integer_register_at];
+                                    if(is_power_of_two(argument_type->size)){
+                                        enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
+                                        argument = emit_load_into_specific_gpr(context, argument, arg_reg);
+                                    }else{
+                                        argument = system_v_load_oddly_sized_type_into_register(context, argument, register_to_load_into, REGISTER_A);
+                                    }
+                                    
+                                    if(integer_register_at >= 4 || integer_register_at == /*d*/2){
+                                        emit_location_prevent_spilling(context, argument);
+                                    }else{
+                                        si_di_dc[integer_register_at] = argument;
+                                    }
+                                    
+                                    integer_register_at += 1;
+                                    
+                                }else if(classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
+                                    // hmm, should there be something special for floats?
+                                    smm size = 8;
+                                    for(u32 index = 0; index + 1 < eight_byte_count; index++){
+                                        if(classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                                            break;
+                                        }
+                                        size += 8;
+                                    }
+                                    
+                                    // @note: If there was an sse_upper argument, this means, the whole argument was a intrinsic type
+                                    //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
+                                    assert(size == 8 || size == 16 || size == 32);
+                                    assert(size == argument_type->size || argument_type->size == 4);
+                                    
+                                    enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                                    argument = emit_load_float_into_specific_register(context, argument, arg_reg);
+                                    float_register_at += 1;
+                                    
+                                    emit_location_prevent_spilling(context, argument);
+                                }else invalid_code_path;
+                                register_locations[register_locations_at++] = argument;
+                            }else{
+                                //
+                                // This is a struct argument.
+                                // So we can assume it is register relative.
+                                //
+                                assert(argument->state == EMIT_LOCATION_register_relative);
+                                
+                                emit_location_prevent_freeing(context, argument);
+                                
+                                u64 size_left = argument_type->size;
+                                
+                                for(u32 index = 0; index < eight_byte_count; index++){
+                                    
+                                    struct emit_location *register_location = null;
+                                    
+                                    if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
+                                        enum register_encoding register_to_load_into = integer_argument_registers[integer_register_at];
+                                        u32 size = (u32)min_of(size_left, 8);
+                                        argument->type = &globals.typedef_u64;
+                                        
+                                        if(is_power_of_two(size)){
+                                            enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
+                                            register_location = emit_load_into_specific_gpr(context, argument, arg_reg);
+                                        }else{
+                                            register_location = system_v_load_oddly_sized_type_into_register(context, argument, register_to_load_into, REGISTER_A);
+                                        }
+                                        
+                                        size_left -= size;
+                                        argument->offset += size;
+                                        
+                                        if(integer_register_at >= 4 || integer_register_at == /*d*/2){
+                                            emit_location_prevent_spilling(context, register_location);
+                                        }else{
+                                            si_di_dc[integer_register_at] = register_location;
+                                        }
+                                        
+                                        integer_register_at += 1;
+                                    }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
+                                        u64 size = 8;
+                                        for(; index + 1 < eight_byte_count; index++){
+                                            if(classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                                                break;
+                                            }
+                                            size += 8;
+                                        }
+                                        
+                                        // @note: If there was an sse_upper argument, this means, the whole argument was a intrinsic type
+                                        //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
+                                        assert(size == 8 || size == 16 || size == 32);
+                                        
+                                        struct ast_type hack_type = {
+                                            .size = size,
+                                            .alignment = size,
+                                            .flags = TYPE_FLAG_is_intrin_type,
+                                        };
+                                        
+                                        argument->type = &hack_type;
+                                        
+                                        enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                                        register_location = emit_load_float_into_specific_register(context, argument, arg_reg);
+                                        float_register_at += 1;
+                                        
+                                        size_left -= size;
+                                        argument->offset += size;
+                                        
+                                        emit_location_prevent_spilling(context, register_location);
+                                    }else invalid_code_path;
+                                    
+                                    register_locations[register_locations_at++] = register_location;
                                 }
-                                integer_register_at += 1;
-                            }else{
-                                
-                                // This is passed on the stack!
-                                
-                                struct emit_location *store_in = emit_location_register_relative(context, argument_type, context->register_sp, context->register_sp, stack_pass_location);
-                                emit_store(context, store_in, argument);
-                                
-                                stack_pass_location += 8;
-                                continue;
                             }
-                        }else if(register_kind == REGISTER_KIND_xmm){
-                            
-                            if(float_register_at < REGISTER_XMM8){
-                                enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
-                                argument = emit_load_float_into_specific_register(context, argument, arg_reg);
-                                float_register_at += 1;
-                            }else{
-                                
-                                // This is passed on the stack!
-                                
-                                stack_pass_location = align_up(stack_pass_location, alignment);
-                                
-                                struct emit_location *store_in = emit_location_register_relative(context, argument_type, context->register_sp, context->register_sp, stack_pass_location);
-                                emit_store(context, store_in, argument);
-                                
-                                stack_pass_location += argument_size;
-                                continue;
-                            }
-                        }else invalid_code_path;
-                        
-                        emit_location_prevent_spilling(context, argument);
-                        argument_locations[argument_index] = argument;
+                        }
                     }
                     
                     context->function_argument_stack_space_needed = max_of(context->function_argument_stack_space_needed, stack_pass_location);
                     
+                    // 
+                    // Ensure di and si are loaded.
+                    // We did not do this before, as we need them for memcpy.
+                    // 
+                    for(u32 register_index = 0; register_index < 4 && register_index < integer_register_at; register_index++){
+                        if(register_index == 2) continue;
+                        
+                        if(si_di_dc[register_index]->state != EMIT_LOCATION_loaded || si_di_dc[register_index]->loaded_register != integer_argument_registers[register_index]){
+                            enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_argument_registers[register_index]);
+                            *si_di_dc[register_index] = *emit_load_into_specific_gpr(context, si_di_dc[register_index], arg_reg);
+                        }
+                        
+                        emit_location_prevent_spilling(context, si_di_dc[register_index]);
+                    }
+                    
                     {
                         // Ensure that all volatile registers that are not parameters to the function call are spilled.
                         
-                        for(u32 register_index = integer_register_at + returns_big_struct; register_index < array_count(system_V_volatile_general_purpose_registers); register_index++){
+                        for(u32 register_index = integer_register_at; register_index < array_count(system_V_volatile_general_purpose_registers); register_index++){
                             enum register_encoding reg = system_V_volatile_general_purpose_registers[register_index];
                             struct emit_location *loc  = context->gpr_allocator.emit_location_map[reg];
                             
@@ -4049,7 +4336,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     // :returning_structs
                     struct emit_location *stack_return_location = null;
                     struct emit_location *locked_pointer_to_stack_location = null; 
-                    if(returns_big_struct){
+                    if(returns_on_stack){
                         stack_return_location = emit_allocate_temporary_stack_location(context, return_type);
                         
                         locked_pointer_to_stack_location = emit_load_address(context, stack_return_location, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_DI));
@@ -4058,7 +4345,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     
                     struct emit_location *va_args_flags = null;
                     if(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs){
-                        
                         u8 va_flags = (float_register_at == 0) ? 0 : 2;
                         struct emit_location *immediate = emit_location_immediate(context, &globals.typedef_u8, va_flags);
                         va_args_flags = emit_load_into_specific_gpr(context, immediate, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_A));
@@ -4092,11 +4378,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         // Free all register argument_locations.
                         // 
                         
-                        for(smm argument_index = 0; argument_index < argument_count; argument_index++){
-                            if(argument_locations[argument_index]->prevent_spilling){
-                                emit_location_allow_spilling(context, argument_locations[argument_index]);
-                                free_emit_location(context, argument_locations[argument_index]);
-                            }
+                        for(u32 register_location_index = 0; register_location_index < register_locations_at; register_location_index++){
+                            emit_location_allow_spilling(context, register_locations[register_location_index]);
+                            free_emit_location(context, register_locations[register_location_index]);
                         }
                         
                         if(locked_pointer_to_stack_location){
@@ -4118,7 +4402,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     // :returning_structs
                     if(stack_return_location){
                         assert(!(return_type->flags & TYPE_FLAG_is_intrin_type));
-                        assert(returns_big_struct);
+                        assert(returns_on_stack);
                         emit_location_stack[emit_location_stack_at++] = stack_return_location;
                         break;
                     }
@@ -4137,28 +4421,62 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         // 
                         
                         u64 allocation_size = (return_type->size + 7) & ~7;
-                        struct ast_type hack_type = {
+                        
+                        struct ast_type hack_return_type = {
                             .size = allocation_size,
                             .alignment = allocation_size ? allocation_size : 1,
                         };
                         
-                        assert(!returns_big_struct); // Otherwise, it should have already been handled.
-                        struct emit_location *ret = emit_allocate_temporary_stack_location(context, &hack_type);
+                        static enum register_encoding integer_return_registers[2] = {
+                            REGISTER_A,
+                            REGISTER_D,
+                        };
                         
-                        if(allocation_size == 8){
-                            struct emit_location *rax = emit_location_loaded(context, &globals.typedef_u64, REGISTER_A);
-                            emit_store(context, ret, rax);
-                        }else{
-                            ret->type = &globals.typedef_u64;
-                            struct emit_location *rax = emit_location_loaded(context, &globals.typedef_u64, REGISTER_A);
-                            emit_store(context, ret, rax);
-                            ret->offset += 8;
-                            struct emit_location *rdx = emit_location_loaded(context, &globals.typedef_u64, REGISTER_D);
-                            emit_store(context, ret, rdx);
-                            ret->offset -= 8;
+                        integer_register_at = 0;
+                        float_register_at = 0;
+                        
+                        assert(!returns_on_stack); // Otherwise, it should have already been handled.
+                        struct emit_location *ret = emit_allocate_temporary_stack_location(context, &hack_return_type);
+                        
+                        u64 return_type_eight_byte_count = allocation_size/8;
+                        for(u32 index = 0; index < return_type_eight_byte_count; index++){
+                            if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
+                                enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_return_registers[integer_register_at]);
+                                struct emit_location *source = emit_location_loaded(context, &globals.typedef_u64, argument_reg);
+                                ret->type = &globals.typedef_u64;
+                                emit_store(context, ret, source);
+                                ret->offset += 8;
+                                
+                                integer_register_at += 1;
+                            }else if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
+                                u64 size = 8;
+                                for(; index + 1 < return_type_eight_byte_count; index++){
+                                    if(return_type_classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                                        break;
+                                    }
+                                    size += 8;
+                                }
+                                
+                                struct ast_type hack_type = {
+                                    .size = size,
+                                    .alignment = size,
+                                    .flags = TYPE_FLAG_is_intrin_type,
+                                };
+                                ret->type = &hack_type;
+                                
+                                enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                                struct emit_location *source = emit_location_loaded(context, &hack_type, argument_reg);
+                                emit_store(context, ret, source);
+                                ret->offset += size;
+                                
+                                float_register_at += 1;
+                            }else if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_x87){
+                                not_implemented;
+                            }else invalid_code_path;
                         }
                         
                         ret->type = return_type;
+                        ret->offset -= return_type_eight_byte_count * 8;
                         
                         emit_location_stack[emit_location_stack_at++] = ret;
                         break;
@@ -4196,58 +4514,171 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     emit_location_stack_at -= 1;
                     struct emit_location *return_location = emit_location_stack[emit_location_stack_at];
                     
-                    if(type_is_returned_by_address(calling_convention, return_type)){
-                        // :returning_structs :function_epilog
-                        // load the address of what we want to copy into rsi, 
-                        // the actual copy will then happen in the epilog.
+                    if(calling_convention == CALLING_CONVENTION_windows_x64){
                         
-                        enum register_encoding rsi = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_SI);
-                        struct emit_location *loaded = emit_load_address(context, return_location, rsi);
-                        free_emit_location(context, return_location);
-                        free_emit_location(context, loaded);
-                    }else{
                         if(return_type->kind == AST_float_type){
                             struct emit_location *loaded = emit_load_float_into_specific_register(context, return_location, REGISTER_XMM0);
                             free_emit_location(context, loaded);
                         }else if(return_type->flags & TYPE_FLAG_is_intrin_type){
                             struct emit_location *loaded = emit_load_float_into_specific_register(context, return_location, REGISTER_XMM0);
                             free_emit_location(context, loaded);
+                        }else if(windows_x64_type_is_returned_by_address(return_type)){
+                            // :returning_structs :function_epilog
+                            // 
+                            // load the address of what we want to copy into rsi, 
+                            // the actual copy will then happen in the epilog.
+                            
+                            enum register_encoding rsi = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_SI);
+                            struct emit_location *loaded = emit_load_address(context, return_location, rsi);
+                            free_emit_location(context, return_location);
+                            free_emit_location(context, loaded);
                         }else{
-                            if(calling_convention == CALLING_CONVENTION_windows_x64){
-                                struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, REGISTER_A);
-                                free_emit_location(context, loaded);
-                            }else if(calling_convention == CALLING_CONVENTION_system_V){
-                                smm return_size = return_location->type->size;
+                            struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, REGISTER_A);
+                            free_emit_location(context, loaded);
+                        }
+                        
+                    }else if(calling_convention == CALLING_CONVENTION_system_V){
+                        
+                        struct system_v_type_classification return_type_classification = system_v_classify_type(context, return_type);
+                        
+                        if(return_type_classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_memory){
+                            // :returning_structs :function_epilog
+                            // 
+                            // load the address of what we want to copy into rsi, 
+                            // the actual copy will then happen in the epilog.
+                            
+                            enum register_encoding rsi = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_SI);
+                            struct emit_location *loaded = emit_load_address(context, return_location, rsi);
+                            free_emit_location(context, return_location);
+                            free_emit_location(context, loaded);
+                        }else{
+                            
+                            smm return_size = return_location->type->size;
+                            u64 return_type_eight_byte_count = (return_size + 7)/8;
+                            
+                            static enum register_encoding integer_return_registers[2] = {
+                                REGISTER_A,
+                                REGISTER_D,
+                            };
+                            
+                            u32 integer_register_at = 0;
+                            u32 float_register_at = 0;
+                            
+                            struct emit_location *register_locations[4];
+                            u32 register_locations_at = 0;
+                            
+                            // @copy and paste from calling.
+                            if(return_type_eight_byte_count == 1 || (return_type_classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_sse && return_type_classification.classification[1] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper)){
+                                // 
+                                // This argument could be in a register.
+                                // 
                                 
-                                enum register_encoding register_to_load_into = REGISTER_A;
+                                if(return_type_classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
+                                    enum register_encoding register_to_load_into = integer_return_registers[integer_register_at];
+                                    if(is_power_of_two(return_type->size)){
+                                        enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
+                                        return_location = emit_load_into_specific_gpr(context, return_location, arg_reg);
+                                    }else{
+                                        return_location = system_v_load_oddly_sized_type_into_register(context, return_location, register_to_load_into, /*scratch*/REGISTER_C);
+                                    }
+                                    integer_register_at += 1;
+                                }else if(return_type_classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
+                                    // hmm, should there be something special for floats?
+                                    smm size = 8;
+                                    for(u32 index = 0; index + 1 < return_type_eight_byte_count; index++){
+                                        if(return_type_classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                                            break;
+                                        }
+                                        size += 8;
+                                    }
+                                    
+                                    // @note: If there was an sse_upper argument, this means, the whole argument was a intrinsic type
+                                    //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
+                                    assert(size == 8 || size == 16 || size == 32);
+                                    assert(size == return_type->size);
+                                    
+                                    enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                                    return_location = emit_load_float_into_specific_register(context, return_location, arg_reg);
+                                    float_register_at += 1;
+                                }else invalid_code_path;
                                 
-                                if(return_size > 8){
-                                    return_location->prevent_freeing += 1;
-                                    return_location->type = &globals.typedef_u64;
-                                    assert(return_location->state == EMIT_LOCATION_register_relative);
+                                emit_location_prevent_spilling(context, return_location);
+                                register_locations[register_locations_at++] = return_location;
+                            }else{
+                                //
+                                // This is a struct argument.
+                                // So we can assume it is register relative.
+                                //
+                                assert(return_location->state == EMIT_LOCATION_register_relative);
+                                emit_location_prevent_freeing(context, return_location);
+                                
+                                u64 size_left = return_type->size;
+                                
+                                for(u32 index = 0; index < return_type_eight_byte_count; index++){
                                     
-                                    struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, REGISTER_A);
-                                    free_emit_location(context, loaded);
-                                    return_location->prevent_freeing -= 1;
+                                    struct emit_location *register_location = null;
                                     
-                                    register_to_load_into = REGISTER_D;
-                                    return_size -= 8;
+                                    if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
+                                        enum register_encoding register_to_load_into = integer_return_registers[integer_register_at];
+                                        u32 size = (u32)min_of(size_left, 8);
+                                        return_location->type = &globals.typedef_u64;
+                                        
+                                        if(is_power_of_two(size)){
+                                            enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
+                                            register_location = emit_load_into_specific_gpr(context, return_location, arg_reg);
+                                        }else{
+                                            register_location = system_v_load_oddly_sized_type_into_register(context, return_location, register_to_load_into, REGISTER_A);
+                                        }
+                                        integer_register_at += 1;
+                                        
+                                        size_left -= size;
+                                        return_location->offset += size;
+                                    }else if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
+                                        u64 size = 8;
+                                        for(; index + 1 < return_type_eight_byte_count; index++){
+                                            if(return_type_classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                                                break;
+                                            }
+                                            size += 8;
+                                        }
+                                        
+                                        // @note: If there was an sse_upper argument, this means, the whole argument was a intrinsic type
+                                        //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
+                                        assert(size == 8 || size == 16 || size == 32);
+                                        
+                                        struct ast_type hack_type = {
+                                            .size = size,
+                                            .alignment = size,
+                                            .flags = TYPE_FLAG_is_intrin_type,
+                                        };
+                                        
+                                        return_location->type = &hack_type;
+                                        
+                                        enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                                        register_location = emit_load_float_into_specific_register(context, return_location, arg_reg);
+                                        float_register_at += 1;
+                                        
+                                        size_left -= size;
+                                        return_location->offset += size;
+                                    }else invalid_code_path;
                                     
-                                    return_location->type = return_location->type;
-                                    return_location->offset += 8;
+                                    emit_location_prevent_spilling(context, register_location);
+                                    register_locations[register_locations_at++] = register_location;
                                 }
+                            }
+                            
+                            // 
+                            // Free the used registers.
+                            // 
+                            for(u32 register_location_index = 0; register_location_index < register_locations_at; register_location_index++){
                                 
-                                if(is_power_of_two(return_size)){
-                                    struct emit_location *loaded = emit_load_into_specific_gpr(context, return_location, register_to_load_into);
-                                    free_emit_location(context, loaded);
-                                }else{
-                                    struct emit_location *loaded = system_v_load_oddly_sized_type_into_register(context, return_location, register_to_load_into, REGISTER_C);
-                                    free_emit_location(context, loaded);
-                                }
-                            }else invalid_code_path;
+                                emit_location_allow_spilling(context, register_locations[register_location_index]);
+                                free_emit_location(context, register_locations[register_location_index]);
+                            }
                         }
                     }
                 }
+                
                 
                 if(ir_arena_at != current_function->end_in_ir_arena){
                     // :function_epilog
@@ -5296,7 +5727,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     smm amount_of_saved_registers = 0;
     u32 *stack_space_subtract_address = 0;
     
-    smm return_location_stack_offset = 0;
+    smm return_location_stack_offset = -1;
     
     if(calling_convention == CALLING_CONVENTION_windows_x64){
         
@@ -5364,7 +5795,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
             
             u32 register_at = 0;
             
-            if(type_is_returned_by_address(calling_convention, return_type)){
+            if(windows_x64_type_is_returned_by_address(return_type)){
                 // If we are returning a struct, the first argument is the address of the struct.
                 // Simply store it in the corresponding slot, we will find it there when we enter 
                 // the function epilog. :returning_structs
@@ -5465,14 +5896,11 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
         u32 integer_register_at = 0;
         u32 float_register_at = 0;
         
-        if(type_is_returned_by_address(calling_convention, return_type)){
-            // If we are returning a struct, the first argument is the address of the struct.
-            // Simply store it in the corresponding slot, we will find it there when we enter 
-            // the function epilog. :returning_structs
-            
+        struct system_v_type_classification return_type_classification = system_v_classify_type(context, return_type);
+        if(return_type_classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_memory){
             return_location_stack_offset = function->stack_space_needed;
             
-            enum register_encoding rcx = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_C);
+            enum register_encoding rcx = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_DI);
             struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_u64, function->stack_space_needed);
             struct emit_location *source = emit_location_loaded(context, &globals.typedef_u64, rcx);
             emit_store(context, dest, source);
@@ -5482,92 +5910,140 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
             integer_register_at += 1;
         }
         
+        static enum register_encoding integer_argument_registers[6] = {
+            REGISTER_DI,
+            REGISTER_SI,
+            REGISTER_D,
+            REGISTER_C,
+            REGISTER_R8,
+            REGISTER_R9,
+        };
+        
         for(struct ast_list_node *argument = function_type->argument_list.first; argument; argument = argument->next){
             struct ast_declaration *argument_decl = (struct ast_declaration *)argument->value;
             struct ast_type *argument_type = argument_decl->type;
             
-            static enum register_encoding integer_argument_registers[6] = {
-                REGISTER_DI,
-                REGISTER_SI,
-                REGISTER_D,
-                REGISTER_C,
-                REGISTER_R8,
-                REGISTER_R9,
-            };
+            struct system_v_type_classification classification = system_v_classify_type(context, argument_type);
             
-            if(argument_type->kind == AST_float_type){
-                
-                if(float_register_at < REGISTER_XMM8){
-                    
-                    function->stack_space_needed += argument_type->size;
-                    
-                    enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
-                    struct emit_location *dest = emit_location_stack_relative(context, argument_type, function->stack_space_needed);
-                    struct emit_location *source = emit_location_loaded(context, argument_type, argument_reg);
-                    emit_store(context, dest, source);
-                    
-                    argument_decl->offset_on_stack = function->stack_space_needed;
-                }else{
-                    // Passed on stack.
-                    argument_decl->offset_on_stack = -stack_argument_at;
-                    stack_argument_at += 8;
-                }
-                
-                float_register_at += 1;
-                
-            }else if(argument_type->flags & TYPE_FLAG_is_intrin_type){
-                
-                if(float_register_at < REGISTER_XMM8){
-                    
-                    function->stack_space_needed = align_up(function->stack_space_needed, argument_type->alignment);
-                    function->stack_space_needed += argument_type->size;
-                    
-                    enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
-                    struct emit_location *dest = emit_location_stack_relative(context, argument_type, function->stack_space_needed);
-                    struct emit_location *source = emit_location_loaded(context, argument_type, argument_reg);
-                    emit_store(context, dest, source);
-                    
-                    argument_decl->offset_on_stack = function->stack_space_needed;
-                }else{
-                    // Passed on stack.
-                    
-                    stack_argument_at = align_up(stack_argument_at, argument_type->alignment);
-                    argument_decl->offset_on_stack = -stack_argument_at;
-                    stack_argument_at += argument_type->size;
-                }
-                
-                float_register_at += 1;
-                
+            u32 eight_byte_count = (u32)(argument_type->size + 7)/8;
+            
+            int passed_in_memory = false;
+            
+            if(classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_memory){
+                passed_in_memory = true;
             }else{
                 // 
-                // The value is in an integer argument. This could be a larger struct or union, in which case it is passed by address.
+                // First figure out if the argument fit into the remaining registers.
+                // Otherwise, the type was passed on the stack.
+                // 
+                u32 needed_integer_registers = 0;
+                u32 needed_float_registers = 0;
+                
+                for(u32 index = 0; index < eight_byte_count; index++){
+                    if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
+                        needed_integer_registers += 1;
+                    }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
+                        needed_float_registers += 1;
+                    }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                    }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_x87){
+                        passed_in_memory = true;
+                    }else invalid_code_path;
+                }
+                
+                if(float_register_at + needed_float_registers > REGISTER_XMM8){
+                    passed_in_memory = true;
+                }
+                
+                if(integer_register_at + needed_integer_registers > array_count(integer_argument_registers)){
+                    passed_in_memory = true;
+                }
+            }
+            
+            if(passed_in_memory){
+                stack_argument_at += align_up(argument_type->size, 8);
+                stack_argument_at  = align_up(stack_argument_at, argument_type->alignment);
+                argument_decl->offset_on_stack = -stack_argument_at;
+            }else{
+                // 
+                // The type was passed in registers.
+                // Most of the type just one, but if its a struct, it may be passed in multiple.
+                // First allocate space for the allocation, then incrementally write it in.
                 // 
                 
-                if(integer_register_at < array_count(integer_argument_registers)){
-                    
-                    function->stack_space_needed += 8;
-                    
-                    enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_argument_registers[integer_register_at]);
-                    struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_u64, function->stack_space_needed);
-                    struct emit_location *source = emit_location_loaded(context, &globals.typedef_u64, argument_reg);
-                    emit_store(context, dest, source);
-                    
-                    argument_decl->offset_on_stack = function->stack_space_needed;
-                }else{
-                    // Passed on stack.
-                    argument_decl->offset_on_stack = -stack_argument_at;
-                    stack_argument_at += 8;
-                }
+                function->stack_space_needed  = align_up(function->stack_space_needed, argument_type->alignment);
+                function->stack_space_needed += align_up(argument_type->size, 8);
+                argument_decl->offset_on_stack = function->stack_space_needed;
                 
-                if(argument_type->size > 8){
-                    argument_decl->flags |= DECLARATION_FLAGS_is_big_function_argument;
+                for(u32 index = 0; index < eight_byte_count; index++){
+                    if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
+                        enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_argument_registers[integer_register_at]);
+                        struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_u64, function->stack_space_needed + index * 8);
+                        struct emit_location *source = emit_location_loaded(context, &globals.typedef_u64, argument_reg);
+                        emit_store(context, dest, source);
+                        integer_register_at += 1;
+                    }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
+                        // hmm, should there be something special for floats
+                        u64 root_index = index;
+                        u64 size = 8;
+                        for(; index + 1 < eight_byte_count; index++){
+                            if(classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                                break;
+                            }
+                            size += 8;
+                        }
+                        
+                        // @note: If there was an sse_upper argument, this means, the whole argument was a intrinsic type
+                        //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
+                        assert(size == 8 || size == 16 || size == 32);
+                        
+                        struct ast_type hack_type = {
+                            .size = size,
+                            .alignment = size,
+                            .flags = TYPE_FLAG_is_intrin_type,
+                        };
+                        
+                        enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                        struct emit_location *dest = emit_location_stack_relative(context, &hack_type, function->stack_space_needed + root_index * 8);
+                        struct emit_location *source = emit_location_loaded(context, &hack_type, argument_reg);
+                        emit_store(context, dest, source);
+                        float_register_at += 1;
+                    }else invalid_code_path;
                 }
-                
-                integer_register_at += 1;
+            }
+        }
+        
+        if(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs){
+            // 
+            // Overflow function arguments.
+            // 
+            
+            function->stack_space_needed = align_up(function->stack_space_needed, 0x10);
+            
+            // ; check the va args flags
+            //    test al, al
+            //    jz rel8
+            emit(0x84); emit(0xc0);
+            emit(0x74); u8 *rel = context->emit_arena.current; emit(0);
+            
+            for(; float_register_at < REGISTER_XMM8; float_register_at++){
+                function->stack_space_needed += 0x10;
+                enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
+                struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_m128, function->stack_space_needed);
+                struct emit_location *source = emit_location_loaded(context, &globals.typedef_m128, argument_reg);
+                emit_store(context, dest, source);
+            }
+            
+            *rel = to_u8(context->emit_arena.current - rel);
+            
+            for(; integer_register_at < array_count(integer_argument_registers); integer_register_at++){
+                function->stack_space_needed += 8;
+                enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_argument_registers[integer_register_at]);
+                struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_u64, function->stack_space_needed);
+                struct emit_location *source = emit_location_loaded(context, &globals.typedef_u64, argument_reg);
+                emit_store(context, dest, source);
             }
         }
     }
-    
     
     // :stack_space_needed. The amount of stack space needed needs to be aligned to 16.
     function->stack_space_needed = align_up(function->stack_space_needed, 0x10);
@@ -5628,7 +6104,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
     // we jump to here, instead of returning on the spot, this is so we can get canonical stack framing.
     emit_end_jumps(context, jump_to_function_epilog);
     
-    if(type_is_returned_by_address(calling_convention, return_type)){
+    if(return_location_stack_offset != -1){
         // :returning_structs
         
         // Get the value of the implicit return value, which was passed as an implicit first operand.

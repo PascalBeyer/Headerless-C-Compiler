@@ -26,9 +26,12 @@ typedef struct __va_list{
 
 #else
 
-// @incomplete: This is wrong on lunix!
+
 typedef struct __va_list{
-    __int64 unused;
+    unsigned int gp_offset;
+    unsigned int fp_offset;
+    void *overflow_arg_area;
+    void *reg_save_area;
 } *va_list;
 
 #define va_start(ap, parmN) ((ap) = ((va_list)&(parmN) + 1))
