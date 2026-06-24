@@ -5970,14 +5970,13 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                 // First allocate space for the allocation, then incrementally write it in.
                 // 
                 
-                function->stack_space_needed  = align_up(function->stack_space_needed, argument_type->alignment);
-                function->stack_space_needed += align_up(argument_type->size, 8);
-                argument_decl->offset_on_stack = function->stack_space_needed;
+                function->stack_space_needed = align_up(function->stack_space_needed, argument_type->alignment);
+                smm aligned_size = align_up(argument_type->size, 8);
                 
                 for(u32 index = 0; index < eight_byte_count; index++){
                     if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
                         enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_argument_registers[integer_register_at]);
-                        struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_u64, function->stack_space_needed + index * 8);
+                        struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_u64, function->stack_space_needed + (aligned_size - index * 8));
                         struct emit_location *source = emit_location_loaded(context, &globals.typedef_u64, argument_reg);
                         emit_store(context, dest, source);
                         integer_register_at += 1;
@@ -6003,12 +6002,15 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                         };
                         
                         enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
-                        struct emit_location *dest = emit_location_stack_relative(context, &hack_type, function->stack_space_needed + root_index * 8);
+                        struct emit_location *dest = emit_location_stack_relative(context, &hack_type, function->stack_space_needed + (aligned_size - root_index * 8));
                         struct emit_location *source = emit_location_loaded(context, &hack_type, argument_reg);
                         emit_store(context, dest, source);
                         float_register_at += 1;
                     }else invalid_code_path;
                 }
+                
+                function->stack_space_needed += aligned_size;
+                argument_decl->offset_on_stack = function->stack_space_needed;
             }
         }
         
