@@ -920,6 +920,11 @@ struct context{
     smm temporary_stack_allocator;
     smm temporary_stack_high_water_mark;
     
+    smm va_reg_save_area_offset;
+    
+    u32 va_float_register_start;
+    u32 va_integer_register_start;
+    
     union{
         struct{
             struct register_allocator gpr_allocator;
@@ -4624,13 +4629,18 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         globals.hacky_global_compilation_unit.index = -1;
         
-        {
+        for(u32 index = 0; index < 2; index++){
             // 
             // The `_alloca` function needs to be intrinsic, as it needs to know a stack offset
             // that is only really known at compile time.
             // 
             
-            struct token *alloca_token = push_dummy_token(arena, atom_for_string(string("_alloca")), TOKEN_identifier);
+            static struct string alloca_name[] = {
+                const_string("_alloca"),
+                const_string("__builtin_alloca"),
+            };
+            
+            struct token *alloca_token = push_dummy_token(arena, atom_for_string(alloca_name[index]), TOKEN_identifier);
             struct token *size_token = push_dummy_token(arena, atom_for_string(string("size")), TOKEN_identifier);
             
             struct ast_function_type *alloca_type = parser_type_push(context, function_type);
@@ -4646,6 +4656,25 @@ globals.typedef_##postfix = (struct ast_type){                                  
             ast_list_append(&alloca_type->argument_list, context->arena, &parameter_declaration->kind);
             
             register_intrinsic_function_declaration(context, alloca_token, alloca_type);
+        }
+        
+        {
+            struct token *va_start_token = push_dummy_token(arena, atom_for_string(string("__builtin_va_start")), TOKEN_identifier);
+            struct token *va_list_token = push_dummy_token(arena, atom_for_string(string("va_list")), TOKEN_identifier);
+            
+            struct ast_function_type *va_start_type = parser_type_push(context, function_type);
+            va_start_type->return_type = &globals.typedef_void;
+            
+            struct declarator_return parameter_declarator = {
+                .type = &globals.typedef_void_pointer.base,
+                .ident = va_list_token,
+            };
+            
+            struct ast_declaration *parameter_declaration = push_declaration_for_declarator(context, parameter_declarator);
+            parameter_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
+            ast_list_append(&va_start_type->argument_list, context->arena, &parameter_declaration->kind);
+            
+            register_intrinsic_function_declaration(context, va_start_token, va_start_type);
         }
         
         {

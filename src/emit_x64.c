@@ -2574,7 +2574,7 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
     (void)call; // @cleanup: How is this not used?
     struct string identifier = token_get_string(function->identifier);
     
-    if(string_match(identifier, string("_alloca"))){
+    if(string_match(identifier, string("_alloca")) || string_match(identifier, string("__builtin_alloca"))){
         // 
         // Alloca stack setup:
         //     
@@ -2641,6 +2641,52 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         return emit_location_loaded(context, &globals.typedef_u64, REGISTER_R13);
     }else if(string_match(identifier, string("_exception_code"))){
         return emit_location_loaded(context, &globals.typedef_u32, REGISTER_R12);
+    }else if(string_match(identifier, string("__builtin_va_start"))){
+        
+        if(context->current_function_calling_convention != CALLING_CONVENTION_system_V){
+            report_error(context, null, "Error: Intrinsic %.*s used in function %.*s but the calling convention of the function is not System-V (the calling convention on linux). This is currently not supported.",
+                    identifier.size, identifier.data, context->current_function->identifier->size, context->current_function->identifier->data);
+            globals.an_error_has_occurred = true;
+        }
+        
+        
+        // mov [.valist + /*gp_offset*/0],
+        // mov [.valist + /*fp_offset*/4],
+        // mov [.valist + /*overflow_arg_area*/8], 
+        // mov [.valist + /*reg_save_area*/0x10], 
+        
+        u32 va_gp_offset = 8 * context->va_integer_register_start;
+        u32 va_fp_offset = 6 * 8 + 0x10 * context->va_float_register_start;
+        
+        struct emit_location *gp_offset = emit_location_immediate(context, &globals.typedef_u32, va_gp_offset);
+        struct emit_location *fp_offset = emit_location_immediate(context, &globals.typedef_u32, va_fp_offset);
+        
+        struct emit_location *va_reg_save_area = emit_location_stack_relative(context, &globals.typedef_u64, context->va_reg_save_area_offset);
+        va_reg_save_area = emit_load_address(context, va_reg_save_area, allocate_register(context, REGISTER_KIND_gpr));
+        
+        struct emit_location *overflow_arg_area = emit_location_stack_relative(context, &globals.typedef_u64, -(8 * (s32)__popcnt(context->current_function->pushed_register_mask)) - 8);
+        overflow_arg_area = emit_load_address(context, overflow_arg_area, allocate_register(context, REGISTER_KIND_gpr));
+        
+        struct emit_location *valist = emit_load_gpr(context, argument_locations[0]);
+        emit_location_prevent_spilling(context, valist);
+        
+        struct emit_location *dest;
+        
+        dest = emit_location_register_relative(context, &globals.typedef_u32, valist, 0, /*offset*/0);
+        emit_store(context, dest, gp_offset);
+        
+        dest = emit_location_register_relative(context, &globals.typedef_u32, valist, 0, /*offset*/4);
+        emit_store(context, dest, fp_offset);
+        
+        dest = emit_location_register_relative(context, &globals.typedef_u64, valist, 0, /*offset*/8);
+        emit_store(context, dest, overflow_arg_area);
+        
+        dest = emit_location_register_relative(context, &globals.typedef_u64, valist, 0, /*offset*/0x10);
+        emit_store(context, dest, va_reg_save_area);
+        
+        emit_location_allow_spilling(context, valist);
+        free_emit_location(context, valist);
+        return null;
     }else{
         invalid_code_path;
     }
@@ -4174,6 +4220,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                             
                             struct emit_location *copy_into = emit_location_register_relative(context, argument_type, context->register_sp, context->register_sp, stack_pass_location);
                             
+                            if(argument_type->kind == AST_integer_type || argument_type->kind == AST_float_type){
+                                argument = emit_load(context, argument);
+                            }
+                            
                             if(argument->state == EMIT_LOCATION_loaded){
                                 emit_store(context, copy_into, argument);
                             }else{
@@ -4306,7 +4356,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     // Ensure di and si are loaded.
                     // We did not do this before, as we need them for memcpy.
                     // 
-                    for(u32 register_index = 0; register_index < 4 && register_index < integer_register_at; register_index++){
+                    for(u32 register_index = returns_on_stack; register_index < 4 && register_index < integer_register_at; register_index++){
                         if(register_index == 2) continue;
                         
                         if(si_di_dc[register_index]->state != EMIT_LOCATION_loaded || si_di_dc[register_index]->loaded_register != integer_argument_registers[register_index]){
@@ -6021,13 +6071,16 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
             
             function->stack_space_needed = align_up(function->stack_space_needed, 0x10);
             
+            context->va_float_register_start   = float_register_at;
+            context->va_integer_register_start = integer_register_at;
+            
             // ; check the va args flags
             //    test al, al
             //    jz rel8
             emit(0x84); emit(0xc0);
             emit(0x74); u8 *rel = context->emit_arena.current; emit(0);
             
-            for(; float_register_at < REGISTER_XMM8; float_register_at++){
+            for(float_register_at = REGISTER_XMM7; float_register_at < 0xffffffff; float_register_at--){
                 function->stack_space_needed += 0x10;
                 enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
                 struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_m128, function->stack_space_needed);
@@ -6037,13 +6090,15 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
             
             *rel = to_u8(context->emit_arena.current - rel);
             
-            for(; integer_register_at < array_count(integer_argument_registers); integer_register_at++){
+            for(integer_register_at = array_count(integer_argument_registers)-1; integer_register_at < 0xffffffff; integer_register_at--){
                 function->stack_space_needed += 8;
                 enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_gpr, integer_argument_registers[integer_register_at]);
                 struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_u64, function->stack_space_needed);
                 struct emit_location *source = emit_location_loaded(context, &globals.typedef_u64, argument_reg);
                 emit_store(context, dest, source);
             }
+            
+            context->va_reg_save_area_offset = function->stack_space_needed;
         }
     }
     

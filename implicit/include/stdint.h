@@ -93,11 +93,11 @@ typedef signed   __int64  intmax_t;
 
 #define SIZE_MAX UINT64_MAX
 
-#define WCHAR_MIN 0
-#define WCHAR_MAX UINT16_MAX
+// #define WCHAR_MIN 0
+// #define WCHAR_MAX UINT16_MAX
 
-#define WINT_MIN 0
-#define WINT_MAX UINT32_MAX
+// #define WINT_MIN 0
+// #define WINT_MAX UINT32_MAX
 
 #define INT8_C(a) a
 #define INT16_C(a) a

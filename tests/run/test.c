@@ -1,5 +1,6 @@
 // run
 
+#include <stdarg.h>
 #include <string.h>
 
 #include "test.h"
