@@ -591,6 +591,8 @@ struct ast_declaration{
         struct declaration_reference_node *first;
         struct declaration_reference_node *last;
     } referenced_declarations;
+    
+    struct import_node *import_node;
 };
 
 struct declaration_list{
@@ -790,6 +792,8 @@ struct ast_function{
                 struct declaration_reference_node *first;
                 struct declaration_reference_node *last;
             } referenced_declarations;
+            
+            struct import_node *import_node;
         };
         struct ast_declaration as_decl;
     };
@@ -827,7 +831,6 @@ struct ast_function{
     u32 debug_symbol_offset;
     u32 pushed_register_mask; // (1 << REGISTER_XXX) is set if we pushed that register in the prolog
     
-    struct import_node *import_node;
     struct seh_exception_handler *seh_exception_handler;
 };
 

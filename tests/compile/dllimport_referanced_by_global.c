@@ -1,3 +1,4 @@
+// os windows
 // compile
 
 __declspec(dllimport) float floorf(float);

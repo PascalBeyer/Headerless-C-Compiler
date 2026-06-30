@@ -249,6 +249,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     
     struct ast_list exports = zero_struct;
     struct ast_list imports = zero_struct;
+    struct ast_list data_imports = zero_struct;
     
     struct ast_list defined_functions = zero_struct;
     
@@ -317,6 +318,12 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                     
                     if(decl->flags & DECLARATION_FLAGS_is_thread_local){
                         ast_list_append(&tls_declarations, arena, ast);
+                        continue;
+                    }
+                    
+                    if(decl->flags & DECLARATION_FLAGS_is_dllimport){
+                        assert(decl->import_node);
+                        ast_list_append(&data_imports, scratch, &decl->kind);
                         continue;
                     }
                     
@@ -613,10 +620,10 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             u8 *plt = push_data(arena, u8, 0x10 + 0x10 * imports.count);
             
-            // We add the got relative virtual address when we allocate the .got
+            // We add the got relative virtual address when we allocate the .got.plt
             
-            // push qword ptr [.got + 0x08]
-            // jmp  qword ptr [.got + 0x10]
+            // push qword ptr [.got.plt + 0x08]
+            // jmp  qword ptr [.got.ptl + 0x10]
             
             // ff 35 <offset>
             // ff 25 <offset>
@@ -740,7 +747,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         fill_section_header(rodata, SHT_PROGBITS, SHF_ALLOC, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
     }
     
-    if(imports.count){
+    if(imports.count || data_imports.count){
         u8 *interp_section_start = arena_current(arena);
         u8 *interp_segment_start = interp_section_start;
         push_zero_terminated_string_copy(arena, string("/lib64/ld-linux-x86-64.so.2"));
@@ -767,7 +774,13 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         u64 addend;
     } *rela_plt_relocations = 0;
     
-    if(imports.count){
+    u64 rela_dyn_section_index = 0;
+    u32 rela_dyn_section_rva  = 0;
+    u64 rela_dyn_section_size = 0;
+    
+    struct elf_relocation_addend *rela_dyn_relocations = 0;
+    
+    if(imports.count || data_imports.count){
         dynstr_section_index = section_header_at;
         dynstr_section_start = arena_current(arena);
         dynstr_section_rva = make_relative_virtual_address(ro_segment_start, dynstr_section_start);
@@ -775,6 +788,11 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         push_zero_terminated_string_copy(arena, string("")); // Start with a zero-sized string.
         
         for_ast_list(imports){
+            struct ast_declaration *decl = (struct ast_declaration *)it->value;
+            push_zero_terminated_string_copy(arena, atom_get_string(decl->identifier->atom));
+        }
+        
+        for_ast_list(data_imports){
             struct ast_declaration *decl = (struct ast_declaration *)it->value;
             push_zero_terminated_string_copy(arena, atom_get_string(decl->identifier->atom));
         }
@@ -795,7 +813,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         {
             push_struct(arena, struct elf_symbol); // The first one is all zeroes for some reason.
             
-            struct elf_symbol *symbols = push_uninitialized_data(arena, struct elf_symbol, imports.count);
+            struct elf_symbol *symbols = push_uninitialized_data(arena, struct elf_symbol, imports.count + data_imports.count);
             u64 symbol_index = 0;
             u32 symbol_name_offset = 1;
             for_ast_list(imports){
@@ -806,6 +824,16 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 symbol->value = 0;
                 symbol->size = 0;
                 symbol->info = /*STB_GLOBAL*/(1 << 4) | /*STT_FUNC*/2;
+                symbol->other = /*STV_DEFAULT*/0;
+            }
+            for_ast_list(data_imports){
+                struct ast_declaration *decl = (struct ast_declaration *)it->value;
+                struct elf_symbol *symbol = symbols + symbol_index++;
+                symbol->name_offset = symbol_name_offset; symbol_name_offset += decl->identifier->size + 1;
+                symbol->section_index = 0;
+                symbol->value = 0;
+                symbol->size = 0;
+                symbol->info = /*STB_GLOBAL*/(1 << 4)| /*STT_OBJECT*/1;
                 symbol->other = /*STV_DEFAULT*/0;
             }
         }
@@ -819,39 +847,42 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         {
             u32 *hash_section_header = push_data(arena, u32, 2);
             
-            u32 hash_bucket_count = (u32)(2 * imports.count);
-            u32 hash_chain_count  = (u32)(imports.count + 1);
+            u32 hash_bucket_count = (u32)(2 * (imports.count + data_imports.count));
+            u32 hash_chain_count  = (u32)(imports.count + data_imports.count + 1);
             u32 *hash_buckets = push_data(arena, u32, hash_bucket_count);
-            u32 *hash_chains  = push_data(arena, u32, imports.count + 1);
+            u32 *hash_chains  = push_data(arena, u32, hash_chain_count);
             
             hash_section_header[0] = hash_bucket_count;
             hash_section_header[1] = hash_chain_count;
             
             u32 symbol_index = 1;
             
-            for_ast_list(imports){
-                struct ast_declaration *decl = (struct ast_declaration *)it->value;
-                
-                u64 hash = elf_symbol_name_hash(atom_get_string(decl->identifier->atom));
-                u32 hash_bucket_index = hash % hash_bucket_count;
-                
-                u32 collision_symbol_index = hash_buckets[hash_bucket_index];
-                if(!collision_symbol_index){
-                    hash_buckets[hash_bucket_index] = symbol_index;
-                }else{
-                    while(1){
-                        u32 chain_entry = hash_chains[collision_symbol_index];
-                        
-                        if(!chain_entry){
-                            hash_chains[collision_symbol_index] = symbol_index;
-                            break;
+            for(u32 ast_list_index = 0; ast_list_index < 2; ast_list_index++){
+                struct ast_list ast_list = ast_list_index ? data_imports : imports;
+                for_ast_list(ast_list){
+                    struct ast_declaration *decl = (struct ast_declaration *)it->value;
+                    
+                    u64 hash = elf_symbol_name_hash(atom_get_string(decl->identifier->atom));
+                    u32 hash_bucket_index = hash % hash_bucket_count;
+                    
+                    u32 collision_symbol_index = hash_buckets[hash_bucket_index];
+                    if(!collision_symbol_index){
+                        hash_buckets[hash_bucket_index] = symbol_index;
+                    }else{
+                        while(1){
+                            u32 chain_entry = hash_chains[collision_symbol_index];
+                            
+                            if(!chain_entry){
+                                hash_chains[collision_symbol_index] = symbol_index;
+                                break;
+                            }
+                            
+                            collision_symbol_index = hash_chains[collision_symbol_index];
                         }
-                        
-                        collision_symbol_index = hash_chains[collision_symbol_index];
                     }
+                    
+                    symbol_index += 1;
                 }
-                
-                symbol_index += 1;
             }
         }
         
@@ -866,6 +897,16 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         rela_plt_section_index = section_header_at;
         fill_section_header(rela_plt, SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
+        
+        push_align(arena, 8);
+        u8 *rela_dyn_section_start = arena_current(arena);
+        rela_dyn_section_rva = make_relative_virtual_address(ro_segment_start, rela_dyn_section_start);
+        
+        rela_dyn_relocations = push_uninitialized_data(arena, struct elf_relocation_addend, data_imports.count);
+        rela_dyn_section_size = arena_current(arena) - rela_dyn_section_start;
+        
+        rela_dyn_section_index = section_header_at;
+        fill_section_header(rela_dyn, SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
     }
     
     if(rodata_section_start != arena_current(arena)){
@@ -874,57 +915,92 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     
     u8 *rw_segment_start = arena_current(arena);
     
-    if(imports.count){
+    if(imports.count || data_imports.count){
         push_align(arena, 8);
         
-        u8 *got_section_start = arena_current(arena);
-        u32 got_section_rva = make_relative_virtual_address(rw_segment_start, got_section_start);
+        u8 *got_plt_section_start = arena_current(arena);
+        u32 got_plt_section_rva = make_relative_virtual_address(rw_segment_start, got_plt_section_start);
         
-        u64 *got = push_uninitialized_data(arena, u64, imports.count + 3);
-        got[0] = 0; // filled in below. Not sure if this is actually used.
-        got[1] = 0; // reserved
-        got[2] = 0; // reserved
-        
-        *(u32 *)(plt_section_start + 2) += got_section_rva;
-        *(u32 *)(plt_section_start + 8) += got_section_rva;
-        
-        {
-            smm import_index = 0;
-            for_ast_list(imports){
-                u32 plt_entry_offset = (u32)(0x10 + 0x10 * import_index);
-                u32 import_plt_rva = plt_section_rva + plt_entry_offset;
+        if(imports.count){
+            u64 *got_plt = push_uninitialized_data(arena, u64, imports.count + 3);
+            got_plt[0] = 0; // filled in below. Not sure if this is actually used.
+            got_plt[1] = 0; // reserved
+            got_plt[2] = 0; // reserved
+            
+            *(u32 *)(plt_section_start + 2) += got_plt_section_rva;
+            *(u32 *)(plt_section_start + 8) += got_plt_section_rva;
+            
+            {
+                smm import_index = 0;
+                for_ast_list(imports){
+                    u32 plt_entry_offset = (u32)(0x10 + 0x10 * import_index);
+                    u32 import_plt_rva = plt_section_rva + plt_entry_offset;
+                    
+                    struct ast_function *function = (struct ast_function *)it->value;
+                    assert(function->kind == IR_function);
+                    function->relative_virtual_address = import_plt_rva;
+                    
+                    got_plt[import_index + 3] = virtual_image_base + import_plt_rva + 6;
+                    *(u32 *)(plt_section_start + plt_entry_offset + 2) += got_plt_section_rva;
+                    
+                    import_index++;
+                }
+            }
+            
+            u64 got_plt_section_index = section_header_at;
+            fill_section_header(got_plt, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/8);
+            
+            {
+                // Now that we know where the got_plt is, fill out the rela.plt relocations:
                 
-                struct ast_function *function = (struct ast_function *)it->value;
-                assert(function->kind == IR_function);
-                function->relative_virtual_address = import_plt_rva;
+                for(smm symbol_index = 0; symbol_index < imports.count; symbol_index++){
+                    struct elf_relocation_addend *relocation = rela_plt_relocations + symbol_index;
+                    relocation->info = ((symbol_index + 1) << 32) | /*R_X86_64_JUMP_SLOT*/7;
+                    relocation->offset = virtual_image_base + got_plt_section_rva + 8 * symbol_index + 0x18;
+                    relocation->addend = 0;
+                }
                 
-                got[import_index + 3] = virtual_image_base + import_plt_rva + 6;
-                *(u32 *)(plt_section_start + plt_entry_offset + 2) += got_section_rva;
-                
-                import_index++;
+                section_headers[rela_plt_section_index].info = (u32)got_plt_section_index;
             }
         }
         
-        u64 got_section_index = section_header_at;
-        fill_section_header(got, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/8);
-        
-        {
-            // Now that we know where the got is, fill out the rela.plt relocations:
+        if(data_imports.count){
+            u8 *got_section_start = arena_current(arena);
+            u32 got_section_rva = make_relative_virtual_address(rw_segment_start, got_section_start);
             
-            for(smm symbol_index = 0; symbol_index < imports.count; symbol_index++){
-                struct elf_relocation_addend *relocation = rela_plt_relocations + symbol_index;
-                relocation->info = ((symbol_index + 1) << 32) | /*R_X86_64_JUMP_SLOT*/7;
-                relocation->offset = virtual_image_base + got_section_rva + 8 * symbol_index + 0x18;
-                relocation->addend = 0;
+            u64 *got = push_data(arena, u64, data_imports.count); // I think these can all be 0.
+            
+            {
+                u64 import_index = 0;
+                for_ast_list(data_imports){
+                    struct ast_declaration *decl = (struct ast_declaration *)it->value;
+                    assert(decl->kind == IR_declaration);
+                    
+                    decl->relative_virtual_address = make_relative_virtual_address(rw_segment_start, got + import_index);
+                    
+                    import_index++;
+                }
             }
             
-            section_headers[rela_plt_section_index].info = (u32)got_section_index;
-        }
+            u64 got_section_index = section_header_at;
+            fill_section_header(got, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/8);
             
+            {
+                // Now that we know where the got is, fill out the rela.dyn relocations:
+                
+                for(smm symbol_index = 0; symbol_index < data_imports.count; symbol_index++){
+                    struct elf_relocation_addend *relocation = rela_dyn_relocations + symbol_index;
+                    relocation->info = ((imports.count + symbol_index + 1) << 32) | /*R_X86_64_GLOB_DAT*/6;
+                    relocation->offset = virtual_image_base + got_section_rva + 8 * symbol_index;
+                    relocation->addend = 0;
+                }
+                
+                section_headers[rela_dyn_section_index].info = (u32)got_section_index;
+            }
+        }
+        
         u8 *dynamic_section_start = arena_current(arena);
         u8 *dynamic_segment_start = dynamic_section_start;
-        u32 dynamic_section_rva = make_relative_virtual_address(rw_segment_start, dynamic_section_start);
-        got[0] = virtual_image_base + dynamic_section_rva;
         
         for(struct import_library_node *import_library_node = globals.import_libraries.first; import_library_node; import_library_node = import_library_node->next){
             *push_struct(arena, u64) = /*DT_NEEDED*/1;
@@ -946,17 +1022,30 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         *push_struct(arena, u64) = /*DT_SYMENT*/11;
         *push_struct(arena, u64) = sizeof(struct elf_symbol);
         
-        *push_struct(arena, u64) = /*DT_PLTGOT*/3;
-        *push_struct(arena, u64) = virtual_image_base + got_section_rva;
+        if(imports.count){
+            *push_struct(arena, u64) = /*DT_PLTGOT*/3;
+            *push_struct(arena, u64) = virtual_image_base + got_plt_section_rva;
+            
+            *push_struct(arena, u64) = /*DT_PLTRELSZ*/2;
+            *push_struct(arena, u64) = rela_plt_section_size;
+            
+            *push_struct(arena, u64) = /*DT_PLTREL*/20;
+            *push_struct(arena, u64) = /*R_X86_64_JUMP_SLOT*/7;
+            
+            *push_struct(arena, u64) = /*DT_JMPREL*/0x17;
+            *push_struct(arena, u64) = virtual_image_base + rela_plt_section_rva;
+        }
         
-        *push_struct(arena, u64) = /*DT_PLTRELSZ*/2;
-        *push_struct(arena, u64) = rela_plt_section_size;
-        
-        *push_struct(arena, u64) = /*DT_PLTREL*/20;
-        *push_struct(arena, u64) = /*R_X86_64_JUMP_SLOT*/7;
-        
-        *push_struct(arena, u64) = /*DT_JMPREL*/0x17;
-        *push_struct(arena, u64) = virtual_image_base + rela_plt_section_rva;
+        if(data_imports.count){
+            *push_struct(arena, u64) = /*DT_RELA*/7;
+            *push_struct(arena, u64) = virtual_image_base + rela_dyn_section_rva;
+            
+            *push_struct(arena, u64) = /*DT_RELASZ*/8;
+            *push_struct(arena, u64) = rela_dyn_section_size;
+            
+            *push_struct(arena, u64) = /*DT_RELAENT*/9;
+            *push_struct(arena, u64) = sizeof(struct elf_relocation_addend);
+        }
         
         *push_struct(arena, u64) = /*DT_FLAGS*/0x1e;
         *push_struct(arena, u64) = /*DF_BIND_NOW*/8;
@@ -1059,6 +1148,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 if(source_kind == IR_function || source_kind == IR_declaration){
                     struct ast_declaration *source_declaration = (struct ast_declaration *)patch->source;
                     
+                    print("%.*s %x %.*s %x\n", patch->dest_declaration->identifier->size, patch->dest_declaration->identifier->data, patch->dest_declaration->relative_virtual_address, source_declaration->identifier->size, source_declaration->identifier->data, source_declaration->relative_virtual_address);
+                    
                     smm source_location = source_declaration->relative_virtual_address + patch->location_offset_in_source_declaration;
                     
                     *(s32 *)memory_location = save_truncate_smm_to_s32(source_location - rip_at);
@@ -1157,6 +1248,19 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
 #undef fill_section_header
 #undef fill_program_header
 #undef make_relative_virtual_address
+    
+    for_ast_list(defined_functions){
+        struct ast_function *function = cast(struct ast_function *)it->value;
+        
+        print("%.*s %zx:\n", function->identifier->size, function->identifier->data, function->relative_virtual_address);
+        for(smm index = 0; index < function->line_information.size; index++){
+            struct function_line_information line = function->line_information.data[index];
+            
+            print("    0x%zx %u\n", virtual_image_base + function->relative_virtual_address + line.offset, line.line);
+        }
+        print("\n");
+    }
+    
 }
 
 

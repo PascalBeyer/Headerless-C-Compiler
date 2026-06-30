@@ -403,11 +403,6 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     
     if(shared_object_symbol){
         
-        if(declaration->kind == IR_declaration){
-            report_error(context, declaration->identifier, "@incomplete: Currently no importing for data declarations?");
-            return;
-        }
-        
         struct import_library_node *shared_object_node = globals.import_libraries.first;
         for(; shared_object_node; shared_object_node = shared_object_node->next){
             if(string_match(shared_object_node->name, shared_object_name)) break;
@@ -428,10 +423,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         sll_push_back(shared_object_node->import_list, import_node);
         shared_object_node->import_list.count += 1;
         declaration->flags |= DECLARATION_FLAGS_is_dllimport;
-        
-        struct ast_function *function = (struct ast_function *)declaration;
-        function->import_node = import_node;
-        
+        declaration->import_node = import_node;
         return;
     }
     
@@ -447,13 +439,6 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     if(object_file_library_name.data){
         report_warning(context, WARNING_imported_function_is_also_defined, declaration->identifier, "%s is imported from '%.*s', but also defined in library '%.*s'.", Function_or_Declaration, import_library_name.size, import_library_name.data, object_file_library_name.size, object_file_library_name.data);
     }
-    
-    if(declaration->kind == IR_declaration){
-        report_error(context, declaration->identifier, "@incomplete: Currently no __declspec(dllimport) for data declarations?");
-        return;
-    }
-    
-    struct ast_function *function = (struct ast_function *)declaration;
     
     u8 *library_name = (u8 *)(ar_import_header + 1) + identifier.size + 1;
     
@@ -484,7 +469,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     sll_push_back(dll_node->import_list, import_node);
     dll_node->import_list.count += 1;
     
-    function->import_node = import_node;
+    declaration->import_node = import_node;
     
     if(!is_dll_import){
         // :dllimports_with_missing_declspec
@@ -499,7 +484,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
             report_warning(context, WARNING_function_is_implicitly_dllimport, declaration->identifier, "%s is treated as dllimport, but was not declared '__declspec(dllimport)'.", Function_or_Declaration);
         }
         
-        function->as_decl.flags |= DECLARATION_FLAGS_is_dllimport;
+        declaration->flags |= DECLARATION_FLAGS_is_dllimport;
     }
 }
 

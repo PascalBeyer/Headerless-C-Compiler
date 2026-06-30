@@ -1151,8 +1151,6 @@ unsigned int test_thread_entry(void *thread_parameter){
                         
                         char *run_command_line = push_format_cstring(&arena, "%s%s%.*s", output_file_name, command->data.size ? " " : "", command->data.size, command->data.data);
                         
-                        print("run_command_line %s\n", run_command_line);
-                        
                         // 
                         // We overwrite output here, this means subsequent 'check' commands check against this output.
                         // 
