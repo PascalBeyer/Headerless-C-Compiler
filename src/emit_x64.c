@@ -600,6 +600,7 @@ func void emit_prefixes_and_opcode(struct context *context, struct prefixes _pre
         if(register_is_extended(reg))  rex |= REXR;
         if(register_is_extended(regm)) rex |= REXB;
         if(index >= 0 && register_is_extended(index)) rex |= REXX;
+        if(size == 1 && (4 <= reg && reg <= 7)) rex |= 0x40;
         if(rex) emit(rex);
         
         // emit the opcode
@@ -2009,7 +2010,6 @@ func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct conte
         free_emit_location(context, rhs);
     }else{
         struct emit_location *loaded_rhs = emit_load_gpr(context, rhs);
-        if(rhs->type->size == 1 && 4 <= loaded_rhs->loaded_register && loaded_rhs->loaded_register < 8) emit(0x40); // Avoid AH, CH, DH, BH.
         emit_reg_extended_op(context, no_prefix(), one_byte_opcode(inst), extension, loaded_rhs);
         free_emit_location(context, loaded_rhs);
     }
@@ -2371,11 +2371,6 @@ func struct emit_location *emit_compare_to_zero(struct context *context, struct 
         u8 inst = TEST_REGM_REG;
         if(loaded->type->size == 1){
             inst = TEST_REGM8_REG8;
-            
-            if(4 <= loaded->loaded_register && loaded->loaded_register < 8){
-                // I really have to fix the whole system.
-                emit(0x40);
-            }
         }
         
         emit_register_register(context, no_prefix(), one_byte_opcode(inst), loaded, loaded);
