@@ -5197,7 +5197,17 @@ case NUMBER_KIND_##type:{ \
                 if(!check_unary_for_basic_types(context, index.resolved_type, CHECK_integer, test)) return index;
                 
                 if(operand.resolved_type->kind != AST_pointer_type && operand.resolved_type->kind != AST_array_type){
-                    report_error(context, test, "Left hand side of [] needs to be of pointer or array type.");
+                    begin_error_report(context);
+                    
+                    struct string type_string = push_type_string(&context->scratch, &context->scratch, operand.resolved_type);
+                    report_error(context, test, "Left hand side of [] needs to be of pointer or array type, but is '%.*s'.", type_string.size, type_string.data);
+                    
+                    if(operand.resolved_type->kind == AST_struct || operand.resolved_type->kind == AST_union || operand.resolved_type->kind == AST_enum){
+                        struct ast_compound_type *compound = (struct ast_compound_type *)operand.resolved_type;
+                        report_error(context, compound->identifier, "... Here is the type.");
+                    }
+                    
+                    end_error_report(context);
                     return index;
                 }
                 
