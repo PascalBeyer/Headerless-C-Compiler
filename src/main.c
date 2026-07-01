@@ -3923,7 +3923,7 @@ int main(int argc, char *argv[]){
             // If the file is not a source file, we should use the libraries paths to find the library file.
             // Hence, in this loop we don't want to handle it in any way.
             // 
-            if(string_match(extension, string(".lib"))){
+            if(string_match(extension, string(".lib")) || string_match(extension, string(".so"))){
                 add_specified_library(arena, path, null);
                 continue;
             }else if(string_match(extension, string(".obj"))){
