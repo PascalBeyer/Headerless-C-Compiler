@@ -600,7 +600,7 @@ func void emit_prefixes_and_opcode(struct context *context, struct prefixes _pre
         if(register_is_extended(reg))  rex |= REXR;
         if(register_is_extended(regm)) rex |= REXB;
         if(index >= 0 && register_is_extended(index)) rex |= REXX;
-        if(size == 1 && (4 <= reg && reg <= 7)) rex |= 0x40;
+        if(size == 1 && ((4 <= reg && reg <= 7) || (4 <= regm && regm <= 7))) rex |= 0x40;
         if(rex) emit(rex);
         
         // emit the opcode
@@ -1051,7 +1051,7 @@ struct system_v_type_classification{
                     }else if(type->flags & TYPE_FLAG_is_intrin_type){
                         ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
                         for(u32 index = 1; index < root_type->size/8; index++){
-                            ret.classification[classification_index + index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse_upper);
+                            ret.classification[classification_index + index] = system_v_combine_type_classification(ret.classification[classification_index + index], SYSTEM_V_TYPE_CLASSIFICATION_sse_upper);
                         }
                     }else if(type->kind == AST_struct || type->kind == AST_union || type->kind == AST_array_type){
                         if(stack_at == stack_capacity) push_uninitialized_struct(&context->scratch, struct compound_stack_entry);
@@ -1088,7 +1088,7 @@ struct system_v_type_classification{
                         u64 classification_index = offset / 8;
                         ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
                         for(u32 index = 1; index < root_type->size/8; index++){
-                            ret.classification[classification_index + index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse_upper);
+                            ret.classification[classification_index + index] = system_v_combine_type_classification(ret.classification[classification_index + index], SYSTEM_V_TYPE_CLASSIFICATION_sse_upper);
                         }
                     }
                 }else if(element_type->kind == AST_struct || element_type->kind == AST_union || element_type->kind == AST_array_type){
@@ -1124,7 +1124,7 @@ struct system_v_type_classification{
         }
         
         for(u32 index = 1; index < 4; index++){
-            if(ret.classification[0] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+            if(ret.classification[index] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
                 ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_memory;
             }
         }
@@ -1592,11 +1592,12 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
             // "The reg field in the ModR/M byte is unused"
             allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
             
-            struct emit_location *load_into = emit_location_loaded(context, source->type, register_to_load_into);
+            struct emit_location *load_into = emit_location_loaded(context, &globals.typedef_u8, register_to_load_into);
             emit_reg_extended_op(context, create_prefixes(0), two_byte_opcode(inst), 0, load_into);
             if(source_size != 1){
                 emit_register_register(context, create_prefixes(0), two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM8), load_into, load_into);
             }
+            load_into->type = source->type;
             
             return load_into;
         }break;
@@ -2832,7 +2833,7 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
 
 struct emit_location *emit_integer_cast(struct context *context, struct emit_location *loc, struct ast_type *dest_type, struct opcode opcode){
     
-    loc->type = dest_type;
+    if(loc->type->size == 2) loc->type = &globals.typedef_u32;
     
     if(loc->state == EMIT_LOCATION_register_relative){
         enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
@@ -2845,6 +2846,8 @@ struct emit_location *emit_integer_cast(struct context *context, struct emit_loc
     }else{
         emit_register_register(context, no_prefix(), opcode, loc, loc);
     }
+    
+    loc->type = dest_type;
     
     return loc;
 }
@@ -4211,9 +4214,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         if(passed_in_memory){
                             
                             stack_pass_location = align_up(stack_pass_location, argument_type->alignment);
-                            stack_pass_location += argument_type->size;
-                            
                             struct emit_location *copy_into = emit_location_register_relative(context, argument_type, context->register_sp, context->register_sp, stack_pass_location);
+                            stack_pass_location += align_up(argument_type->size, 8); // not sure, it seems this moves in increments of 8?
                             
                             if(argument_type->kind == AST_integer_type || argument_type->kind == AST_float_type){
                                 argument = emit_load(context, argument);
@@ -6083,7 +6085,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                 emit_store(context, dest, source);
             }
             
-            *rel = to_u8(context->emit_arena.current - rel);
+            *rel = to_u8(context->emit_arena.current - (rel + 1));
             
             for(integer_register_at = array_count(integer_argument_registers)-1; integer_register_at < 0xffffffff; integer_register_at--){
                 function->stack_space_needed += 8;

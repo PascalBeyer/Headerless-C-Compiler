@@ -1,4 +1,4 @@
-// fail "Left hand side of [] needs to be of pointer or array type."
+// fail "Left hand side of [] needs to be of pointer or array type, but is 'int'."
 
 typedef unsigned char type_0;
 
