@@ -595,6 +595,8 @@ struct ast_declaration{
     struct import_node *import_node;
 };
 
+#define debug_match(decl, name) if(atoms_match((decl)->identifier->atom, atom_for_string(string(#name)))) os_debug_break();
+
 struct declaration_list{
     struct ast_type *type_specifier;
     enum ast_kind *defined_type_specifier;

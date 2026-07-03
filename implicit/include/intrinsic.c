@@ -3470,8 +3470,17 @@ __declspec(inline_asm) __m256i _mm256_set1_epi8(char a){
 }
 
 
-__declspec(inline_asm)__m256i _mm256_cmpeq_epi8(__m256i a, __m256i b){
+__declspec(inline_asm) __m256i _mm256_cmpeq_epi8(__m256i a, __m256i b){
     vpcmpeqb ymm0, a, b
     return ymm0
 }
 
+__declspec(inline_asm) __m256i _mm256_cmpeq_epi16(__m256i a, __m256i b){
+    vpcmpeqw ymm0, a, b
+    return ymm0
+}
+
+__declspec(inline_asm) __m256i _mm256_broadcastw_epi16(__m128i a){
+    vpbroadcastw ymm0, a
+    return ymm0
+}

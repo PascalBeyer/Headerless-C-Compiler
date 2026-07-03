@@ -3255,7 +3255,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ir_arena_at += sizeof(struct ir);
                 smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
                 struct emit_location *loc = emit_location_stack[stack_index];
-                loc->type = &globals.typedef_u64;
+                loc->type = &globals.typedef_f64;
                 
                 // cvtss2sd - convert_scalar_single_to_scalar_double
                 if(loc->state == EMIT_LOCATION_register_relative){
@@ -5261,9 +5261,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 // 
                 // @note: To allow for -(0) == -0, instead of 0, we have to use an xor.
                 // 
+                struct ast_type *gpr_type = loaded->type->size == 4 ? &globals.typedef_u32 : &globals.typedef_u64;
                 
                 enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
-                struct emit_location *as_gpr = emit_location_loaded(context, loaded->type, reg);
+                struct emit_location *as_gpr = emit_location_loaded(context, gpr_type, reg);
                 emit_location_prevent_spilling(context, as_gpr);
                 
                 // movd / movq as_gpr, loaded

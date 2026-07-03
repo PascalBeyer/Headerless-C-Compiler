@@ -1382,7 +1382,15 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             }
         }break;
         
+        case MEMONIC_vpbroadcastw:{
+            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
+                asm_instruction->operands[regm_index].size = 16;
+            }
+            
+        }break;
+        
         case MEMONIC_vpcmpeqb:
+        case MEMONIC_vpcmpeqw:
         case MEMONIC_vpshufb:
         case MEMONIC_vshufps: case MEMONIC_vblendps: case MEMONIC_vperm2f128: // 'op ymm1, ymm2, ymm3/m256, imm8' or 'op xmm1, xmm2, xmm3/m128, imm8'
         case MEMONIC_vpminub: case MEMONIC_vpxor:

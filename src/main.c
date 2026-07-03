@@ -5117,33 +5117,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
     // If /Zs was specified, we have succeeded when we get here!
     if(globals.cli_options.syntax_check) return 0;
     
-    // #pragma comment(linker, "/ALTERNATENAME:strdup=_strdup").
-    for(struct alternate_name *alternate_name = globals.alternate_names.first; alternate_name; alternate_name = alternate_name->next){
-        struct ast_declaration *source      = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->source);
-        struct ast_declaration *destination = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->destination);
-        
-        if(warning_enabled[WARNING_ALTERNATENAME_type_mismatch] && source && destination){
-            if(!types_are_equal(source->type, destination->type)){
-                struct string source_type      = push_type_string(context->arena, &context->scratch, source->type);
-                struct string destination_type = push_type_string(context->arena, &context->scratch, destination->type);
-                
-                begin_error_report(context);
-                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, alternate_name->token, "/ALTERNATENAME source (%.*s) and destination (%.*s) have mismatching type.", alternate_name->source.size, alternate_name->source.data, alternate_name->destination.size, alternate_name->destination.data);
-                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, source->identifier, "Source has type '%.*s'.", source_type.size, source_type.data);
-                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, destination->identifier, "Destination has type '%.*s'.", destination_type.size, destination_type.data);
-                end_error_report(context);
-            }
-        }
-        
-        if(destination && destination->assign_expr){
-            begin_error_report(context);
-            report_error(context, alternate_name->token, "/ALTERNATENAME currently does not support linking to defined identifiers.");
-            report_error(context, get_initializer_token(destination), "Here, the destination '%.*s' was defined.", alternate_name->destination.size, alternate_name->destination.data);
-            end_error_report(context);
-            continue;
-        }
-    }
-    
     struct string_list attempted_entry_point_string_list = {};
     
     if(!globals.cli_options.no_entry){
@@ -5880,6 +5853,34 @@ globals.typedef_##postfix = (struct ast_type){                                  
     }
     
     end_temporary_memory(temp);
+    
+    // #pragma comment(linker, "/ALTERNATENAME:strdup=_strdup").
+    for(struct alternate_name *alternate_name = globals.alternate_names.first; alternate_name; alternate_name = alternate_name->next){
+        struct ast_declaration *source      = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->source);
+        struct ast_declaration *destination = (struct ast_declaration *)ast_table_get(&globals.global_declarations, alternate_name->destination);
+        
+        if(warning_enabled[WARNING_ALTERNATENAME_type_mismatch] && source && destination){
+            if(!types_are_equal(source->type, destination->type)){
+                struct string source_type      = push_type_string(context->arena, &context->scratch, source->type);
+                struct string destination_type = push_type_string(context->arena, &context->scratch, destination->type);
+                
+                begin_error_report(context);
+                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, alternate_name->token, "/ALTERNATENAME source (%.*s) and destination (%.*s) have mismatching type.", alternate_name->source.size, alternate_name->source.data, alternate_name->destination.size, alternate_name->destination.data);
+                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, source->identifier, "Source has type '%.*s'.", source_type.size, source_type.data);
+                report_warning(context, WARNING_ALTERNATENAME_type_mismatch, destination->identifier, "Destination has type '%.*s'.", destination_type.size, destination_type.data);
+                end_error_report(context);
+            }
+        }
+        
+        if(source && (source->flags & DECLARATION_FLAGS_is_reachable_from_entry) && destination && destination->assign_expr){
+            begin_error_report(context);
+            report_error(context, alternate_name->token, "/ALTERNATENAME currently does not support linking to defined identifiers.");
+            report_error(context, get_initializer_token(destination), "Here, the destination '%.*s' was defined.", alternate_name->destination.size, alternate_name->destination.data);
+            end_error_report(context);
+            continue;
+        }
+    }
+    
     end_error_report(context);
     
     if(context->error){

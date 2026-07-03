@@ -297,6 +297,7 @@ enum memonic{
     MEMONIC_vpminub,
     MEMONIC_vpxor,
     MEMONIC_vpcmpeqb,
+    MEMONIC_vpcmpeqw,
     
     MEMONIC_vpshufb,
     MEMONIC_vshufps,
@@ -308,6 +309,8 @@ enum memonic{
     MEMONIC_vpsrld, MEMONIC_vpsrad, MEMONIC_vpslld,  // vpsrld/vpsrad/vpslld xmm, xmm, xmm/m128 | vpsrld/vpsrad/vpslld xmm, xmm, imm8
     MEMONIC_vpsrlq, MEMONIC_vpsraq, MEMONIC_vpsllq,  // vpsrlq/------/vpsllq xmm, xmm, xmm/m128 | vpsrlq/------/vpsllq xmm, xmm, imm8
     MEMONIC_vpsrldq,                MEMONIC_vpslldq, //                                         | vpsrldq/----/vpslldq xmm, xmm, imm8
+    
+    MEMONIC_vpbroadcastw,
     
     MEMONIC_vpmovmskb,
     
@@ -862,6 +865,7 @@ static struct{
     [MEMONIC_vpxor]   = {.memonic = const_string("vpxor"),   .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },
     [MEMONIC_vpshufb] = {.memonic = const_string("vpshufb"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },
     [MEMONIC_vpcmpeqb]= {.memonic = const_string("vpcmpeqb"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },
+    [MEMONIC_vpcmpeqw]= {.memonic = const_string("vpcmpeqw"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },
     
     [MEMONIC_vblendps] = {.memonic = const_string("vblendps"),  .amount_of_operands = 4, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256, .operand_kind_flags[3] = ASM_OP_KIND_imm8 },
     [MEMONIC_vshufps]  = {.memonic = const_string("vshufps"),   .amount_of_operands = 4, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256, .operand_kind_flags[3] = ASM_OP_KIND_imm8 },
@@ -876,6 +880,7 @@ static struct{
     [MEMONIC_vptest] = {.memonic = const_string("vptest"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_ymmm256 },
     
     [MEMONIC_vpmovmskb] = {.memonic = const_string("vpmovmskb"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_reg32 | ASM_OP_KIND_reg64, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_ymm },
+    [MEMONIC_vpbroadcastw] = {.memonic = const_string("vpbroadcastw"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_ymm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128},
     
     [MEMONIC_vmovd] = {.memonic = const_string("vmovd"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_regm32, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_regm32 },
     [MEMONIC_vmovq] = {.memonic = const_string("vmovq"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_regm64, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_regm64 },
