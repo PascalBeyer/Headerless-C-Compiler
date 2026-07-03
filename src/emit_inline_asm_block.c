@@ -619,17 +619,23 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             case MEMONIC_movsx: case MEMONIC_movzx:{
                 struct emit_location *loaded = emit_load_without_freeing_gpr(context, lhs);
                 
-                // assert(rhs->size == 1 || rhs->size == 2);
+                assert(rhs->type->size == 1 || rhs->type->size == 2);
                 
                 u8 base_opcode = (inst->memonic == MEMONIC_movsx) ? MOVE_WITH_SIGN_EXTENSION_REG_REGM8 : MOVE_WITH_ZERO_EXTENSION_REG_REGM8;
                 struct opcode opcode = (rhs->type->size == 1) ? two_byte_opcode(base_opcode) : two_byte_opcode(base_opcode + 1);
-                rhs->type = loaded->type;
+                if(rhs->type->size == 2) rhs->type = &globals.typedef_u32;
+                
+                struct ast_type *type = loaded->type;
+                loaded->type = rhs->type;
                 
                 if(rhs->state == EMIT_LOCATION_loaded){
                     emit_register_register(context, no_prefix(), opcode, loaded, rhs);
                 }else{
                     emit_register_relative_register(context, no_prefix(), opcode, loaded->loaded_register, rhs);
                 }
+                
+                rhs->type = type;
+                lhs->type = type;
                 
                 if(loaded != lhs) emit_store(context, lhs, loaded);
             }break;

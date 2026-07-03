@@ -2247,16 +2247,6 @@ func void emit_end_jumps(struct context *context, struct jump_context jump_conte
     emit_end_jumps_location(jump_context, get_bytes_emitted(context));
 }
 
-func void emit_jump(struct context *context, smm location, enum comp_condition cond, enum jump_context_condition jump_on){
-    u8 inst = instruction_from_comp_condition(cond, jump_on);
-    
-    if(cond != COMP_none) emit(TWO_BYTE_INSTRUCTION_PREFIX);
-    emit(inst);
-    // @note: plus 4 because we have to factor in the 'emit_u32' afterwards
-    u32 rel_location = cast(u32)(location - (get_bytes_emitted(context) + 4));
-    emit_u32(rel_location);
-}
-
 //_____________________________________________________________________________________________________________________
 // Bitfields
 
@@ -2567,7 +2557,6 @@ struct alloca_patch_node{
 };
 
 func struct emit_location *emit_intrinsic(struct context *context, struct ast_function *function, struct ir_function_call *call, struct emit_location **argument_locations){
-    (void)call; // @cleanup: How is this not used?
     struct string identifier = token_get_string(function->identifier);
     
     if(string_match(identifier, string("_alloca")) || string_match(identifier, string("__builtin_alloca"))){
@@ -2683,6 +2672,181 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         emit_location_allow_spilling(context, valist);
         free_emit_location(context, valist);
         return null;
+    }else if(string_match(identifier, string("__builtin_va_arg"))){
+        struct ir *next_ir = &(call + 1)->base;
+        
+        if((u8 *)next_ir >= context->current_function->end_in_ir_arena || next_ir->kind != IR_deref){
+            report_error(context, null, "Error: Intrinsic %.*s used in function %.*s but the calling convention of the function is not System-V (the calling convention on linux). This is currently not supported.",
+                    identifier.size, identifier.data, context->current_function->identifier->size, context->current_function->identifier->data);
+            globals.an_error_has_occurred = true;
+            return emit_location_immediate(context, &globals.typedef_u64, 0);
+        }
+        
+        if(context->current_function_calling_convention != CALLING_CONVENTION_system_V){
+            report_error(context, null, "Error: Intrinsic %.*s used in function %.*s but the calling convention of the function is not System-V (the calling convention on linux). This is currently not supported.",
+                    identifier.size, identifier.data, context->current_function->identifier->size, context->current_function->identifier->data);
+            globals.an_error_has_occurred = true;
+        }
+        
+        struct ir_deref *deref = (struct ir_deref *)next_ir;
+        struct ast_type *type = deref->type;
+        
+        struct system_v_type_classification classification = system_v_classify_type(context, type);
+        u32 eight_byte_count = (u32)(type->size + 7)/8;
+        
+        int passed_in_memory = false;
+        int needed_integer_registers = 0;
+        int needed_float_registers = 0;
+        
+        if(classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_memory){
+            passed_in_memory = true;
+        }else{
+            
+            for(u32 index = 0; index < eight_byte_count; index++){
+                if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
+                    needed_integer_registers += 1;
+                }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
+                    
+                    if(classification.classification[1] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper && classification.classification[2] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper && classification.classification[3] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                        passed_in_memory = true;
+                    }else{
+                        needed_float_registers += 1;
+                    }
+                    
+                }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_x87){
+                    passed_in_memory = true;
+                }else invalid_code_path;
+            }
+        }
+        
+        struct emit_location *valist = emit_load_gpr(context, argument_locations[0]);
+        emit_location_prevent_spilling(context, valist);
+        
+        struct jump_context jump_to_end = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+        
+        enum register_encoding register_to_load_into = allocate_register(context, REGISTER_KIND_gpr);
+        struct emit_location *loc = 0;
+        
+        // 1. Determine if type may be passed in the registers. If not go to step 7.
+        if(!passed_in_memory){
+            // 2. computer num_gp to hold the number of general purpose registers needed
+            //    to pass type and num_fp to hold the number of ploating point registers needed.
+            u64 num_fp = needed_float_registers;
+            u64 num_gp = needed_integer_registers;
+            
+            // 3. Verify whether arguments fit into registers. In the case:
+            //     
+            //     l->gp_offset > 48 - num_gp * 8
+            //     
+            // or 
+            // 
+            //     l->fp_offset > 304 - num_fp * 16
+            //     
+            // go to step 7.
+            
+            struct jump_context jump_to_step_7 = emit_begin_jumps(JUMP_CONTEXT_jump_on_true);
+            
+            struct emit_location *gp_offset = 0;
+            if(num_gp > 0){
+                gp_offset = emit_load_gpr(context, emit_location_register_relative(context, &globals.typedef_u32, valist, 0, /*offset*/0));
+                struct emit_location *immediate = emit_location_immediate(context, &globals.typedef_u32, 0x30 - num_gp * 8);
+                // cmp [valist + 0], 48 - num_gp * 8
+                // jge .step_7
+                emit_binary_op__internal(context, no_prefix(), gp_offset, immediate, 4, 0, REG_OPCODE_CMP, CMP_REG8_REGM8, CMP_REG_REGM);
+                jump_context_emit(context, &jump_to_step_7, JUMP_CONTEXT_jump_on_true, COMP_bigger);
+            }
+            
+            struct emit_location *fp_offset = 0; 
+            if(num_fp > 0){
+                fp_offset = emit_load_gpr(context, emit_location_register_relative(context, &globals.typedef_u32, valist, 0, /*offset*/4));
+                // @cleanup: Are all 16 float registers are used as arguments? I thought not.
+                struct emit_location *immediate = emit_location_immediate(context, &globals.typedef_u32, 0xB0 - num_fp * 16);
+                // cmp [valist + 0], 304 - num_fp * 16
+                // jge .step_7
+                emit_binary_op__internal(context, no_prefix(), fp_offset, immediate, 4, 0, REG_OPCODE_CMP, CMP_REG8_REGM8, CMP_REG_REGM);
+                jump_context_emit(context, &jump_to_step_7, JUMP_CONTEXT_jump_on_true, COMP_bigger);
+            }
+            
+            struct emit_location *va_reg_save_area = emit_load_gpr(context, emit_location_register_relative(context, &globals.typedef_u64, valist, 0, /*offset*/0x10));
+            
+            // 4. Fetch type from l->reg_save_area with an offset of l->gp_offset
+            //    and/or l->fp_offset. This may require copying to a temporary location
+            //    in case the parameter is passed in a different register classes or 
+            //    requires an alignment greater than 8 for general purpose registers and 
+            //    16 for xmm registers.
+            if((num_fp && num_gp) || (num_gp && (type->alignment > 8)) || (num_fp && (type->alignment > 16))){
+                not_implemented;
+            }else if(num_gp){
+                loc = emit_location_register_relative(context, type, va_reg_save_area, gp_offset, 0);
+                loc = emit_load_address(context, loc, register_to_load_into);
+            }else if(num_fp){
+                loc = emit_location_register_relative(context, type, va_reg_save_area, fp_offset, 0);
+                loc = emit_load_address(context, loc, register_to_load_into);
+            }
+            
+            // 5. Set 
+            // 
+            //     l->gp_offset = l->gp_offset + num_gp * 8
+            //     l->fp_offset = l->fp_offset + num_fp * 16
+            if(num_gp){
+                free_emit_location(context, gp_offset);
+                gp_offset = emit_location_register_relative(context, &globals.typedef_u32, valist, 0, /*offset*/0);
+                struct emit_location *immediate = emit_location_immediate(context, &globals.typedef_u32, num_gp * 8);
+                emit_compound_assignment__internal(context, no_prefix(), gp_offset, immediate, 0, REG_OPCODE_ADD, ADD_REGM8_REG8, ADD_REGM_REG);
+            }
+            
+            if(num_fp){
+                free_emit_location(context, fp_offset);
+                fp_offset = emit_location_register_relative(context, &globals.typedef_u32, valist, 0, /*offset*/4);
+                struct emit_location *immediate = emit_location_immediate(context, &globals.typedef_u32, num_fp * 16);
+                emit_compound_assignment__internal(context, no_prefix(), fp_offset, immediate, 0, REG_OPCODE_ADD, ADD_REGM8_REG8, ADD_REGM_REG);
+            }
+            
+            // 6. return the fetched type.
+            jump_context_emit(context, &jump_to_end, JUMP_CONTEXT_jump_always, COMP_none);
+            
+            emit_end_jumps(context, jump_to_step_7);
+        }
+        
+        struct emit_location *overflow_arg_area = emit_load_gpr(context, emit_location_register_relative(context, &globals.typedef_u64, valist, 0, /*offset*/8));
+        emit_location_prevent_spilling(context, overflow_arg_area);
+        
+        // 7. Align l->overflow_arg_area upwards to a 16-byte boundary 
+        //    if alignment needed by type exceeds 8-byte boundary.
+        if(type->alignment > 8){
+            // add overflow_arg_area, 0xf
+            // and overflow_arg_area, ~0xf
+            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8), REG_OPCODE_ADD, overflow_arg_area); emit(0x0f);
+            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8), REG_OPCODE_AND, overflow_arg_area); emit(0xf0);
+        }
+        
+        // 8. Fetch type from l->overflow_arg_area.
+        // 
+        //    mov loc, overflow_arg_area
+        loc = emit_load_into_specific_gpr(context, overflow_arg_area, register_to_load_into);
+        
+        // 9. Set l->overflow_arg_area to:
+        // 
+        //     l->overflow_arg_area + sizeof(type)
+        // 
+        // 10. Align l->overflow_arg_area upwards to an 8-byte boundary.
+        u64 size = (type->size + 7) & ~7;
+        if(size < 0x80){
+            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8), REG_OPCODE_ADD, overflow_arg_area); emit(size);
+        }else{
+            emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_IMMIDIATE), REG_OPCODE_ADD, overflow_arg_area); emit_u32(size);
+        }
+        
+        emit_location_allow_spilling(context, overflow_arg_area);
+        emit_store(context, emit_location_register_relative(context, &globals.typedef_u64, valist, 0, /*offset*/8), overflow_arg_area);
+        
+        // 11. Return the fetched type
+        
+        emit_location_allow_spilling(context, valist);
+        free_emit_location(context, valist);
+        emit_end_jumps(context, jump_to_end);
+        return loc;
     }else{
         invalid_code_path;
     }
@@ -4195,7 +4359,11 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                 if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
                                     needed_integer_registers += 1;
                                 }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
-                                    needed_float_registers += 1;
+                                    if(argument_index >= parameter_count && eight_byte_count == 4 && classification.classification[1] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
+                                        passed_in_memory = true;
+                                    }else{
+                                        needed_float_registers += 1;
+                                    }
                                 }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
                                 }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_x87){
                                     passed_in_memory = true;
@@ -4725,7 +4893,6 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         }
                     }
                 }
-                
                 
                 if(ir_arena_at != current_function->end_in_ir_arena){
                     // :function_epilog

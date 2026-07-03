@@ -4678,6 +4678,25 @@ globals.typedef_##postfix = (struct ast_type){                                  
         }
         
         {
+            struct token *va_arg_token = push_dummy_token(arena, atom_for_string(string("__builtin_va_arg")), TOKEN_identifier);
+            struct token *va_list_token = push_dummy_token(arena, atom_for_string(string("va_list")), TOKEN_identifier);
+            
+            struct ast_function_type *va_arg_type = parser_type_push(context, function_type);
+            va_arg_type->return_type = &globals.typedef_void_pointer.base;
+            
+            struct declarator_return parameter_declarator = {
+                .type = &globals.typedef_void_pointer.base,
+                .ident = va_list_token,
+            };
+            
+            struct ast_declaration *parameter_declaration = push_declaration_for_declarator(context, parameter_declarator);
+            parameter_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
+            ast_list_append(&va_arg_type->argument_list, context->arena, &parameter_declaration->kind);
+            
+            register_intrinsic_function_declaration(context, va_arg_token, va_arg_type);
+        }
+        
+        {
             // 
             // The `__noop` function needs to be intrinsic, as it's arguments are not evaluated.
             // 
