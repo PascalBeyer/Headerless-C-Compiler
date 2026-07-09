@@ -564,10 +564,10 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     struct string_list section_name_string_table = {0}; // We gather up the section names and emit them in the end.
     string_list_postfix_no_copy(&section_name_string_table, scratch, string("\0"));
     
-#define fill_section_header(section_name, section_type, section_flags, section_alignment, section_link, section_info, section_entry_size){  \
+#define fill_section_header(section_name, section_string, section_type, section_flags, section_alignment, section_link, section_info, section_entry_size){  \
     struct elf_section_header *section_header = section_headers + section_header_at++;                                                      \
     u64 name_offset = section_name_string_table.total_size;                                                                                 \
-    string_list_postfix_no_copy(&section_name_string_table, scratch, string("." #section_name "\0"));                                       \
+    string_list_postfix_no_copy(&section_name_string_table, scratch, string("." section_string "\0"));                                       \
     section_header->name_offset = (u32)name_offset;                                                                                         \
     section_header->type = (section_type);                                                                                                  \
     section_header->flags = (section_flags);                                                                                                \
@@ -580,7 +580,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     section_header->entry_size = (section_entry_size);                                                                                      \
 }
     
-#define make_relative_virtual_address(section_start, address) (u32)(current_relative_virtual_address + ((u8 *)(address) - (section_start)))
+#define make_relative_virtual_address(segment_start, address) (u32)(current_relative_virtual_address + ((u8 *)(address) - (segment_start)))
     
     // 
     // Start to actually emit the sections.
@@ -608,7 +608,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         if(arena_current(arena) != text_section_start){
-            fill_section_header(text, SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
+            fill_section_header(text, "text", SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
         }
         
         if(imports.count){
@@ -647,7 +647,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 plt += 0x10;
             }
             
-            fill_section_header(plt, SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR, /*alignment*/0x10, /*link*/0, /*info*/0, /*entry_size*/0x10);
+            fill_section_header(plt, "plt", SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR, /*alignment*/0x10, /*link*/0, /*info*/0, /*entry_size*/0x10);
         }
     }
     
@@ -744,14 +744,14 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }
     
     if(rodata_section_start != arena_current(arena)){
-        fill_section_header(rodata, SHT_PROGBITS, SHF_ALLOC, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_section_header(rodata, "rodata", SHT_PROGBITS, SHF_ALLOC, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
     }
     
     if(imports.count || data_imports.count){
         u8 *interp_section_start = arena_current(arena);
         u8 *interp_segment_start = interp_section_start;
         push_zero_terminated_string_copy(arena, string("/lib64/ld-linux-x86-64.so.2"));
-        fill_section_header(interp, SHT_PROGBITS, SHF_ALLOC, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_section_header(interp, "interp", SHT_PROGBITS, SHF_ALLOC, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
         fill_program_header(interp, PT_INTERP, PF_READ, /*alignment*/1);
     }
     
@@ -803,7 +803,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         dynstr_section_size = arena_current(arena) - dynstr_section_start;
         
-        fill_section_header(dynstr, SHT_STRTAB, SHF_ALLOC, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_section_header(dynstr, "dynstr", SHT_STRTAB, SHF_ALLOC, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
         
         push_align(arena, 8);
         u64 dynsym_section_index = section_header_at;
@@ -838,7 +838,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             }
         }
         
-        fill_section_header(dynsym, SHT_DYNSYM, SHF_ALLOC, /*alignment*/8, /*link*/(u32)dynstr_section_index, /*info(local_symbol_count)*/1, /*entry_size*/sizeof(struct elf_symbol));
+        fill_section_header(dynsym, "dynsym", SHT_DYNSYM, SHF_ALLOC, /*alignment*/8, /*link*/(u32)dynstr_section_index, /*info(local_symbol_count)*/1, /*entry_size*/sizeof(struct elf_symbol));
         
         push_align(arena, 8);
         u8 *hash_section_start = arena_current(arena);
@@ -886,7 +886,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             }
         }
         
-        fill_section_header(hash, SHT_HASH, SHF_ALLOC, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info*/0, /*entry_size*/4);
+        fill_section_header(hash, "hash", SHT_HASH, SHF_ALLOC, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info*/0, /*entry_size*/4);
         
         push_align(arena, 8);
         u8 *rela_plt_section_start = arena_current(arena);
@@ -896,7 +896,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         rela_plt_section_size = arena_current(arena) - rela_plt_section_start;
         
         rela_plt_section_index = section_header_at;
-        fill_section_header(rela_plt, SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
+        fill_section_header(rela_plt, "rela.plt", SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
         
         push_align(arena, 8);
         u8 *rela_dyn_section_start = arena_current(arena);
@@ -906,7 +906,147 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         rela_dyn_section_size = arena_current(arena) - rela_dyn_section_start;
         
         rela_dyn_section_index = section_header_at;
-        fill_section_header(rela_dyn, SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
+        fill_section_header(rela_dyn, "rela_dyn", SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
+        
+        if(defined_functions.count){
+            u8 *eh_frame_section_start = arena_current(arena);
+            
+            // 
+            // The eh_frame_section is very simplified for our rbp based stack frames.
+            // We have one CIE (I don't know if there is ever more than one) and then
+            // one FDE for each function. 
+            // 
+            // The CIE gives some common parameters, and then contains an initial set of 
+            // dwarf cfa instructions that are intended to define the initial dfa at the start of the function.
+            // They seem to be always the same. Here they are:
+            // 
+            //    DW_CFA_def_cfa: r7 (rsp) ofs 8       (define the dfa to be at rsp + 8)
+            //    DW_CFA_offset: r16 (rip) at cfa-8    (define rip to be at cfa-8)
+            // 
+            // 
+            // All of the FDEs have the same form:
+            //     
+            //  frame instructions:
+            //     
+            //     DW_CFA_advance_loc: 1               (move the location to past the initial push rbp)
+            //     DW_CFA_def_cfa_offset: 16           (define the dfa to be rsp + /*rbp rip*/0x10)
+            //     DW_CFA_offset: r6 (rbp) at cfa-16   (define rbp to be on the stack at cfa - 0x10)
+            //     
+            //     DW_CFA_advance_loc: 3               (move the location to past the mov rbp, rsp)
+            //     DW_CFA_def_cfa_register: r6 (rbp)   (define the dfa to be contained in rbp)
+            //     
+            //     DW_CFA_advance_loc<n>: <end-1>      (move the location all the way to the end of the function, just past the pop rbp, but before the ret)
+            //     DW_CFA_def_cfa: r7 (rsp) ofs 8      (define the dfa to point to rsp + 8)
+            //     
+            // For reference, the corresponding assembly:
+            // 
+            //   function:
+            //           0: push rbp
+            //           1: mov rbp, rsp
+            //              <...>
+            //     <end-2>: pop rbp
+            //     <end-1>: ret
+            // 
+            
+            struct cie{
+                u32 length;
+                u32 cie_offset;
+                
+                u8 version;
+                u8 augmentation_string[3];
+                
+                u8 code_alignment_factor;
+                u8 data_alignment_factor;
+                u8 return_address_register;
+                u8 augmentation_length;
+                
+                u8 address_pointer_encoding;
+                u8 initial_instructions[7];
+            } *cie = push_struct(arena, struct cie);
+            cie->length = sizeof(struct cie) - sizeof(cie->length);
+            cie->cie_offset = 0; // This is the cie!
+            cie->version = 1;
+            cie->augmentation_string[0] = 'z';
+            cie->augmentation_string[1] = 'R';
+            cie->augmentation_string[2] = 0;
+            cie->code_alignment_factor   = 1;
+            cie->data_alignment_factor   = 0x78; // -8
+            cie->return_address_register = 0x10; // rip
+            cie->augmentation_length = 1;
+            cie->address_pointer_encoding = /*sdata4 pcrel*/0x1b;
+            
+            memcpy(cie->initial_instructions, (u8[]){
+                        // DW_CFA_def_cfa reg=7 (rsp) offset=8
+                        0x0c, 0x07, 0x08,
+                        
+                        // DW_CFA_offset reg=16 (rip) offset=1
+                        0x90, 0x01,
+                        
+                        // DW_CFA_nop, DW_CFA_nop
+                        0x00, 0x00,
+                    }, 7);
+            
+            for_ast_list(defined_functions){
+                
+                struct ast_function *function = (struct ast_function *)it->value;
+                
+                u32 *length = push_struct(arena, u32);
+                u8 *start = arena_current(arena);
+                
+                u32 *cie_offset = push_struct(arena, u32);
+                *cie_offset = (u32)(start - (u8 *)cie);
+                
+                s32 *pc_begin = push_struct(arena, s32);
+                s32 *pc_range = push_struct(arena, s32);
+                
+                s32 relative_virtual_address  = make_relative_virtual_address(ro_segment_start, pc_begin);
+                smm function_relative_virtual_address = function->relative_virtual_address;
+                
+                *pc_begin = (s32)(function_relative_virtual_address - relative_virtual_address);
+                
+                u32 function_size = function->byte_size;
+                *pc_range = function_size;
+                
+                *push_struct(arena, u8) = 0; // Augmentation Length;
+                
+                
+                static u8 common_instructions[] = {
+                    0x41, // DW_CFA_advance_loc 1
+                    0x0e, 0x10, // DW_CFA_def_cfa_offset 10
+                    0x86, 0x02, // DW_CFA_offset reg=6 (rbp) offset=2
+                    
+                    0x43, // DW_CFA_advance_loc 3
+                    0x0d, 0x06, // DW_CFA_def_cfa_register reg=6 (rbp)
+                };
+                push_array_copy(arena, u8, common_instructions, array_count(common_instructions));
+                
+                if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_noreturn)){
+                    u32 advance = function_size - /*push rbp, mov rbp, rsp*/4  - /*ret*/1;
+                    if(advance <= 0x3f){
+                        *push_struct(arena, u8) = 0x40 | (u8)advance;
+                    }else if(advance <= 0xff){
+                        *push_struct(arena, u8) = /*DW_CFA_advance_loc1*/0x02;
+                        *push_struct(arena, u8) = (u8)advance;
+                    }else if(advance <= 0xffff){
+                        *push_struct(arena, u8) = /*DW_CFA_advance_loc2*/0x03;
+                        *push_struct_unaligned(arena, u16) = (u16)advance;
+                    }else if(advance <= 0xffffffff){
+                        *push_struct(arena, u8) = /*DW_CFA_advance_loc4*/0x04;
+                        *push_struct_unaligned(arena, u32) = advance;
+                    }
+                    
+                    // DW_CFA_def_cfa reg=7 (rsp) offset=8
+                    static u8 define_dfa_rsp_8[] = { 0x0c, 0x07, 0x08 };
+                    push_array_copy(arena, u8, define_dfa_rsp_8, array_count(define_dfa_rsp_8));
+                }
+                
+                push_zero_align(arena, 8);
+                
+                *length = (u32)(arena_current(arena) - start);
+            }
+            
+            fill_section_header(eh_frame, "eh_frame", 0x70000001, SHF_ALLOC, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/0);
+        }
     }
     
     if(rodata_section_start != arena_current(arena)){
@@ -948,7 +1088,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             }
             
             u64 got_plt_section_index = section_header_at;
-            fill_section_header(got_plt, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/8);
+            fill_section_header(got_plt, "got.plt", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/8);
             
             {
                 // Now that we know where the got_plt is, fill out the rela.plt relocations:
@@ -983,7 +1123,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             }
             
             u64 got_section_index = section_header_at;
-            fill_section_header(got, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/8);
+            fill_section_header(got, "got", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/8);
             
             {
                 // Now that we know where the got is, fill out the rela.dyn relocations:
@@ -1053,7 +1193,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         *push_struct(arena, u64) = /*DT_NONE*/0;
         *push_struct(arena, u64) = 0;
         
-        fill_section_header(dynamic, SHT_DYNAMIC, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/(u32)dynstr_section_index, /*info*/0, /*entry_size*/0x10);
+        fill_section_header(dynamic, "dynamic", SHT_DYNAMIC, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/(u32)dynstr_section_index, /*info*/0, /*entry_size*/0x10);
         fill_program_header(dynamic, PT_DYNAMIC, PF_READ | PF_WRITE, /*alignment*/8);
     }
     
@@ -1080,7 +1220,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }
     
     if(arena_current(arena) != data_section_start){
-        fill_section_header(data, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_section_header(data, "data", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
     }
     
     smm bss_size = 0;
@@ -1104,7 +1244,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         if(bss_size){
             struct elf_section_header *bss_section_header = section_headers + section_header_at;
-            fill_section_header(bss, SHT_NOBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/0x10, /*link*/0, /*info*/0, /*entry_size*/0);
+            fill_section_header(bss, "bss", SHT_NOBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/0x10, /*link*/0, /*info*/0, /*entry_size*/0);
             
             bss_section_header->offset = 0;
             bss_section_header->size = bss_size;
@@ -1147,8 +1287,6 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 
                 if(source_kind == IR_function || source_kind == IR_declaration){
                     struct ast_declaration *source_declaration = (struct ast_declaration *)patch->source;
-                    
-                    print("%.*s %x %.*s %x\n", patch->dest_declaration->identifier->size, patch->dest_declaration->identifier->data, patch->dest_declaration->relative_virtual_address, source_declaration->identifier->size, source_declaration->identifier->data, source_declaration->relative_virtual_address);
                     
                     smm source_location = source_declaration->relative_virtual_address + patch->location_offset_in_source_declaration;
                     
@@ -1193,12 +1331,11 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }
     
     struct string shstrtab = string_list_flatten(section_name_string_table, arena);
-    replace_characters(shstrtab, "_", '.');
     u8 *shstrtab_section_start = shstrtab.data;
     arena->current -= 1;
     push_zero_terminated_string_copy(arena, string(".shstrtab"));
     
-    fill_section_header(shstrtab, SHT_STRTAB, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
+    fill_section_header(shstrtab, "shstrtab", SHT_STRTAB, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
     
     struct elf_program_header *gnu_stack_program_header = program_headers + program_header_at++;
     gnu_stack_program_header->type = /*PT_GNU_STACK*/0x6474e551;
@@ -1300,6 +1437,285 @@ s64 read_sleb(u8 *data, u64 *inout_offset){
     
     *inout_offset = offset;
     return result;
+}
+
+enum dwarf_cfa{
+    DW_CFA_nop                = 0x00,
+    DW_CFA_set_loc            = 0x01,
+    DW_CFA_advance_loc1       = 0x02,
+    DW_CFA_advance_loc2       = 0x03,
+    DW_CFA_advance_loc4       = 0x04,
+    DW_CFA_offset_extended    = 0x05,
+    DW_CFA_restore_extended   = 0x06,
+    DW_CFA_undefined          = 0x07,
+    DW_CFA_same_value         = 0x08,
+    DW_CFA_register           = 0x09,
+    DW_CFA_remember_state     = 0x0a,
+    DW_CFA_restore_state      = 0x0b,
+    DW_CFA_def_cfa            = 0x0c,
+    DW_CFA_def_cfa_register   = 0x0d,
+    DW_CFA_def_cfa_offset     = 0x0e,
+    DW_CFA_def_cfa_expression = 0x0f,
+    DW_CFA_expression         = 0x10,
+    DW_CFA_offset_extended_sf = 0x11,
+    DW_CFA_def_cfa_sf         = 0x12,
+    DW_CFA_def_cfa_offset_sf  = 0x13,
+    DW_CFA_val_offset         = 0x14,
+    DW_CFA_val_offset_sf      = 0x15,
+    DW_CFA_val_expression     = 0x16,
+};
+
+void dump_dwarf_cfa(u8 *buffer, u64 size){
+    
+    u64 offset = 0;
+    
+    static char *register_names[] = {
+        "rax",      // 0
+        "rdx",      // 1
+        "rcx",      // 2
+        "rbx",      // 3
+        "rsi",      // 4
+        "rdi",      // 5
+        "rbp",      // 6
+        "rsp",      // 7
+        "r8",       // 8
+        "r9",       // 9
+        "r10",      // 10
+        "r11",      // 11
+        "r12",      // 12
+        "r13",      // 13
+        "r14",      // 14
+        "r15",      // 15
+        "rip",      // 16
+        "xmm0",     // 17
+        "xmm1",     // 18
+        "xmm2",     // 19
+        "xmm3",     // 20
+        "xmm4",     // 21
+        "xmm5",     // 22
+        "xmm6",     // 23
+        "xmm7",     // 24
+        "xmm8",     // 25
+        "xmm9",     // 26
+        "xmm10",    // 27
+        "xmm11",    // 28
+        "xmm12",    // 29
+        "xmm13",    // 30
+        "xmm14",    // 31
+        "xmm15",    // 32
+        "st0",      // 33
+        "st1",
+        "st2",
+        "st3",
+        "st4",
+        "st5",
+        "st6",
+        "st7",
+        "mm0",      // 41
+        "mm1",
+        "mm2",
+        "mm3",
+        "mm4",
+        "mm5",
+        "mm6",
+        "mm7",
+        "rflags",   // 49
+        "es",
+        "cs",
+        "ss",
+        "ds",
+        "fs",
+        "gs",
+        "fs.base",
+        "gs.base",
+        "tr",
+        "ldtr",
+        "mxcsr",
+        "fcw",
+        "fsw"
+    };
+    
+    while(offset < size){
+        
+        print("        %04zx: ", offset);
+        
+        u64 start_offset = offset;
+        
+        u8 op = buffer[offset];
+        offset += 1;
+        
+        u8 primary = op & 0xc0;
+        u8 operand = op & 0x3f;
+        
+        int is_primary = 0;
+        
+        switch(primary){
+            
+            case /*DW_CFA_advance_loc*/0x40:{
+                print("DW_CFA_advance_loc %x\n", operand);
+                is_primary = 1;
+            }break;
+            
+            case 0x80:{
+                u64 off = read_uleb(buffer, &offset);
+                print("DW_CFA_offset reg=%u (%s) offset=%x\n", operand, operand < array_count(register_names) ? register_names[operand] : "", off);
+                is_primary = 1;
+            }break;
+            
+            case 0xc0:{
+                print("DW_CFA_restore reg=%u (%s)\n", operand, operand < array_count(register_names) ? register_names[operand] : "");
+                is_primary = 1;
+            }break;
+        }
+        
+        if(!is_primary) switch(op){
+            
+            case DW_CFA_nop:{
+                print("DW_CFA_nop\n");
+            }break;
+            
+            case DW_CFA_set_loc:{
+                print("DW_CFA_set_loc %llx\n", *(u64 *)(buffer + offset));
+                offset += 8;
+            }break;
+            
+            case DW_CFA_advance_loc1:{
+                print("DW_CFA_advance_loc1 %x\n", buffer[offset]);
+                offset += 1;
+            }break;
+            
+            case DW_CFA_advance_loc2:{
+                u16 v = *(u16 *)(buffer + offset);
+                print("DW_CFA_advance_loc2 %x\n", v);
+                offset += 2;
+            }break;
+            
+            case DW_CFA_advance_loc4:{
+                u32 v = *(u32 *)(buffer + offset);
+                offset += 4;
+                print("DW_CFA_advance_loc4 %x\n", v);
+            }break;
+            
+            case DW_CFA_offset_extended:{
+                u64 reg = read_uleb(buffer, &offset);
+                u64 off = read_uleb(buffer, &offset);
+                print("DW_CFA_offset_extended reg=%u (%s) offset=%x\n", reg, reg < array_count(register_names) ? register_names[reg] : "???", off);
+            }break;
+            
+            case DW_CFA_restore_extended:{
+                u64 reg = read_uleb(buffer, &offset);
+                print("DW_CFA_restore_extended reg=%u (%s)\n", reg, reg < array_count(register_names) ? register_names[reg] : "???");
+            }break;
+            
+            case DW_CFA_undefined:{
+                u64 reg = read_uleb(buffer, &offset);
+                print("DW_CFA_undefined reg=%u (%s)\n", reg, reg < array_count(register_names) ? register_names[reg] : "???");
+            }break;
+            
+            case DW_CFA_same_value:{
+                u64 reg = read_uleb(buffer, &offset);
+                print("DW_CFA_same_value reg=%u (%s)\n", reg, reg < array_count(register_names) ? register_names[reg] : "???");
+            }break;
+            
+            case DW_CFA_register: {
+                u64 r1 = read_uleb(buffer, &offset);
+                u64 r2 = read_uleb(buffer, &offset);
+                print("DW_CFA_register reg=%u (%s) -> reg=%u (%s)\n", r1, r1 < array_count(register_names) ? register_names[r1] : "???", r2, r2 < array_count(register_names) ? register_names[r2] : "???");
+            }break;
+            
+            case DW_CFA_remember_state:{
+                print("DW_CFA_remember_state\n");
+            }break;
+            
+            case DW_CFA_restore_state:{
+                print("DW_CFA_restore_state\n");
+            }break;
+            
+            case DW_CFA_def_cfa:{
+                u64 reg = read_uleb(buffer, &offset);
+                u64 off = read_uleb(buffer, &offset);
+                print("DW_CFA_def_cfa reg=%u (%s) offset=%llx\n", reg, reg < array_count(register_names) ? register_names[reg] : "???", off);
+            }break;
+            
+            case DW_CFA_def_cfa_register:{
+                u64 reg = read_uleb(buffer, &offset);
+                print("DW_CFA_def_cfa_register reg=%u (%s)\n", reg, reg < array_count(register_names) ? register_names[reg] : "???");
+            }break;
+            
+            case DW_CFA_def_cfa_offset:{
+                u64 off = read_uleb(buffer, &offset);
+                print("DW_CFA_def_cfa_offset %x\n", off);
+            }break;
+            
+            case DW_CFA_def_cfa_expression:{
+                u64 length = read_uleb(buffer, &offset);
+                print("DW_CFA_def_cfa_expression len=%llx\n", length);
+                
+                print_byte_range(buffer + offset, length);
+                
+                offset += length;
+            }break;
+            
+            case DW_CFA_expression:{
+                u64 reg = read_uleb(buffer, &offset);
+                u64 len = read_uleb(buffer, &offset);
+                print("DW_CFA_expression reg=%u (%s) len=%llx\n", reg, reg < array_count(register_names) ? register_names[reg] : "???", len);
+                
+                print_byte_range(buffer + offset, len);
+                
+                offset += len;
+            }break;
+            
+            case DW_CFA_offset_extended_sf:{
+                u64 reg = read_uleb(buffer, &offset);
+                s64 off = read_sleb(buffer, &offset);
+                print("DW_CFA_offset_extended_sf reg=%u (%s) offset=%llx\n", reg, reg < array_count(register_names) ? register_names[reg] : "???", off);
+            }break;
+            
+            case DW_CFA_def_cfa_sf:{
+                u64 reg = read_uleb(buffer, &offset);
+                s64 off = read_sleb(buffer, &offset);
+                print("DW_CFA_def_cfa_sf reg=%u (%s) offset=%llx\n", reg, reg < array_count(register_names) ? register_names[reg] : "???", off);
+            }break;
+            
+            case DW_CFA_def_cfa_offset_sf:{
+                u64 off = read_sleb(buffer, &offset);
+                print("DW_CFA_def_cfa_offset_sf %llx\n", off);
+            }break;
+            
+            case DW_CFA_val_offset:{
+                u64 reg = read_uleb(buffer, &offset);
+                u64 off = read_uleb(buffer, &offset);
+                print("DW_CFA_val_offset reg=%u (%s) offset=%llx\n", reg, reg < array_count(register_names) ? register_names[reg] : "???", off);
+            }break;
+            
+            case DW_CFA_val_offset_sf:{
+                u64 reg = read_uleb(buffer, &offset);
+                s64 off = read_sleb(buffer, &offset);
+                print("DW_CFA_val_offset_sf reg=%u (%s) offset=%llx\n", reg, reg < array_count(register_names) ? register_names[reg] : "???", off);
+            }break;
+            
+            case DW_CFA_val_expression:{
+                u64 reg = read_uleb(buffer, &offset);
+                u64 len = read_uleb(buffer, &offset);
+                print("DW_CFA_val_expression reg=%u (%s) len=%llx\n", reg, reg < array_count(register_names) ? register_names[reg] : "???", len);
+                
+                print_byte_range(buffer + offset, len);
+                
+                offset += len;
+            }break;
+            
+            default:{
+                print("Unknown CFA opcode 0x%02x\n", op);
+            }break;
+        }
+        
+        print("              ");
+        for(u64 index = start_offset; index < offset; index++){
+            print("%.2x ", buffer[index]);
+        }
+        print("\n");
+    }
 }
 
 int dump_elf(char *cfile_name, struct memory_arena *arena){
@@ -1992,7 +2408,7 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                     }
                     
                     print("Dwarf data:\n");
-                    print_byte_range(section_data + offset, length - (offset - root_offset));
+                    dump_dwarf_cfa(section_data + offset, length - (offset - root_offset));
                 }else{
                     print("FDE:\n");
                     
@@ -2010,7 +2426,7 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                     }
                     
                     print("Dwarf data:\n");
-                    print_byte_range(section_data + offset, length - (offset - root_offset));
+                    dump_dwarf_cfa(section_data + offset, length - (offset - root_offset));
                 }
                 
                 offset = root_offset + length;
