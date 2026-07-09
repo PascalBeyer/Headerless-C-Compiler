@@ -565,19 +565,19 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     string_list_postfix_no_copy(&section_name_string_table, scratch, string("\0"));
     
 #define fill_section_header(section_name, section_string, section_type, section_flags, section_alignment, section_link, section_info, section_entry_size){  \
-    struct elf_section_header *section_header = section_headers + section_header_at++;                                                      \
-    u64 name_offset = section_name_string_table.total_size;                                                                                 \
-    string_list_postfix_no_copy(&section_name_string_table, scratch, string("." section_string "\0"));                                       \
-    section_header->name_offset = (u32)name_offset;                                                                                         \
-    section_header->type = (section_type);                                                                                                  \
-    section_header->flags = (section_flags);                                                                                                \
-    section_header->address = virtual_image_base + current_relative_virtual_address + (section_name##_section_start - current_segment_start);                             \
-    section_header->offset = section_name##_section_start - elf_base;                                                                       \
-    section_header->size = arena_current(arena) - section_name##_section_start;                                                             \
-    section_header->linked_section = (section_link);                                                                                        \
-    section_header->info = (section_info);                                                                                                  \
-    section_header->alignment = (section_alignment);                                                                                        \
-    section_header->entry_size = (section_entry_size);                                                                                      \
+    struct elf_section_header *section_header = section_headers + section_header_at++;                                                                      \
+    u64 name_offset = section_name_string_table.total_size;                                                                                                 \
+    string_list_postfix_no_copy(&section_name_string_table, scratch, string("." section_string "\0"));                                                      \
+    section_header->name_offset = (u32)name_offset;                                                                                                         \
+    section_header->type = (section_type);                                                                                                                  \
+    section_header->flags = (section_flags);                                                                                                                \
+    section_header->address = virtual_image_base + current_relative_virtual_address + (section_name##_section_start - current_segment_start);               \
+    section_header->offset = section_name##_section_start - elf_base;                                                                                       \
+    section_header->size = arena_current(arena) - section_name##_section_start;                                                                             \
+    section_header->linked_section = (section_link);                                                                                                        \
+    section_header->info = (section_info);                                                                                                                  \
+    section_header->alignment = (section_alignment);                                                                                                        \
+    section_header->entry_size = (section_entry_size);                                                                                                      \
 }
     
 #define make_relative_virtual_address(segment_start, address) (u32)(current_relative_virtual_address + ((u8 *)(address) - (segment_start)))
@@ -589,6 +589,10 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     u8 *rx_segment_start = arena_current(arena);
     u8 *plt_section_start = 0;
     u32 plt_section_rva = 0;
+    
+    u64 text_section_index = 0;
+    u64 data_section_index = 0;
+    u64 bss_section_index = 0;
     
     {
         u8 *text_section_start = rx_segment_start;
@@ -608,6 +612,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         if(arena_current(arena) != text_section_start){
+            text_section_index = section_header_at;
             fill_section_header(text, "text", SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
         }
         
@@ -1004,7 +1009,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 
                 *pc_begin = (s32)(function_relative_virtual_address - relative_virtual_address);
                 
-                u32 function_size = function->byte_size;
+                u32 function_size = (u32)function->byte_size;
                 *pc_range = function_size;
                 
                 *push_struct(arena, u8) = 0; // Augmentation Length;
@@ -1220,7 +1225,84 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }
     
     if(arena_current(arena) != data_section_start){
+        data_section_index = section_header_at;
         fill_section_header(data, "data", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
+    }
+    
+    if(!globals.cli_options.no_debug){
+        
+        u8 *symtab_section_start = arena_current(arena);
+        
+        u32 symbol_name_offset = 1;
+        u64 first_non_local_symbol = 0;
+        
+        struct string_list strtab = zero_struct;
+        
+        push_struct(arena, struct elf_symbol); // The first one is all zeroes for some reason.
+        
+        for(s32 locals_done = 0; locals_done < 2; locals_done++){
+            if(locals_done){
+                first_non_local_symbol = (arena_current(arena) - symtab_section_start)/sizeof(struct elf_symbol);
+            }
+            
+            for_ast_list(defined_functions){
+                struct ast_function *function = (struct ast_function *)it->value;
+                
+                u8 bind = /*STB_GLOBAL*/1;
+                if(function->as_decl.flags & DECLARATION_FLAGS_is_static) bind = /*STB_LOCAL*/0;
+                
+                if(locals_done == (bind == /*STB_LOCAL*/0)) continue;
+                
+                string_list_postfix_no_copy(&strtab, scratch, token_get_string(function->identifier));
+                
+                struct elf_symbol *elf_symbol = push_struct(arena, struct elf_symbol);
+                elf_symbol->name_offset = symbol_name_offset; symbol_name_offset += function->identifier->size + 1;
+                elf_symbol->info = (bind << 4) | /*STT_FUNC*/2;
+                elf_symbol->other = 0;
+                elf_symbol->section_index = (u16)text_section_index;
+                elf_symbol->value = function->relative_virtual_address;
+                elf_symbol->size  = function->byte_size;
+            }
+            
+            struct ast_list declaration_ast_lists[] = {
+                initialized_declarations,
+                uninitialized_declarations,
+            };
+            
+            for(u32 declaration_ast_list_index = 0; declaration_ast_list_index < array_count(declaration_ast_lists); declaration_ast_list_index += 1){
+                for_ast_list(declaration_ast_lists[declaration_ast_list_index]){
+                    struct ast_declaration *declaration = (struct ast_declaration *)it->value;
+                    
+                    u8 bind = /*STB_GLOBAL*/1;
+                    if(declaration->flags & DECLARATION_FLAGS_is_static) bind = /*STB_LOCAL*/0;
+                    
+                    if(locals_done == (bind == /*STB_LOCAL*/0)) continue;
+                    
+                    string_list_postfix_no_copy(&strtab, scratch, token_get_string(declaration->identifier));
+                    
+                    struct elf_symbol *elf_symbol = push_struct(arena, struct elf_symbol);
+                    elf_symbol->name_offset = symbol_name_offset; symbol_name_offset += declaration->identifier->size + 1;
+                    elf_symbol->info = (bind << 4) | /*STT_OBJECT*/1;
+                    elf_symbol->other = 0;
+                    elf_symbol->section_index = (u16)(declaration_ast_list_index ? bss_section_index : data_section_index);
+                    elf_symbol->value = declaration->relative_virtual_address;
+                    elf_symbol->size  = get_declaration_size(declaration);
+                }
+            }
+        }
+        
+        u32 strtab_section_index = (u32)(section_header_at + 1);
+        fill_section_header(symtab, "symtab", SHT_SYMTAB, /*flags*/0, /*alignment*/8, /*link*/strtab_section_index, /*info*/(u32)first_non_local_symbol, /*entry_size*/sizeof(struct elf_symbol));
+        
+        u8 *strtab_section_start = arena_current(arena);
+        
+        *push_struct(arena, u8) = 0;
+        
+        for(struct string_list_node *node = strtab.list.first; node; node = node->next){
+            push_zero_terminated_string_copy(arena, node->string);
+        }
+        
+        fill_section_header(strtab, "strtab", SHT_STRTAB, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
     }
     
     smm bss_size = 0;
@@ -1243,6 +1325,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         if(bss_size){
+            bss_section_index = section_header_at;
             struct elf_section_header *bss_section_header = section_headers + section_header_at;
             fill_section_header(bss, "bss", SHT_NOBITS, SHF_ALLOC | SHF_WRITE, /*alignment*/0x10, /*link*/0, /*info*/0, /*entry_size*/0);
             
@@ -1358,6 +1441,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     u64 program_header_segment_size = (u8 *)(program_headers + program_header_at) - program_header_segment_start;
     program_header_program_header->file_size = program_header_segment_size;
     program_header_program_header->memory_size = program_header_segment_size;
+    
+    assert((u8 *)(section_headers + section_header_at) <= elf_base + 0x1000);
     
     if(globals.entry_point){
         elf_header->entry_point = virtual_image_base + globals.entry_point->relative_virtual_address;
@@ -1890,13 +1975,6 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
         u64 section_size   = section_header->size;
         u64 section_end    = section_offset + section_size;
         
-        if(section_header->type != /*SHT_NOBITS*/8){
-            if(section_offset > file.size || section_end > file.size){
-                print("Error: Invalid section bounds for section %s.\n", section_name);
-                return 1;
-            }
-        }
-        
         static char *section_type_strings[] = {
             [0x0] = "(SHT_NULL)", // Section header table entry unused
             [0x1] = "(SHT_PROGBITS)", // Program data
@@ -1923,6 +2001,13 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
         // For symbol table sections, the sh_info member is the index of the first non-local symbol.
         
         print("[%.2u] %20s (%.8x) %.8x %19s %.8x %.16x %.16x %.16x %.8x %.8x %.16x %.16x\n", section_index, section_name, section_header->name_offset, section_header->type, type_string, section_header->flags, section_header->address, section_header->offset, section_header->size, section_header->linked_section, section_header->info, section_header->alignment, section_header->entry_size);
+        
+        if(section_header->type != /*SHT_NOBITS*/8){
+            if(section_offset > file.size || section_end > file.size){
+                print("Error: Invalid section bounds for section %s.\n", section_name);
+                return 1;
+            }
+        }
     }
     
     print("\n");
