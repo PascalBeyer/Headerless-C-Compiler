@@ -239,6 +239,34 @@ struct elf_symbol *elf_lookup_symbol(struct library_node *library_node, struct s
     return found;
 }
 
+void push_uleb(struct memory_arena *arena, u64 value){
+    do{
+        u8 byte = value & 0x7f;
+        value >>= 7;
+        
+        if(value) byte |= 0x80;
+        
+        *push_uninitialized_struct(arena, u8) = byte;
+    }while(value != 0);
+}
+
+
+void push_sleb(struct memory_arena *arena, s64 value){
+    
+    int done;
+    do{
+        u8 byte = value & 0x7f;
+        value >>= 7; // Arithmetic shift
+        
+        done = (value == 0 && !(byte & 0x40)) || (value == -1 && (byte & 0x40));
+        
+        if(!done) byte |= 0x80;
+        
+        *push_uninitialized_struct(arena, u8) = byte;
+    }while(!done);
+}
+
+
 void write_elf(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
     
     // 
@@ -598,7 +626,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         u8 *text_section_start = rx_segment_start;
         
         for_ast_list(defined_functions){
-            struct ast_function *function = cast(struct ast_function *)it->value;
+            struct ast_function *function = (struct ast_function *)it->value;
             
             smm function_size = function->byte_size;
             
@@ -1260,7 +1288,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 elf_symbol->info = (bind << 4) | /*STT_FUNC*/2;
                 elf_symbol->other = 0;
                 elf_symbol->section_index = (u16)text_section_index;
-                elf_symbol->value = function->relative_virtual_address;
+                elf_symbol->value = function->relative_virtual_address + virtual_image_base;
                 elf_symbol->size  = function->byte_size;
             }
             
@@ -1285,7 +1313,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                     elf_symbol->info = (bind << 4) | /*STT_OBJECT*/1;
                     elf_symbol->other = 0;
                     elf_symbol->section_index = (u16)(declaration_ast_list_index ? bss_section_index : data_section_index);
-                    elf_symbol->value = declaration->relative_virtual_address;
+                    elf_symbol->value = declaration->relative_virtual_address + virtual_image_base;
                     elf_symbol->size  = get_declaration_size(declaration);
                 }
             }
@@ -1335,7 +1363,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }
     
     // 
-    // @warninig: We assume this is the last segment.
+    // @Warninig: We assume this is the last segment.
     // 
     
     if((arena_current(arena) != rw_segment_start) || bss_size){
@@ -1411,6 +1439,210 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 }
             }else not_implemented;
         }
+    }
+    
+    // 
+    // Debug information:
+    // 
+    
+    {
+        
+        // .debug_line_str
+        //     directory_names
+        //     file_names
+        
+        struct string_list directories = zero_struct;
+        struct string_list file_names = zero_struct;
+        
+        struct{
+            struct file_index_node{
+                struct file_index_node *next;
+                u64 directory_index;
+                u64 file_name_offset;
+            } *first, *last;
+            u64 count;
+        } file_index_list = zero_struct;
+        
+        for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
+            struct file *node = globals.file_table.data[file_index];
+            if(!node) continue;
+            
+            struct string absolute_file_path = string_from_cstring(node->absolute_file_path);
+            struct string name = strip_file_path(absolute_file_path);
+            struct string path = {.data = absolute_file_path.data, .size = absolute_file_path.size - name.size - 1};
+            
+            struct string_list_pool_add_return directory_add_ret = string_list_pool_add(&directories, scratch, path);
+            struct string_list_pool_add_return file_name_add_ret = string_list_pool_add(&file_names, scratch, name);
+            
+            struct file_index_node *index_node = push_struct(scratch, struct file_index_node);
+            index_node->directory_index  = directory_add_ret.index;
+            index_node->file_name_offset = file_name_add_ret.offset;
+            sll_push_back(file_index_list, index_node);
+            
+            node->file_number = (u32)file_index_list.count;
+            file_index_list.count += 1;
+        }
+        
+        u8 *debug_line_str_section_start = arena_current(arena);
+        
+        string_list_pool_flatten(directories, arena);
+        string_list_pool_flatten(file_names, arena);
+        
+        fill_section_header(debug_line_str, "debug_line_str", SHT_PROGBITS, /*flags(SHF_MERGE|SHF_STRINGS)*/0x30, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/1);
+        
+        // .debug_line
+        //    v5_header
+        //    directory table
+        //    file_name table
+        //    line_number_ir
+        
+        struct dwarf_debug_line_v5_header{
+            u32 initial_length;
+            u16 version;
+            u8  address_size;
+            u8  segment_selector_size;
+            u32 header_length;
+            u8  minimum_instruction_length;
+            u8  maximum_operation_per_instruction;
+            u8  default_is_statement;
+            s8  line_base;
+            u8  line_range;
+            u8  opcode_base;
+            u8  opcode_args[12];
+        } *header = push_struct_(arena, offset_in_type(struct dwarf_debug_line_v5_header, opcode_args) + sizeof(header->opcode_args), 4);
+        header->version = 5;
+        header->address_size = 8;
+        header->segment_selector_size = 0; // ?
+        header->minimum_instruction_length = 1;
+        header->maximum_operation_per_instruction = 1;
+        header->default_is_statement = 1;
+        header->line_base  = -5;
+        header->line_range = 14;
+        header->opcode_base = 13;
+        header->opcode_args[0] = 0;
+        header->opcode_args[1] = 1;
+        header->opcode_args[2] = 1;
+        header->opcode_args[3] = 1;
+        header->opcode_args[4] = 1;
+        header->opcode_args[5] = 1;
+        header->opcode_args[6] = 0;
+        header->opcode_args[7] = 0;
+        header->opcode_args[8] = 0;
+        header->opcode_args[9] = 1;
+        header->opcode_args[10] = 0;
+        header->opcode_args[11] = 0;
+        header->opcode_args[12] = 1;
+        
+        *push_struct(arena, u8) = /*directory_entry_format_count*/1;
+        *push_struct(arena, u8) = /*content_type = DW_LNCT_path*/1;
+        *push_struct(arena, u8) = /*attribute form = DW_FORM_line_strp*/0x1f;
+        
+        push_uleb(arena, directories.amount_of_strings);
+        
+        u32 debug_line_string_offset = 0;
+        for(struct string_list_node *node = directories.list.first; node; node = node->next){
+            *push_struct_unaligned(arena, u32) = debug_line_string_offset;
+            debug_line_string_offset += (u32)node->string.size + 1;
+        }
+        
+        *push_struct(arena, u8) = /*file_name_entry_format_count*/2;
+        *push_struct(arena, u8) = /*content_type = DW_LNCT_path*/1;
+        *push_struct(arena, u8) = /*attribute form = DW_FORM_line_strp*/0x1f;
+        *push_struct(arena, u8) = /*content_type = DW_LNCT_directory_index*/2;
+        *push_struct(arena, u8) = /*attribute form = DW_FORM_udata*/0xf;
+        
+        push_uleb(arena, file_index_list.count);
+        
+        for(struct file_index_node *node = file_index_list.first; node; node = node->next){
+            *push_struct_unaligned(arena, u32) = (u32)(debug_line_string_offset + node->file_name_offset);
+            *push_struct(arena, u8) = (u8)node->directory_index;
+        }
+        
+        // "The number of bytes following the header_length field to the beginning of 24 the first byte of the line number program itself."
+        header->header_length = (u32)(arena_current(arena) - (u8 *)(&header->header_length + 1));
+        
+        // Virtual machine registers:
+        u64 address = 0;
+        u64 file_number = 1;
+        u64 line = 1;
+        // u64 column = 0;
+        
+        for(struct ast_list_node *function_node = defined_functions.first; function_node; function_node = function_node->next){
+            struct ast_function *function = (struct ast_function *)function_node->value;
+            
+            struct token_location_information initial_location = get_location_for_token(null, function->compilation_unit, function->scope->token);
+            struct file *file = globals.file_table.data[initial_location.file_index];
+            
+            if(file_number != file->file_number){
+                *push_struct(arena, u8) = /*DW_LNS_set_file*/4;
+                push_uleb(arena, file->file_number);
+            }
+            
+            s8 line_base = -5;
+            u8 line_range = 14;
+            u8 opcode_base = 13;
+            
+            {
+                // 
+                // Push the initial location.
+                // 
+                
+                s64 line_delta    = initial_location.line - line;
+                s64 address_delta = address - function->relative_virtual_address;
+                
+                if(line_base <= line_delta && line_delta < line_range && 0 <= address_delta && address_delta <= 255/14){
+                    *push_struct(arena, u8) = (u8)((line_delta - line_base) + line_range * address_delta + opcode_base);
+                }else{
+                    *push_struct(arena, u8) = /*extended opcode*/0;
+                    *push_struct(arena, u8) = /*length*/5;
+                    *push_struct(arena, u8) = /*DW_LNE_set_address*/2;
+                    *push_struct_unaligned(arena, u32) = (u32)function->relative_virtual_address;
+                    
+                    *push_struct(arena, u8) = /*DW_LNS_advance_line*/3;
+                    push_sleb(arena, line_delta);
+                    
+                    *push_struct(arena, u8) = /*DW_LNS_copy*/1;
+                }
+            }
+            *push_struct(arena, u8) = /*DW_LNS_set_prologue_end*/10;
+            
+            struct function_line_information last = {
+                .line = initial_location.line,
+                .offset = 0,
+            };
+            
+            for(smm index = 0; index < function->line_information.size; index++){
+                struct function_line_information info = function->line_information.data[index];
+                
+                s64 line_delta    = (s64)info.line   - (s64)last.line;
+                s64 address_delta = (s64)info.offset - (s64)last.offset;
+                
+                if(line_base <= line_delta && line_delta < line_range && 0 <= address_delta && address_delta <= 255/14){
+                    *push_struct(arena, u8) = (u8)((line_delta - line_base) + line_range * address_delta + opcode_base);
+                }else{
+                    *push_struct(arena, u8) = /*extended opcode*/0;
+                    *push_struct(arena, u8) = /*length*/5;
+                    *push_struct(arena, u8) = /*DW_LNE_set_address*/2;
+                    *push_struct_unaligned(arena, u32) = (u32)(function->relative_virtual_address + info.offset);
+                    
+                    *push_struct(arena, u8) = /*DW_LNS_advance_line*/3;
+                    push_sleb(arena, line_delta);
+                    
+                    *push_struct(arena, u8) = /*DW_LNS_copy*/1;
+                }
+                
+                last = info;
+            }
+            
+            file_number = file->file_number;
+            line = last.line;
+            address = function->relative_virtual_address + last.offset;
+        }
+        
+        header->initial_length = (u32)(arena_current(arena) - ((u8 *)header + 4));
+        
+        u8 *debug_line_section_start = (u8 *)header;
+        fill_section_header(debug_line, "debug_line", SHT_PROGBITS, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/1);
     }
     
     struct string shstrtab = string_list_flatten(section_name_string_table, arena);
@@ -2123,6 +2355,8 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
             struct elf_section_header *dynstr_header = (void *)(file.data + section_header_table_offset + section_header->linked_section * section_header_table_entry_size);
             u8 *dynstr = file.data + dynstr_header->offset;
             
+            print("index sect      value             size       info=     type       bind    visibility    name_offset\n");
+            
             for(u64 symbol_offset = 0, symbol_index = 0; symbol_offset < section_size; symbol_offset += section_header->entry_size, symbol_index++){
                 struct elf_symbol *symbol = (void *)(section_data + symbol_offset);
                 
@@ -2647,12 +2881,413 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
         // .debug_abbrev
         
         // .debug_line
+        if(string_match(section_name, string(".debug_line"))){
+            
+            // for whatever reason, there is no associated section, 
+            // so search for the .debug_line_str section manually
+            
+            struct elf_section_header *debug_line_str = null;
+            u8 *section_end = section_data + section_size;
+            
+            for(u64 sho = section_header_table_offset; sho < section_header_table_end; sho += section_header_table_entry_size){
+                struct elf_section_header *sh = (void *)(file.data + sho);
+                
+                struct string sn = string_from_cstring((char *)section_name_string_table + sh->name_offset);
+                if(sn.size == 0) continue;
+                
+                if(string_match(sn, string(".debug_line_str"))){
+                    debug_line_str = sh;
+                    break;
+                }
+            }
+            
+            u8 *debug_line_string_table = file.data + debug_line_str->offset;
+            
+            u32 initial_length = *(u32 *)section_data;
+            section_data += 4;
+            
+            u32 offset_size;
+            u64 unit_length;
+            
+            print("initial_length = %x\n", initial_length);
+            
+            if(initial_length == 0xffffffff){
+                offset_size = 8;
+                unit_length = *(u64 *)section_data;
+            }else{
+                offset_size = 4;
+                unit_length = initial_length;
+            }
+            
+            u16 version = *(u16 *)section_data;
+            section_data += 2;
+            
+            print("unit_length = %x\n", unit_length);
+            print("offset_size = %x\n", offset_size);
+            print("version %u\n", version);
+            
+            if(version >= 5){
+                u8 address_size = *section_data++;
+                u8 segment_selector_size = *section_data++;
+                
+                print("address size %x\n", address_size);
+                print("segment selector size %x\n", segment_selector_size);
+            }
+            
+            u32 header_length = *(u32 *)section_data;
+            section_data += 4;
+            
+            u8 minimum_instruction_length = *section_data++;
+            u8 maximum_operation_per_instruction = *section_data++;
+            u8 default_is_statement = *section_data++;
+            s8 line_base = *section_data++;
+            u8 line_range = *section_data++;
+            u8 opcode_base = *section_data++;
+            
+            print("header length %x\n", header_length);
+            print("minimum instruction length %x\n", minimum_instruction_length);
+            print("maximum instruction per instruction %x\n", maximum_operation_per_instruction);
+            print("default is statement %x\n", default_is_statement);
+            print("line base %d\n", line_base);
+            print("line range %x\n", line_range);
+            print("opcode base %x\n", opcode_base);
+            
+            for(u32 index = 1; index < opcode_base; index++){
+                print("  [%u] %x\n", index, *section_data++);
+            }
+            
+            static char *content_type_code[] = {
+                [1] = "DW_LNCT_path",
+                "DW_LNCT_directory_index",
+                "DW_LNCT_timestamp",
+                "DW_LNCT_size",
+                "DW_LNCT_MD5",
+            };
+            
+            static char *attribute_form_codes[] = {
+                [0x09] = "DW_FORM_block", 
+                [0x0a] = "DW_FORM_block1", 
+                [0x03] = "DW_FORM_block2", 
+                [0x04] = "DW_FORM_block4", 
+                [0x0b] = "DW_FORM_data1", 
+                [0x05] = "DW_FORM_data2", 
+                [0x06] = "DW_FORM_data4", 
+                [0x07] = "DW_FORM_data8", 
+                [0x1e] = "DW_FORM_data16", 
+                [0x0c] = "DW_FORM_flag", 
+                [0x1f] = "DW_FORM_line_strp", 
+                [0x0d] = "DW_FORM_sdata", 
+                [0x17] = "DW_FORM_sec_offset", 
+                [0x08] = "DW_FORM_string", 
+                [0x0e] = "DW_FORM_strp", 
+                [0x1a] = "DW_FORM_strx", 
+                [0x25] = "DW_FORM_strx1", 
+                [0x26] = "DW_FORM_strx2", 
+                [0x27] = "DW_FORM_strx3", 
+                [0x28] = "DW_FORM_strx4", 
+                [0x0f] = "DW_FORM_udata", 
+            };
+            
+            
+            u8 directory_entry_format_count = *section_data++;
+            print("directory entry format count %x\n", directory_entry_format_count);
+            for(u8 index = 0; index < directory_entry_format_count; index++){
+                u64 offset = 0;
+                u64 a = read_uleb(section_data, &offset);
+                u64 b = read_uleb(section_data, &offset);
+                section_data += offset;
+                
+                print("  [%u] %x (%s) %x (%s)\n", index, a, content_type_code[a], b, attribute_form_codes[b]);
+            }
+            
+            u64 uff_offset = 0;
+            u64 number_of_directories = read_uleb(section_data, &uff_offset);
+            section_data += uff_offset;
+            
+            print("Number of directories %u\n", number_of_directories);
+            // u32 *directory_offsets = (u32 *)section_data;
+            
+            for(u32 index = 0; index < number_of_directories; index++){
+                u32 offset = *(u32 *)section_data;
+                section_data += 4;
+                print("  [%u] %x %s\n", index, offset, debug_line_string_table + offset);
+            }
+            
+            u8 file_name_entry_format_count = *section_data++;
+            print("File name entry format count %u\n", file_name_entry_format_count);
+            
+            for(u32 index = 0; index < file_name_entry_format_count; index++){
+                u64 offset = 0;
+                u64 a = read_uleb(section_data, &offset);
+                u64 b = read_uleb(section_data, &offset);
+                section_data += offset;
+                
+                print("  [%u] %x (%s) %x (%s)\n", index, a, content_type_code[a], b, attribute_form_codes[b]);
+            }
+            
+            uff_offset = 0;
+            u64 number_of_files = read_uleb(section_data, &uff_offset);
+            section_data += uff_offset;
+            
+            print("Number of files %u\n", number_of_files);
+            u8 *file_table = section_data;
+            
+            for(u32 index = 0; index < number_of_files; index++){
+                u32 offset = *(u32 *)section_data;
+                section_data += 4;
+                
+                u8 value = *section_data++;
+                print("  [%u] %x %s -> %x\n", index, offset, debug_line_string_table + offset, value);
+            }
+            
+            // 
+            // Dump the line program.
+            // 
+            
+            u64 address = 0;
+            u64 file_number = 1;
+            u64 line = 1;
+            u64 column = 0;
+            u64 isa = 0;
+            u64 discriminator = 0;
+            
+            int is_statement = default_is_statement;
+            int is_basic_block = 0;
+            int prologue_end = 0;
+            int epilogue_begin = 0;
+            int end_sequence = 0;
+            
+            struct row{
+                u64 address;
+                u64 file_number;
+                u64 line;
+                u64 column;
+                u64 isa;
+                u64 discriminator;
+                
+                int is_statement;
+                int is_basic_block;
+                int prologue_end;
+                int epilogue_begin;
+                int end_sequence;
+            } *rows = push_data(arena, struct row, 0);
+            
+#define push_row()                                            \
+struct row *row = push_struct(arena, struct row); \
+row->address = address;                                       \
+row->file_number = file_number;                               \
+row->line = line;                                             \
+row->column = column;                                         \
+row->isa = isa;                                               \
+row->discriminator = discriminator;                           \
+row->is_statement = is_statement;                     \
+row->is_basic_block = is_basic_block;                         \
+row->prologue_end = prologue_end;                             \
+row->epilogue_begin = epilogue_begin;                         \
+row->end_sequence = end_sequence;                             \
+            
+            
+            int row_index = 0;
+            
+            while(section_data < section_end){
+                u8 opcode = *section_data++;
+                
+                if(row_index++ == 0x100) break;
+                
+                if(opcode == 0){
+                    // Extended opcode
+                    uff_offset = 0;
+                    u64 opcode_length = read_uleb(section_data, &uff_offset);
+                    section_data += uff_offset;
+                    
+                    u8 sub_opcode = *section_data++;
+                    
+                    switch(sub_opcode){
+                        case /*DW_LNE_end_sequence*/1:{
+                            print("DW_LNE_end_sequence\n");
+                            end_sequence = 1;
+                            push_row();
+                            
+                            address  = 0;
+                            column = 0;
+                            isa = 0;
+                            discriminator = 0;
+                            is_statement = 0;
+                            is_basic_block = 0;
+                            prologue_end = 0;
+                            epilogue_begin = 0;
+                            end_sequence = 0;
+                            
+                            file_number = 1;
+                            line = 1;
+                            is_statement = default_is_statement;
+                        }break;
+                        
+                        case /*DW_LNE_set_address*/2:{
+                            address = *(u32 *)section_data;
+                            print("DW_LNE_set_address %x\n", address);
+                        }break;
+                        
+                        // case /*DW_LNE_define_file*/3:{}break;
+                        
+                        case /*DW_LNE_set_discriminator*/4:{
+                            uff_offset = 0;
+                            discriminator = read_uleb(section_data, &uff_offset);
+                            section_data += uff_offset;
+                        }break;
+                        
+                        default:{
+                            print("    extended opcode %u unhandled\n", sub_opcode);
+                            os_panic(1);
+                        }break;
+                    }
+                    
+                    section_data += opcode_length-1;
+                    continue;
+                }
+                
+                if(opcode < opcode_base){
+                    switch(opcode){
+                        case /*DW_LNS_copy*/1:{
+                            print("DW_LNS_copy\n");
+                            
+                            push_row();
+                            
+                            is_basic_block = false;
+                            prologue_end = false;
+                            epilogue_begin = false;
+                            discriminator = 0;
+                        }break;
+                        
+                        case /*DW_LNS_advance_pc*/2:{
+                            uff_offset = 0;
+                            u64 advance = read_uleb(section_data, &uff_offset);
+                            section_data += uff_offset;
+                            
+                            print("DW_LNS_advance_pc %x\n", advance);
+                            
+                            address += advance * minimum_instruction_length;
+                        }break;
+                        
+                        case /*DW_LNS_advance_line*/3:{
+                            uff_offset = 0;
+                            s64 advance = read_sleb(section_data, &uff_offset);
+                            section_data += uff_offset;
+                            line += advance;
+                            
+                            print("DW_LNS_advance_line %x\n", advance);
+                        }break;
+                        
+                        case /*DW_LNS_set_file*/4:{
+                            uff_offset = 0;
+                            file_number = read_uleb(section_data, &uff_offset);
+                            section_data += uff_offset;
+                            
+                            print("DW_LNS_set_file %x\n", file_number);
+                        }break;
+                        
+                        case /*DW_LNS_set_column*/5:{
+                            uff_offset = 0;
+                            column = read_uleb(section_data, &uff_offset);
+                            section_data += uff_offset;
+                            
+                            print("DW_LNS_set_column %x\n", column);
+                        }break;
+                        
+                        case /*DW_LNS_negate_stmt*/6:{
+                            is_statement = !is_statement;
+                            print("DW_LNS_negate_stmt\n");
+                        }break;
+                        
+                        case /*DW_LNS_set_basic_block*/7:{
+                            is_basic_block = 1;
+                            print("DW_LNS_set_basic_block\n");
+                        }break;
+                        
+                        case /*DW_LNS_const_add_pc*/8:{
+                            u32 adjusted = 255 - opcode_base;
+                            u32 operation_advance = adjusted / line_range;
+                            address += operation_advance * minimum_instruction_length;
+                            
+                            print("DW_LNS_const_add_pc\n");
+                        }break;
+                        
+                        case /*DW_LNS_fixed_advance_pc*/9:{
+                            u16 advance = *(u16 *)section_data;
+                            address += advance;
+                            section_data += 2;
+                            
+                            print("DW_LNS_fixed_advance_pc %x\n", advance);
+                        }break;
+                        
+                        case /*DW_LNS_set_prologue_end*/10:{
+                            print("DW_LNS_set_prologue_end\n");
+                            prologue_end = 1;
+                        }break;
+                        
+                        case /*DW_LNS_set_epilogue_begin*/11:{
+                            print("DW_LNS_set_epilogue_begin\n");
+                            epilogue_begin = 1;
+                        }break;
+                        
+                        case /*DW_LNS_set_isa*/12:{
+                            uff_offset = 0;
+                            isa = read_uleb(section_data, &uff_offset);
+                            section_data += uff_offset;
+                            print("DW_LNS_set_isa %x\n", isa);
+                        }break;
+                        
+                        default:{
+                            print("    opcode %u unhandled\n", opcode);
+                            os_panic(1);
+                        }break;
+                    }
+                    
+                    continue;
+                }
+                
+                // Special opcode?
+                
+                u32 adjusted_opcode   = opcode - opcode_base;
+                u32 operation_advance = adjusted_opcode / line_range;
+                
+                int line_increment = line_base + (adjusted_opcode % line_range);
+                
+                address += operation_advance * minimum_instruction_length;
+                line    += line_increment;
+                
+                print("Special Opcode %x (address += 0x%x, line += %d)\n", opcode, operation_advance * minimum_instruction_length, line_increment);
+                
+                push_row();
+                
+                is_basic_block    = 0;
+                prologue_end   = 0;
+                epilogue_begin = 0;
+                discriminator  = 0;
+            }
+            
+            u64 amount_of_rows = push_data(arena, struct row, 0) - rows;
+            
+            print("\nExtracted Rows:\n");
+            for(u64 index = 0; index < amount_of_rows; index++){
+                struct row *row = &rows[index];
+                
+                print("    %p: %s(%u,%u)\n", row->address, debug_line_string_table + *(u32 *)(file_table + 5 * row->file_number), row->line, row->column);
+            }
+            
+        }
         
         // .debug_str
         
         // .debug_addr
         
-        // .debug_line_str
+        if(string_match(section_name, string(".debug_line_str"))){
+            for(u64 offset = 0; offset < section_size;){
+                char *string = (char *)(section_data + offset);
+                print("    0x%x -> %s\n", offset, string);
+                offset += cstring_length(string) + 1;
+            }
+        }
         
         // .debug_str_offsets
         

@@ -271,9 +271,18 @@ struct file{
     
     struct raw_token_array tokens;
     
-    // pdb debug info
-    u32 offset_in_names;
-    u32 offset_in_f4;
+    
+    union{
+        struct{
+            // pdb debug info
+            u32 offset_in_names;
+            u32 offset_in_f4;
+        };
+        struct{
+            // elf debug info
+            u32 file_number;
+        };
+    };
 };
 
 struct import_node{

@@ -1532,7 +1532,26 @@ func b32 string_list_add_uniquely(struct string_list *list, struct memory_arena 
     return 0;
 }
 
-
+func struct string_list_pool_add_return{
+    u64 offset;
+    u64 index;
+    int added;
+} string_list_pool_add(struct string_list *list, struct memory_arena *arena, struct string string){
+    struct string_list_pool_add_return ret = {0};
+    
+    for(struct string_list_node *node = list->list.first; node; node = node->next){
+        if(string_match(node->string, string)){
+            return ret;
+        }
+        ret.offset += node->string.size + 1;
+        ret.index += 1;
+    }
+    
+    ret.added = 1;
+    
+    string_list_postfix(list, arena, string);
+    return ret;
+}
 
 // zero terminates because why not
 func struct string string_list_flatten(struct string_list list, struct memory_arena *arena){
@@ -1544,6 +1563,20 @@ func struct string string_list_flatten(struct string_list list, struct memory_ar
         at += it->string.length;
     }
     return create_string(data, list.total_size);
+
+}
+
+func struct string string_list_pool_flatten(struct string_list list, struct memory_arena *arena){
+    u8 *data = push_uninitialized_data(arena, u8, list.total_size + list.amount_of_strings);
+    
+    u8 *at = data;
+    for(struct string_list_node *it = list.list.first; it; it = it->next){
+        memcpy(at, it->string.data, it->string.length);
+        at[it->string.length] = 0;
+        at += it->string.length + 1;
+    }
+    
+    return create_string(data, list.total_size + list.amount_of_strings);
 }
 
 // @note: this trashes front and back.
@@ -1557,7 +1590,6 @@ func struct string_list string_list_concatenate(struct string_list front, struct
     
     return ret;
 }
-
 
 func void print_byte_range(u8 *start, smm amount){
     
