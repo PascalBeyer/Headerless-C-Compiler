@@ -1446,13 +1446,17 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     // 
     
     {
-        
         // .debug_line_str
         //     directory_names
         //     file_names
         
         struct string_list directories = zero_struct;
         struct string_list file_names = zero_struct;
+        
+        struct string main_file_name = strip_file_path(cstring_to_string(globals.first_compilation_unit->main_file->absolute_file_path));
+        
+        string_list_pool_add(&directories, scratch, globals.working_directory);
+        string_list_pool_add(&file_names, scratch, main_file_name);
         
         struct{
             struct file_index_node{
@@ -1519,19 +1523,18 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         header->line_base  = -5;
         header->line_range = 14;
         header->opcode_base = 13;
-        header->opcode_args[0] = 0;
-        header->opcode_args[1] = 1;
-        header->opcode_args[2] = 1;
-        header->opcode_args[3] = 1;
-        header->opcode_args[4] = 1;
-        header->opcode_args[5] = 1;
-        header->opcode_args[6] = 0;
-        header->opcode_args[7] = 0;
-        header->opcode_args[8] = 0;
-        header->opcode_args[9] = 1;
-        header->opcode_args[10] = 0;
-        header->opcode_args[11] = 0;
-        header->opcode_args[12] = 1;
+        header->opcode_args[1-1] = 0;
+        header->opcode_args[2-1] = 1;
+        header->opcode_args[3-1] = 1;
+        header->opcode_args[4-1] = 1;
+        header->opcode_args[5-1] = 1;
+        header->opcode_args[6-1] = 0;
+        header->opcode_args[7-1] = 0;
+        header->opcode_args[8-1] = 0;
+        header->opcode_args[9-1] = 1;
+        header->opcode_args[10-1] = 0;
+        header->opcode_args[11-1] = 0;
+        header->opcode_args[12-1] = 1;
         
         *push_struct(arena, u8) = /*directory_entry_format_count*/1;
         *push_struct(arena, u8) = /*content_type = DW_LNCT_path*/1;
@@ -1551,9 +1554,16 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         *push_struct(arena, u8) = /*content_type = DW_LNCT_directory_index*/2;
         *push_struct(arena, u8) = /*attribute form = DW_FORM_udata*/0xf;
         
-        push_uleb(arena, file_index_list.count);
+        push_uleb(arena, file_index_list.count + (file_index_list.count == 1));
         
         for(struct file_index_node *node = file_index_list.first; node; node = node->next){
+            *push_struct_unaligned(arena, u32) = (u32)(debug_line_string_offset + node->file_name_offset);
+            *push_struct(arena, u8) = (u8)node->directory_index;
+        }
+        
+        if(file_index_list.count == 1){
+            // For whatever reason gdb adds this if there is only one.
+            struct file_index_node *node = file_index_list.first;
             *push_struct_unaligned(arena, u32) = (u32)(debug_line_string_offset + node->file_name_offset);
             *push_struct(arena, u8) = (u8)node->directory_index;
         }
@@ -1594,9 +1604,9 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                     *push_struct(arena, u8) = (u8)((line_delta - line_base) + line_range * address_delta + opcode_base);
                 }else{
                     *push_struct(arena, u8) = /*extended opcode*/0;
-                    *push_struct(arena, u8) = /*length*/5;
+                    *push_struct(arena, u8) = /*length*/9;
                     *push_struct(arena, u8) = /*DW_LNE_set_address*/2;
-                    *push_struct_unaligned(arena, u32) = (u32)function->relative_virtual_address;
+                    *push_struct_unaligned(arena, u64) = (u64)(virtual_image_base + function->relative_virtual_address);
                     
                     *push_struct(arena, u8) = /*DW_LNS_advance_line*/3;
                     push_sleb(arena, line_delta);
@@ -1604,6 +1614,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                     *push_struct(arena, u8) = /*DW_LNS_copy*/1;
                 }
             }
+            
             *push_struct(arena, u8) = /*DW_LNS_set_prologue_end*/10;
             
             struct function_line_information last = {
@@ -1621,9 +1632,9 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                     *push_struct(arena, u8) = (u8)((line_delta - line_base) + line_range * address_delta + opcode_base);
                 }else{
                     *push_struct(arena, u8) = /*extended opcode*/0;
-                    *push_struct(arena, u8) = /*length*/5;
+                    *push_struct(arena, u8) = /*length*/9;
                     *push_struct(arena, u8) = /*DW_LNE_set_address*/2;
-                    *push_struct_unaligned(arena, u32) = (u32)(function->relative_virtual_address + info.offset);
+                    *push_struct_unaligned(arena, u64) = (u64)(virtual_image_base + function->relative_virtual_address + info.offset);
                     
                     *push_struct(arena, u8) = /*DW_LNS_advance_line*/3;
                     push_sleb(arena, line_delta);
@@ -1639,10 +1650,98 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             address = function->relative_virtual_address + last.offset;
         }
         
+        *push_struct(arena, u8) = /*extended opcode*/0;
+        *push_struct(arena, u8) = /*length*/1;
+        *push_struct(arena, u8) = /*DW_LNE_end_sequence*/1;
+        
         header->initial_length = (u32)(arena_current(arena) - ((u8 *)header + 4));
         
         u8 *debug_line_section_start = (u8 *)header;
-        fill_section_header(debug_line, "debug_line", SHT_PROGBITS, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/1);
+        fill_section_header(debug_line, "debug_line", SHT_PROGBITS, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
+        
+        // 
+        // .debug_abbrev
+        // 
+        //     DW_TAG_compile_unit
+        //         DW_AT_producer           DW_FORM_string
+        //         DW_AT_language           DW_FORM_data2
+        //         DW_AT_name               DW_FORM_string
+        //         DW_AT_stmt_list          DW_FORM_sec_offset
+        //         DW_AT_comp_dir           DW_FORM_string
+        //         DW_AT_low_pc             DW_FORM_data4
+        //         DW_AT_high_pc            DW_FORM_data4
+        //         
+        //         DW_AT_str_offsets_base   DW_FORM_sec_offset
+        //         DW_AT_addr_base          DW_FORM_sec_offset
+        //         DW_AT_rnglists_base      DW_FORM_sec_offset
+        //         DW_AT_loclists_base      DW_FORM_sec_offset
+        // 
+        
+        u8 *debug_abbrev_section_start = arena_current(arena);
+        
+        *push_struct(arena, u8) = /*index*/1;
+        *push_struct(arena, u8) = /*DW_TAG_compile_unit*/0x11;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_producer*/0x25;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_language*/0x13;
+            *push_struct(arena, u8) = /*DW_FORM_data2*/0x5;
+            
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_stmt_list*/0x10;
+            *push_struct(arena, u8) = /*DW_FORM_sec_offset*/0x17;
+            
+            *push_struct(arena, u8) = /*DW_AT_comp_dir*/0x1b;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_low_pc*/0x11;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/0x06;
+            
+            *push_struct(arena, u8) = /*DW_AT_high_pc*/0x12;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/0x06;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        *push_struct(arena, u8) = /*zero-terminator*/0;
+        
+        fill_section_header(debug_abbrev, "debug_abbrev", SHT_PROGBITS, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
+        
+        struct debug_info_header{
+            u32 length;
+            u16 version;
+            u8 unit_type;
+            u8 address_size;
+            u32 abbrev_offset;
+        } *debug_info_header = push_struct(arena, struct debug_info_header);
+        debug_info_header->version = 5;
+        debug_info_header->unit_type = 1; // ?
+        debug_info_header->address_size = 8;
+        debug_info_header->abbrev_offset = 0;
+        
+        *push_struct(arena, u8) = /*index*/1;
+        
+        push_zero_terminated_string_copy(arena, string("hlc")); // producer
+        *push_struct_unaligned(arena, u16) = 29; // language (C11)
+        push_zero_terminated_string_copy(arena, main_file_name); // name
+        *push_struct_unaligned(arena, u32) = 0; // stmt_list
+        push_zero_terminated_string_copy(arena, globals.working_directory); // comp_dir
+        
+        struct elf_section_header *text_section = section_headers + text_section_index;
+        *push_struct_unaligned(arena, u32) = (u32)(text_section->address); // low_pc
+        *push_struct_unaligned(arena, u32) = (u32)(text_section->size); // high_pc
+        
+        // ...
+        
+        *push_struct(arena, u8) = /*end*/0;
+        
+        debug_info_header->length = (u32)(arena_current(arena) - (u8 *)(&debug_info_header->length + 1));
+        
+        u8 *debug_info_section_start = (u8 *)debug_info_header;
+        fill_section_header(debug_info, "debug_info", SHT_PROGBITS, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
     }
     
     struct string shstrtab = string_list_flatten(section_name_string_table, arena);
@@ -2034,6 +2133,8 @@ void dump_dwarf_cfa(u8 *buffer, u64 size){
         print("\n");
     }
 }
+
+#define get(a, i) (((i) < array_count(a)) ? (a)[(i)] : 0)
 
 int dump_elf(char *cfile_name, struct memory_arena *arena){
     
@@ -2875,10 +2976,608 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
             print_byte_range(section_data, section_size);
         }
         
+        static char *attribute_form_codes[] = {
+            [0x01] = "DW_FORM_addr",
+            [0x03] = "DW_FORM_block2",
+            [0x04] = "DW_FORM_block4",
+            [0x05] = "DW_FORM_data2",
+            [0x06] = "DW_FORM_data4",
+            [0x07] = "DW_FORM_data8",
+            [0x08] = "DW_FORM_string",
+            [0x09] = "DW_FORM_block",
+            [0x0a] = "DW_FORM_block1",
+            [0x0b] = "DW_FORM_data1",
+            [0x0c] = "DW_FORM_flag",
+            [0x0d] = "DW_FORM_sdata",
+            [0x0e] = "DW_FORM_strp",
+            [0x0f] = "DW_FORM_udata",
+            [0x10] = "DW_FORM_ref_addr",
+            [0x11] = "DW_FORM_ref1",
+            [0x12] = "DW_FORM_ref2",
+            [0x13] = "DW_FORM_ref4",
+            [0x14] = "DW_FORM_ref8",
+            [0x15] = "DW_FORM_ref_udata",
+            [0x16] = "DW_FORM_indirect",
+            [0x17] = "DW_FORM_sec_offset",
+            [0x18] = "DW_FORM_exprloc",
+            [0x19] = "DW_FORM_flag_present",
+            [0x1a] = "DW_FORM_strx",
+            [0x1b] = "DW_FORM_addrx",
+            [0x1c] = "DW_FORM_ref_sup4",
+            [0x1d] = "DW_FORM_strp_sup",
+            [0x1e] = "DW_FORM_data16",
+            [0x1f] = "DW_FORM_line_strp",
+            [0x20] = "DW_FORM_ref_sig8",
+            [0x21] = "DW_FORM_implicit_const",
+            [0x22] = "DW_FORM_loclistx",
+            [0x23] = "DW_FORM_rnglistx",
+            [0x24] = "DW_FORM_ref_sup8",
+            [0x25] = "DW_FORM_strx1",
+            [0x26] = "DW_FORM_strx2",
+            [0x27] = "DW_FORM_strx3",
+            [0x28] = "DW_FORM_strx4",
+            [0x29] = "DW_FORM_addrx1",
+            [0x2a] = "DW_FORM_addrx2",
+            [0x2b] = "DW_FORM_addrx3",
+            [0x2c] = "DW_FORM_addrx4",
+        };
+        
+        static char *dwarf_tag_string[] = {
+            [0x01] = "DW_TAG_array_type",
+            [0x02] = "DW_TAG_class_type",
+            [0x03] = "DW_TAG_entry_point",
+            [0x04] = "DW_TAG_enumeration_type",
+            [0x05] = "DW_TAG_formal_parameter",
+            [0x08] = "DW_TAG_imported_declaration",
+            [0x0a] = "DW_TAG_label",
+            [0x0b] = "DW_TAG_lexical_block",
+            [0x0d] = "DW_TAG_member",
+            [0x0f] = "DW_TAG_pointer_type",
+            [0x10] = "DW_TAG_reference_type",
+            [0x11] = "DW_TAG_compile_unit",
+            [0x12] = "DW_TAG_string_type",
+            [0x13] = "DW_TAG_structure_type",
+            [0x15] = "DW_TAG_subroutine_type",
+            [0x16] = "DW_TAG_typedef",
+            [0x17] = "DW_TAG_union_type",
+            [0x18] = "DW_TAG_unspecified_parameters",
+            [0x19] = "DW_TAG_variant",
+            [0x1a] = "DW_TAG_common_block",
+            [0x1b] = "DW_TAG_common_inclusion",
+            [0x1c] = "DW_TAG_inheritance",
+            [0x1d] = "DW_TAG_inlined_subroutine",
+            [0x1e] = "DW_TAG_module",
+            [0x1f] = "DW_TAG_ptr_to_member_type",
+            [0x20] = "DW_TAG_set_type",
+            [0x21] = "DW_TAG_subrange_type",
+            [0x22] = "DW_TAG_with_stmt",
+            [0x23] = "DW_TAG_access_declaration",
+            [0x24] = "DW_TAG_base_type",
+            [0x25] = "DW_TAG_catch_block",
+            [0x26] = "DW_TAG_const_type",
+            [0x27] = "DW_TAG_constant",
+            [0x28] = "DW_TAG_enumerator",
+            [0x29] = "DW_TAG_file_type",
+            [0x2a] = "DW_TAG_friend",
+            [0x2b] = "DW_TAG_namelist",
+            [0x2c] = "DW_TAG_namelist_item",
+            [0x2d] = "DW_TAG_packed_type",
+            [0x2e] = "DW_TAG_subprogram",
+            [0x2f] = "DW_TAG_template_type_parameter",
+            [0x30] = "DW_TAG_template_value_parameter",
+            [0x31] = "DW_TAG_thrown_type",
+            [0x32] = "DW_TAG_try_block",
+            [0x33] = "DW_TAG_variant_part",
+            [0x34] = "DW_TAG_variable",
+            [0x35] = "DW_TAG_volatile_type",
+            
+            [0x36] = "DW_TAG_dwarf_procedure",
+            [0x37] = "DW_TAG_restrict_type",
+            [0x38] = "DW_TAG_interface_type",
+            [0x39] = "DW_TAG_namespace",
+            [0x3a] = "DW_TAG_imported_module",
+            [0x3b] = "DW_TAG_unspecified_type",
+            [0x3c] = "DW_TAG_partial_unit",
+            [0x3d] = "DW_TAG_imported_unit",
+            [0x3f] = "DW_TAG_condition",
+            [0x40] = "DW_TAG_shared_type",
+            
+            [0x41] = "DW_TAG_type_unit",
+            [0x42] = "DW_TAG_rvalue_reference_type",
+            [0x43] = "DW_TAG_template_alias",
+            
+        };
+        
+        static char *attr_string[] = {
+            [0x01] = "DW_AT_sibling", // reference
+            [0x02] = "DW_AT_location", // block, loclistptr
+            [0x03] = "DW_AT_name", // string
+            [0x09] = "DW_AT_ordering", // constant
+            [0x0b] = "DW_AT_byte_size", // block, constant, reference
+            [0x0c] = "DW_AT_bit_offset", // block, constant, reference
+            [0x0d] = "DW_AT_bit_size", // block, constant, reference
+            [0x10] = "DW_AT_stmt_list", // lineptr
+            [0x11] = "DW_AT_low_pc", // address
+            [0x12] = "DW_AT_high_pc", // address
+            [0x13] = "DW_AT_language", // constant
+            [0x15] = "DW_AT_discr", // reference
+            [0x16] = "DW_AT_discr_value", // constant
+            [0x17] = "DW_AT_visibility", // constant
+            [0x18] = "DW_AT_import", // reference
+            [0x19] = "DW_AT_string_length", // block, loclistptr
+            [0x1a] = "DW_AT_common_reference", // reference
+            [0x1b] = "DW_AT_comp_dir", // string
+            [0x1c] = "DW_AT_const_value", // block, constant, string
+            [0x1d] = "DW_AT_containing_type", // reference
+            [0x1e] = "DW_AT_default_value", // reference
+            [0x20] = "DW_AT_inline", // constant
+            [0x21] = "DW_AT_is_optional", // flag
+            [0x22] = "DW_AT_lower_bound", // block, constant, reference
+            [0x25] = "DW_AT_producer", // string
+            [0x27] = "DW_AT_prototyped", // flag
+            [0x2a] = "DW_AT_return_addr", // block, loclistptr
+            [0x2c] = "DW_AT_start_scope", // constant
+            [0x2e] = "DW_AT_bit_stride", // constant
+            [0x2f] = "DW_AT_upper_bound", // block, constant, reference
+            [0x31] = "DW_AT_abstract_origin", // reference
+            [0x32] = "DW_AT_accessibility", // constant
+            [0x33] = "DW_AT_address_class", // constant
+            [0x34] = "DW_AT_artificial", // flag
+            [0x35] = "DW_AT_base_types", // reference
+            [0x36] = "DW_AT_calling_convention", // constant
+            [0x37] = "DW_AT_count", // block, constant, reference
+            [0x38] = "DW_AT_data_member_location", // block, constant, loclistptr
+            [0x39] = "DW_AT_decl_column", // constant
+            [0x3a] = "DW_AT_decl_file", // constant
+            [0x3b] = "DW_AT_decl_line", // constant
+            [0x3c] = "DW_AT_declaration", // flag
+            [0x3d] = "DW_AT_discr_list", // block
+            [0x3e] = "DW_AT_encoding", // constant
+            [0x3f] = "DW_AT_external", // flag
+            [0x40] = "DW_AT_frame_base", // block, loclistptr
+            [0x41] = "DW_AT_friend", // reference
+            [0x42] = "DW_AT_identifier_case", // constant
+            [0x43] = "DW_AT_macro_info", // macptr
+            [0x44] = "DW_AT_namelist_item", // block
+            [0x45] = "DW_AT_priority", // reference
+            [0x46] = "DW_AT_segment", // block, loclistptr
+            [0x47] = "DW_AT_specification", // reference
+            [0x48] = "DW_AT_static_link", // block, loclistptr
+            [0x49] = "DW_AT_type", // reference
+            [0x4a] = "DW_AT_use_location", // block, loclistptr
+            [0x4b] = "DW_AT_variable_parameter", // flag
+            [0x4c] = "DW_AT_virtuality", // constant
+            [0x4d] = "DW_AT_vtable_elem_location", // block, loclistptr
+	           // Dwarf3
+            [0x4e] = "DW_AT_allocated", // block, constant, reference
+            [0x4f] = "DW_AT_associated", // block, constant, reference
+            [0x50] = "DW_AT_data_location", // block
+            [0x51] = "DW_AT_byte_stride", // block, constant, reference
+            [0x52] = "DW_AT_entry_pc", // address
+            [0x53] = "DW_AT_use_UTF8", // flag
+            [0x54] = "DW_AT_extension", // reference
+            [0x55] = "DW_AT_ranges", // rangelistptr
+            [0x56] = "DW_AT_trampoline", // address, flag, reference, string
+            [0x57] = "DW_AT_call_column", // constant
+            [0x58] = "DW_AT_call_file", // constant
+            [0x59] = "DW_AT_call_line", // constant
+            [0x5a] = "DW_AT_description", // string
+            [0x5b] = "DW_AT_binary_scale", // constant
+            [0x5c] = "DW_AT_decimal_scale", // constant
+            [0x5d] = "DW_AT_small", // reference
+            [0x5e] = "DW_AT_decimal_sign", // constant
+            [0x5f] = "DW_AT_digit_count", // constant
+            [0x60] = "DW_AT_picture_string", // string
+            [0x61] = "DW_AT_mutable", // flag
+            [0x62] = "DW_AT_threads_scaled", // flag
+            [0x63] = "DW_AT_explicit", // flag
+            [0x64] = "DW_AT_object_pointer", // reference
+            [0x65] = "DW_AT_endianity", // constant
+            [0x66] = "DW_AT_elemental", // flag
+            [0x67] = "DW_AT_pure", // flag
+            [0x68] = "DW_AT_recursive", // flag
+            
+            [0x69] = "DW_AT_signature", // reference
+            [0x6a] = "DW_AT_main_subprogram", // flag
+            [0x6b] = "DW_AT_data_bit_offset", // constant
+            [0x6c] = "DW_AT_const_expr", // flag
+            [0x6d] = "DW_AT_enum_class", // flag
+            [0x6e] = "DW_AT_linkage_name", // string
+            [0x6f] = "DW_AT_string_length_bit_size", //  constant
+            [0x70] = "DW_AT_string_length_byte_size", //  constant
+            [0x71] = "DW_AT_rank", //  constant, exprloc
+            [0x72] = "DW_AT_str_offsets_base", //  stroffsetsptr
+            
+            [0x73] = "DW_AT_addr_base", // addrptr
+            
+            [0x73] = "DW_AT_addr_base", // addrptr
+            [0x74] = "DW_AT_rnglists_base", // rnglistsptr
+            // Reserved 0x75 Unused
+            [0x76] = "DW_AT_dwo_name", // string
+            [0x77] = "DW_AT_reference", // flag
+            [0x78] = "DW_AT_rvalue_reference", // flag
+            [0x79] = "DW_AT_macros", // macptr
+            [0x7a] = "DW_AT_call_all_calls", // flag
+            [0x7b] = "DW_AT_call_all_source_calls", // flag
+            [0x7c] = "DW_AT_call_all_tail_calls", // flag
+            [0x7d] = "DW_AT_call_return_pc", // address
+            [0x7e] = "DW_AT_call_value", // exprloc
+            [0x7f] = "DW_AT_call_origin", // exprloc
+            [0x80] = "DW_AT_call_parameter", // reference
+            [0x81] = "DW_AT_call_pc", // address
+            [0x82] = "DW_AT_call_tail_call", // flag
+            [0x83] = "DW_AT_call_target", // exprloc
+            [0x84] = "DW_AT_call_target_clobbered", // exprloc
+            [0x85] = "DW_AT_call_data_location", // exprloc
+            [0x86] = "DW_AT_call_data_value", // exprloc
+            [0x87] = "DW_AT_noreturn", // flag
+            [0x88] = "DW_AT_alignment", // constant
+            [0x89] = "DW_AT_export_symbols", // flag
+            [0x8a] = "DW_AT_deleted", // flag
+            [0x8b] = "DW_AT_defaulted", // constant
+            [0x8c] = "DW_AT_loclists_base", // loclistsptr
+        };
+        
         
         // .debug_info
+        if(string_match(section_name, string(".debug_info"))){
+            
+            struct elf_section_header *debug_abbrev = 0;
+            struct elf_section_header *debug_str = 0;
+            struct elf_section_header *debug_line_str = 0;
+            struct elf_section_header *debug_str_offsets = 0;
+            struct elf_section_header *debug_addr = 0;
+            
+            for(u64 sho = section_header_table_offset; sho < section_header_table_end; sho += section_header_table_entry_size){
+                struct elf_section_header *sh = (void *)(file.data + sho);
+                
+                struct string sn = string_from_cstring((char *)section_name_string_table + sh->name_offset);
+                if(sn.size == 0) continue;
+                
+                if(string_match(sn, string(".debug_abbrev"))){
+                    debug_abbrev = sh;
+                }
+                
+                if(string_match(sn, string(".debug_str"))){
+                    debug_str = sh;
+                }
+                
+                if(string_match(sn, string(".debug_line_str"))){
+                    debug_line_str = sh;
+                }
+                
+                if(string_match(sn, string(".debug_str_offsets"))){
+                    debug_str_offsets = sh;
+                }
+                
+                if(string_match(sn, string(".debug_addr"))){
+                    debug_addr = sh;
+                }
+            }
+            
+            u8 *abbrev = file.data + debug_abbrev->offset;
+            u64 abbrev_size = debug_abbrev->size;
+            
+            u8 *debug_string_table   = file.data + (debug_str ? debug_str->offset : 0);
+            u8 *debug_line_string_table   = file.data + (debug_line_str ? debug_line_str->offset : 0);
+            u32 *debug_string_offsets = (u32 *)(file.data + (debug_str_offsets ? debug_str_offsets->offset : 0) + 8);
+            u64 *debug_address_table  = (u64 *)(file.data + (debug_addr ? debug_addr->offset : 0) + 8); 
+            
+            // u64 debug_string_table_size = debug_str->size;
+            
+            u64 offset = 0;
+            
+            while(offset < section_size){
+                
+                print("compilation unit at %x\n", offset);
+                
+                u32 compilation_unit_length = *(u32 *)(section_data + offset);
+                offset += 4;
+                
+                u64 unit_end = offset + compilation_unit_length;
+                
+                u16 version = *(u16 *)(section_data + offset);
+                offset += 2;
+                
+                u8 unit_type = section_data[offset++];
+                u8 address_size = section_data[offset++];
+                
+                u32 abbrev_base = *(u32 *)(section_data + offset);
+                offset += 4;
+                
+                print("   length %x\n", compilation_unit_length);
+                print("   version %u\n", version);
+                print("   unit_type %u\n", unit_type);
+                print("   address_size %u\n", address_size);
+                print("   abbrev_offset %x\n", abbrev_base);
+                
+                int depth = 0;
+                
+                while(offset < unit_end){
+                    u64 abbrev_code = read_uleb(section_data, &offset);
+                    
+                    if(abbrev_code == 0){
+                        print("%*sAbbrevCode == 0 (%x)\n", depth, "", offset);
+                        if(depth == 0) break;
+                        
+                        depth -= 4;
+                        continue;
+                    }
+                    
+                    // Search for the abbrev with the abbrev_code
+                    u64 abbrev_entry_offset = 0;
+                    
+                    for(u64 abbrev_offset = abbrev_base; abbrev_offset < abbrev_size; ){
+                        u64 code = read_uleb(abbrev, &abbrev_offset);
+                        
+                        if(code == 0) break;
+                        if(code == abbrev_code){
+                            abbrev_entry_offset = abbrev_offset;
+                            break;
+                        }
+                        
+                        read_uleb(abbrev, &abbrev_offset);
+                        abbrev_offset++;
+                        
+                        while(true){
+                            u64 attr = read_uleb(abbrev, &abbrev_offset);
+                            u64 form = read_uleb(abbrev, &abbrev_offset);
+                            if(attr == 0 && form == 0) break;
+                        }
+                    }
+                    
+                    u64 root_abbrev_entry_offset = abbrev_entry_offset;
+                    u64 tag = read_uleb(abbrev, &abbrev_entry_offset);
+                    u8  have_children = abbrev[abbrev_entry_offset++];
+                    print("%*s[%llx (%llx)] %s [%s]\n", depth, "", abbrev_code, root_abbrev_entry_offset, get(dwarf_tag_string, tag), have_children ? "has children" : "no children");
+                    
+                    depth += 2;
+                    while(1){
+                        u64 attr = read_uleb(abbrev, &abbrev_entry_offset);
+                        u64 form = read_uleb(abbrev, &abbrev_entry_offset);
+                        if(attr == 0 && form == 0) break;
+                        
+                        print("%*s%s(%s): ", depth, "", get(attr_string, attr), get(attribute_form_codes, form));
+                        
+                        int unsupported = 0;
+                        
+                        switch(form){
+                            
+                            case /*DW_FORM_addr*/0x01:{
+                                u64 address = *(u64 *)(section_data + offset);
+                                offset += 8;
+                                print("%p\n", address);
+                            }break;
+                            
+                            case /*DW_FORM_block2*/0x03:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_block4*/0x04:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_data2*/0x05:{
+                                u16 data = *(u16 *)(section_data + offset);
+                                offset += 2;
+                                print("0x%x\n", data);
+                            }break;
+                            case /*DW_FORM_data4*/0x06:{
+                                u32 data = *(u32 *)(section_data + offset);
+                                offset += 4;
+                                print("0x%x\n", data);
+                            }break;
+                            case /*DW_FORM_data8*/0x07:{
+                                u64 data = *(u64 *)(section_data + offset);
+                                offset += 8;
+                                print("0x%llx\n", data);
+                            }break;
+                            case /*DW_FORM_string*/0x08:{
+                                char *string = (char *)(section_data + offset);
+                                offset += cstring_length(string) + 1;
+                                print("%s\n", string);
+                            }break;
+                            case /*DW_FORM_block*/0x09:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_block1*/0x0a:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_data1*/0x0b:{
+                                u8 data = section_data[offset++];
+                                print("%x\n", data);
+                            }break;
+                            case /*DW_FORM_flag*/0x0c:{
+                                u8 data = section_data[offset++];
+                                print("%x\n", data);
+                            }break;
+                            case /*DW_FORM_sdata*/0x0d:{
+                                s64 value = read_sleb(section_data, &offset);
+                                print("%lld (%llx)\n", value, value);
+                            }break;
+                            case /*DW_FORM_strp*/0x0e:{
+                                u32 string_offset = *(u32 *)(section_data + offset);
+                                offset += 4;
+                                print("%x (%s)\n", string_offset, debug_string_table + string_offset);
+                            }break;
+                            
+                            case /*DW_FORM_udata*/0x0f:{
+                                u64 value = read_uleb(section_data, &offset);
+                                print("%llx\n", value);
+                            }break;
+                            case /*DW_FORM_ref_addr*/0x10:{
+                                u64 address = *(u64 *)(section_data + offset);
+                                offset += 8;
+                                print("<%llx>\n", address);
+                            }break;
+                            case /*DW_FORM_ref1*/0x11:{
+                                u8 ref = *(u8 *)(section_data + offset);
+                                offset += 1;
+                                print("<%x>\n", ref);
+                            }break;
+                            case /*DW_FORM_ref2*/0x12:{
+                                u16 ref = *(u16 *)(section_data + offset);
+                                offset += 2;
+                                print("<%x>\n", ref);
+                            }break;
+                            case /*DW_FORM_ref4*/0x13:{
+                                u32 ref = *(u32 *)(section_data + offset);
+                                offset += 4;
+                                print("<%x>\n", ref);
+                            }break;
+                            case /*DW_FORM_ref8*/0x14:{
+                                u64 ref = *(u64 *)(section_data + offset);
+                                offset += 8;
+                                print("<%llx>\n", ref);
+                            }break;
+                            case /*DW_FORM_ref_udata*/0x15:{
+                                u64 value = read_uleb(section_data, &offset);
+                                print("<%llx>\n", value);
+                            }break;
+                            case /*DW_FORM_indirect*/0x16:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_sec_offset*/0x17:{
+                                u32 sec_offset = *(u32 *)(section_data + offset);
+                                offset += 4;
+                                print("%x\n", sec_offset);
+                            }break;
+                            case /*DW_FORM_exprloc*/0x18:{
+                                u64 length = read_uleb(section_data, &offset);
+                                print("expr(%llx): ", length);
+                                
+                                for(u32 index = 0; index < length; index++){
+                                    print("%.2x ", section_data[offset + index]);
+                                }
+                                print("\n");
+                                offset += length;
+                            }break;
+                            case /*DW_FORM_flag_present*/0x19:{
+                                print("true\n");
+                            }break;
+                            case /*DW_FORM_strx*/0x1a:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_addrx*/0x1b:{
+                                u64 value = read_uleb(section_data, &offset);
+                                print("%llx (%p)\n", value, debug_address_table[value]);
+                            }break;
+                            case /*DW_FORM_ref_sup4*/0x1c:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_strp_sup*/0x1d:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_data16*/0x1e:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_line_strp*/0x1f:{
+                                u32 string_offset = *(u32 *)(section_data + offset);
+                                offset += 4;
+                                print("%x (%s)\n", string_offset, debug_line_string_table + string_offset);
+                            }break;
+                            case /*DW_FORM_ref_sig8*/0x20:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_implicit_const*/0x21:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_loclistx*/0x22:{
+                                u64 value = read_uleb(section_data, &offset);
+                                print(".debug_loclists[%llx]\n", value);
+                            }break;
+                            case /*DW_FORM_rnglistx*/0x23:{
+                                u64 value = read_uleb(section_data, &offset);
+                                print(".debug_rnglists[%llx]\n", value);
+                            }break;
+                            case /*DW_FORM_ref_sup8*/0x24:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_strx1*/0x25:{
+                                u8 string_offset = section_data[offset++];
+                                print("%x (%s)\n", string_offset, debug_string_table + debug_string_offsets[string_offset]);
+                            }break;
+                            case /*DW_FORM_strx2*/0x26:{
+                                u16 string_offset = *(u16 *)(section_data + offset);
+                                offset += 2;
+                                print("%x (%s)\n", string_offset, debug_string_table + debug_string_offsets[string_offset]);
+                            }break;
+                            case /*DW_FORM_strx3*/0x27:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_strx4*/0x28:{
+                                u32 string_offset = *(u32 *)(section_data + offset);
+                                offset += 4;
+                                print("%x (%s)\n", string_offset, debug_string_table + debug_string_offsets[string_offset]);
+                            }break;
+                            case /*DW_FORM_addrx1*/0x29:{
+                                u8 index = *(u8 *)(section_data + offset);
+                                offset += 1;
+                                print("%x (%p)\n", index, debug_address_table[index]);
+                            }break;
+                            case /*DW_FORM_addrx2*/0x2a:{
+                                u16 index = *(u16 *)(section_data + offset);
+                                offset += 2;
+                                print("%x (%p)\n", index, debug_address_table[index]);
+                            }break;
+                            case /*DW_FORM_addrx3*/0x2b:{
+                                unsupported = 1;
+                            }break;
+                            case /*DW_FORM_addrx4*/0x2c:{
+                                u32 index = *(u32 *)(section_data + offset);
+                                offset += 4;
+                                print("%x (%p)\n", index, debug_address_table[index]);
+                            }break;
+                            default:{
+                                unsupported = 1;
+                            }break;
+                        }
+                        
+                        if(unsupported){
+                            print("Unsupported form!!!\n");
+                            os_panic(1);
+                        }
+                    }
+                    depth -= 2;
+                    
+                    if(have_children) depth += 4;
+                }
+            }
+            
+        }
         
         // .debug_abbrev
+        if(string_match(section_name, string(".debug_abbrev"))){
+            
+            u64 offset = 0;
+            while(offset < section_size){
+                print("Table @ 0x%llx:\n", offset);
+                
+                while(true){
+                    u64 code = read_uleb(section_data, &offset);
+                    if(code == 0){
+                        print("    [0] - end of abbreviation table\n");
+                        break;
+                    }
+                    
+                    u64 tag = read_uleb(section_data, &offset);
+                    
+                    u8 have_children = section_data[offset++];
+                    
+                    print("    [%x] %x (%s) children = %u\n", code, tag, dwarf_tag_string[tag], have_children);
+                    
+                    while(true){
+                        u64 attr = read_uleb(section_data, &offset);
+                        u64 form = read_uleb(section_data, &offset);
+                        
+                        if(attr == 0 && form == 0){
+                            print("        attr = 0, form = 0, end of table\n");
+                            break;
+                        }
+                        
+                        print("        attr = 0x%x (%s), form = 0x%x (%s)\n", attr, get(attr_string, attr), form, get(attribute_form_codes, form));
+                    }
+                }
+            }
+        }
         
         // .debug_line
         if(string_match(section_name, string(".debug_line"))){
@@ -2962,30 +3661,6 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                 "DW_LNCT_timestamp",
                 "DW_LNCT_size",
                 "DW_LNCT_MD5",
-            };
-            
-            static char *attribute_form_codes[] = {
-                [0x09] = "DW_FORM_block", 
-                [0x0a] = "DW_FORM_block1", 
-                [0x03] = "DW_FORM_block2", 
-                [0x04] = "DW_FORM_block4", 
-                [0x0b] = "DW_FORM_data1", 
-                [0x05] = "DW_FORM_data2", 
-                [0x06] = "DW_FORM_data4", 
-                [0x07] = "DW_FORM_data8", 
-                [0x1e] = "DW_FORM_data16", 
-                [0x0c] = "DW_FORM_flag", 
-                [0x1f] = "DW_FORM_line_strp", 
-                [0x0d] = "DW_FORM_sdata", 
-                [0x17] = "DW_FORM_sec_offset", 
-                [0x08] = "DW_FORM_string", 
-                [0x0e] = "DW_FORM_strp", 
-                [0x1a] = "DW_FORM_strx", 
-                [0x25] = "DW_FORM_strx1", 
-                [0x26] = "DW_FORM_strx2", 
-                [0x27] = "DW_FORM_strx3", 
-                [0x28] = "DW_FORM_strx4", 
-                [0x0f] = "DW_FORM_udata", 
             };
             
             
@@ -3099,6 +3774,8 @@ row->end_sequence = end_sequence;                             \
                     uff_offset = 0;
                     u64 opcode_length = read_uleb(section_data, &uff_offset);
                     section_data += uff_offset;
+                    
+                    print("Extended(%llx): ", opcode_length);
                     
                     u8 sub_opcode = *section_data++;
                     
@@ -3274,14 +3951,27 @@ row->end_sequence = end_sequence;                             \
                 
                 print("    %p: %s(%u,%u)\n", row->address, debug_line_string_table + *(u32 *)(file_table + 5 * row->file_number), row->line, row->column);
             }
-            
         }
         
-        // .debug_str
-        
         // .debug_addr
+        if(string_match(section_name, string(".debug_addr"))){
+            u32 length  = *(u32 *)(section_data + 0);
+            u16 version = *(u16 *)(section_data + 4);
+            u8 address_size = section_data[6];
+            u8 segment_size = section_data[7];
+            
+            print("length %x\n", length);
+            print("version %u\n", version);
+            print("address_size %u\n", address_size);
+            print("segment_size %u\n", segment_size);
+            
+            for(u64 offset = 8, index = 0; offset < section_size; offset += 8, index++){
+                u64 address = *(u64 *)(section_data + offset);
+                print("    [%x] = %llx\n", index, address);
+            }
+        }
         
-        if(string_match(section_name, string(".debug_line_str"))){
+        if(string_match(section_name, string(".debug_line_str")) || string_match(section_name, string(".debug_str"))){
             for(u64 offset = 0; offset < section_size;){
                 char *string = (char *)(section_data + offset);
                 print("    0x%x -> %s\n", offset, string);
@@ -3290,6 +3980,37 @@ row->end_sequence = end_sequence;                             \
         }
         
         // .debug_str_offsets
+        if(string_match(section_name, string(".debug_str_offsets"))){
+            
+            struct elf_section_header *debug_str = null;
+            
+            for(u64 sho = section_header_table_offset; sho < section_header_table_end; sho += section_header_table_entry_size){
+                struct elf_section_header *sh = (void *)(file.data + sho);
+                
+                struct string sn = string_from_cstring((char *)section_name_string_table + sh->name_offset);
+                if(sn.size == 0) continue;
+                
+                if(string_match(sn, string(".debug_str"))){
+                    debug_str = sh;
+                    break;
+                }
+            }
+            
+            u8 *debug_string_table = file.data + debug_str->offset;
+            
+            u32 length = *(u32 *)(section_data + 0);
+            u16 version = *(u16 *)(section_data + 4);
+            u16 padding = *(u16 *)(section_data + 6);
+            
+            print("Length %x\n", length);
+            print("version %u\n", version);
+            print("padding %u\n", padding);
+            
+            for(u64 offset = 8, index = 0; offset < section_size; offset += 4, index++){
+                u32 string_offset = *(u32 *)(section_data + offset);
+                print("    [%x] -> %x (%s)\n", index, string_offset, debug_string_table + string_offset);
+            }
+        }
         
         print("\n");
     }
