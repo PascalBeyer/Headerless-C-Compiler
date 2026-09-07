@@ -1577,6 +1577,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         u64 line = 1;
         // u64 column = 0;
         
+        u32 is_statement = 1;
+        
         for(struct ast_list_node *function_node = defined_functions.first; function_node; function_node = function_node->next){
             struct ast_function *function = (struct ast_function *)function_node->value;
             
@@ -1619,14 +1621,23 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             struct function_line_information last = {
                 .line = initial_location.line,
+                .column = 0,
                 .offset = 0,
             };
             
             for(smm index = 0; index < function->line_information.size; index++){
                 struct function_line_information info = function->line_information.data[index];
                 
+                if((info.flags & /*is_statement*/1) != is_statement){
+                    *push_struct(arena, u8) = /*DW_LNS_negate_stmt*/6;
+                    is_statement = !is_statement;
+                }
+                
                 s64 line_delta    = (s64)info.line   - (s64)last.line;
                 s64 address_delta = (s64)info.offset - (s64)last.offset;
+                
+                *push_struct(arena, u8) = /*DW_LNS_set_column*/5;
+                push_uleb(arena, info.column);
                 
                 if(line_base <= line_delta && line_delta < line_range && 0 <= address_delta && address_delta <= 255/14){
                     *push_struct(arena, u8) = (u8)((line_delta - line_base) + line_range * address_delta + opcode_base);

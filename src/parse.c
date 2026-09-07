@@ -1445,7 +1445,7 @@ func enum ast_kind ast_stack_current(struct context *context){
 //_____________________________________________________________________________________________________________________
 
 // :function_line_information
-void function_maybe_add_line_information(struct context *context, struct token *token){
+void function_maybe_add_line_information(struct context *context, struct token *token, u32 flags){
     
     struct token_location_information location = get_location_for_token(context->arena, context->current_compilation_unit, token);
     
@@ -1466,7 +1466,9 @@ void function_maybe_add_line_information(struct context *context, struct token *
             
             struct function_line_information *new_entry = current_function->line_information.data + current_function->line_information.size++;
             
+            new_entry->flags = flags;
             new_entry->line   = location.line;
+            new_entry->column = location.column;
             new_entry->offset = offset;
         }
         
@@ -9094,7 +9096,10 @@ func void parse_statement(struct context *context){
     
     b32 needs_semicolon = true;
     
-    function_maybe_add_line_information(context, initial_token);
+    if(initial_token->type != TOKEN_open_curly){
+        // Don't put a statement for open_curly, as it screws with for(){ line information.
+        function_maybe_add_line_information(context, initial_token, /*is_statement*/1);
+    }
     
     switch(initial_token->type){
         case TOKEN_semicolon:{
@@ -9145,7 +9150,7 @@ func void parse_statement(struct context *context){
             struct token *else_token = peek_token_eat(context, TOKEN_else);
             if(else_token){
                 
-                function_maybe_add_line_information(context, else_token);
+                function_maybe_add_line_information(context, else_token, /*is_statement*/1);
                 
                 struct ir_jump_node *jump_over_else = push_jump(context, IR_jump);
                 jump_over_else->label_number = context->jump_label_index++;
@@ -9250,7 +9255,7 @@ func void parse_statement(struct context *context){
                     smm past_body = context->token_at;
                     context->token_at = increment_token_at;
                     
-                    function_maybe_add_line_information(context, get_current_token_for_error_report(context));
+                    function_maybe_add_line_information(context, get_current_token_for_error_report(context), /*is_statement*/0);
                     
                     parse_expression(context, false);
                     
@@ -9364,7 +9369,7 @@ func void parse_statement(struct context *context){
             
             expect_token(context, TOKEN_while, "Missing 'while' in do-while statement.");
             struct token *while_open_paren = expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
-            function_maybe_add_line_information(context, while_open_paren);
+            function_maybe_add_line_information(context, while_open_paren, /*is_statement*/0);
             
             
             struct ir_jump_node *continue_label = push_jump(context, IR_jump_label);

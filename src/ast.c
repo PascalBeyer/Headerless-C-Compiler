@@ -822,6 +822,8 @@ struct ast_function{
     
     struct{ // @cleanup: should we have a line information arena?
         struct function_line_information{
+            u32 flags; // Currently only 'is_statement'.
+            u32 column;
             u32 line;
             u32 offset;// :function_line_information - This is first the offset in the 'ir_arena', then later the offset in the code.
         } *data;
