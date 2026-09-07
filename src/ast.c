@@ -805,7 +805,6 @@ struct ast_function{
     u8 *end_in_ir_arena;
     
     
-    // right now _just_ the function without the prolog
     smm byte_size;
     
     smm rsp_subtract_offset;

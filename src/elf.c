@@ -1812,19 +1812,6 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
 #undef fill_section_header
 #undef fill_program_header
 #undef make_relative_virtual_address
-    
-    for_ast_list(defined_functions){
-        struct ast_function *function = cast(struct ast_function *)it->value;
-        
-        print("%.*s %zx:\n", function->identifier->size, function->identifier->data, function->relative_virtual_address);
-        for(smm index = 0; index < function->line_information.size; index++){
-            struct function_line_information line = function->line_information.data[index];
-            
-            print("    0x%zx %u\n", virtual_image_base + function->relative_virtual_address + line.offset, line.line);
-        }
-        print("\n");
-    }
-    
 }
 
 
