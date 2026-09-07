@@ -12,7 +12,6 @@ int _start(){
     }
     
     struct{
-        void *return_address;
         int argc;
         char *argv0;
     } *stack = _AddressOfReturnAddress();
