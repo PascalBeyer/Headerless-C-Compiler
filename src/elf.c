@@ -266,6 +266,75 @@ void push_sleb(struct memory_arena *arena, s64 value){
     }while(!done);
 }
 
+enum abbrev_indices{
+    ABBREV_compilation_unit = 1,
+    ABBREV_base_type,
+    ABBREV_subprogram,
+    ABBREV_variable,
+    ABBREV_lexical_block,
+    ABBREV_structure_type,
+    ABBREV_member,
+};
+
+void dwarf_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast_scope *scope, struct memory_arena *scratch, u64 virtual_image_base, u32 int_offset){
+    
+    if(scope->amount_of_declarations){
+        if(function->scope != scope){
+            // 
+            // Open the scope.
+            // 
+            *push_struct(arena, u8) = /*index*/ABBREV_lexical_block;
+            *push_struct_unaligned(arena, u64) = virtual_image_base + function->relative_virtual_address + scope->start_offset;
+            *push_struct_unaligned(arena, u64) = scope->end_offset - scope->start_offset;
+        }
+        
+        // 
+        // Define all the member's of the scope.
+        // 
+        for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
+            struct ast_declaration *decl = scope->declarations[declaration_index];
+            if(!decl) continue;
+            
+            // @cleanup:
+            if(decl->kind == IR_typedef) continue;
+            if(decl->kind == IR_function) continue;
+            if(decl->flags & DECLARATION_FLAGS_is_local_persist) continue;
+            if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
+            
+            *push_struct(arena, u8) = /*index*/ABBREV_variable;
+            push_zero_terminated_string_copy(arena, token_get_string(decl->identifier));
+            struct token_location_information location = get_location_for_token(scratch, function->compilation_unit, decl->identifier);
+            struct file *file = globals.file_table.data[location.file_index];
+            
+            *push_struct_unaligned(arena, u32) = (u32)file->file_number;
+            *push_struct_unaligned(arena, u32) = (u32)location.line;
+            *push_struct_unaligned(arena, u32) = (u32)location.column;
+            *push_struct_unaligned(arena, u32) = int_offset; // For now every type is int!
+            u8 *expression_length = push_struct(arena, u8);
+            *push_struct(arena, u8) = /*DW_OP_fbreg*/0x91;
+            push_sleb(arena, -decl->offset_on_stack - 16); // @note: The -16 come from how we set up the CFA in the .eh_frame section. This is sort of stupid.
+            *expression_length = (u8)(arena_current(arena) - (expression_length + 1));
+        }
+    }
+    
+    // 
+    // Recurse into all subscopes.
+    // 
+    
+    for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
+        dwarf_emit_debug_information_for_function__recursive(function, arena, subscope, scratch, virtual_image_base, int_offset);
+    }
+    
+    if(scope->amount_of_declarations){
+        if(function->scope != scope){
+            // 
+            // End the scope.
+            // 
+            *push_struct(arena, u8) = /*end*/0;
+        }
+    }
+}
+
 
 void write_elf(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
     
@@ -1692,7 +1761,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         u8 *debug_abbrev_section_start = arena_current(arena);
         
-        *push_struct(arena, u8) = /*index*/1;
+        *push_struct(arena, u8) = /*index*/ABBREV_compilation_unit;
         *push_struct(arena, u8) = /*DW_TAG_compile_unit*/0x11;
         *push_struct(arena, u8) = /*have_children*/1;
         {
@@ -1726,7 +1795,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         //         DW_AT_encoding           DW_FORM_data1
         //         DW_AT_name               DW_FORM_string
         //         
-        *push_struct(arena, u8) = /*index*/2;
+        *push_struct(arena, u8) = /*index*/ABBREV_base_type;
         *push_struct(arena, u8) = /*DW_TAG_base_type*/0x24;
         *push_struct(arena, u8) = /*have_children*/0;
         {
@@ -1752,7 +1821,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         //         DW_AT_high_pc            DW_FORM_data8
         //         DW_AT_frame_base         DW_FORM_exprloc
         // 
-        *push_struct(arena, u8) = /*index*/3;
+        *push_struct(arena, u8) = /*index*/ABBREV_subprogram;
         *push_struct(arena, u8) = /*DW_TAG_subprogram*/0x2e;
         *push_struct(arena, u8) = /*have_children*/1;
         {
@@ -1792,7 +1861,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         //         DW_AT_type               DW_FORM_ref4
         //         DW_AT_location           DW_FORM_exprloc
         //  
-        *push_struct(arena, u8) = /*index*/4;
+        *push_struct(arena, u8) = /*index*/ABBREV_variable;
         *push_struct(arena, u8) = /*DW_TAG_variable*/0x34;
         *push_struct(arena, u8) = /*have_children*/0;
         {
@@ -1817,6 +1886,88 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
         }
         
+        // 
+        //     DW_TAG_lexical_block
+        //         DW_AT_low_pc                DW_FORM_addr
+        //         DW_AT_high_pc               DW_FORM_data8
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_lexical_block;
+        *push_struct(arena, u8) = /*DW_TAG_lexical_block*/0xb;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_low_pc*/0x11;
+            *push_struct(arena, u8) = /*DW_FORM_addr*/0x1;
+            
+            *push_struct(arena, u8) = /*DW_AT_high_pc*/0x12;
+            *push_struct(arena, u8) = /*DW_FORM_data8*/0x7;
+            
+            // *push_struct(arena, u8) = /*DW_AT_sibling*/1;
+            // *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_structure_type
+        //         DW_AT_name                   DW_FORM_string
+        //         DW_AT_byte_size              DW_FORM_data8
+        //         DW_AT_decl_file              DW_FORM_data4
+        //         DW_AT_decl_line              DW_FORM_data4
+        //         DW_AT_decl_column            DW_FORM_data4
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_structure_type;
+        *push_struct(arena, u8) = /*DW_TAG_structure_type*/0x13;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
+            *push_struct(arena, u8) = /*DW_FORM_data8*/0x7;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_file*/0x3a;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_line*/0x3b;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_column*/0x39;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_member
+        //         DW_AT_name                   DW_FORM_string
+        //         DW_AT_decl_file              DW_FORM_data4
+        //         DW_AT_decl_line              DW_FORM_data4
+        //         DW_AT_decl_column            DW_FORM_data4
+        //         DW_AT_type                   DW_FORM_ref4
+        //         DW_AT_data_member_location   DW_FORM_data8
+        //         
+        *push_struct(arena, u8) = /*index*/ABBREV_member;
+        *push_struct(arena, u8) = /*DW_TAG_structure_type*/0x13;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_file*/0x3a;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_line*/0x3b;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_column*/0x39;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_data_member_location*/0x38;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/7;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
         *push_struct(arena, u8) = /*zero-terminator*/0;
         
         fill_section_header(debug_abbrev, "debug_abbrev", SHT_PROGBITS, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
@@ -1835,7 +1986,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         // DW_TAG_COMPILE_UNIT:
         {
-            *push_struct(arena, u8) = /*index*/1;
+            *push_struct(arena, u8) = /*index*/ABBREV_compilation_unit;
             
             push_zero_terminated_string_copy(arena, string("hlc")); // producer
             *push_struct_unaligned(arena, u16) = 29; // language (C11)
@@ -1851,7 +2002,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         // DW_TAG_base_type:
         u32 int_offset = (u32)(arena_current(arena) - (u8 *)debug_info_header);
         {
-            *push_struct(arena, u8) = /*index*/2;
+            *push_struct(arena, u8) = /*index*/ABBREV_base_type;
             *push_struct(arena, u8) = /*byte_size*/4;
             *push_struct(arena, u8) = /*encoding(DW_ATE_signed)*/5;
             push_zero_terminated_string_copy(arena, string("int"));
@@ -1859,12 +2010,12 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         for(struct ast_list_node *function_node = defined_functions.first; function_node; function_node = function_node->next){
             struct ast_function *function = (struct ast_function *)function_node->value;
-            struct ast_scope *scope = function->scope;
+            struct ast_scope *root_scope = function->scope;
             
-            struct token_location_information initial_location = get_location_for_token(null, function->compilation_unit, scope->token);
+            struct token_location_information initial_location = get_location_for_token(null, function->compilation_unit, root_scope->token);
             struct file *file = globals.file_table.data[initial_location.file_index];
             
-            *push_struct(arena, u8) = /*index*/3;
+            *push_struct(arena, u8) = /*index*/ABBREV_subprogram;
             push_zero_terminated_string_copy(arena, token_get_string(function->identifier));
             *push_struct_unaligned(arena, u32) = (u32)file->file_number;
             *push_struct_unaligned(arena, u32) = (u32)initial_location.line;
@@ -1875,29 +2026,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct(arena, u8) = 1;
             *push_struct(arena, u8) = /*DW_OP_call_frame_cfa*/0x9c;
             
-            for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
-                struct ast_declaration *decl = scope->declarations[declaration_index];
-                if(!decl) continue;
-                
-                // @cleanup:
-                if(decl->kind == IR_typedef) continue;
-                if(decl->kind == IR_function) continue;
-                if(decl->flags & DECLARATION_FLAGS_is_local_persist) continue;
-                if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
-                
-                *push_struct(arena, u8) = /*index*/4;
-                push_zero_terminated_string_copy(arena, token_get_string(decl->identifier));
-                struct token_location_information location = get_location_for_token(scratch, function->compilation_unit, decl->identifier);
-                
-                *push_struct_unaligned(arena, u32) = (u32)file->file_number;
-                *push_struct_unaligned(arena, u32) = (u32)location.line;
-                *push_struct_unaligned(arena, u32) = (u32)location.column;
-                *push_struct_unaligned(arena, u32) = int_offset; // For now every type is int!
-                u8 *expression_length = push_struct(arena, u8);
-                *push_struct(arena, u8) = /*DW_OP_fbreg*/0x91;
-                push_sleb(arena, -decl->offset_on_stack - 16); // @note: The -16 come from how we set up the CFA in the .eh_frame section. This is sort of stupid.
-                *expression_length = (u8)(arena_current(arena) - (expression_length + 1));
-            }
+            dwarf_emit_debug_information_for_function__recursive(function, arena, root_scope, scratch, virtual_image_base, int_offset);
             
             *push_struct(arena, u8) = /*end*/0;
         }

@@ -891,7 +891,6 @@ void codeview_emit_debug_info_for_function(struct ast_function *function, struct
     *frameproc_length = (u16)(arena_current(arena) - (u8 *)(frameproc_length + 1));
     
     codeview_emit_debug_information_for_function__recursive(function, arena, function->scope, relocation_arena, debug_symbols_base, text_section_id, function->debug_symbol_offset);
-    
 }
 
 func void *push_unwind_information_for_function(struct memory_arena *arena, struct ast_function *function){
