@@ -239,6 +239,7 @@ static struct{
     {const_string("__func__"),     TOKEN___func__}, // c99
     {const_string("__FUNCTION__"), TOKEN___func__}, // msvc/gcc extension
     {const_string("__FUNCSIG__"),  TOKEN___func__}, // wrong msvc-extension implementation.
+    {const_string("__PRETTY_FUNCTION__"),     TOKEN___func__}, // wrong (?) gcc-extension implementation.
     
     {const_string("_Static_assert"), TOKEN_static_assert},
     {const_string("static_assert"), TOKEN_static_assert},
