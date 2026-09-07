@@ -941,146 +941,148 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         rela_dyn_section_index = section_header_at;
         fill_section_header(rela_dyn, "rela_dyn", SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
         
-        if(defined_functions.count){
-            u8 *eh_frame_section_start = arena_current(arena);
+    }
+    
+    if(defined_functions.count){
+        u8 *eh_frame_section_start = arena_current(arena);
+        
+        // 
+        // The eh_frame_section is very simplified for our rbp based stack frames.
+        // We have one CIE (I don't know if there is ever more than one) and then
+        // one FDE for each function. 
+        // 
+        // The CIE gives some common parameters, and then contains an initial set of 
+        // dwarf cfa instructions that are intended to define the initial dfa at the start of the function.
+        // They seem to be always the same. Here they are:
+        // 
+        //    DW_CFA_def_cfa: r7 (rsp) ofs 8       (define the dfa to be at rsp + 8)
+        //    DW_CFA_offset: r16 (rip) at cfa-8    (define rip to be at cfa-8)
+        // 
+        // 
+        // All of the FDEs have the same form:
+        //     
+        //  frame instructions:
+        //     
+        //     DW_CFA_advance_loc: 1               (move the location to past the initial push rbp)
+        //     DW_CFA_def_cfa_offset: 16           (define the dfa to be rsp + /*rbp rip*/0x10)
+        //     DW_CFA_offset: r6 (rbp) at cfa-16   (define rbp to be on the stack at cfa - 0x10)
+        //     
+        //     DW_CFA_advance_loc: 3               (move the location to past the mov rbp, rsp)
+        //     DW_CFA_def_cfa_register: r6 (rbp)   (define the dfa to be contained in rbp)
+        //     
+        //     DW_CFA_advance_loc<n>: <end-1>      (move the location all the way to the end of the function, just past the pop rbp, but before the ret)
+        //     DW_CFA_def_cfa: r7 (rsp) ofs 8      (define the dfa to point to rsp + 8)
+        //     
+        // For reference, the corresponding assembly:
+        // 
+        //   function:
+        //           0: push rbp
+        //           1: mov rbp, rsp
+        //              <...>
+        //     <end-2>: pop rbp
+        //     <end-1>: ret
+        // 
+        
+        struct cie{
+            u32 length;
+            u32 cie_offset;
             
-            // 
-            // The eh_frame_section is very simplified for our rbp based stack frames.
-            // We have one CIE (I don't know if there is ever more than one) and then
-            // one FDE for each function. 
-            // 
-            // The CIE gives some common parameters, and then contains an initial set of 
-            // dwarf cfa instructions that are intended to define the initial dfa at the start of the function.
-            // They seem to be always the same. Here they are:
-            // 
-            //    DW_CFA_def_cfa: r7 (rsp) ofs 8       (define the dfa to be at rsp + 8)
-            //    DW_CFA_offset: r16 (rip) at cfa-8    (define rip to be at cfa-8)
-            // 
-            // 
-            // All of the FDEs have the same form:
-            //     
-            //  frame instructions:
-            //     
-            //     DW_CFA_advance_loc: 1               (move the location to past the initial push rbp)
-            //     DW_CFA_def_cfa_offset: 16           (define the dfa to be rsp + /*rbp rip*/0x10)
-            //     DW_CFA_offset: r6 (rbp) at cfa-16   (define rbp to be on the stack at cfa - 0x10)
-            //     
-            //     DW_CFA_advance_loc: 3               (move the location to past the mov rbp, rsp)
-            //     DW_CFA_def_cfa_register: r6 (rbp)   (define the dfa to be contained in rbp)
-            //     
-            //     DW_CFA_advance_loc<n>: <end-1>      (move the location all the way to the end of the function, just past the pop rbp, but before the ret)
-            //     DW_CFA_def_cfa: r7 (rsp) ofs 8      (define the dfa to point to rsp + 8)
-            //     
-            // For reference, the corresponding assembly:
-            // 
-            //   function:
-            //           0: push rbp
-            //           1: mov rbp, rsp
-            //              <...>
-            //     <end-2>: pop rbp
-            //     <end-1>: ret
-            // 
+            u8 version;
+            u8 augmentation_string[3];
             
-            struct cie{
-                u32 length;
-                u32 cie_offset;
-                
-                u8 version;
-                u8 augmentation_string[3];
-                
-                u8 code_alignment_factor;
-                u8 data_alignment_factor;
-                u8 return_address_register;
-                u8 augmentation_length;
-                
-                u8 address_pointer_encoding;
-                u8 initial_instructions[7];
-            } *cie = push_struct(arena, struct cie);
-            cie->length = sizeof(struct cie) - sizeof(cie->length);
-            cie->cie_offset = 0; // This is the cie!
-            cie->version = 1;
-            cie->augmentation_string[0] = 'z';
-            cie->augmentation_string[1] = 'R';
-            cie->augmentation_string[2] = 0;
-            cie->code_alignment_factor   = 1;
-            cie->data_alignment_factor   = 0x78; // -8
-            cie->return_address_register = 0x10; // rip
-            cie->augmentation_length = 1;
-            cie->address_pointer_encoding = /*sdata4 pcrel*/0x1b;
+            u8 code_alignment_factor;
+            u8 data_alignment_factor;
+            u8 return_address_register;
+            u8 augmentation_length;
             
-            memcpy(cie->initial_instructions, (u8[]){
-                        // DW_CFA_def_cfa reg=7 (rsp) offset=8
-                        0x0c, 0x07, 0x08,
-                        
-                        // DW_CFA_offset reg=16 (rip) offset=1
-                        0x90, 0x01,
-                        
-                        // DW_CFA_nop, DW_CFA_nop
-                        0x00, 0x00,
-                    }, 7);
-            
-            for_ast_list(defined_functions){
-                
-                struct ast_function *function = (struct ast_function *)it->value;
-                
-                u32 *length = push_struct(arena, u32);
-                u8 *start = arena_current(arena);
-                
-                u32 *cie_offset = push_struct(arena, u32);
-                *cie_offset = (u32)(start - (u8 *)cie);
-                
-                s32 *pc_begin = push_struct(arena, s32);
-                s32 *pc_range = push_struct(arena, s32);
-                
-                s32 relative_virtual_address  = make_relative_virtual_address(ro_segment_start, pc_begin);
-                smm function_relative_virtual_address = function->relative_virtual_address;
-                
-                *pc_begin = (s32)(function_relative_virtual_address - relative_virtual_address);
-                
-                u32 function_size = (u32)function->byte_size;
-                *pc_range = function_size;
-                
-                *push_struct(arena, u8) = 0; // Augmentation Length;
-                
-                
-                static u8 common_instructions[] = {
-                    0x41, // DW_CFA_advance_loc 1
-                    0x0e, 0x10, // DW_CFA_def_cfa_offset 10
-                    0x86, 0x02, // DW_CFA_offset reg=6 (rbp) offset=2
-                    
-                    0x43, // DW_CFA_advance_loc 3
-                    0x0d, 0x06, // DW_CFA_def_cfa_register reg=6 (rbp)
-                };
-                push_array_copy(arena, u8, common_instructions, array_count(common_instructions));
-                
-                if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_noreturn)){
-                    u32 advance = function_size - /*push rbp, mov rbp, rsp*/4  - /*ret*/1;
-                    if(advance <= 0x3f){
-                        *push_struct(arena, u8) = 0x40 | (u8)advance;
-                    }else if(advance <= 0xff){
-                        *push_struct(arena, u8) = /*DW_CFA_advance_loc1*/0x02;
-                        *push_struct(arena, u8) = (u8)advance;
-                    }else if(advance <= 0xffff){
-                        *push_struct(arena, u8) = /*DW_CFA_advance_loc2*/0x03;
-                        *push_struct_unaligned(arena, u16) = (u16)advance;
-                    }else if(advance <= 0xffffffff){
-                        *push_struct(arena, u8) = /*DW_CFA_advance_loc4*/0x04;
-                        *push_struct_unaligned(arena, u32) = advance;
-                    }
-                    
+            u8 address_pointer_encoding;
+            u8 initial_instructions[7];
+        } *cie = push_struct(arena, struct cie);
+        cie->length = sizeof(struct cie) - sizeof(cie->length);
+        cie->cie_offset = 0; // This is the cie!
+        cie->version = 1;
+        cie->augmentation_string[0] = 'z';
+        cie->augmentation_string[1] = 'R';
+        cie->augmentation_string[2] = 0;
+        cie->code_alignment_factor   = 1;
+        cie->data_alignment_factor   = 0x78; // -8
+        cie->return_address_register = 0x10; // rip
+        cie->augmentation_length = 1;
+        cie->address_pointer_encoding = /*sdata4 pcrel*/0x1b;
+        
+        memcpy(cie->initial_instructions, (u8[]){
                     // DW_CFA_def_cfa reg=7 (rsp) offset=8
-                    static u8 define_dfa_rsp_8[] = { 0x0c, 0x07, 0x08 };
-                    push_array_copy(arena, u8, define_dfa_rsp_8, array_count(define_dfa_rsp_8));
+                    0x0c, 0x07, 0x08,
+                    
+                    // DW_CFA_offset reg=16 (rip) offset=1
+                    0x90, 0x01,
+                    
+                    // DW_CFA_nop, DW_CFA_nop
+                    0x00, 0x00,
+                }, 7);
+        
+        for_ast_list(defined_functions){
+            
+            struct ast_function *function = (struct ast_function *)it->value;
+            
+            u32 *length = push_struct(arena, u32);
+            u8 *start = arena_current(arena);
+            
+            u32 *cie_offset = push_struct(arena, u32);
+            *cie_offset = (u32)(start - (u8 *)cie);
+            
+            s32 *pc_begin = push_struct(arena, s32);
+            s32 *pc_range = push_struct(arena, s32);
+            
+            s32 relative_virtual_address  = make_relative_virtual_address(ro_segment_start, pc_begin);
+            smm function_relative_virtual_address = function->relative_virtual_address;
+            
+            *pc_begin = (s32)(function_relative_virtual_address - relative_virtual_address);
+            
+            u32 function_size = (u32)function->byte_size;
+            *pc_range = function_size;
+            
+            *push_struct(arena, u8) = 0; // Augmentation Length;
+            
+            
+            static u8 common_instructions[] = {
+                0x41, // DW_CFA_advance_loc 1
+                0x0e, 0x10, // DW_CFA_def_cfa_offset 10
+                0x86, 0x02, // DW_CFA_offset reg=6 (rbp) offset=2
+                
+                0x43, // DW_CFA_advance_loc 3
+                0x0d, 0x06, // DW_CFA_def_cfa_register reg=6 (rbp)
+            };
+            push_array_copy(arena, u8, common_instructions, array_count(common_instructions));
+            
+            if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_noreturn)){
+                u32 advance = function_size - /*push rbp, mov rbp, rsp*/4  - /*ret*/1;
+                if(advance <= 0x3f){
+                    *push_struct(arena, u8) = 0x40 | (u8)advance;
+                }else if(advance <= 0xff){
+                    *push_struct(arena, u8) = /*DW_CFA_advance_loc1*/0x02;
+                    *push_struct(arena, u8) = (u8)advance;
+                }else if(advance <= 0xffff){
+                    *push_struct(arena, u8) = /*DW_CFA_advance_loc2*/0x03;
+                    *push_struct_unaligned(arena, u16) = (u16)advance;
+                }else if(advance <= 0xffffffff){
+                    *push_struct(arena, u8) = /*DW_CFA_advance_loc4*/0x04;
+                    *push_struct_unaligned(arena, u32) = advance;
                 }
                 
-                push_zero_align(arena, 8);
-                
-                *length = (u32)(arena_current(arena) - start);
+                // DW_CFA_def_cfa reg=7 (rsp) offset=8
+                static u8 define_dfa_rsp_8[] = { 0x0c, 0x07, 0x08 };
+                push_array_copy(arena, u8, define_dfa_rsp_8, array_count(define_dfa_rsp_8));
             }
             
-            fill_section_header(eh_frame, "eh_frame", 0x70000001, SHF_ALLOC, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/0);
+            push_zero_align(arena, 8);
+            
+            *length = (u32)(arena_current(arena) - start);
         }
+        
+        fill_section_header(eh_frame, "eh_frame", 0x70000001, SHF_ALLOC, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/0);
     }
+
     
     if(rodata_section_start != arena_current(arena)){
         fill_program_header(ro, PT_LOAD, PF_READ, 0x1000);
@@ -1717,6 +1719,104 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
         }
+        
+        // 
+        //     DW_TAG_base_type
+        //         DW_AT_byte_size          DW_FORM_data1
+        //         DW_AT_encoding           DW_FORM_data1
+        //         DW_AT_name               DW_FORM_string
+        //         
+        *push_struct(arena, u8) = /*index*/2;
+        *push_struct(arena, u8) = /*DW_TAG_base_type*/0x24;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = /*DW_AT_encoding*/0x3e;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_subprogram
+        //         DW_AT_name               DW_FORM_string
+        //         DW_AT_decl_file          DW_FORM_data4
+        //         DW_AT_decl_line          DW_FORM_data4
+        //         DW_AT_type               DW_FORM_ref4
+        //         DW_AT_low_pc             DW_FORM_addr
+        //         DW_AT_high_pc            DW_FORM_data8
+        //         DW_AT_frame_base         DW_FORM_exprloc
+        // 
+        *push_struct(arena, u8) = /*index*/3;
+        *push_struct(arena, u8) = /*DW_TAG_subprogram*/0x2e;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_file*/0x3a;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_line*/0x3b;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_column*/0x39;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = /*DW_AT_low_pc*/0x11;
+            *push_struct(arena, u8) = /*DW_FORM_addr*/0x1;
+            
+            *push_struct(arena, u8) = /*DW_AT_high_pc*/0x12;
+            *push_struct(arena, u8) = /*DW_FORM_data8*/0x7;
+            
+            *push_struct(arena, u8) = /*DW_AT_frame_base*/0x40;
+            *push_struct(arena, u8) = /*DW_FORM_exprloc*/0x18;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_variable
+        //         DW_AT_name               DW_FORM_string
+        //         DW_AT_decl_file          DW_FORM_data4
+        //         DW_AT_decl_line          DW_FORM_data4
+        //         DW_AT_decl_column        DW_FORM_data4
+        //         DW_AT_type               DW_FORM_ref4
+        //         DW_AT_location           DW_FORM_exprloc
+        //  
+        *push_struct(arena, u8) = /*index*/4;
+        *push_struct(arena, u8) = /*DW_TAG_variable*/0x34;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_file*/0x3a;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_line*/0x3b;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_column*/0x39;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = /*DW_AT_location*/0x2;
+            *push_struct(arena, u8) = /*DW_FORM_exprloc*/0x18;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
         *push_struct(arena, u8) = /*zero-terminator*/0;
         
         fill_section_header(debug_abbrev, "debug_abbrev", SHT_PROGBITS, /*flags*/0, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
@@ -1733,19 +1833,74 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         debug_info_header->address_size = 8;
         debug_info_header->abbrev_offset = 0;
         
-        *push_struct(arena, u8) = /*index*/1;
+        // DW_TAG_COMPILE_UNIT:
+        {
+            *push_struct(arena, u8) = /*index*/1;
+            
+            push_zero_terminated_string_copy(arena, string("hlc")); // producer
+            *push_struct_unaligned(arena, u16) = 29; // language (C11)
+            push_zero_terminated_string_copy(arena, main_file_name); // name
+            *push_struct_unaligned(arena, u32) = 0; // stmt_list
+            push_zero_terminated_string_copy(arena, globals.working_directory); // comp_dir
+            
+            struct elf_section_header *text_section = section_headers + text_section_index;
+            *push_struct_unaligned(arena, u32) = (u32)(text_section->address); // low_pc
+            *push_struct_unaligned(arena, u32) = (u32)(text_section->size); // high_pc
+        }
         
-        push_zero_terminated_string_copy(arena, string("hlc")); // producer
-        *push_struct_unaligned(arena, u16) = 29; // language (C11)
-        push_zero_terminated_string_copy(arena, main_file_name); // name
-        *push_struct_unaligned(arena, u32) = 0; // stmt_list
-        push_zero_terminated_string_copy(arena, globals.working_directory); // comp_dir
+        // DW_TAG_base_type:
+        u32 int_offset = (u32)(arena_current(arena) - (u8 *)debug_info_header);
+        {
+            *push_struct(arena, u8) = /*index*/2;
+            *push_struct(arena, u8) = /*byte_size*/4;
+            *push_struct(arena, u8) = /*encoding(DW_ATE_signed)*/5;
+            push_zero_terminated_string_copy(arena, string("int"));
+        }
         
-        struct elf_section_header *text_section = section_headers + text_section_index;
-        *push_struct_unaligned(arena, u32) = (u32)(text_section->address); // low_pc
-        *push_struct_unaligned(arena, u32) = (u32)(text_section->size); // high_pc
-        
-        // ...
+        for(struct ast_list_node *function_node = defined_functions.first; function_node; function_node = function_node->next){
+            struct ast_function *function = (struct ast_function *)function_node->value;
+            struct ast_scope *scope = function->scope;
+            
+            struct token_location_information initial_location = get_location_for_token(null, function->compilation_unit, scope->token);
+            struct file *file = globals.file_table.data[initial_location.file_index];
+            
+            *push_struct(arena, u8) = /*index*/3;
+            push_zero_terminated_string_copy(arena, token_get_string(function->identifier));
+            *push_struct_unaligned(arena, u32) = (u32)file->file_number;
+            *push_struct_unaligned(arena, u32) = (u32)initial_location.line;
+            *push_struct_unaligned(arena, u32) = (u32)initial_location.column;
+            *push_struct_unaligned(arena, u32) = int_offset; // For now every type is int!
+            *push_struct_unaligned(arena, u64) = virtual_image_base + function->relative_virtual_address;
+            *push_struct_unaligned(arena, u64) = function->byte_size;
+            *push_struct(arena, u8) = 1;
+            *push_struct(arena, u8) = /*DW_OP_call_frame_cfa*/0x9c;
+            
+            for(smm declaration_index = 0; declaration_index < scope->current_max_amount_of_declarations; declaration_index++){
+                struct ast_declaration *decl = scope->declarations[declaration_index];
+                if(!decl) continue;
+                
+                // @cleanup:
+                if(decl->kind == IR_typedef) continue;
+                if(decl->kind == IR_function) continue;
+                if(decl->flags & DECLARATION_FLAGS_is_local_persist) continue;
+                if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
+                
+                *push_struct(arena, u8) = /*index*/4;
+                push_zero_terminated_string_copy(arena, token_get_string(decl->identifier));
+                struct token_location_information location = get_location_for_token(scratch, function->compilation_unit, decl->identifier);
+                
+                *push_struct_unaligned(arena, u32) = (u32)file->file_number;
+                *push_struct_unaligned(arena, u32) = (u32)location.line;
+                *push_struct_unaligned(arena, u32) = (u32)location.column;
+                *push_struct_unaligned(arena, u32) = int_offset; // For now every type is int!
+                u8 *expression_length = push_struct(arena, u8);
+                *push_struct(arena, u8) = /*DW_OP_fbreg*/0x91;
+                push_sleb(arena, -decl->offset_on_stack - 16); // @note: The -16 come from how we set up the CFA in the .eh_frame section. This is sort of stupid.
+                *expression_length = (u8)(arena_current(arena) - (expression_length + 1));
+            }
+            
+            *push_struct(arena, u8) = /*end*/0;
+        }
         
         *push_struct(arena, u8) = /*end*/0;
         
@@ -2133,6 +2288,339 @@ void dump_dwarf_cfa(u8 *buffer, u64 size){
 }
 
 #define get(a, i) (((i) < array_count(a)) ? (a)[(i)] : 0)
+
+
+enum {
+    DW_OP_addr       = 0x03,
+    DW_OP_deref      = 0x06,
+    DW_OP_const1u    = 0x08,
+    DW_OP_const1s    = 0x09,
+    DW_OP_const2u    = 0x0a,
+    DW_OP_const2s    = 0x0b,
+    DW_OP_const4u    = 0x0c,
+    DW_OP_const4s    = 0x0d,
+    DW_OP_const8u    = 0x0e,
+    DW_OP_const8s    = 0x0f,
+    DW_OP_constu     = 0x10,
+    DW_OP_consts     = 0x11,
+    
+    DW_OP_dup        = 0x12,
+    DW_OP_drop       = 0x13,
+    DW_OP_over       = 0x14,
+    DW_OP_pick       = 0x15,
+    DW_OP_swap       = 0x16,
+    DW_OP_rot        = 0x17,
+    DW_OP_xderef     = 0x18,
+    
+    DW_OP_abs        = 0x19,
+    DW_OP_and        = 0x1a,
+    DW_OP_div        = 0x1b,
+    DW_OP_minus      = 0x1c,
+    DW_OP_mod        = 0x1d,
+    DW_OP_mul        = 0x1e,
+    DW_OP_neg        = 0x1f,
+    DW_OP_not        = 0x20,
+    DW_OP_or         = 0x21,
+    DW_OP_plus       = 0x22,
+    DW_OP_plus_uconst = 0x23,
+    DW_OP_shl        = 0x24,
+    DW_OP_shr        = 0x25,
+    DW_OP_shra       = 0x26,
+    DW_OP_xor        = 0x27,
+    
+    DW_OP_bra        = 0x28,
+    DW_OP_eq         = 0x29,
+    DW_OP_ge         = 0x2a,
+    DW_OP_gt         = 0x2b,
+    DW_OP_le         = 0x2c,
+    DW_OP_lt         = 0x2d,
+    DW_OP_ne         = 0x2e,
+    
+    DW_OP_skip       = 0x2f,
+    
+    DW_OP_lit0       = 0x30,
+    DW_OP_lit31      = 0x4f,
+    
+    DW_OP_reg0       = 0x50,
+    DW_OP_reg31      = 0x6f,
+    
+    DW_OP_breg0      = 0x70,
+    DW_OP_breg31     = 0x8f,
+    
+    DW_OP_regx       = 0x90,
+    DW_OP_fbreg      = 0x91,
+    DW_OP_bregx      = 0x92,
+    DW_OP_piece      = 0x93,
+    DW_OP_deref_size = 0x94,
+    DW_OP_xderef_size = 0x95,
+    DW_OP_nop        = 0x96,
+    
+    DW_OP_push_object_address = 0x97,
+    DW_OP_call2      = 0x98,
+    DW_OP_call4      = 0x99,
+    DW_OP_call_ref   = 0x9a,
+    DW_OP_form_tls_address = 0x9b,
+    DW_OP_call_frame_cfa = 0x9c,
+    DW_OP_bit_piece  = 0x9d,
+    DW_OP_implicit_value = 0x9e,
+    DW_OP_stack_value = 0x9f,
+    
+    DW_OP_implicit_pointer = 0xa0,
+    DW_OP_addrx      = 0xa1,
+    DW_OP_constx     = 0xa2,
+    DW_OP_entry_value = 0xa3,
+    DW_OP_const_type = 0xa4,
+    DW_OP_regval_type = 0xa5,
+    DW_OP_deref_type = 0xa6,
+    DW_OP_xderef_type = 0xa7,
+    DW_OP_convert    = 0xa8,
+    DW_OP_reinterpret = 0xa9,
+    
+    DW_OP_lo_user    = 0xe0,
+    DW_OP_hi_user    = 0xff,
+};
+
+static const char *
+drawf_expression_opcode_name(unsigned op)
+{
+    switch (op) {
+#define CASE(x) case x: return #x
+        CASE(DW_OP_addr);
+        CASE(DW_OP_deref);
+        CASE(DW_OP_const1u);
+        CASE(DW_OP_const1s);
+        CASE(DW_OP_const2u);
+        CASE(DW_OP_const2s);
+        CASE(DW_OP_const4u);
+        CASE(DW_OP_const4s);
+        CASE(DW_OP_const8u);
+        CASE(DW_OP_const8s);
+        CASE(DW_OP_constu);
+        CASE(DW_OP_consts);
+        CASE(DW_OP_dup);
+        CASE(DW_OP_drop);
+        CASE(DW_OP_over);
+        CASE(DW_OP_pick);
+        CASE(DW_OP_swap);
+        CASE(DW_OP_rot);
+        CASE(DW_OP_xderef);
+        CASE(DW_OP_abs);
+        CASE(DW_OP_and);
+        CASE(DW_OP_div);
+        CASE(DW_OP_minus);
+        CASE(DW_OP_mod);
+        CASE(DW_OP_mul);
+        CASE(DW_OP_neg);
+        CASE(DW_OP_not);
+        CASE(DW_OP_or);
+        CASE(DW_OP_plus);
+        CASE(DW_OP_plus_uconst);
+        CASE(DW_OP_shl);
+        CASE(DW_OP_shr);
+        CASE(DW_OP_shra);
+        CASE(DW_OP_xor);
+        CASE(DW_OP_bra);
+        CASE(DW_OP_eq);
+        CASE(DW_OP_ge);
+        CASE(DW_OP_gt);
+        CASE(DW_OP_le);
+        CASE(DW_OP_lt);
+        CASE(DW_OP_ne);
+        CASE(DW_OP_skip);
+        CASE(DW_OP_regx);
+        CASE(DW_OP_fbreg);
+        CASE(DW_OP_bregx);
+        CASE(DW_OP_piece);
+        CASE(DW_OP_deref_size);
+        CASE(DW_OP_xderef_size);
+        CASE(DW_OP_nop);
+        CASE(DW_OP_push_object_address);
+        CASE(DW_OP_call2);
+        CASE(DW_OP_call4);
+        CASE(DW_OP_call_ref);
+        CASE(DW_OP_form_tls_address);
+        CASE(DW_OP_call_frame_cfa);
+        CASE(DW_OP_bit_piece);
+        CASE(DW_OP_implicit_value);
+        CASE(DW_OP_stack_value);
+        CASE(DW_OP_implicit_pointer);
+        CASE(DW_OP_addrx);
+        CASE(DW_OP_constx);
+        CASE(DW_OP_entry_value);
+        CASE(DW_OP_const_type);
+        CASE(DW_OP_regval_type);
+        CASE(DW_OP_deref_type);
+        CASE(DW_OP_xderef_type);
+        CASE(DW_OP_convert);
+        CASE(DW_OP_reinterpret);
+#undef CASE
+    }
+    
+    if (op >= DW_OP_lit0 && op <= DW_OP_lit31)
+    return "DW_OP_lit*";
+    
+    if (op >= DW_OP_reg0 && op <= DW_OP_reg31)
+    return "DW_OP_reg*";
+    
+    if (op >= DW_OP_breg0 && op <= DW_OP_breg31)
+    return "DW_OP_breg*";
+    
+    if (op >= DW_OP_lo_user && op <= DW_OP_hi_user)
+    return "DW_OP_user";
+    
+    return "DW_OP_unknown";
+}
+
+void dump_dwarf_expression(u8 *data, u64 size){
+    
+    for(u32 index = 0; index < size; index++){
+        print("%.2x ", data[index]);
+    }
+    
+    u64 offset = 0;
+    while(offset < size){
+        u8 opcode = data[offset++];
+        
+        print(" %s ", drawf_expression_opcode_name(opcode));
+        
+        if(opcode >= DW_OP_lit0 && opcode <= DW_OP_lit31){
+            print("%d", (opcode - DW_OP_lit0));
+            continue;
+        }
+        
+        if(opcode >= DW_OP_reg0 && opcode <= DW_OP_reg31){
+            print("r%d", opcode - DW_OP_reg0);
+            continue;
+        }
+        
+        if(opcode >= DW_OP_breg0 && opcode <= DW_OP_breg31){
+            s64 offset_value = read_sleb(data, &offset);
+            
+            print("r%u + %lld", opcode - DW_OP_breg0, offset_value);
+            continue;
+        }
+        
+        switch(opcode){
+            case DW_OP_addr:{
+                u64 address = *(u64 *)(data + offset);
+                offset += 8;
+                
+                print(" %llx", address);
+            }break;
+            
+            case DW_OP_const1u:{
+                u8 value = data[offset++];
+                print(" %x", value);
+            }break;
+            case DW_OP_const1s:{
+                s8 value = data[offset++];
+                if(value >= 0){
+                    print(" %x", value);
+                }else{
+                    print(" -%x", -value);
+                }
+            }break;
+            
+            case DW_OP_const2u:{
+                u16 value = *(u16 *)(data + offset);
+                offset += sizeof(u16);
+                print(" %x", value);
+            }break;
+            case DW_OP_const2s:{
+                s16 value = *(s16 *)(data + offset);
+                offset += sizeof(s16);
+                if(value >= 0){
+                    print(" %x", value);
+                }else{
+                    print(" -%x", -value);
+                }
+            }break;
+            case DW_OP_const4u:{
+                u32 value = *(u32 *)(data + offset);
+                offset += sizeof(u32);
+                print(" %x", value);
+            }break;
+            case DW_OP_const4s:{
+                s32 value = *(s32 *)(data + offset);
+                offset += sizeof(s32);
+                if(value >= 0){
+                    print(" %x", value);
+                }else{
+                    print(" -%x", -value);
+                }
+            }break;
+            
+            case DW_OP_const8u:{
+                u64 value = *(u64 *)(data + offset);
+                offset += sizeof(u64);
+                print(" %llX", value);
+            }break;
+            case DW_OP_const8s:{
+                s64 value = *(s64 *)(data + offset);
+                offset += sizeof(s64);
+                if(value >= 0){
+                    print(" %llX", value);
+                }else{
+                    print(" -%llX", -value);
+                }
+            }break;
+            
+            case DW_OP_constu:
+            case DW_OP_plus_uconst:
+            case DW_OP_piece:
+            case DW_OP_pick:
+            case DW_OP_addrx:
+            case DW_OP_constx:
+            case DW_OP_convert:
+            case DW_OP_reinterpret:{
+                u64 value = read_uleb(data, &offset);
+                print(" %llx\n", value);
+            }break;
+            
+            case DW_OP_bra:
+            case DW_OP_skip:{
+                
+                u16 raw = *(u16 *)(data + offset);
+                offset += 2;
+                
+                print(" %x", raw);
+            }break;
+            
+            case DW_OP_regx:{
+                u64 value = read_uleb(data, &offset);
+                print(" r%lld\n", value);
+            }break;
+            
+            case DW_OP_bregx:{
+                u64 reg = read_uleb(data, &offset);
+                s64 off = read_sleb(data, &offset);
+                
+                print("r%llu + %llx\n", reg, off);
+            }break;
+            
+            case DW_OP_deref_size:
+            case DW_OP_xderef_size:{
+                u8 value = data[offset++];
+                print("%x", value);
+            }break;
+            
+            case DW_OP_call_frame_cfa: break;
+            
+            case DW_OP_fbreg:{
+                s64 value = read_sleb(data, &offset);
+                if(value > 0){
+                    print("+ %llx", value);
+                }else{
+                    print("- %llx", -value);
+                }
+            }break;
+            
+            default:{
+                print("Unhandled dwarf opcode %x", opcode);
+            }break;
+        }
+    }
+}
 
 int dump_elf(char *cfile_name, struct memory_arena *arena){
     
@@ -3292,6 +3780,7 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                 int depth = 0;
                 
                 while(offset < unit_end){
+                    u64 root_offset = offset;
                     u64 abbrev_code = read_uleb(section_data, &offset);
                     
                     if(abbrev_code == 0){
@@ -3304,8 +3793,10 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                     
                     // Search for the abbrev with the abbrev_code
                     u64 abbrev_entry_offset = 0;
+                    u64 root_abbrev_entry_offset = 0;
                     
                     for(u64 abbrev_offset = abbrev_base; abbrev_offset < abbrev_size; ){
+                        root_abbrev_entry_offset = abbrev_offset;
                         u64 code = read_uleb(abbrev, &abbrev_offset);
                         
                         if(code == 0) break;
@@ -3314,20 +3805,23 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                             break;
                         }
                         
-                        read_uleb(abbrev, &abbrev_offset);
-                        abbrev_offset++;
+                        read_uleb(abbrev, &abbrev_offset); // tag
+                        abbrev_offset++; // have_children
                         
                         while(true){
                             u64 attr = read_uleb(abbrev, &abbrev_offset);
                             u64 form = read_uleb(abbrev, &abbrev_offset);
                             if(attr == 0 && form == 0) break;
+                            
+                            if(form == /*DW_FORM_implicit_const*/0x21){
+                                read_sleb(abbrev, &abbrev_offset);
+                            }
                         }
                     }
                     
-                    u64 root_abbrev_entry_offset = abbrev_entry_offset;
                     u64 tag = read_uleb(abbrev, &abbrev_entry_offset);
                     u8  have_children = abbrev[abbrev_entry_offset++];
-                    print("%*s[%llx (%llx)] %s [%s]\n", depth, "", abbrev_code, root_abbrev_entry_offset, get(dwarf_tag_string, tag), have_children ? "has children" : "no children");
+                    print("%*s[%llx] -> [%llx (%llx)] %s [%s]\n", depth, "", root_offset, abbrev_code, root_abbrev_entry_offset, get(dwarf_tag_string, tag), have_children ? "has children" : "no children");
                     
                     depth += 2;
                     while(1){
@@ -3442,9 +3936,8 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                                 u64 length = read_uleb(section_data, &offset);
                                 print("expr(%llx): ", length);
                                 
-                                for(u32 index = 0; index < length; index++){
-                                    print("%.2x ", section_data[offset + index]);
-                                }
+                                dump_dwarf_expression(section_data + offset, length);
+                                
                                 print("\n");
                                 offset += length;
                             }break;
@@ -3476,7 +3969,10 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                                 unsupported = 1;
                             }break;
                             case /*DW_FORM_implicit_const*/0x21:{
-                                unsupported = 1;
+                                s64 value = read_sleb(abbrev, &abbrev_entry_offset);
+                                
+                                // "No value is stored in the .debug_info section."
+                                print("%lld\n", value);
                             }break;
                             case /*DW_FORM_loclistx*/0x22:{
                                 u64 value = read_uleb(section_data, &offset);
@@ -3531,7 +4027,7 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                         
                         if(unsupported){
                             print("Unsupported form!!!\n");
-                            os_panic(1);
+                            goto double_break;
                         }
                     }
                     depth -= 2;
@@ -3539,7 +4035,7 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                     if(have_children) depth += 4;
                 }
             }
-            
+            double_break:;
         }
         
         // .debug_abbrev
@@ -3550,6 +4046,7 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                 print("Table @ 0x%llx:\n", offset);
                 
                 while(true){
+                    u64 root_offset = offset;
                     u64 code = read_uleb(section_data, &offset);
                     if(code == 0){
                         print("    [0] - end of abbreviation table\n");
@@ -3560,7 +4057,7 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                     
                     u8 have_children = section_data[offset++];
                     
-                    print("    [%x] %x (%s) children = %u\n", code, tag, dwarf_tag_string[tag], have_children);
+                    print("    [%x (%llx)] %x (%s) children = %u\n", code, root_offset, tag, dwarf_tag_string[tag], have_children);
                     
                     while(true){
                         u64 attr = read_uleb(section_data, &offset);
@@ -3571,7 +4068,14 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                             break;
                         }
                         
-                        print("        attr = 0x%x (%s), form = 0x%x (%s)\n", attr, get(attr_string, attr), form, get(attribute_form_codes, form));
+                        print("        attr = 0x%x (%s), form = 0x%x (%s)", attr, get(attr_string, attr), form, get(attribute_form_codes, form));
+                        
+                        if(form == /*DW_FORM_implicit_const*/0x21){
+                            s64 value = read_sleb(section_data, &offset);
+                            print(" -> value = %lld\n", value);
+                        }else{
+                            print("\n");
+                        }
                     }
                 }
             }
