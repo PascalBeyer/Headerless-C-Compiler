@@ -1091,12 +1091,6 @@ func struct string push_token_string(struct context *context, struct token *toke
     }
 }
 
-//_____________________________________________________________________________________________________________________
-
-#include "ar.c"
-#include "elf.c"
-//_____________________________________________________________________________________________________________________
-
 
 static enum ir_type ir_type_from_type(struct ast_type *type){
     u64 index = type - &globals.typedef_void;
@@ -1111,6 +1105,52 @@ static enum ir_type ir_type_from_type(struct ast_type *type){
     invalid_code_path;
 }
 
+func struct string basic_type_string(struct ast_type *type){
+    
+    enum ir_type ir_type = ir_type_from_type(type);
+    
+    static struct string type_to_string[] = {
+        [IR_TYPE_void] = const_string("void"),
+        [IR_TYPE_bool] = const_string("_Bool"),
+        
+        [IR_TYPE_s8] = const_string("char"), 
+        [IR_TYPE_u8] = const_string("unsigned char"), 
+        
+        [IR_TYPE_s16] = const_string("short"), 
+        [IR_TYPE_u16] = const_string("unsigned short"), 
+        
+        [IR_TYPE_s32] = const_string("int"),
+        [IR_TYPE_u32] = const_string("unsigned int"),
+        
+        [IR_TYPE_s64] = const_string("long long"), 
+        [IR_TYPE_u64] = const_string("unsigned long long"),
+        
+        [IR_TYPE_f32] = const_string("float"),
+        [IR_TYPE_f64] = const_string("double"),
+        
+        [IR_TYPE_atomic_bool] = const_string("_Atomic(_Bool)"),
+        
+        [IR_TYPE_atomic_s8] = const_string("_Atomic(char)"), 
+        [IR_TYPE_atomic_u8] = const_string("_Atomic(unsigned char)"), 
+        
+        [IR_TYPE_atomic_s16] = const_string("_Atomic(short)"), 
+        [IR_TYPE_atomic_u16] = const_string("_Atomic(unsigned short)"), 
+        
+        [IR_TYPE_atomic_s32] = const_string("_Atomic(int)"),
+        [IR_TYPE_atomic_u32] = const_string("_Atomic(unsigned int)"),
+        
+        [IR_TYPE_atomic_s64] = const_string("_Atomic(long long)"), 
+        [IR_TYPE_atomic_u64] = const_string("_Atomic(unsigned long long)"),
+    };
+    
+    return type_to_string[ir_type];
+}
+
+//_____________________________________________________________________________________________________________________
+
+#include "ar.c"
+
+//_____________________________________________________________________________________________________________________
 
 func struct string push_type_string(struct memory_arena *arena, struct memory_arena *scratch, struct ast_type *type);
 
@@ -1120,44 +1160,7 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
         case AST_float_type:
         case AST_integer_type:
         case AST_atomic_integer_type:{
-            
-            enum ir_type ir_type = ir_type_from_type(type);
-            
-            static struct string type_to_string[] = {
-                [IR_TYPE_void] = const_string("void"),
-                [IR_TYPE_bool] = const_string("_Bool"),
-                
-                [IR_TYPE_s8] = const_string("char"), 
-                [IR_TYPE_u8] = const_string("unsigned char"), 
-                
-                [IR_TYPE_s16] = const_string("short"), 
-                [IR_TYPE_u16] = const_string("unsigned short"), 
-                
-                [IR_TYPE_s32] = const_string("int"),
-                [IR_TYPE_u32] = const_string("unsigned int"),
-                
-                [IR_TYPE_s64] = const_string("long long"), 
-                [IR_TYPE_u64] = const_string("unsigned long long"),
-                
-                [IR_TYPE_f32] = const_string("float"),
-                [IR_TYPE_f64] = const_string("double"),
-                
-                [IR_TYPE_atomic_bool] = const_string("_Atomic(_Bool)"),
-                
-                [IR_TYPE_atomic_s8] = const_string("_Atomic(char)"), 
-                [IR_TYPE_atomic_u8] = const_string("_Atomic(unsigned char)"), 
-                
-                [IR_TYPE_atomic_s16] = const_string("_Atomic(short)"), 
-                [IR_TYPE_atomic_u16] = const_string("_Atomic(unsigned short)"), 
-                
-                [IR_TYPE_atomic_s32] = const_string("_Atomic(int)"),
-                [IR_TYPE_atomic_u32] = const_string("_Atomic(unsigned int)"),
-                
-                [IR_TYPE_atomic_s64] = const_string("_Atomic(long long)"), 
-                [IR_TYPE_atomic_u64] = const_string("_Atomic(unsigned long long)"),
-            };
-            
-            string_list_prefix(list, scratch, type_to_string[ir_type]);
+            string_list_prefix(list, scratch, basic_type_string(type));
         }break;
         case AST_union: case AST_struct: case AST_enum:{
             struct ast_compound_type *compound = cast(struct ast_compound_type *)type;
@@ -2247,6 +2250,10 @@ func void parser_emit_memory_location(struct context *context, struct ast_declar
 
 //_____________________________________________________________________________________________________________________
 
+#include "elf.c"
+
+//_____________________________________________________________________________________________________________________
+
 #include "emit_x64.c"
 
 //_____________________________________________________________________________________________________________________
@@ -2681,6 +2688,7 @@ func u8 *evaluate_static_initializer(struct context *context, struct ast_declara
 
 //_____________________________________________________________________________________________________________________
 // Writer helpers.
+// 
 
 #include "obj_writer.c"
 #include "coff_writer.c"
@@ -6047,7 +6055,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         if(globals.output_file_type == OUTPUT_FILE_obj){
             write_obj(output_file_path, &emit_arena, arena); 
         }else if(globals.output_file_type == OUTPUT_FILE_elf){
-            write_elf(output_file_path, &emit_arena, arena);
+            write_elf(output_file_path, &emit_arena, arena, &context->scratch);
         }else{
             write_coff(output_file_path, &emit_arena, arena); 
         }

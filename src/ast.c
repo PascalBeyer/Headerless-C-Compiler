@@ -484,8 +484,11 @@ struct expr{
 
 enum type_flags{
     TYPE_FLAG_none          = 0x0,
+    
+    // @cleanup: These are also used by the dwarf backend...
     TYPE_FLAG_pdb_temporary = 0x1, 
     TYPE_FLAG_pdb_permanent = 0x2, 
+    
     TYPE_FLAG_ends_in_array_of_unknown_size = 0x4,
     TYPE_FLAG_is_intrin_type = 0x8,
     TYPE_FLAG_is_atomic      = 0x10,
@@ -500,8 +503,13 @@ struct ast_type{
     smm size;      // @note: these could be u32's probably
     smm alignment; // @note: these could be u32's probably
     
-    u32 pdb_type_index;
-    u32 pdb_predecl_type_index;
+    union{
+        struct{
+            u32 pdb_type_index;
+            u32 pdb_predecl_type_index;
+        };
+        u32 dwarf_form_offset;
+    };
 };
 
 struct ast_list_node{
@@ -629,7 +637,7 @@ static struct string type_prefix_for_unresolved_type(struct ast_unresolved_type 
 
 struct ast_array_type{
     struct ast_type base;
-    b32 is_of_unknown_size;
+    b32 is_of_unknown_size; // @cleanup: why does this exits, should this not be a flag?
     smm amount_of_elements;
     struct ast_type *element_type;
     enum ast_kind *element_type_defined_type; // :defined_types

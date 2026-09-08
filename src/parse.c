@@ -956,7 +956,6 @@ func int maybe_resolve_unresolved_type_or_sleep_or_error(struct context *context
     return 0;
 }
 
-
 func int maybe_resolve_unresolved_type(struct ast_type **in_out_type){
     
     struct ast_type *type = atomic_load(struct ast_type *, *in_out_type);
@@ -8295,8 +8294,8 @@ case TOKEN_##type_name:{                                                 \
                         
                         compound->base.size = (size + (alignment - 1)) & ~(alignment - 1); // @cleanup: overflow
                         compound->base.alignment = alignment;
+                        compound->compilation_unit = context->current_compilation_unit;
                         if(name){
-                            compound->compilation_unit = context->current_compilation_unit;
                             register_compound_type(context, &compound->base, compound->identifier);
                         }
                     }

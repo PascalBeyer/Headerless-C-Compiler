@@ -268,15 +268,272 @@ void push_sleb(struct memory_arena *arena, s64 value){
 
 enum abbrev_indices{
     ABBREV_compilation_unit = 1,
-    ABBREV_base_type,
-    ABBREV_subprogram,
+    
+    ABBREV_function,
+    ABBREV_void_function,    
     ABBREV_variable,
     ABBREV_lexical_block,
+    
+    ABBREV_base_type,
+    ABBREV_pointer_type,
+    ABBREV_void_pointer_type,
+    ABBREV_array_type,
+    ABBREV_subrange_type, // for arrays, kinda weird.
+    ABBREV_subrange_unknown_size_type, // for arrays, kinda weird.
+    
     ABBREV_structure_type,
+    ABBREV_union_type,
     ABBREV_member,
+    ABBREV_bitfield_member,
+    
+    ABBREV_enumeration_type,
+    ABBREV_enumerator,
+    
+    ABBREV_atomic_type,
+    ABBREV_function_type,
+    ABBREV_void_function_type,
+    
+    ABBREV_unresolved_type,
 };
 
-void dwarf_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast_scope *scope, struct memory_arena *scratch, u64 virtual_image_base, u32 int_offset){
+
+void dwarf_register_type(struct memory_arena *arena, struct ast_type *root_type, struct memory_arena *scratch, struct memory_arena *location_arena, u8 *debug_info_base){
+    
+    if(root_type->dwarf_form_offset != 0) return;
+    
+    // 
+    // Register all types:
+    // 
+    //     In this system, the types do not have to be in linear order,
+    //     this means we can simply register all the types and emit patches.
+    //     when we are done, we simply fix up all of the patches.
+    //     
+    //     Therefore, we can simply add all sub-types to a queue and mark them
+    //     as temporary. We mark them as permanent when we have emitted them.
+    //     If the sub-type is not yet permanent, we emit a patch, if it is permanent
+    //     we can simpy put in the reference, if it is neither, we add a patch and
+    //     add it to the queue and mark it as temporary.
+    // 
+    
+    struct{
+        struct type_queue_node{
+            struct type_queue_node *next;
+            struct ast_type *type;
+        } *first, *last;
+    } subtypes = {0};
+    
+    struct{
+        struct type_patch_node{
+            struct type_patch_node *next;
+            struct ast_type *type;
+            u32 *patch_location;
+        } *first, *last;
+    } patches = {0};
+    
+    struct type_queue_node *initial_subtype = push_struct(scratch, struct type_queue_node);
+    initial_subtype->type = root_type;
+    sll_push_back(subtypes, initial_subtype);
+    
+    while(subtypes.first){
+        struct ast_type *subtype = subtypes.first->type;
+        sll_pop_front(subtypes);
+        
+        subtype->flags |= TYPE_FLAG_pdb_permanent;
+        subtype->dwarf_form_offset = (u32)(arena_current(arena) - debug_info_base);
+        
+#define recurse(recurse_type)                                                                \
+if((recurse_type)->flags & TYPE_FLAG_pdb_permanent){                                         \
+    *form_ref = (recurse_type)->dwarf_form_offset;                                           \
+}else{                                                                                       \
+    if(!((recurse_type)->flags & TYPE_FLAG_pdb_temporary)){                                  \
+        (recurse_type)->flags |= TYPE_FLAG_pdb_temporary;                                    \
+        struct type_queue_node *subtype_node = push_struct(scratch, struct type_queue_node); \
+        subtype_node->type = (recurse_type);                                                 \
+        sll_push_back(subtypes, subtype_node);                                               \
+    }                                                                                        \
+    struct type_patch_node *patch_node = push_struct(scratch, struct type_patch_node);       \
+    patch_node->type = (recurse_type);                                                       \
+    patch_node->patch_location = form_ref;                                                   \
+    sll_push_back(patches, patch_node);                                                      \
+}                                                                                            \
+
+        switch(subtype->kind){
+            
+            case AST_struct:
+            case AST_union:{
+                struct ast_compound_type *compound = (struct ast_compound_type *)subtype;
+                
+                *push_struct(arena, u8) = /*index*/(subtype->kind == AST_union) ? ABBREV_union_type : ABBREV_structure_type;
+                push_zero_terminated_string_copy(arena, token_get_string(compound->identifier));
+                *push_struct_unaligned(arena, u64) = compound->base.size;
+                
+                {
+                    struct token_location_information location_information = get_location_for_token(location_arena, compound->compilation_unit, compound->identifier);
+                    struct file *file = globals.file_table.data[location_information.file_index];
+                    *push_struct_unaligned(arena, u32) = file->file_number;
+                    *push_struct_unaligned(arena, u32) = location_information.line;
+                    *push_struct_unaligned(arena, u32) = location_information.column;
+                }
+                
+                for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
+                    struct compound_member *member = &compound->members[member_index];
+                    if(member->name == globals.invalid_identifier_token) continue;
+                    
+                    struct ast_type *member_type = member->type;
+                    if(member_type->kind == AST_bitfield_type){
+                        struct ast_bitfield_type *bitfield_type = (struct ast_bitfield_type *)member_type;
+                        struct ast_type *base_type = bitfield_type->base_type;
+                        
+                        *push_struct(arena, u8) = /*index*/ABBREV_bitfield_member;
+                        push_zero_terminated_string_copy(arena, token_get_string(member->name));
+                        
+                        struct token_location_information location_information = get_location_for_token(location_arena, compound->compilation_unit, member->name);
+                        struct file *file = globals.file_table.data[location_information.file_index];
+                        *push_struct_unaligned(arena, u32) = file->file_number;
+                        *push_struct_unaligned(arena, u32) = location_information.line;
+                        *push_struct_unaligned(arena, u32) = location_information.column;
+                        
+                        u32 *form_ref = push_struct_unaligned(arena, u32);
+                        recurse(base_type);
+                        
+                        *push_struct(arena, u8) = (u8)bitfield_type->bit_index;
+                        *push_struct(arena, u8) = (u8)bitfield_type->width;
+                        
+                        *push_struct_unaligned(arena, u64) = member->offset_in_type;
+                    }else{
+                        *push_struct(arena, u8) = /*index*/ABBREV_member;
+                        push_zero_terminated_string_copy(arena, token_get_string(member->name));
+                        
+                        struct token_location_information location_information = get_location_for_token(location_arena, compound->compilation_unit, member->name);
+                        struct file *file = globals.file_table.data[location_information.file_index];
+                        *push_struct_unaligned(arena, u32) = file->file_number;
+                        *push_struct_unaligned(arena, u32) = location_information.line;
+                        *push_struct_unaligned(arena, u32) = location_information.column;
+                        
+                        u32 *form_ref = push_struct_unaligned(arena, u32);
+                        recurse(member_type);
+                        
+                        *push_struct_unaligned(arena, u64) = member->offset_in_type;
+                    }
+                }
+                
+                *push_struct(arena, u8) = /*end*/0;
+            }break;
+            
+            case AST_enum:{
+                struct ast_compound_type *compound = (struct ast_compound_type *)subtype;
+                
+                struct token_location_information location_information = get_location_for_token(location_arena, compound->compilation_unit, compound->identifier);
+                struct file *file = globals.file_table.data[location_information.file_index];
+                
+                *push_struct(arena, u8) = ABBREV_enumeration_type;
+                push_zero_terminated_string_copy(arena, token_get_string(compound->identifier));
+                *push_struct(arena, u8) = /*encoding(signed)*/5;
+                *push_struct(arena, u8) = /*byte_size*/(u8)compound->base.size;
+                *push_struct_unaligned(arena, u32) = /*type*/globals.typedef_s32.dwarf_form_offset;
+                
+                *push_struct_unaligned(arena, u32) = file->file_number;
+                *push_struct_unaligned(arena, u32) = location_information.line;
+                *push_struct_unaligned(arena, u32) = location_information.column;
+                
+                for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
+                    struct compound_member *member = &compound->members[member_index];
+                    
+                    *push_struct(arena, u8) = /*index*/ABBREV_enumerator;
+                    push_zero_terminated_string_copy(arena, token_get_string(member->name));
+                    *push_struct_unaligned(arena, s32) = (s32)member->enum_value;
+                }
+                
+                *push_struct(arena, u8) = /*end*/0;
+            }break;
+            
+            case AST_pointer_type:{
+                struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)subtype;
+                
+                // 
+                // In the case of:
+                // 
+                //     struct unresolved *pointer;
+                //     
+                // Where we did not dereference 'pointer', but 'unresolved' gets defined _later_,
+                // this pointer is still pointing to an unresolved type.
+                // If this is the case we try to patch it here.
+                // 
+                maybe_resolve_unresolved_type(&pointer_type->pointer_to);
+                
+                *push_struct(arena, u8) = /*index*/ABBREV_pointer_type;
+                *push_struct(arena, u8) = /*byte_size*/8;
+                u32 *form_ref = push_struct_unaligned(arena, u32);
+                
+                struct ast_type *pointee_type = pointer_type->pointer_to;
+                recurse(pointee_type);
+            }break;
+            
+            case AST_array_type:{
+                struct ast_array_type *array_type = (struct ast_array_type *)subtype;
+                
+                *push_struct(arena, u8) = /*index*/ABBREV_array_type;
+                *push_struct_unaligned(arena, u64) = array_type->base.size;
+                
+                u32 *form_ref = push_struct_unaligned(arena, u32);
+                struct ast_type *element_type = array_type->element_type;
+                recurse(element_type);
+                
+                {
+                    int is_of_unknown_size = array_type->is_of_unknown_size;
+                    
+                    *push_struct(arena, u8) = /*index*/is_of_unknown_size ? ABBREV_subrange_unknown_size_type : ABBREV_subrange_type;
+                    *push_struct_unaligned(arena, u32) = /*type*/globals.typedef_u64.dwarf_form_offset;
+                    if(!is_of_unknown_size){
+                        *push_struct_unaligned(arena, u64) = /*upper_bound*/array_type->amount_of_elements-1;
+                    }
+                }
+                
+                *push_struct(arena, u8) = /*end*/0;
+            }break;
+            
+            case AST_function_type:{
+                struct ast_function_type *function_type = (struct ast_function_type *)subtype;
+                maybe_resolve_unresolved_type(&function_type->return_type);
+                
+                struct ast_type *return_type = function_type->return_type;
+                int return_type_is_void = (return_type == &globals.typedef_void);
+                
+                if(return_type_is_void){
+                    *push_struct(arena, u8) = /*index*/ABBREV_void_function_type;
+                }else{
+                    *push_struct(arena, u8) = /*index*/ABBREV_function_type;
+                    u32 *form_ref = push_struct_unaligned(arena, u32);
+                    recurse(return_type);
+                }
+                
+                // @cleanup: argument types?
+                
+                *push_struct(arena, u8) = /*end*/0;
+            }break;
+            
+            case AST_unresolved_type:{
+                struct ast_unresolved_type *unresolved = (struct ast_unresolved_type *)subtype;
+                
+                *push_struct(arena, u8) = /*index*/ABBREV_unresolved_type;
+                push_zero_terminated_string_copy(arena, token_get_string(unresolved->sleeping_on));
+            }break;
+            
+            default:{
+                print("Unhandled type kind %u in dwarf_register_type.\n", subtype->kind);
+                invalid_code_path;
+            }break;
+        }
+    }
+    
+    for(struct type_patch_node *patch = patches.first; patch; patch = patch->next){
+        struct ast_type *type = patch->type;
+        u32 *form_ref = patch->patch_location;
+        *form_ref = type->dwarf_form_offset;
+    }
+}
+
+void dwarf_emit_debug_information_for_function__recursive(struct ast_function *function, struct memory_arena *arena, struct ast_scope *scope, struct memory_arena *scratch, struct memory_arena *location_arena, u64 virtual_image_base, u8 *debug_info_base){
     
     if(scope->amount_of_declarations){
         if(function->scope != scope){
@@ -301,15 +558,21 @@ void dwarf_emit_debug_information_for_function__recursive(struct ast_function *f
             if(decl->flags & DECLARATION_FLAGS_is_local_persist) continue;
             if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
             
-            *push_struct(arena, u8) = /*index*/ABBREV_variable;
-            push_zero_terminated_string_copy(arena, token_get_string(decl->identifier));
-            struct token_location_information location = get_location_for_token(scratch, function->compilation_unit, decl->identifier);
+            struct string identifier = token_get_string(decl->identifier);
+            struct token_location_information location = get_location_for_token(location_arena, function->compilation_unit, decl->identifier);
             struct file *file = globals.file_table.data[location.file_index];
+            
+            if(decl->type->dwarf_form_offset == 0){
+                dwarf_register_type(arena, decl->type, scratch, location_arena, debug_info_base); // I think we can simply register the type here.
+            }
+            
+            *push_struct(arena, u8) = /*index*/ABBREV_variable;
+            push_zero_terminated_string_copy(arena, identifier);
             
             *push_struct_unaligned(arena, u32) = (u32)file->file_number;
             *push_struct_unaligned(arena, u32) = (u32)location.line;
             *push_struct_unaligned(arena, u32) = (u32)location.column;
-            *push_struct_unaligned(arena, u32) = int_offset; // For now every type is int!
+            *push_struct_unaligned(arena, u32) = decl->type->dwarf_form_offset;
             u8 *expression_length = push_struct(arena, u8);
             *push_struct(arena, u8) = /*DW_OP_fbreg*/0x91;
             push_sleb(arena, -decl->offset_on_stack - 16); // @note: The -16 come from how we set up the CFA in the .eh_frame section. This is sort of stupid.
@@ -322,7 +585,7 @@ void dwarf_emit_debug_information_for_function__recursive(struct ast_function *f
     // 
     
     for(struct ast_scope *subscope = scope->subscopes.first; subscope; subscope = subscope->subscopes.next){
-        dwarf_emit_debug_information_for_function__recursive(function, arena, subscope, scratch, virtual_image_base, int_offset);
+        dwarf_emit_debug_information_for_function__recursive(function, arena, subscope, scratch, location_arena, virtual_image_base, debug_info_base);
     }
     
     if(scope->amount_of_declarations){
@@ -335,8 +598,7 @@ void dwarf_emit_debug_information_for_function__recursive(struct ast_function *f
     }
 }
 
-
-void write_elf(struct string output_file_path, struct memory_arena *arena, struct memory_arena *scratch){
+void write_elf(struct string output_file_path, struct memory_arena *arena, struct memory_arena *location_arena, struct memory_arena *scratch){
     
     // 
     // Gather the symbols.
@@ -1653,7 +1915,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         for(struct ast_list_node *function_node = defined_functions.first; function_node; function_node = function_node->next){
             struct ast_function *function = (struct ast_function *)function_node->value;
             
-            struct token_location_information initial_location = get_location_for_token(null, function->compilation_unit, function->scope->token);
+            struct token_location_information initial_location = get_location_for_token(location_arena, function->compilation_unit, function->scope->token);
             struct file *file = globals.file_table.data[initial_location.file_index];
             
             if(file_number != file->file_number){
@@ -1790,28 +2052,6 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         // 
-        //     DW_TAG_base_type
-        //         DW_AT_byte_size          DW_FORM_data1
-        //         DW_AT_encoding           DW_FORM_data1
-        //         DW_AT_name               DW_FORM_string
-        //         
-        *push_struct(arena, u8) = /*index*/ABBREV_base_type;
-        *push_struct(arena, u8) = /*DW_TAG_base_type*/0x24;
-        *push_struct(arena, u8) = /*have_children*/0;
-        {
-            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
-            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
-            
-            *push_struct(arena, u8) = /*DW_AT_encoding*/0x3e;
-            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
-            
-            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
-            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
-            
-            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
-        }
-        
-        // 
         //     DW_TAG_subprogram
         //         DW_AT_name               DW_FORM_string
         //         DW_AT_decl_file          DW_FORM_data4
@@ -1821,7 +2061,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         //         DW_AT_high_pc            DW_FORM_data8
         //         DW_AT_frame_base         DW_FORM_exprloc
         // 
-        *push_struct(arena, u8) = /*index*/ABBREV_subprogram;
+        *push_struct(arena, u8) = /*index*/ABBREV_function;
         *push_struct(arena, u8) = /*DW_TAG_subprogram*/0x2e;
         *push_struct(arena, u8) = /*have_children*/1;
         {
@@ -1839,6 +2079,43 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             *push_struct(arena, u8) = /*DW_AT_type*/0x49;
             *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = /*DW_AT_low_pc*/0x11;
+            *push_struct(arena, u8) = /*DW_FORM_addr*/0x1;
+            
+            *push_struct(arena, u8) = /*DW_AT_high_pc*/0x12;
+            *push_struct(arena, u8) = /*DW_FORM_data8*/0x7;
+            
+            *push_struct(arena, u8) = /*DW_AT_frame_base*/0x40;
+            *push_struct(arena, u8) = /*DW_FORM_exprloc*/0x18;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_subprogram
+        //         DW_AT_name               DW_FORM_string
+        //         DW_AT_decl_file          DW_FORM_data4
+        //         DW_AT_decl_line          DW_FORM_data4
+        //         DW_AT_low_pc             DW_FORM_addr
+        //         DW_AT_high_pc            DW_FORM_data8
+        //         DW_AT_frame_base         DW_FORM_exprloc
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_void_function;
+        *push_struct(arena, u8) = /*DW_TAG_subprogram*/0x2e;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_file*/0x3a;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_line*/0x3b;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_column*/0x39;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
             
             *push_struct(arena, u8) = /*DW_AT_low_pc*/0x11;
             *push_struct(arena, u8) = /*DW_FORM_addr*/0x1;
@@ -1908,6 +2185,106 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         // 
+        //     DW_TAG_base_type
+        //         DW_AT_byte_size          DW_FORM_data1
+        //         DW_AT_encoding           DW_FORM_data1
+        //         DW_AT_name               DW_FORM_string
+        //         
+        *push_struct(arena, u8) = /*index*/ABBREV_base_type;
+        *push_struct(arena, u8) = /*DW_TAG_base_type*/0x24;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = /*DW_AT_encoding*/0x3e;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_pointer_type
+        //         DW_AT_byte_size          DW_FORM_data1
+        //         DW_AT_type               DW_FORM_ref4
+        //         
+        *push_struct(arena, u8) = /*index*/ABBREV_pointer_type;
+        *push_struct(arena, u8) = /*DW_TAG_pointer_type*/0xf;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_pointer_type
+        //         DW_AT_byte_size          DW_FORM_data1
+        //         
+        *push_struct(arena, u8) = /*index*/ABBREV_void_pointer_type;
+        *push_struct(arena, u8) = /*DW_TAG_pointer_type*/0xf;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_array_type
+        //         DW_AT_byte_size          DW_FORM_data8
+        //         DW_AT_type               DW_FORM_ref4
+        //         
+        //     DW_TAG_subrange_type         
+        //         DW_AT_type               DW_FORM_ref4
+        //         DW_AT_upper_bound        DW_FORM_data8
+        //         
+        *push_struct(arena, u8) = /*index*/ABBREV_array_type;
+        *push_struct(arena, u8) = /*DW_TAG_array_type*/0x1;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            
+            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
+            *push_struct(arena, u8) = /*DW_FORM_data8*/0x7;
+            
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        *push_struct(arena, u8) = /*index*/ABBREV_subrange_type;
+        *push_struct(arena, u8) = /*DW_TAG_subrange_type*/0x21;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = /*DW_AT_upper_bound*/0x2f;
+            *push_struct(arena, u8) = /*DW_FORM_data8*/0x7;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        *push_struct(arena, u8) = /*index*/ABBREV_subrange_unknown_size_type;
+        *push_struct(arena, u8) = /*DW_TAG_subrange_type*/0x21;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
         //     DW_TAG_structure_type
         //         DW_AT_name                   DW_FORM_string
         //         DW_AT_byte_size              DW_FORM_data8
@@ -1938,6 +2315,36 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         // 
+        //     DW_TAG_union_type
+        //         DW_AT_name                   DW_FORM_string
+        //         DW_AT_byte_size              DW_FORM_data8
+        //         DW_AT_decl_file              DW_FORM_data4
+        //         DW_AT_decl_line              DW_FORM_data4
+        //         DW_AT_decl_column            DW_FORM_data4
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_union_type;
+        *push_struct(arena, u8) = /*DW_TAG_union_type*/0x17;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
+            *push_struct(arena, u8) = /*DW_FORM_data8*/0x7;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_file*/0x3a;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_line*/0x3b;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_column*/0x39;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
         //     DW_TAG_member
         //         DW_AT_name                   DW_FORM_string
         //         DW_AT_decl_file              DW_FORM_data4
@@ -1947,8 +2354,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         //         DW_AT_data_member_location   DW_FORM_data8
         //         
         *push_struct(arena, u8) = /*index*/ABBREV_member;
-        *push_struct(arena, u8) = /*DW_TAG_structure_type*/0x13;
-        *push_struct(arena, u8) = /*have_children*/1;
+        *push_struct(arena, u8) = /*DW_TAG_member*/0xd;
+        *push_struct(arena, u8) = /*have_children*/0;
         {
             *push_struct(arena, u8) = /*DW_AT_name*/0x3;
             *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
@@ -1962,8 +2369,175 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct(arena, u8) = /*DW_AT_decl_column*/0x39;
             *push_struct(arena, u8) = /*DW_FORM_data4*/6;
             
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
             *push_struct(arena, u8) = /*DW_AT_data_member_location*/0x38;
             *push_struct(arena, u8) = /*DW_FORM_data4*/7;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        // Bitfield member:
+        // 
+        //     DW_TAG_member
+        //         DW_AT_name                   DW_FORM_string
+        //         DW_AT_decl_file              DW_FORM_data4
+        //         DW_AT_decl_line              DW_FORM_data4
+        //         DW_AT_decl_column            DW_FORM_data4
+        //         DW_AT_type                   DW_FORM_ref4
+        //         DW_AT_bit_size               DW_FORM_data1
+        //         DW_AT_data_member_location   DW_FORM_data8
+        //         
+        *push_struct(arena, u8) = /*index*/ABBREV_bitfield_member;
+        *push_struct(arena, u8) = /*DW_TAG_member*/0xd;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_file*/0x3a;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_line*/0x3b;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_column*/0x39;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = /*DW_AT_data_bit_offset*/0x6b;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = /*DW_AT_bit_size*/0xd;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = /*DW_AT_data_member_location*/0x38;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/7;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_enumeration_type
+        //         DW_AT_name                   DW_FORM_string
+        //         DW_AT_encoding               DW_FORM_data1
+        //         DW_AT_byte_size              DW_FORM_data1
+        //         DW_AT_type                   DW_FORM_ref4
+        //         DW_AT_decl_file              DW_FORM_data4
+        //         DW_AT_decl_line              DW_FORM_data4
+        //         DW_AT_decl_column            DW_FORM_data4
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_enumeration_type;
+        *push_struct(arena, u8) = /*DW_TAG_enumeration_type*/0x4;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_encoding*/0x3e;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
+            *push_struct(arena, u8) = /*DW_FORM_data1*/0xb;
+            
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_file*/0x3a;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_line*/0x3b;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = /*DW_AT_decl_column*/0x39;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_enumerator
+        //         DW_AT_name                 DW_FORM_string
+        //         DW_AT_const_value          DW_FORM_data4
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_enumerator;
+        *push_struct(arena, u8) = /*DW_TAG_enumerator*/0x28;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_const_value*/0x1c;
+            *push_struct(arena, u8) = /*DW_FORM_data4*/6;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_structure_type
+        //         DW_AT_name                   DW_FORM_string
+        //         DW_AT_declaration            DW_FORM_flag_present
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_unresolved_type;
+        *push_struct(arena, u8) = /*DW_TAG_structure_type*/0x13;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_name*/0x3;
+            *push_struct(arena, u8) = /*DW_FORM_string*/0x08;
+            
+            *push_struct(arena, u8) = /*DW_AT_declaration*/0x3c;
+            *push_struct(arena, u8) = /*DW_FORM_flag_present*/0x19;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_atomic_type
+        //         DW_AT_type                    DW_FORM_ref4
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_atomic_type;
+        *push_struct(arena, u8) = /*DW_TAG_atomic_type*/0x47;
+        *push_struct(arena, u8) = /*have_children*/0;
+        {
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_subroutine_type
+        //         DW_AT_prototyped              DW_FORM_flag_present
+        //         DW_AT_type                    DW_FORM_ref4
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_function_type;
+        *push_struct(arena, u8) = /*DW_TAG_subroutine_type*/0x15;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_prototyped*/0x27;
+            *push_struct(arena, u8) = /*DW_FORM_flag_present*/0x19;
+            
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
+        // 
+        //     DW_TAG_subroutine_type
+        //         DW_AT_prototyped              DW_FORM_flag_present
+        //         DW_AT_type                    DW_FORM_ref4
+        // 
+        *push_struct(arena, u8) = /*index*/ABBREV_void_function_type;
+        *push_struct(arena, u8) = /*DW_TAG_subroutine_type*/0x15;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            *push_struct(arena, u8) = /*DW_AT_prototyped*/0x27;
+            *push_struct(arena, u8) = /*DW_FORM_flag_present*/0x19;
             
             *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
         }
@@ -1984,6 +2558,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         debug_info_header->address_size = 8;
         debug_info_header->abbrev_offset = 0;
         
+        u8 *debug_info_base = (u8 *)debug_info_header;
+        
         // DW_TAG_COMPILE_UNIT:
         {
             *push_struct(arena, u8) = /*index*/ABBREV_compilation_unit;
@@ -1999,34 +2575,156 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct_unaligned(arena, u32) = (u32)(text_section->size); // high_pc
         }
         
-        // DW_TAG_base_type:
-        u32 int_offset = (u32)(arena_current(arena) - (u8 *)debug_info_header);
+        // 
+        // Register all of the basic types.
+        // 
+        
         {
+            struct ast_type *type = &globals.typedef_void_pointer.base;
+            type->flags |= TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary;
+            type->dwarf_form_offset = (u32)(arena_current(arena) - debug_info_base);
+            *push_struct(arena, u8) = /*index*/ABBREV_void_pointer_type;
+            *push_struct(arena, u8) = /*byte_size*/(u8)type->size;
+        }
+        
+        {
+            struct ast_type *type = &globals.typedef_Bool;
+            type->flags |= TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary;
+            type->dwarf_form_offset = (u32)(arena_current(arena) - debug_info_base);
             *push_struct(arena, u8) = /*index*/ABBREV_base_type;
-            *push_struct(arena, u8) = /*byte_size*/4;
-            *push_struct(arena, u8) = /*encoding(DW_ATE_signed)*/5;
-            push_zero_terminated_string_copy(arena, string("int"));
+            *push_struct(arena, u8) = /*byte_size*/(u8)type->size;
+            *push_struct(arena, u8) = /*encoding(DW_ATE_boolean)*/2;
+            push_zero_terminated_string_copy(arena, basic_type_string(type));
+        }
+        
+        for(struct ast_type *type = &globals.typedef_s8; type <= &globals.typedef_u64; type++){
+            type->flags |= TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary;
+            type->dwarf_form_offset = (u32)(arena_current(arena) - debug_info_base);
+            *push_struct(arena, u8) = /*index*/ABBREV_base_type;
+            *push_struct(arena, u8) = /*byte_size*/(u8)type->size;
+            *push_struct(arena, u8) = (/*encoding*/ type_is_signed(type) ? /*signed*/5 : /*unsigned*/7) + /*char*/(type->size == 1);
+            push_zero_terminated_string_copy(arena, basic_type_string(type));
+        }
+        
+        for(struct ast_type *type = &globals.typedef_f32; type <= &globals.typedef_f64; type++){
+            type->flags |= TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary;
+            type->dwarf_form_offset = (u32)(arena_current(arena) - debug_info_base);
+            *push_struct(arena, u8) = /*index*/ABBREV_base_type;
+            *push_struct(arena, u8) = /*byte_size*/(u8)type->size;
+            *push_struct(arena, u8) = /*encoding(DW_ATE_float)*/4;
+            push_zero_terminated_string_copy(arena, basic_type_string(type));
+        }
+        
+        for(struct ast_type *type = &globals.typedef_atomic_bool; type <= &globals.typedef_atomic_u64; type++){
+            type->flags |= TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary;
+            type->dwarf_form_offset = (u32)(arena_current(arena) - debug_info_base);
+            
+            // :translate_atomic_to_non_atomic_and_back
+            struct ast_type *base_type = type - (&globals.typedef_atomic_bool - &globals.typedef_Bool);
+            
+            *push_struct(arena, u8) = /*index*/ABBREV_atomic_type;
+            *push_struct_unaligned(arena, u32) = base_type->dwarf_form_offset;
+        }
+        
+        // 
+        // Register all compound types.
+        // 
+        
+        for(u64 index = 0; index < globals.compound_types.capacity; index++){
+            struct ast_node *node = globals.compound_types.nodes + index;
+            if(!node->token) continue;
+            
+            struct ast_type *type = (struct ast_type *)node->ast;
+            
+            if(type->dwarf_form_offset == 0){
+                dwarf_register_type(arena, type, scratch, location_arena, debug_info_base);
+            }
+        }
+        
+        // 
+        // Register all declarations.
+        // 
+        
+        for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+            struct ast_table *table = &compilation_unit->static_declaration_table; // :DeclarationTableLoop
+            
+            for(u64 table_index = 0; table_index < table->capacity; table_index++){
+                enum ast_kind *ast = table->nodes[table_index].ast;
+                if(!ast) continue;
+                
+                struct ast_declaration *decl = (struct ast_declaration *)ast;
+                struct ast_type *type = decl->type;
+                
+                
+                struct string identifier = token_get_string(decl->identifier);
+                struct token_location_information location = get_location_for_token(location_arena, decl->compilation_unit, decl->identifier);
+                struct file *file = globals.file_table.data[location.file_index];
+                
+                if(decl->kind == IR_typedef){
+                    if(type->dwarf_form_offset == 0 && type != &globals.typedef_void){
+                        dwarf_register_type(arena, type, scratch, location_arena, debug_info_base);
+                    }
+                    
+                    // @cleanup: Typedefs.
+                    
+                    continue;
+                }
+                
+                if(*ast == IR_declaration){
+                    
+                    // For dllimports, the defining dll has the declaration and type information.
+                    if(decl->flags & DECLARATION_FLAGS_is_dllimport) continue;
+                    
+                    if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                    
+                    if(type->dwarf_form_offset == 0){
+                        dwarf_register_type(arena, type, scratch, location_arena, debug_info_base);
+                    }
+                    
+                    *push_struct(arena, u8) = /*index*/ABBREV_variable;
+                    push_zero_terminated_string_copy(arena, identifier);
+                    
+                    *push_struct_unaligned(arena, u32) = (u32)file->file_number;
+                    *push_struct_unaligned(arena, u32) = (u32)location.line;
+                    *push_struct_unaligned(arena, u32) = (u32)location.column;
+                    *push_struct_unaligned(arena, u32) = type->dwarf_form_offset;
+                    
+                    *push_struct(arena, u8) = /*length*/9;
+                    *push_struct(arena, u8) = /*DW_OP_addr*/0x03;
+                    *push_struct_unaligned(arena, u64) = virtual_image_base + decl->relative_virtual_address;
+                    continue;
+                }
+            }
         }
         
         for(struct ast_list_node *function_node = defined_functions.first; function_node; function_node = function_node->next){
             struct ast_function *function = (struct ast_function *)function_node->value;
             struct ast_scope *root_scope = function->scope;
             
-            struct token_location_information initial_location = get_location_for_token(null, function->compilation_unit, root_scope->token);
+            struct token_location_information initial_location = get_location_for_token(location_arena, function->compilation_unit, root_scope->token);
             struct file *file = globals.file_table.data[initial_location.file_index];
             
-            *push_struct(arena, u8) = /*index*/ABBREV_subprogram;
+            struct ast_type *return_type = function->type->return_type;
+            int returns_void = (return_type == &globals.typedef_void);
+            
+            if(!returns_void && return_type->dwarf_form_offset == 0){
+                dwarf_register_type(arena, return_type, scratch, location_arena, debug_info_base);
+            }
+            
+            *push_struct(arena, u8) = /*index*/returns_void ? ABBREV_void_function : ABBREV_function;
             push_zero_terminated_string_copy(arena, token_get_string(function->identifier));
             *push_struct_unaligned(arena, u32) = (u32)file->file_number;
             *push_struct_unaligned(arena, u32) = (u32)initial_location.line;
             *push_struct_unaligned(arena, u32) = (u32)initial_location.column;
-            *push_struct_unaligned(arena, u32) = int_offset; // For now every type is int!
+            if(!returns_void){
+                *push_struct_unaligned(arena, u32) = return_type->dwarf_form_offset;
+            }
             *push_struct_unaligned(arena, u64) = virtual_image_base + function->relative_virtual_address;
             *push_struct_unaligned(arena, u64) = function->byte_size;
             *push_struct(arena, u8) = 1;
             *push_struct(arena, u8) = /*DW_OP_call_frame_cfa*/0x9c;
             
-            dwarf_emit_debug_information_for_function__recursive(function, arena, root_scope, scratch, virtual_image_base, int_offset);
+            dwarf_emit_debug_information_for_function__recursive(function, arena, root_scope, scratch, location_arena, virtual_image_base, debug_info_base);
             
             *push_struct(arena, u8) = /*end*/0;
         }
@@ -3701,6 +4399,16 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
             [0x42] = "DW_TAG_rvalue_reference_type",
             [0x43] = "DW_TAG_template_alias",
             
+            [0x44] = "DW_TAG_coarray_type",  /* DWARF5 */
+            [0x45] = "DW_TAG_generic_subrange",  /* DWARF5 */
+            [0x46] = "DW_TAG_dynamic_type",  /* DWARF5 */
+            [0x47] = "DW_TAG_atomic_type",  /* DWARF5 */
+            [0x48] = "DW_TAG_call_site",  /* DWARF5 */
+            [0x49] = "DW_TAG_call_site_parameter",  /* DWARF5 */
+            [0x4a] = "DW_TAG_skeleton_unit",  /* DWARF5 */
+            [0x4b] = "DW_TAG_immutable_type",  /* DWARF5 */
+            
+            
         };
         
         static char *attr_string[] = {
@@ -4186,7 +4894,7 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
                     
                     u8 have_children = section_data[offset++];
                     
-                    print("    [%x (%llx)] %x (%s) children = %u\n", code, root_offset, tag, dwarf_tag_string[tag], have_children);
+                    print("    [%x (%llx)] %x (%s) children = %u\n", code, root_offset, tag, get(dwarf_tag_string, tag), have_children);
                     
                     while(true){
                         u64 attr = read_uleb(section_data, &offset);

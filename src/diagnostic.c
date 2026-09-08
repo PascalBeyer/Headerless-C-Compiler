@@ -155,33 +155,6 @@ func void print_one_error_node(struct error_report_node *node){
     }
 }
 
-func void debug_print_error(struct context *context, struct token *token, char *format, ...){
-    
-    struct string error_string = {0};
-    
-    va_list va;
-    va_start(va, format);
-    
-    va_list copied_va;
-    va_copy(copied_va, va);
-    error_string.length = vsnprintf(0, 0, format, copied_va);
-    va_end(copied_va);
-    
-    error_string.data = push_uninitialized_data(&context->scratch, u8, error_string.length + 1);
-    vsnprintf((char *)error_string.data, (int)(error_string.length + 1), format, va);
-    error_string.data[error_string.length] = 0;
-    
-    va_end(va);
-    
-    struct error_report_node node = {
-        .token = token,
-        .error = error_string,
-    };
-    
-    print_one_error_node(&node);
-}
-
-
 func s32 token_get_file_index(struct compilation_unit *compilation_unit, struct token *token){
     
     if(token->location_index != -1 && (token->location_index & 0x80000000)){

@@ -994,8 +994,6 @@ func void *push_unwind_information_for_function(struct memory_arena *arena, stru
         *count_dest = count;
     }
     
-    
-    
     return unwind_info;
 }
 
