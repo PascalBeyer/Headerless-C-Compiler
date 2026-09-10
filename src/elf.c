@@ -800,7 +800,11 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     elf_header->elf_header_version = 1;
     elf_header->abi = 3;
     elf_header->abi_version = 0;
-    elf_header->object_file_type = /*ET_EXEC*/2; // @cleanup: for so /*ET_DYN*/3
+    elf_header->object_file_type = /*ET_DYN*/3;
+    if(globals.cli_options.no_dynamic_base){
+        elf_header->object_file_type = /*ET_EXEC*/2;
+    }
+    
     elf_header->machine_type = /*x64*/0x3E;
     elf_header->elf_version = 1;
     elf_header->flags = 0;
@@ -868,7 +872,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }                                                                                                  \
 }
     
-    u64 virtual_image_base = 0x400000;
+    u64 virtual_image_base = 0;
+    if(globals.cli_options.no_dynamic_base) virtual_image_base = 0x400000;
     if(globals.cli_options.image_base_specified) virtual_image_base = globals.cli_options.image_base;
     
     u64 current_relative_virtual_address = 0;
@@ -1119,6 +1124,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         fill_program_header(interp, PT_INTERP, PF_READ, /*alignment*/1);
     }
     
+    u64 dynsym_section_index = 0;
     u32 dynsym_section_rva = 0;
     
     u8 *dynstr_section_start = 0;
@@ -1127,22 +1133,6 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     u64 dynstr_section_size = 0;
     
     u32 hash_section_rva = 0;
-    
-    u64 rela_plt_section_index = 0;
-    u32 rela_plt_section_rva  = 0;
-    u64 rela_plt_section_size = 0;
-    
-    struct elf_relocation_addend{
-        u64 offset; 
-        u64 info;
-        u64 addend;
-    } *rela_plt_relocations = 0;
-    
-    u64 rela_dyn_section_index = 0;
-    u32 rela_dyn_section_rva  = 0;
-    u64 rela_dyn_section_size = 0;
-    
-    struct elf_relocation_addend *rela_dyn_relocations = 0;
     
     if(imports.count || data_imports.count){
         dynstr_section_index = section_header_at;
@@ -1170,7 +1160,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         fill_section_header(dynstr, "dynstr", SHT_STRTAB, SHF_ALLOC, /*alignment*/1, /*link*/0, /*info*/0, /*entry_size*/0);
         
         push_align(arena, 8);
-        u64 dynsym_section_index = section_header_at;
+        dynsym_section_index = section_header_at;
         u8 *dynsym_section_start = arena_current(arena);
         dynsym_section_rva = make_relative_virtual_address(ro_segment_start, dynsym_section_start);
         
@@ -1251,7 +1241,20 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         }
         
         fill_section_header(hash, "hash", SHT_HASH, SHF_ALLOC, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info*/0, /*entry_size*/4);
-        
+    }
+    
+    
+    u64 rela_plt_section_index = 0;
+    u32 rela_plt_section_rva  = 0;
+    u64 rela_plt_section_size = 0;
+    
+    struct elf_relocation_addend{
+        u64 offset; 
+        u64 info;
+        u64 addend;
+    } *rela_plt_relocations = 0;
+    
+    if(imports.count){
         push_align(arena, 8);
         u8 *rela_plt_section_start = arena_current(arena);
         rela_plt_section_rva = make_relative_virtual_address(ro_segment_start, rela_plt_section_start);
@@ -1261,17 +1264,35 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         rela_plt_section_index = section_header_at;
         fill_section_header(rela_plt, "rela.plt", SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
-        
+    }
+    
+    
+    u64 rela_dyn_section_index = 0;
+    u32 rela_dyn_section_rva  = 0;
+    u64 rela_dyn_section_size = 0;
+    
+    struct elf_relocation_addend *rela_dyn_relocations = 0;
+    
+    u64 absolute_patches = 0;
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        for(struct patch_node *patch = thread_context->local_patch_list.first; patch; patch = patch->next){
+            if(patch->kind == PATCH_absolute){
+                absolute_patches++;
+            }
+        }
+    }
+    
+    if(data_imports.count || absolute_patches){
         push_align(arena, 8);
         u8 *rela_dyn_section_start = arena_current(arena);
         rela_dyn_section_rva = make_relative_virtual_address(ro_segment_start, rela_dyn_section_start);
         
-        rela_dyn_relocations = push_uninitialized_data(arena, struct elf_relocation_addend, data_imports.count);
+        rela_dyn_relocations = push_uninitialized_data(arena, struct elf_relocation_addend, data_imports.count + absolute_patches);
         rela_dyn_section_size = arena_current(arena) - rela_dyn_section_start;
         
         rela_dyn_section_index = section_header_at;
-        fill_section_header(rela_dyn, "rela_dyn", SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
-        
+        fill_section_header(rela_dyn, "rela.dyn", SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
     }
     
     if(defined_functions.count){
@@ -1421,7 +1442,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     
     u8 *rw_segment_start = arena_current(arena);
     
-    if(imports.count || data_imports.count){
+    if(imports.count || data_imports.count || absolute_patches){
         push_align(arena, 8);
         
         u8 *got_plt_section_start = arena_current(arena);
@@ -1513,20 +1534,25 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct(arena, u64) = import_library_node->name.data - dynstr_section_start;
         }
         
-        *push_struct(arena, u64) = /*DT_HASH*/4;
-        *push_struct(arena, u64) = virtual_image_base + hash_section_rva;
-        
-        *push_struct(arena, u64) = /*DT_STRTAB*/5;
-        *push_struct(arena, u64) = virtual_image_base + dynstr_section_rva;
-        
-        *push_struct(arena, u64) = /*DT_SYMTAB*/6;
-        *push_struct(arena, u64) = virtual_image_base + dynsym_section_rva;
-        
-        *push_struct(arena, u64) = /*DT_STRSZ*/10;
-        *push_struct(arena, u64) = dynstr_section_size;
-        
-        *push_struct(arena, u64) = /*DT_SYMENT*/11;
-        *push_struct(arena, u64) = sizeof(struct elf_symbol);
+        if(imports.count || data_imports.count){
+            *push_struct(arena, u64) = /*DT_HASH*/4;
+            *push_struct(arena, u64) = virtual_image_base + hash_section_rva;
+            
+            *push_struct(arena, u64) = /*DT_STRTAB*/5;
+            *push_struct(arena, u64) = virtual_image_base + dynstr_section_rva;
+            
+            *push_struct(arena, u64) = /*DT_SYMTAB*/6;
+            *push_struct(arena, u64) = virtual_image_base + dynsym_section_rva;
+            
+            *push_struct(arena, u64) = /*DT_STRSZ*/10;
+            *push_struct(arena, u64) = dynstr_section_size;
+            
+            *push_struct(arena, u64) = /*DT_SYMENT*/11;
+            *push_struct(arena, u64) = sizeof(struct elf_symbol);
+            
+            *push_struct(arena, u64) = /*DT_FLAGS*/0x1e;
+            *push_struct(arena, u64) = /*DF_BIND_NOW*/8;
+        }
         
         if(imports.count){
             *push_struct(arena, u64) = /*DT_PLTGOT*/3;
@@ -1542,7 +1568,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct(arena, u64) = virtual_image_base + rela_plt_section_rva;
         }
         
-        if(data_imports.count){
+        if(data_imports.count || absolute_patches){
             *push_struct(arena, u64) = /*DT_RELA*/7;
             *push_struct(arena, u64) = virtual_image_base + rela_dyn_section_rva;
             
@@ -1552,9 +1578,6 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct(arena, u64) = /*DT_RELAENT*/9;
             *push_struct(arena, u64) = sizeof(struct elf_relocation_addend);
         }
-        
-        *push_struct(arena, u64) = /*DT_FLAGS*/0x1e;
-        *push_struct(arena, u64) = /*DF_BIND_NOW*/8;
         
         *push_struct(arena, u64) = /*DT_NONE*/0;
         *push_struct(arena, u64) = 0;
@@ -1713,6 +1736,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         current_relative_virtual_address += align_up(segment_size + bss_size, 0x1000);
     }
     
+    u64 absolute_patch_relocation_at = 0;
+    
     for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
         struct context *thread_context = globals.thread_infos[thread_index].context;
         
@@ -1768,17 +1793,22 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 *(smm *)memory_location = source_location;
                 
                 if(!globals.cli_options.no_dynamic_base){
-                    // @incomplete: currently not implemented.
+                    struct elf_relocation_addend *relocation = rela_dyn_relocations + data_imports.count + absolute_patch_relocation_at++;
+                    relocation->info   = /*R_X86_64_RELATIVE*/8;
+                    relocation->offset = virtual_image_base + patch->dest_declaration->relative_virtual_address + patch->location_offset_in_dest_declaration;
+                    relocation->addend = source_location;
                 }
             }else not_implemented;
         }
     }
     
+    assert(absolute_patch_relocation_at == absolute_patches);
+    
     // 
     // Debug information:
     // 
     
-    {
+    if(!globals.cli_options.no_debug){
         // .debug_line_str
         //     directory_names
         //     file_names
