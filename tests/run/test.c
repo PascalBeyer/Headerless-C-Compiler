@@ -1020,6 +1020,14 @@ int main(){
     
     assert(memcmp(string_literal_with_backslash, "Hel        lo", sizeof("Hel        lo")) == 0);
     
+    {
+        int i = -1;
+        
+        unsigned __int64 u = i;
+        
+        if(u != 0xffffffffffffffff) return 1;
+    }
+    
     return 0;
 }
 

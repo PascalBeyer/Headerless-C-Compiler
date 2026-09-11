@@ -16,6 +16,7 @@ enum cli_option_kind{
     CLI_OPTION_no_debug,
     CLI_OPTION_no_dynamic_base,
     CLI_OPTION_image_base,
+    CLI_OPTION_stack_size,
     CLI_OPTION_show_includes,
     CLI_OPTION_subsystem,
     CLI_OPTION_out,
@@ -83,6 +84,8 @@ struct cli_option_hash_table_entry{
     [41] = {{7, (u8 *)"nodebug"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_debug, -1},
     [98] = {{13, (u8 *)"nodynamicbase"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_dynamic_base, -1},
     [35] = {{9, (u8 *)"imagebase"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_image_base, 0},
+    [54] = {{9, (u8 *)"stacksize"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_stack_size, 0},
+    [91] = {{5, (u8 *)"stack"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_stack_size, 0},
     [93] = {{12, (u8 *)"showincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_show_includes, -1},
     [20] = {{9, (u8 *)"subsystem"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_subsystem, 0},
     [29] = {{3, (u8 *)"out"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
@@ -114,8 +117,8 @@ struct cli_option_hash_table_entry{
     [58] = {{2, (u8 *)"ep"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_EP, -1},
     [24] = {{1, (u8 *)"p"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_P, -1},
     [85] = {{2, (u8 *)"fi"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_Fi, 0},
-    [54] = {{2, (u8 *)"md"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MD, -1},
-    [91] = {{3, (u8 *)"mdd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MDd, -1},
+    [55] = {{2, (u8 *)"md"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MD, -1},
+    [92] = {{3, (u8 *)"mdd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MDd, -1},
     [71] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
     [106] = {{3, (u8 *)"mtd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MTd, -1},
     [112] = {{3, (u8 *)"std"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_std, 0},
@@ -124,7 +127,7 @@ struct cli_option_hash_table_entry{
     [74] = {{11, (u8 *)"syntaxcheck"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
     [114] = {{2, (u8 *)"zs"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
     [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
-    [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
+    [94] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [43] = {{6, (u8 *)"ignore"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_ignore, 0},
     [52] = {{4, (u8 *)"link"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_link, -1},
@@ -209,6 +212,8 @@ struct cli_options{
     int no_dynamic_base; // Generate a non-relocatable image.
     int image_base_specified;
     u64 image_base; // Set the default image base address of the image.
+    int stack_size_specified;
+    u64 stack_size; // Sets the stack size of the program.
     int show_includes; // Prints all file paths of included files to stdout.
     enum subsystem subsystem; // Set the 'Subsystem' field of the image optional header.
     struct string out; // Sets the name of the output files.
@@ -577,6 +582,13 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "For executables this defaults to 0x140000000 and for DLLs it defaults to 0x180000000.\n"
                             "", 155);
                 }break;
+                case CLI_OPTION_stack_size:{
+                    print("-stack_size <u64> | Sets the stack size of the program.\n\n");
+                    os_print_string(
+                            "Currently, we set both the `SizeOfStackReserve` and the `SizeOfStackCommit` to the specified value.\n"
+                            "By default the compiler sets both of these values to 1MiB.\n"
+                            "", 159);
+                }break;
                 case CLI_OPTION_show_includes:{
                     print("-show_includes | Prints all file paths of included files to stdout.\n\n");
                     os_print_string(
@@ -943,6 +955,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -no_debug                   | Disables generation of debugging information.\n"
                             "  -no_dynamic_base            | Generate a non-relocatable image.\n"
                             "  -image_base <u64>           | Set the default image base address of the image.\n"
+                            "  -stack_size <u64>           | Sets the stack size of the program.\n"
                             "  -show_includes              | Prints all file paths of included files to stdout.\n"
                             "  -subsystem <enum>           | Set the 'Subsystem' field of the image optional header.\n"
                             "  -out <path>                 | Sets the name of the output files.\n"
@@ -975,7 +988,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 3199);
+                    , 3267);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1000,6 +1013,11 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_image_base:{
                 cli_options->image_base_specified = 1;
                 cli_options->image_base = argument_as_u64;
+            }break;
+            
+            case CLI_OPTION_stack_size:{
+                cli_options->stack_size_specified = 1;
+                cli_options->stack_size = argument_as_u64;
             }break;
             case CLI_OPTION_show_includes: cli_options->show_includes = 1; break;
             

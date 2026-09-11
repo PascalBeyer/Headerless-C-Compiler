@@ -1029,6 +1029,10 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
     
     image_optional_header->size_of_stack_reserve = mega_bytes(1);
     image_optional_header->size_of_stack_commit  = mega_bytes(1);
+    if(globals.cli_options.stack_size_specified){
+        image_optional_header->size_of_stack_reserve = globals.cli_options.stack_size;
+        image_optional_header->size_of_stack_commit  = globals.cli_options.stack_size;
+    }
     image_optional_header->number_of_rva_and_sizes = array_count(image_optional_header->data_directory);
     
     // We currently have at most 6 sections. In the future, when we allow user sections this needs to be variable sized.

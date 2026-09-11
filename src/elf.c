@@ -1701,7 +1701,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             smm alignment = get_declaration_alignment(decl);
             smm decl_size = get_declaration_size(decl);
             
-            if(decl_size) decl_size = 1;
+            if(decl_size == 0) decl_size = 1;
             
             bss_size = align_up(bss_size, alignment);
             decl->relative_virtual_address = bss_virtual_address_base + bss_size;

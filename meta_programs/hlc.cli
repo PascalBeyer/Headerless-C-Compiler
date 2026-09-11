@@ -44,6 +44,11 @@ image optional header. Furthermore, no base relocations are produced.
 This option sets the `ImageBase` field of the image optional header.
 For executables this defaults to 0x140000000 and for DLLs it defaults to 0x180000000.
 
+/stack_size <u64> | /stack <u64> - Sets the stack size of the program.
+
+Currently, we set both the `SizeOfStackReserve` and the `SizeOfStackCommit` to the specified value.
+By default the compiler sets both of these values to 1MiB.
+
 /show_includes - Prints all file paths of included files to stdout.
 
 This option allows you to detect include files used by a compilation unit.

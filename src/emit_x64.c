@@ -2998,6 +2998,7 @@ func struct emit_location *emit_code_for_pointer_subscript(struct context *conte
 struct emit_location *emit_integer_cast(struct context *context, struct emit_location *loc, struct ast_type *dest_type, struct opcode opcode){
     
     if(loc->type->size == 2) loc->type = &globals.typedef_u32;
+    if(dest_type->size == 8) loc->type = &globals.typedef_u64;
     
     if(loc->state == EMIT_LOCATION_register_relative){
         enum register_encoding reg = allocate_register(context, REGISTER_KIND_gpr);
@@ -6113,16 +6114,14 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
         
         struct system_v_type_classification return_type_classification = system_v_classify_type(context, return_type);
         if(return_type_classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_memory){
-            return_location_stack_offset = function->stack_space_needed;
-            
             enum register_encoding rcx = allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_DI);
-            struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_u64, function->stack_space_needed);
+            struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_u64, function->stack_space_needed + 8);
             struct emit_location *source = emit_location_loaded(context, &globals.typedef_u64, rcx);
             emit_store(context, dest, source);
             
-            // :MSVC_function_call_stack_increase
             function->stack_space_needed += 8;
             integer_register_at += 1;
+            return_location_stack_offset = function->stack_space_needed;
         }
         
         static enum register_encoding integer_argument_registers[6] = {
