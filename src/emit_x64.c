@@ -2434,14 +2434,6 @@ func struct emit_location *emit_shift_or_rotate__internal(struct context *contex
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
-func void assert_that_no_registers_are_allocated(struct context *context){
-    for(enum register_kind a = 0; a < REGISTER_KIND_count; a++){
-        for(u32 i = 0; i < array_count(context->register_allocators[a].emit_location_map); i++){
-            assert(context->register_allocators[a].emit_location_map[i] == 0);
-        }
-    }
-}
-
 func void emit_inline_asm_binary_op(struct context *context, struct prefixes prefixes, struct emit_location *lhs, struct emit_location *rhs,
         b32 is_signed, u8 reg_extended, u8 u8_code, u8 opcode, u8 u8_compound, u8 opcode_compound){
     assert(lhs->type == rhs->type);
@@ -2686,10 +2678,16 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
             report_error(context, null, "Error: Intrinsic %.*s used in function %.*s but the calling convention of the function is not System-V (the calling convention on linux). This is currently not supported.",
                     identifier.size, identifier.data, context->current_function->identifier->size, context->current_function->identifier->data);
             globals.an_error_has_occurred = true;
+            return emit_location_immediate(context, &globals.typedef_u64, 0);
         }
         
         struct ir_deref *deref = (struct ir_deref *)next_ir;
         struct ast_type *type = deref->type;
+        if(type->kind == AST_float_type && type->size == 4){
+            report_error(context, null, "Error: Intrinsic %.*s, used in function %.*s has return type float. This is not valid for this __builtin_va_arg.", identifier.size, identifier.data, context->current_function->identifier->size, context->current_function->identifier->data);
+            globals.an_error_has_occurred = true;
+            return emit_location_immediate(context, &globals.typedef_u64, 0);
+        }
         
         struct system_v_type_classification classification = system_v_classify_type(context, type);
         u32 eight_byte_count = (u32)(type->size + 7)/8;
@@ -2802,6 +2800,8 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
                 struct emit_location *immediate = emit_location_immediate(context, &globals.typedef_u32, num_fp * 16);
                 emit_compound_assignment__internal(context, no_prefix(), fp_offset, immediate, 0, REG_OPCODE_ADD, ADD_REGM8_REG8, ADD_REGM_REG);
             }
+            
+            free_emit_location(context, va_reg_save_area);
             
             // 6. return the fetched type.
             jump_context_emit(context, &jump_to_end, JUMP_CONTEXT_jump_always, COMP_none);
@@ -4561,7 +4561,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     
                     struct emit_location *va_args_flags = null;
                     if(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs){
-                        u8 va_flags = (float_register_at == 0) ? 0 : 2;
+                        u8 va_flags = (float_register_at == 0) ? 0 : 2; // @cleanup: This should be the amount of floating point function arguments I think.
                         struct emit_location *immediate = emit_location_immediate(context, &globals.typedef_u8, va_flags);
                         va_args_flags = emit_load_into_specific_gpr(context, immediate, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_A));
                         emit_location_prevent_spilling(context, va_args_flags); // Just so we dont stomp it in the `EMIT_LOCATION_register_relative` case in the call to a function pointer.
@@ -5897,7 +5897,12 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
         emit_end_jumps_location(jump_label_information->context, jump_label_information->jump_location);
     }
     
-    assert_that_no_registers_are_allocated(context);
+    // Assert that no register is allocated.
+    for(enum register_kind kind = 0; kind < REGISTER_KIND_count; kind++){
+        for(u32 reg_index = 0; reg_index < array_count(context->register_allocators[kind].emit_location_map); reg_index++){
+            assert(context->register_allocators[kind].emit_location_map[reg_index] == 0);
+        }
+    }
     
     u32 ir_size = (u32)(current_function->end_in_ir_arena - current_function->start_in_ir_arena);
     u32 asm_size = to_s32(get_bytes_emitted(context));
