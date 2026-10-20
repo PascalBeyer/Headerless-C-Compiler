@@ -259,9 +259,14 @@ func void push_error_node_to_context(struct context *context, struct token *toke
         struct compilation_unit *compilation_unit = context->current_compilation_unit;
         
         if(stage == COMPILE_STAGE_tokenize_files){
-            // while tokenizing copy the tokens, as they might be tempoary
+            // While tokenizing copy the tokens, as they might be temporary.
             struct token *copied_token = push_uninitialized_struct(context->arena, struct token);
             *copied_token = *token;
+            
+            if(context->rescan_macro_expansion_index){
+                copied_token->location_index = context->rescan_macro_expansion_index;
+            }
+            
             token = copied_token;
         }else if((token->location_index != -1) && (token->location_index & 0x80000000)){
             // 

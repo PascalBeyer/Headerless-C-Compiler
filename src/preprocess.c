@@ -1360,7 +1360,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     push_to_token_stack(context, token_array, 0, null);
                 }else{
                     skip_until_tokens_are_balanced_define(context, open_paren, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' after '__pragma('.");
-                    report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsuported __pragma ignored.");
+                    report_warning(context, WARNING_unsupported_pragma, pragma_directive, "Unsupported __pragma ignored.");
                 }
                 
                 return null;
@@ -1369,7 +1369,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 if(!context->in_static_if_condition) return token_to_expand;
                 
                 //
-                // defined() macro. We first parse the invokation, it should be 'defined <macro>' or 'defined (<macro>)'.
+                // defined() macro. We first parse the invocation, it should be 'defined <macro>' or 'defined (<macro>)'.
                 // if it is, disable '<macro>', push a token stack node with the '<macro>' or '(<macro>)' 
                 // and return the 'defined' token.
                 //                                                                                      14.06.2022
@@ -1380,7 +1380,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 eat_whitespace_and_comments_define(context);
                 struct token *identifier = peek_token_eat_define(context, TOKEN_identifier);
                 if(!identifier){
-                    report_error(context, token_to_expand, "Builtin macro 'defined' expected an identifier following it. Possible invokations are 'defined <identifier>' and 'defined(<identifer>)'.");
+                    report_error(context, token_to_expand, "Builtin macro 'defined' expected an identifier following it. Possible invocations are 'defined <identifier>' and 'defined(<identifer>)'.");
                     return token_to_expand;
                 }
                 
@@ -1391,7 +1391,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     eat_whitespace_and_comments_define(context);
                     struct token *closed_paren = peek_token_eat_define(context, TOKEN_closed_paren);
                     if(!closed_paren){
-                        report_error(context, token_to_expand, "Builtin macro 'defined' expected exactly one identifier in its argument list. Possible invokations are 'defined <identifier>' and 'defined(<identifier>)'.");
+                        report_error(context, token_to_expand, "Builtin macro 'defined' expected exactly one identifier in its argument list. Possible invocations are 'defined <identifier>' and 'defined(<identifier>)'.");
                         return token_to_expand;
                     }
                     
@@ -1486,9 +1486,8 @@ func struct token *expand_define(struct context *context, struct token *token_to
             // 
             // Fast-path for empty replacement lists.
             // Simply skip the tokens that make up the define.
-            // Apperantly, this makes up 34% off all defines when compiling the raddebugger.
+            // Apparently, this makes up 34% off all defines when compiling the raddebugger.
             // 
-            
             
             smm paren_depth = 1;
             
@@ -3037,6 +3036,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         macro_expansion_record->expanded_token = raw_token_atom.data;
                         macro_expansion_record->defined_token = define->name.data;
                         
+                        context->rescan_macro_expansion_index = macro_expansion_record->macro_expansion_index;
+                        
                         // 
                         // Rescan Macro loop.
                         // 
@@ -3201,8 +3202,10 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                         }
                                     } 
                                 }
-                            } 
+                            }
                         }
+                        
+                        context->rescan_macro_expansion_index = 0;
                         
                         token_index -= 1;
                         offset -= tokens.data[token_index].size;

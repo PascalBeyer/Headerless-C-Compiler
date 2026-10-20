@@ -806,6 +806,8 @@ struct context{
     b32 static_if_evaluate_should_skip_undefined_identifier; // used to not report errors for example for '#if defined(_MSC_VER) && _MSC_VER > 1337'
     b32 in_static_if_condition; // used to not process defined as a macro outside of a #if condition.
     
+    u32 rescan_macro_expansion_index;
+    
     //
     // parsing
     //
