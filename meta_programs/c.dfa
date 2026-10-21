@@ -379,7 +379,7 @@ pp-zero:
     "xX"   -> pp-hex
     number -> pp-integer
     "."    -> pp-float, float_literal
-    "eE"   -> pp-float-ep, float_literal
+    "eE"   -> pp-float-e, float_literal
     letter\"xXeE" -> pp-integer
     separator -> pp-integer
     _ -> @default, integer_literal
@@ -389,26 +389,40 @@ pp-integer:
     separator -> pp-integer
     letter \ "eE" -> pp-integer
     "." -> pp-float, float_literal
-    "eE" -> pp-float-ep, float_literal
+    "eE" -> pp-float-e, float_literal
     _ -> @default, integer_literal
     
 pp-hex:
     number -> pp-hex
     separator -> pp-hex
     letter \ "pP" -> pp-hex
-    "." -> pp-float, float_literal
-    "pP" -> pp-float-ep, float_literal
+    "." -> pp-hex-float, float_literal
+    "pP" -> pp-hex-float-p, float_literal
     _ -> @default, integer_literal
+    
+pp-hex-float:
+    number -> pp-hex-float
+    separator -> pp-hex-float
+    letter \ "pP" -> pp-hex-float
+    "pP" -> pp-hex-float-p
+    _ -> @default, float_literal
+    
+pp-hex-float-p:
+    "+-" -> pp-hex-float
+    letter v number -> pp-hex-float
+    separator -> pp-hex-float
+    "." -> pp-hex-float
+    _ -> @default, float_literal
     
 pp-float:
     number -> pp-float
     separator -> pp-float
     "." -> pp-float
-    "eEpP" -> pp-float-ep
-    letter \ "eEpP" -> pp-float
+    "eE" -> pp-float-e
+    letter \ "eE" -> pp-float
     _ -> @default, float_literal
     
-pp-float-ep:
+pp-float-e:
     "+-" -> pp-float
     letter v number -> pp-float
     separator -> pp-float
