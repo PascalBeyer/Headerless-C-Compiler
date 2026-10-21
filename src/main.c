@@ -836,6 +836,9 @@ struct context{
     smm in_conditional_expression;
     int current_statement_returns_a_value;
     
+    struct ast_scope *statement_expression_scope;
+    struct expr statement_expression_return;
+    
     smm in_exception_filter;
     smm in_finally_block;
     smm filter_function_index;

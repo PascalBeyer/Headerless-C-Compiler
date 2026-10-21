@@ -1229,6 +1229,7 @@ func struct expr invalid_ast(struct context *context){
 // :forward_declarations :predeclarations
 func struct declaration_specifiers parse_declaration_specifiers(struct context *context, struct ast_type *optional_type_specifier, enum ast_kind *optional_defined_type_speicifer);
 func struct expr parse_expression(struct context *context, b32 should_skip_comma_expression);
+func void parse_imperative_scope(struct context *context);
 func struct declaration_list parse_declaration_list(struct context *context, struct ast_type *optional_type, enum ast_kind *optional_defined_type);
 func struct declarator_return parse_declarator(struct context *context, struct ast_type *initial_type, enum ast_kind *initial_defined_type, enum declarator_kind_flags declarator_kind_flags);
 
@@ -4401,6 +4402,31 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
         
         case TOKEN_open_paren:{
             struct token *open_paren = next_token(context);
+            
+            if(peek_token_eat(context, TOKEN_open_curly)){
+                
+                struct ast_scope *old_statement_expression_scope = context->statement_expression_scope;
+                
+                struct ast_scope *scope = parser_push_new_scope(context, open_paren, SCOPE_FLAG_none);
+                context->statement_expression_scope = scope;
+                
+                parse_imperative_scope(context);
+                
+                context->statement_expression_scope = old_statement_expression_scope;
+                parser_scope_pop(context, scope);
+                
+                expect_token(context, TOKEN_closed_paren, "Expected ')' ending ({<statement>}) expression.");
+                
+                operand = context->statement_expression_return;
+                
+                memset(&context->statement_expression_return, 0, sizeof(context->statement_expression_return));
+                
+                if(!operand.ir){
+                    operand = ast_push_s32_literal(context, 0, open_paren);
+                }
+                
+                goto skip_primary_expression_because_we_got_a_struct_literal;
+            }
             
             // 
             // :cast_expression parse_cast_expression
@@ -9206,8 +9232,6 @@ void maybe_report_warning_for_assignment_in_condition(struct context *context, s
     }
 }
 
-func void parse_imperative_scope(struct context *context);
-
 void parse_static_assert(struct context *context, struct token *static_assert_token){
     
     expect_token(context, TOKEN_open_paren, "Expected a '(' after _Static_assert.");
@@ -9988,8 +10012,17 @@ func void parse_statement(struct context *context){
             prev_token(context);
             
             // If it is nothing else; it's gotta be an assignment or expression.
-            parse_expression(context, false);
-            push_ir(context, IR_pop_expression);
+            struct expr expr = parse_expression(context, false);
+            
+            if(peek_token_eat(context, TOKEN_semicolon)){
+                needs_semicolon = false;
+                
+                if(context->current_scope == context->statement_expression_scope && peek_token(context, TOKEN_closed_curly)){
+                    context->statement_expression_return = expr;
+                }else{
+                    push_ir(context, IR_pop_expression);
+                }
+            }
         }break;
         
         case TOKEN_invalid:{
