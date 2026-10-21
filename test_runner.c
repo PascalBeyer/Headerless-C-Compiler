@@ -27,6 +27,10 @@
 #include <sys/eventfd.h>
 #include <sys/ptrace.h>
 
+#if __HLC__
+#include <intrin.h>
+#endif
+
 #endif
 
 typedef uint8_t  u8;
