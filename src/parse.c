@@ -2983,48 +2983,94 @@ func void perform_integer_operation(struct context *context, struct token *opera
     
     struct ast_type *promoted_type = perform_usual_arithmetic_conversions(lhs_expr->resolved_type, rhs_expr->resolved_type);
     
-#define __perform_integer_operation(basic_type)                           \
-basic_type lhs_val = integer_literal_as_##basic_type(lhs_expr);         \
-basic_type rhs_val = integer_literal_as_##basic_type(rhs_expr);         \
-switch(operation->type){                                                  \
-    case TOKEN_times:   lhs->_##basic_type = lhs_val * rhs_val; break;    \
-    case TOKEN_slash:{                                                    \
-        if(rhs_val == 0){                                                 \
-            report_error(context, operation, "Integer division by 0.");   \
-        }else{                                                            \
-            lhs->_##basic_type = lhs_val / rhs_val;                       \
-        }                                                                 \
-    }break;                                                               \
-    case TOKEN_mod:{                                                      \
-        if(rhs_val == 0){                                                 \
-            report_error(context, operation, "Integer modulation by 0."); \
-        }else{                                                            \
-            lhs->_##basic_type = lhs_val % rhs_val;                       \
-        }                                                                 \
-    }break;                                                               \
-    case TOKEN_plus:    lhs->_##basic_type = lhs_val + rhs_val; break;    \
-    case TOKEN_minus:   lhs->_##basic_type = lhs_val - rhs_val; break;    \
-    \
-    case TOKEN_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break; \
-    case TOKEN_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break; \
-    case TOKEN_bigger_equals:    lhs->_u64 = (lhs_val >= rhs_val); break; \
-    case TOKEN_smaller_equals:   lhs->_u64 = (lhs_val <= rhs_val); break; \
-    case TOKEN_bigger:           lhs->_u64 = (lhs_val > rhs_val);  break; \
-    case TOKEN_smaller:          lhs->_u64 = (lhs_val < rhs_val);  break; \
-    invalid_default_case();                                               \
-}                                                                         \
-
     u64 value;
     
     if(promoted_type->size == 4){
         
         if(promoted_type == &globals.typedef_u32){
-            __perform_integer_operation(u32);
+            u32 lhs_val = integer_literal_as_u32(lhs_expr);
+            u32 rhs_val = integer_literal_as_u32(rhs_expr);
+            
+            switch(operation->type){
+                case TOKEN_times:{
+                    u64 result = (u64)lhs_val * (u64)rhs_val;
+                    lhs->_u32 = (u32)result;
+                    if(lhs->_u32 != result){
+                        report_warning(context, WARNING_compile_time_overflow, operation, "Compile time overflow: (u32)(0x%x * 0x%x) = 0x%x.", lhs_val, rhs_val, lhs->_u32);
+                    }
+                }break;
+                case TOKEN_slash:{
+                    if(rhs_val == 0){
+                        report_error(context, operation, "Integer division by 0.");
+                    }else{
+                        lhs->_u32 = lhs_val / rhs_val;
+                    }
+                }break;
+                case TOKEN_mod:{
+                    if(rhs_val == 0){
+                        report_error(context, operation, "Integer modulation by 0.");
+                    }else{
+                        lhs->_u32 = lhs_val % rhs_val;
+                    }
+                }break;
+                
+                case TOKEN_plus:  lhs->_u32 = lhs_val + rhs_val; break;
+                case TOKEN_minus: lhs->_u32 = lhs_val - rhs_val; break;
+                
+                case TOKEN_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break;
+                case TOKEN_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break;
+                case TOKEN_bigger_equals:    lhs->_u64 = (lhs_val >= rhs_val); break;
+                case TOKEN_smaller_equals:   lhs->_u64 = (lhs_val <= rhs_val); break;
+                case TOKEN_bigger:           lhs->_u64 = (lhs_val > rhs_val);  break;
+                case TOKEN_smaller:          lhs->_u64 = (lhs_val < rhs_val);  break;
+                invalid_default_case();
+            }
             
             value = lhs->_u32;
         }else{
             assert(promoted_type == &globals.typedef_s32);
-            __perform_integer_operation(s32);
+            
+            s32 lhs_val = integer_literal_as_s32(lhs_expr);
+            s32 rhs_val = integer_literal_as_s32(rhs_expr);
+            
+            switch(operation->type){
+                case TOKEN_times:{
+                    s64 result = (s64)lhs_val * (s64)rhs_val;
+                    lhs->_s32 = (s32)result;
+                    if(lhs->_s32 != result){
+                        report_warning(context, WARNING_compile_time_overflow, operation, "Compile time overflow: (s32)(%d * %d) = %d.", lhs_val, rhs_val, lhs->_u32);
+                    }
+                }break;
+                case TOKEN_slash:{
+                    if(rhs_val == 0){
+                        report_error(context, operation, "Integer division by 0.");
+                    }else if(rhs_val == -1 && lhs_val == s32_min){
+                        report_error(context, operation, "Invalid divide 'INT_MIN/(-1)'.");
+                    }else{
+                        lhs->_s32 = lhs_val / rhs_val;
+                    }
+                }break;
+                case TOKEN_mod:{
+                    if(rhs_val == 0){
+                        report_error(context, operation, "Integer modulation by 0.");
+                    }else if(rhs_val == -1 && lhs_val == s32_min){
+                        report_error(context, operation, "Invalid modulation 'INT_MIN %% (-1)'.");
+                    }else{
+                        lhs->_s32 = lhs_val % rhs_val;
+                    }
+                }break;
+                
+                case TOKEN_plus:  lhs->_s32 = lhs_val + rhs_val; break;
+                case TOKEN_minus: lhs->_s32 = lhs_val - rhs_val; break;
+                
+                case TOKEN_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break;
+                case TOKEN_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break;
+                case TOKEN_bigger_equals:    lhs->_u64 = (lhs_val >= rhs_val); break;
+                case TOKEN_smaller_equals:   lhs->_u64 = (lhs_val <= rhs_val); break;
+                case TOKEN_bigger:           lhs->_u64 = (lhs_val > rhs_val);  break;
+                case TOKEN_smaller:          lhs->_u64 = (lhs_val < rhs_val);  break;
+                invalid_default_case();
+            }
             
             value = (lhs->_s32 < 0) ? -lhs->_s32 : lhs->_s32;
         }
@@ -3032,18 +3078,127 @@ switch(operation->type){                                                  \
         assert(promoted_type->size == 8);
         
         if(promoted_type == &globals.typedef_u64){
-            __perform_integer_operation(u64);
+            u64 lhs_val = integer_literal_as_u64(lhs_expr);
+            u64 rhs_val = integer_literal_as_u64(rhs_expr);
+            
+            switch(operation->type){
+                case TOKEN_times:{
+                    u64 result = lhs_val * rhs_val;
+                    lhs->_u64 = result;
+                    if(lhs_val != 0 && result/lhs_val != rhs_val){
+                        report_warning(context, WARNING_compile_time_overflow, operation, "Compile time overflow: 0x%llx * 0x%llx = 0x%llx.", lhs_val, rhs_val, lhs->_u64);
+                    }
+                }break;
+                case TOKEN_slash:{
+                    if(rhs_val == 0){
+                        report_error(context, operation, "Integer division by 0.");
+                    }else{
+                        lhs->_u64 = lhs_val / rhs_val;
+                    }
+                }break;
+                case TOKEN_mod:{
+                    if(rhs_val == 0){
+                        report_error(context, operation, "Integer modulation by 0.");
+                    }else{
+                        lhs->_u64 = lhs_val % rhs_val;
+                    }
+                }break;
+                
+                case TOKEN_plus:  lhs->_u64 = lhs_val + rhs_val; break;
+                case TOKEN_minus: lhs->_u64 = lhs_val - rhs_val; break;
+                
+                case TOKEN_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break;
+                case TOKEN_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break;
+                case TOKEN_bigger_equals:    lhs->_u64 = (lhs_val >= rhs_val); break;
+                case TOKEN_smaller_equals:   lhs->_u64 = (lhs_val <= rhs_val); break;
+                case TOKEN_bigger:           lhs->_u64 = (lhs_val > rhs_val);  break;
+                case TOKEN_smaller:          lhs->_u64 = (lhs_val < rhs_val);  break;
+                invalid_default_case();
+            }
             
             value = lhs->_u64;
         }else{
             assert(promoted_type == &globals.typedef_s64);
-            __perform_integer_operation(s64);
             
-            value = (lhs->_s32 < 0) ? -lhs->_s64 : lhs->_s64;
+            s64 lhs_val = integer_literal_as_s64(lhs_expr);
+            s64 rhs_val = integer_literal_as_s64(rhs_expr);
+            
+            switch(operation->type){
+                case TOKEN_times:{
+                    // @note: We do the multiplication in 'u64' to avoid signed overflow (which is undefined behaviour).
+                    lhs->_s64 = (s64)((u64)lhs_val * (u64)rhs_val);
+                    
+                    int overflow = 0;
+                    
+                    if(lhs_val != 0 && rhs_val != 0){
+                        
+                        if(lhs_val == s64_min && rhs_val == -1) overflow = 1;
+                        if(rhs_val == s64_min && lhs_val == -1) overflow = 1;
+                        
+                        // 
+                        // 'a * b' overflows if it does not fit into [s64_min, s64_max].
+                        // For the two cases in which the lhs is negative, we have to compare against
+                        // the bound with the 'other' sign:
+                        //     lhs < 0, rhs > 0  ->  the product is negative -> compare against 's64_min'.
+                        //     lhs < 0, rhs < 0  ->  the product is positive -> compare against 's64_max'.
+                        // 
+                        
+                        if(lhs_val > 0){
+                            if(rhs_val > 0){
+                                if(lhs_val > s64_max/rhs_val) overflow = 1;
+                            }else if(rhs_val != -1){
+                                // @note: 's64_min / -1' would overflow (and traps on x86).
+                                //        For 'rhs_val == -1' the product is '-lhs_val', which always
+                                //        fits into an s64, so there is nothing to check.
+                                if(lhs_val > s64_min/rhs_val) overflow = 1;
+                            }
+                        }else{
+                            if(rhs_val < 0){
+                                if(lhs_val < s64_max/rhs_val) overflow = 1;
+                            }else{
+                                if(lhs_val < s64_min/rhs_val) overflow = 1;
+                            }
+                        }
+                    }
+                    
+                    if(overflow){
+                        report_warning(context, WARNING_compile_time_overflow, operation, "Compile time overflow: %lld * %lld = %lld.", lhs_val, rhs_val, lhs->_s64);
+                    }
+                }break;
+                case TOKEN_slash:{
+                    if(rhs_val == 0){
+                        report_error(context, operation, "Integer division by 0.");
+                    }else if(rhs_val == -1 && lhs_val == s64_min){
+                        report_error(context, operation, "Invalid divide 'LLONG_MIN/(-1)'.");
+                    }else{
+                        lhs->_s64 = lhs_val / rhs_val;
+                    }
+                }break;
+                case TOKEN_mod:{
+                    if(rhs_val == 0){
+                        report_error(context, operation, "Integer modulation by 0.");
+                    }else if(rhs_val == -1 && lhs_val == s64_min){
+                        report_error(context, operation, "Invalid modulation 'LLONG_MIN %% (-1)'.");
+                    }else{
+                        lhs->_s64 = lhs_val % rhs_val;
+                    }
+                }break;
+                
+                case TOKEN_plus:  lhs->_s64 = lhs_val + rhs_val; break;
+                case TOKEN_minus: lhs->_s64 = lhs_val - rhs_val; break;
+                
+                case TOKEN_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break;
+                case TOKEN_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break;
+                case TOKEN_bigger_equals:    lhs->_u64 = (lhs_val >= rhs_val); break;
+                case TOKEN_smaller_equals:   lhs->_u64 = (lhs_val <= rhs_val); break;
+                case TOKEN_bigger:           lhs->_u64 = (lhs_val > rhs_val);  break;
+                case TOKEN_smaller:          lhs->_u64 = (lhs_val < rhs_val);  break;
+                invalid_default_case();
+            }
+            
+            value = (lhs->_s64 < 0) ? -lhs->_s64 : lhs->_s64;
         }
     }
-    
-#undef __perform_integer_operation
     
     enum ast_kind *defined_type = null;
     if(value <= max_u8)  defined_type = &globals.typedef_u8.kind;
