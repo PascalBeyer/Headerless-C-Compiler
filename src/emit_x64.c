@@ -447,6 +447,17 @@ func struct prefixes get_sse_prefix_for_scalar(smm size){
     return create_prefixes(sse_prefix);
 }
 
+func struct ast_type *get_system_v_sse_type_for_size(smm size){
+    switch(size){
+        case 4:  return &globals.typedef_f32;
+        case 8:  return &globals.typedef_f64;
+        case 16: return &globals.typedef_m128;
+        case 32: return &globals.typedef_m256;
+        invalid_default_case();
+    }
+    return &globals.typedef_f64;
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 struct opcode{
@@ -994,7 +1005,7 @@ struct system_v_type_classification{
     struct system_v_type_classification ret = {0};
     if(root_type->kind == AST_void_type){
         ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_none;
-    }else if(root_type->kind == AST_integer_type || root_type->kind == AST_pointer_type){
+    }else if(root_type->kind == AST_integer_type || root_type->kind == AST_atomic_integer_type || root_type->kind == AST_pointer_type){
         // "Arguments of types _Bool, char, short, int, long, long long and pointers are INTEGER."
         ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_integer;
     }else if(root_type->kind == AST_float_type){
@@ -4039,7 +4050,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     // :returning_structs
                     // 
                     // If the function returns a big struct, there is an implicit first argument, which is the
-                    // address of the return value. We memcpy in 'case AST_return'.
+                    // address of the return value. We memcpy in 'case IR_return'.
                     b32 returns_big_struct = windows_x64_type_is_returned_by_address(return_type);
                     
                     // Keep track of the maximal amount of function call arguments 
@@ -4071,14 +4082,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                             // 
                             
                             struct emit_location *copy_into = emit_allocate_temporary_stack_location(context, argument->type);
-                            
-                            if(argument->state == EMIT_LOCATION_loaded){
-                                // This can happen if we have a function that returns an intrinsic type.
-                                emit_store(context, copy_into, argument);
-                            }else{
-                                emit_memcpy(context, copy_into, argument);
-                                free_emit_location(context, argument); // @hmm: emit_store frees, emit_memcpy does not
-                            }
+                            emit_store(context, copy_into, argument);
                             
                             argument = emit_load_address(context, copy_into, allocate_register(context, REGISTER_KIND_gpr));
                             register_kind = REGISTER_KIND_gpr;
@@ -4262,7 +4266,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         break;
                     }
                     
-                    assert(return_type->kind == AST_integer_type || return_type->kind == AST_pointer_type);
+                    assert(return_type->kind == AST_integer_type || return_type->kind == AST_atomic_integer_type || return_type->kind == AST_pointer_type);
                     emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, return_type, REGISTER_A);
                 }else if(calling_convention == CALLING_CONVENTION_system_V){
                     // 
@@ -4386,16 +4390,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                             struct emit_location *copy_into = emit_location_register_relative(context, argument_type, context->register_sp, context->register_sp, stack_pass_location);
                             stack_pass_location += align_up(argument_type->size, 8); // not sure, it seems this moves in increments of 8?
                             
-                            if(argument_type->kind == AST_integer_type || argument_type->kind == AST_float_type){
-                                argument = emit_load(context, argument);
-                            }
-                            
-                            if(argument->state == EMIT_LOCATION_loaded){
-                                emit_store(context, copy_into, argument);
-                            }else{
-                                emit_memcpy(context, copy_into, argument);
-                                free_emit_location(context, argument); // @hmm: emit_store frees, emit_memcpy does not
-                            }
+                            emit_store(context, copy_into, argument);
                         }else{
                             
                             if(eight_byte_count == 1 || (classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_sse && classification.classification[1] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper)){
@@ -4422,7 +4417,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     
                                 }else if(classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
                                     // hmm, should there be something special for floats?
-                                    smm size = 8;
+                                    smm size = min_of(argument_type->size, 8);
                                     for(u32 index = 0; index + 1 < eight_byte_count; index++){
                                         if(classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
                                             break;
@@ -4431,9 +4426,11 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     }
                                     
                                     // @note: If there was an sse_upper argument, this means, the whole argument was a intrinsic type
-                                    //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
-                                    assert(size == 8 || size == 16 || size == 32);
-                                    assert(size == argument_type->size || argument_type->size == 4);
+                                    //        and thus was passed in one register. Hence, the size should be 4, 8, 16 or 32. (Maybe 64 in the future?)
+                                    assert(size == 4 || size == 8 || size == 16 || size == 32);
+                                    assert(size == argument_type->size);
+
+                                    argument->type = get_system_v_sse_type_for_size(size);
                                     
                                     enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
                                     argument = emit_load_float_into_specific_register(context, argument, arg_reg);
@@ -4480,7 +4477,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                         
                                         integer_register_at += 1;
                                     }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
-                                        u64 size = 8;
+                                        u64 size = min_of(size_left, 8);
                                         for(; index + 1 < eight_byte_count; index++){
                                             if(classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
                                                 break;
@@ -4489,16 +4486,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                         }
                                         
                                         // @note: If there was an sse_upper argument, this means, the whole argument was a intrinsic type
-                                        //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
-                                        assert(size == 8 || size == 16 || size == 32);
+                                        //        and thus was passed in one register. Hence, the size should be 4, 8, 16 or 32. (Maybe 64 in the future?)
+                                        assert(size == 4 || size == 8 || size == 16 || size == 32);
                                         
-                                        struct ast_type hack_type = {
-                                            .size = size,
-                                            .alignment = size,
-                                            .flags = TYPE_FLAG_is_intrin_type,
-                                        };
-                                        
-                                        argument->type = &hack_type;
+                                        argument->type = get_system_v_sse_type_for_size((smm)size);
                                         
                                         enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
                                         register_location = emit_load_float_into_specific_register(context, argument, arg_reg);
@@ -4698,7 +4689,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         break;
                     }
                     
-                    assert(return_type->kind == AST_integer_type || return_type->kind == AST_pointer_type);
+                    assert(return_type->kind == AST_integer_type || return_type->kind == AST_atomic_integer_type || return_type->kind == AST_pointer_type);
                     emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, return_type, REGISTER_A);
                 }
             }break;
@@ -4800,7 +4791,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     integer_register_at += 1;
                                 }else if(return_type_classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
                                     // hmm, should there be something special for floats?
-                                    smm size = 8;
+                                    smm size = min_of(return_size, 8);
                                     for(u32 index = 0; index + 1 < return_type_eight_byte_count; index++){
                                         if(return_type_classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
                                             break;
@@ -4809,9 +4800,11 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     }
                                     
                                     // @note: If there was an sse_upper argument, this means, the whole argument was a intrinsic type
-                                    //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
-                                    assert(size == 8 || size == 16 || size == 32);
+                                    //        and thus was passed in one register. Hence, the size should be 4, 8, 16 or 32. (Maybe 64 in the future?)
+                                    assert(size == 4 || size == 8 || size == 16 || size == 32);
                                     assert(size == return_type->size);
+
+                                    return_location->type = get_system_v_sse_type_for_size(size);
                                     
                                     enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
                                     return_location = emit_load_float_into_specific_register(context, return_location, arg_reg);
@@ -4850,7 +4843,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                         size_left -= size;
                                         return_location->offset += size;
                                     }else if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
-                                        u64 size = 8;
+                                        u64 size = min_of(size_left, 8);
                                         for(; index + 1 < return_type_eight_byte_count; index++){
                                             if(return_type_classification.classification[index+1] != SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
                                                 break;
@@ -4859,16 +4852,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                         }
                                         
                                         // @note: If there was an sse_upper argument, this means, the whole argument was a intrinsic type
-                                        //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
-                                        assert(size == 8 || size == 16 || size == 32);
+                                        //        and thus was passed in one register. Hence, the size should be 4, 8, 16 or 32. (Maybe 64 in the future?)
+                                        assert(size == 4 || size == 8 || size == 16 || size == 32);
                                         
-                                        struct ast_type hack_type = {
-                                            .size = size,
-                                            .alignment = size,
-                                            .flags = TYPE_FLAG_is_intrin_type,
-                                        };
-                                        
-                                        return_location->type = &hack_type;
+                                        return_location->type = get_system_v_sse_type_for_size((smm)size);
                                         
                                         enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
                                         register_location = emit_load_float_into_specific_register(context, return_location, arg_reg);
@@ -4881,6 +4868,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     emit_location_prevent_spilling(context, register_location);
                                     register_locations[register_locations_at++] = register_location;
                                 }
+                                
+                                emit_location_allow_freeing(context, return_location);
+                                free_emit_location(context, return_location);
                             }
                             
                             // 
@@ -6179,9 +6169,9 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
             }
             
             if(passed_in_memory){
-                stack_argument_at += align_up(argument_type->size, 8);
-                stack_argument_at  = align_up(stack_argument_at, argument_type->alignment);
+                stack_argument_at = align_up(stack_argument_at, argument_type->alignment);
                 argument_decl->offset_on_stack = -stack_argument_at;
+                stack_argument_at += align_up(argument_type->size, 8);
             }else{
                 // 
                 // The type was passed in registers.
