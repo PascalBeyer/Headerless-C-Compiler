@@ -1,4 +1,5 @@
 
+#ifdef _WIN32
 #ifdef __HLC_COMPILE_TO_OBJECT__
 // @cleanup: Microsotf passes rsp as the second parameter (somemthing like __read_rsp()),
 //           but for me that crashes somewhere inside RtlUnwindEx.
@@ -9,4 +10,9 @@
 
 #pragma compilation_unit("setjmp.c")
 
+#else
+
+#include_next <setjmp.h>
+
+#endif
 
