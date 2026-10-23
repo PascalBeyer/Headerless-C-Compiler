@@ -8857,7 +8857,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 if(declarator.type->kind == AST_function_type) decl->kind = IR_function;
                 decl->flags |= DECLARATION_FLAGS_is_global;
                 
-                if(globals.output_file_type == OUTPUT_FILE_obj){
+                if(globals.compile_to_object){
                     // If we are compiling to an object, this is fine. 
                     // The declaration is just an unresolved external in the end.
                     struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(&globals.external_declarations_at_function_scope, &decl->kind, declarator.ident);

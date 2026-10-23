@@ -3849,9 +3849,6 @@ int main(int argc, char *argv[]){
         return 0;
     }
     
-#ifndef _WIN32
-    if(ptrace(PTRACE_TRACEME, 0, NULL, 0) == -1) __is_debugger_present = 1;
-#endif
     
     u64 begin_cycle_time = __rdtsc();
     f64 begin_time = os_get_time_in_seconds();
@@ -3940,28 +3937,32 @@ int main(int argc, char *argv[]){
         
         struct string extension = get_file_extension(path);
         
-        if(extension.size > 2){ // Fast-path for .c and .h, not that it matters.
-            // 
-            // If the file is not a source file, we should use the libraries paths to find the library file.
-            // Hence, in this loop we don't want to handle it in any way.
-            // 
-            if(string_match(extension, string(".lib")) || string_match(extension, string(".so"))){
-                add_specified_library(arena, path, null);
-                continue;
-            }else if(string_match(extension, string(".obj"))){
-                // @hack: This is a hack to handle linking for now.
-                //        We set the output file type to obj and then call into link.exe.
-                globals.output_file_type = OUTPUT_FILE_obj;
-                
-                string_list_postfix(&object_files, arena, path);
-                continue;
-            }else if(string_match(extension, string(".dll")) || string_match(extension, string(".exe"))){
-                print("Error: Currently linking to %.*s files is not implemented.\n", extension.size, extension.data);
-                return 1;
-            }else if(string_match(extension, string(".res")) || string_match(extension, string(".rc"))){
-                print("Warning: Ignoring resource file '%.*s'.\n", path.size, path.data);
-                continue;
-            }
+        // 
+        // If the file is not a source file, we should use the libraries paths to find the library file.
+        // Hence, in this loop we don't want to handle it in any way.
+        // 
+        if(string_match(extension, string(".lib")) || string_match(extension, string(".so"))){
+            add_specified_library(arena, path, null);
+            continue;
+        }else if(string_match(extension, string(".a"))){
+            // Static archives are passed directly to the linker driver below.
+            canonicalize_slashes(path);
+            if(!path_is_absolute(path)) path = concatenate_file_paths(arena, working_directory, path);
+            add_specified_library(arena, path, null);
+            continue;
+        }else if(string_match(extension, string(".obj")) || string_match(extension, string(".o"))){
+            // @hack: This is a hack to handle linking for now.
+            //        We set the output file type to obj and then call into link.exe.
+            globals.output_file_type = OUTPUT_FILE_obj;
+            
+            string_list_postfix(&object_files, arena, path);
+            continue;
+        }else if(string_match(extension, string(".dll")) || string_match(extension, string(".exe"))){
+            print("Error: Currently linking to %.*s files is not implemented.\n", extension.size, extension.data);
+            return 1;
+        }else if(string_match(extension, string(".res")) || string_match(extension, string(".rc"))){
+            print("Warning: Ignoring resource file '%.*s'.\n", path.size, path.data);
+            continue;
         }
         
         b32 contains_wildcard = path_contains_wildcard(path);
@@ -4056,12 +4057,46 @@ int main(int argc, char *argv[]){
         if(!sll_is_empty(object_files.list)){
             struct string_list command = {0};
             
+#ifdef _WIN32
             string_list_postfix_no_copy(&command, arena, string("link.exe"));
+#else
+            string_list_postfix_no_copy(&command, arena, string("ld"));
+#endif
             
             for(struct string_list_node *object_file = object_files.list.first; object_file; object_file = object_file->next){
                 string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", object_file->string.size, object_file->string.data));
             }
             
+#ifndef _WIN32
+            // 
+            // Pass directly specified libraries (for example, .a archives) to the
+            // system linker. Static archives need to appear after the object files
+            // that reference them.
+            // 
+            for(struct specified_library *library = globals.specified_libraries.first; library; library = library->next){
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", library->library_path.size, library->library_path.data));
+            }
+            
+            for(struct string_list_node *library_path = globals.cli_options.LIBPATH.list.first; library_path; library_path = library_path->next){
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -L\"%.*s\"", library_path->string.size, library_path->string.data));
+            }
+            
+            for(struct string_list_node *library = globals.cli_options.l.list.first; library; library = library->next){
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -l%.*s", library->string.size, library->string.data));
+            }
+            
+            if(globals.cli_options.out.data){
+                // @cleanup: windows?
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -o \"%.*s\"", globals.cli_options.out.size, globals.cli_options.out.data));
+            }
+            
+            string_list_postfix_no_copy(&command, arena, string(
+                    " /usr/lib/x86_64-linux-gnu/Scrt1.o"
+                    " -dynamic-linker /lib64/ld-linux-x86-64.so.2"
+                    " -lc"
+                    ));
+            
+#endif
             // 
             // @hack: To allow hlc.exe to be used as a linker, we check if only object files are specified
             //        and just call into system. In the future, we should just be a linker :)
@@ -4073,6 +4108,14 @@ int main(int argc, char *argv[]){
         print("Error: No input files specified.\n");
         return 0;
     }
+    
+#ifndef _WIN32
+    // 
+    // Only enable the debugger check once we know that we are not acting as a
+    // linker driver. PTRACE_TRACEME interferes with spawning the system linker.
+    // 
+    if(ptrace(PTRACE_TRACEME, 0, NULL, 0) == -1) __is_debugger_present = 1;
+#endif
     
     if(!sll_is_empty(object_files.list)){
         print("Error: Currently linking to .obj files are not implemented.\n");
@@ -4105,7 +4148,13 @@ int main(int argc, char *argv[]){
         
         // Check the arguments that hard-set the file type.
         if(globals.cli_options.dll) globals.output_file_type = OUTPUT_FILE_dll;
-        if(globals.cli_options.obj) globals.output_file_type = OUTPUT_FILE_obj;
+        if(globals.cli_options.obj){
+#ifdef _WIN32
+            globals.output_file_type = OUTPUT_FILE_obj;
+#else
+            globals.output_file_type = OUTPUT_FILE_elf;
+#endif
+        }
         
         // Check the output string.
         if(globals.output_file_type == OUTPUT_FILE_unset && globals.cli_options.out.data){
@@ -4115,6 +4164,10 @@ int main(int argc, char *argv[]){
             if(string_match(output_extension, string(".obj"))) globals.output_file_type = OUTPUT_FILE_obj;
             if(string_match(output_extension, string(".efi"))) globals.output_file_type = OUTPUT_FILE_efi;
             if(string_match(output_extension, string(".elf"))) globals.output_file_type = OUTPUT_FILE_elf;
+            if(string_match(output_extension, string(".o"))){
+                globals.output_file_type = OUTPUT_FILE_elf;
+                globals.cli_options.obj = 1;
+            }
         }
         
         // A no_entry file ought to be a dll.
@@ -4135,11 +4188,13 @@ int main(int argc, char *argv[]){
     if(globals.subsystem == 0 && globals.output_file_type == OUTPUT_FILE_dll) globals.subsystem = SUBSYSTEM_windows;
     
     if(globals.cli_options.entry.data && globals.cli_options.no_entry){
-        print("Error: Found option '/no_entry' and option '/entry %.*s'.\n", globals.cli_options.entry.size, globals.cli_options.entry.data);
+        print("Error: Found option '-no_entry' and option '-entry %.*s'.\n", globals.cli_options.entry.size, globals.cli_options.entry.data);
         return 1;
     }
     
-    if(globals.output_file_type == OUTPUT_FILE_obj) globals.cli_options.no_entry = 1;
+    globals.compile_to_object = globals.output_file_type == OUTPUT_FILE_obj || (globals.output_file_type == OUTPUT_FILE_elf && globals.cli_options.obj); 
+    
+    if(globals.compile_to_object) globals.cli_options.no_entry = 1;
     
     int no_standard_library = globals.cli_options.no_stdlib;
     
@@ -4166,7 +4221,7 @@ int main(int argc, char *argv[]){
         add_specified_library(arena, library_node->string, null);
     }
     
-    if(globals.output_file_type != OUTPUT_FILE_obj && !no_standard_library){
+    if(!globals.compile_to_object && !no_standard_library){
         struct string ucrt_lib_path = push_format_string(arena, "%.*s\\ucrt.lib", ucrt_library_path.size, ucrt_library_path.data);
         add_specified_library(arena, ucrt_lib_path, null);
         
@@ -4419,7 +4474,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 string_list_postfix_no_copy(&predefines, arena, time_define);
 #endif
                 
-                if(globals.output_file_type == OUTPUT_FILE_obj){
+                if(globals.compile_to_object){
                     string_list_postfix_no_copy(&predefines, arena, string("#define __HLC_COMPILE_TO_OBJECT__ 1\n"));
                 }
             }
@@ -4646,7 +4701,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         // :ast_tables
         globals.global_declarations = ast_table_create(1 << 8);
-        if(globals.output_file_type == OUTPUT_FILE_obj) globals.external_declarations_at_function_scope = ast_table_create(1 << 8);
+        if(globals.compile_to_object) globals.external_declarations_at_function_scope = ast_table_create(1 << 8);
         globals.compound_types      = ast_table_create(1 << 8);
         
         globals.hacky_global_compilation_unit.index = -1;
@@ -5440,7 +5495,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     globals.compile_stage = COMPILE_STAGE_emit_code;
     
-    if(globals.output_file_type != OUTPUT_FILE_obj){
+    if(!globals.compile_to_object){
         // If we are not compiling to an object file, we should now be loading / parsing all of the libraries.
         // In theory, we _could_ parse them lazily.
         
@@ -5714,7 +5769,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.globally_referenced_declarations = entry_point_node;
     }
     
-    if(globals.output_file_type == OUTPUT_FILE_obj){
+    if(globals.compile_to_object){
         // 
         // For an .obj any external function is a potential entry point.
         // 
@@ -5832,7 +5887,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             // 
                         }else if(!function->scope){
                             
-                            if(globals.output_file_type != OUTPUT_FILE_obj){
+                            if(!globals.compile_to_object){
                                 
                                 if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
                                     report_error(context, function->identifier, "A referenced function marked '__declspec(dllexport)' must be defined."); // :Error
@@ -5869,7 +5924,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             declaration->memory_location = evaluate_static_initializer(context, declaration);
                         }
                         
-                        if(globals.output_file_type != OUTPUT_FILE_obj){
+                        if(!globals.compile_to_object){
                             
                             if(!declaration->assign_expr && (declaration->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport))){
                                 
@@ -5957,7 +6012,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
     //           to do it earlier, in the case where emitting code takes a while. (E.g. when we get to optimization).
     // 
     
-    if(globals.output_file_type != OUTPUT_FILE_obj){
+    if(!globals.compile_to_object){
         
         if(warning_enabled[WARNING_function_defined_but_unreachable] || warning_enabled[WARNING_function_declared_but_never_defined]){
             
@@ -6046,7 +6101,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     case OUTPUT_FILE_dll: file_extension = string(".dll"); break;
                     case OUTPUT_FILE_obj: file_extension = string(".obj"); break;
                     case OUTPUT_FILE_efi: file_extension = string(".efi"); break;
-                    case OUTPUT_FILE_elf: file_extension = string(""); break;
+                    case OUTPUT_FILE_elf: file_extension = globals.cli_options.obj ? string(".o") : string(""); break;
                     invalid_default_case();
                 }
                 output_file_path = string_concatenate(arena, output_file_path, file_extension);
@@ -6060,7 +6115,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
         if(globals.output_file_type == OUTPUT_FILE_obj){
             write_obj(output_file_path, &emit_arena, arena); 
         }else if(globals.output_file_type == OUTPUT_FILE_elf){
-            write_elf(output_file_path, &emit_arena, arena, &context->scratch);
+            if(globals.cli_options.obj){
+                write_elf_object(output_file_path, &emit_arena, arena, &context->scratch);
+            }else{
+                write_elf(output_file_path, &emit_arena, arena, &context->scratch);
+            }
         }else{
             write_coff(output_file_path, &emit_arena, arena); 
         }

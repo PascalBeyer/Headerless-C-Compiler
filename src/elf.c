@@ -1719,7 +1719,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }
     
     // 
-    // @Warninig: We assume this is the last segment.
+    // @Warning: We assume this is the last segment.
     // 
     
     if((arena_current(arena) != rw_segment_start) || bss_size){
@@ -2824,6 +2824,875 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
 #undef fill_section_header
 #undef fill_program_header
 #undef make_relative_virtual_address
+}
+
+static struct elf_symbol *push_elf_object_symbol(struct memory_arena *arena, struct memory_arena *scratch, struct string_list *symbol_names, u32 *inout_name_offset, struct string name, u8 bind, u8 type, u16 section_index, u64 value, u64 size){
+    
+    struct elf_symbol *symbol = push_struct(arena, struct elf_symbol);
+    
+    // @note: A name_offset of zero refers to the empty string at the start of the string table.
+    if(name.size){
+        symbol->name_offset = *inout_name_offset;
+        string_list_postfix(symbol_names, scratch, name);
+        *inout_name_offset += (u32)name.size + 1;
+    }
+    
+    symbol->info          = (u8)((bind << 4) | type);
+    symbol->other         = 0;
+    symbol->section_index = section_index;
+    symbol->value         = value;
+    symbol->size          = size;
+    
+    return symbol;
+}
+
+static struct string elf_object_symbol_name(struct memory_arena *scratch, struct ast_declaration *decl, u32 symbol_index){
+    
+    // Anonymous global struct/array literals do not have a usable identifier.
+    if(decl->flags & DECLARATION_FLAGS_is_unnamed){
+        return push_format_string(scratch, ".Lslit%x", symbol_index);
+    }
+    
+    return token_get_string(decl->identifier);
+}
+
+void write_elf_object(struct string output_file_path, struct memory_arena *arena, struct memory_arena *location_arena, struct memory_arena *scratch){
+    
+    (void)location_arena;
+    
+    // 
+    // Gather all of the symbols.
+    // 
+    // Unlike an executable, an object file keeps every definition that might be
+    // referenced by the linker and only contains undefined symbols for things
+    // that are actually used.
+    // 
+    
+    struct ast_list defined_functions        = zero_struct;
+    struct ast_list external_functions       = zero_struct;
+    struct ast_list external_variables       = zero_struct;
+    struct ast_list initialized_declarations = zero_struct;
+    struct ast_list uninitialized_declarations = zero_struct;
+    
+    for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
+        
+        struct ast_table *table = &compilation_unit->static_declaration_table;
+        
+        for(u64 table_index = 0; table_index < table->capacity; table_index++){
+            enum ast_kind *ast = table->nodes[table_index].ast;
+            if(!ast) continue;
+            
+            struct ast_declaration *decl = (struct ast_declaration *)ast;
+            
+            if(*ast == IR_function){
+                struct ast_function *function = (struct ast_function *)ast;
+                
+                if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic) continue;
+                if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
+                
+                if(!function->scope){
+                    ast_list_append(&external_functions, scratch, &function->kind);
+                    continue;
+                }
+                
+                ast_list_append(&defined_functions, scratch, &function->kind);
+                
+                for_ast_list(function->static_variables){
+                    struct ast_declaration *static_declaration = (struct ast_declaration *)it->value;
+                    
+                    if(static_declaration->assign_expr){
+                        ast_list_append(&initialized_declarations, scratch, &static_declaration->kind);
+                    }else{
+                        ast_list_append(&uninitialized_declarations, scratch, &static_declaration->kind);
+                    }
+                }
+            }else if(*ast == IR_declaration){
+                if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue;
+                if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                
+                assert(!(decl->flags & DECLARATION_FLAGS_is_local_persist));
+                
+                if(decl->flags & DECLARATION_FLAGS_is_static){
+                    if(decl->assign_expr){
+                        ast_list_append(&initialized_declarations, scratch, &decl->kind);
+                    }else{
+                        ast_list_append(&uninitialized_declarations, scratch, &decl->kind);
+                    }
+                    continue;
+                }
+                
+                if(decl->flags & DECLARATION_FLAGS_is_dllexport){
+                    if(decl->assign_expr){
+                        ast_list_append(&initialized_declarations, scratch, &decl->kind);
+                    }else{
+                        ast_list_append(&uninitialized_declarations, scratch, &decl->kind);
+                    }
+                    continue;
+                }
+                
+                if(decl->assign_expr){
+                    ast_list_append(&initialized_declarations, scratch, &decl->kind);
+                    continue;
+                }
+                
+                if(decl->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport)){
+                    ast_list_append(&external_variables, scratch, &decl->kind);
+                    continue;
+                }
+                
+                ast_list_append(&uninitialized_declarations, scratch, &decl->kind);
+            }else{
+                assert(*ast == IR_typedef);
+            }
+        }
+    }
+    
+    // 
+    // Local functions are by definition defined.
+    // 
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for(struct ast_list_node *local_function_node = thread_context->local_functions.first; local_function_node; local_function_node = local_function_node->next){
+            struct ast_function *function = (struct ast_function *)local_function_node->value;
+            
+            if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
+            
+            ast_list_append(&defined_functions, scratch, &function->kind);
+            
+            for_ast_list(function->static_variables){
+                struct ast_declaration *static_declaration = (struct ast_declaration *)it->value;
+                
+                if(static_declaration->assign_expr){
+                    ast_list_append(&initialized_declarations, scratch, &static_declaration->kind);
+                }else{
+                    ast_list_append(&uninitialized_declarations, scratch, &static_declaration->kind);
+                }
+            }
+        }
+    }
+    
+    // 
+    // Anonymous global struct and array literals live in .data.
+    // 
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for_ast_list(thread_context->global_struct_and_array_literals){
+            ast_list_append(&initialized_declarations, arena, it->value);
+        }
+    }
+    
+    // 
+    // Externals that were declared at function scope.
+    // 
+    if(globals.external_declarations_at_function_scope.nodes){
+        for(u64 table_index = 0; table_index < globals.external_declarations_at_function_scope.capacity; table_index++){
+            struct ast_declaration *decl = (struct ast_declaration *)globals.external_declarations_at_function_scope.nodes[table_index].ast;
+            if(!decl) continue;
+            if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+            
+            if(decl->kind == IR_declaration){
+                ast_list_append(&external_variables, scratch, &decl->kind);
+            }else{
+                ast_list_append(&external_functions, scratch, &decl->kind);
+            }
+        }
+    }
+    
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for_ast_list(thread_context->local_dllimports){
+            struct ast_function *function = (struct ast_function *)it->value;
+            if(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry){
+                ast_list_append(&external_functions, scratch, &function->kind);
+            }
+        }
+    }
+    
+    // 
+    // Count the relocations so we know which sections we have to emit.
+    // 
+    u64 text_relocation_count = 0;
+    u64 data_relocation_count = 0;
+    
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for(struct patch_node *patch = thread_context->local_patch_list.first; patch; patch = patch->next){
+            
+            struct ast_declaration *dest_declaration = patch->dest_declaration;
+            if(!(dest_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+            
+            if(dest_declaration->kind == IR_function){
+                if(patch->kind == PATCH_rip_relative) text_relocation_count += 1;
+            }else{
+                assert(dest_declaration->kind == IR_declaration);
+                if(patch->kind == PATCH_absolute) data_relocation_count += 1;
+            }
+        }
+    }
+    
+    // 
+    // Assign the section indices. The actual data can be emitted in any order,
+    // the section headers describe where everything ended up.
+    // 
+    
+    enum elf_section_header_type{
+        SHT_NULL     = 0,
+        SHT_PROGBITS = 1,
+        SHT_SYMTAB   = 2,
+        SHT_STRTAB   = 3,
+        SHT_RELA     = 4,
+        SHT_NOBITS   = 8,
+    };
+    
+    enum elf_section_header_flags{
+        SHF_WRITE     = 1,
+        SHF_ALLOC     = 2,
+        SHF_EXECINSTR = 4,
+    };
+    
+    enum elf_symbol_binding{
+        STB_LOCAL  = 0,
+        STB_GLOBAL = 1,
+        STB_WEAK   = 2,
+    };
+    
+    enum elf_symbol_type{
+        STT_NOTYPE  = 0,
+        STT_OBJECT  = 1,
+        STT_FUNC    = 2,
+        STT_SECTION = 3,
+        STT_FILE    = 4,
+    };
+    
+    enum elf_special_section_index{
+        SHN_UNDEF = 0,
+        SHN_ABS   = 0xfff1,
+    };
+    
+    struct elf_section_header{
+        u32 name_offset;
+        u32 type;
+        u64 flags;
+        u64 address;
+        u64 offset;
+        u64 size;
+        u32 linked_section;
+        u32 info;
+        u64 alignment;
+        u64 entry_size;
+    };
+    
+    struct elf_relocation_addend{
+        u64 offset;
+        u64 info;
+        u64 addend;
+    };
+    
+    u32 section_index_at = 0;
+    
+    u32 text_section_index     = ++section_index_at;
+    u32 data_section_index     = ++section_index_at;
+    u32 bss_section_index      = ++section_index_at;
+    u32 rodata_section_index   = ++section_index_at;
+    u32 rela_text_section_index = text_relocation_count ? ++section_index_at : 0;
+    u32 rela_data_section_index = data_relocation_count ? ++section_index_at : 0;
+    u32 symtab_section_index   = ++section_index_at;
+    u32 strtab_section_index   = ++section_index_at;
+    u32 shstrtab_section_index = ++section_index_at;
+    u32 gnu_stack_section_index = ++section_index_at;
+    
+    u32 section_header_count = section_index_at + 1; // Including the null section.
+    
+    // 
+    // Start writing the ELF file. For a relocatable object the section headers
+    // are placed at the end of the file.
+    // 
+    
+    push_align(arena, 0x1000);
+    u8 *elf_base = arena_current(arena);
+    
+    struct elf_header{
+        u8  magic[4];
+        u8  size_value;
+        u8  endianess_value;
+        u8  elf_header_version;
+        u8  abi;
+        u8  abi_version;
+        u8  padding[7];
+        u16 object_file_type;
+        u16 machine_type;
+        u32 elf_version;
+        u64 entry_point;
+        u64 program_header_table_offset;
+        u64 section_header_table_offset;
+        u32 flags;
+        u16 elf_header_size;
+        u16 program_header_table_entry_size;
+        u16 program_header_table_entry_count;
+        u16 section_header_table_entry_size;
+        u16 section_header_table_entry_count;
+        u16 section_name_section_table_index;
+    } *elf_header = push_struct(arena, struct elf_header);
+    
+    elf_header->magic[0] = 0x7f;
+    elf_header->magic[1] = 'E';
+    elf_header->magic[2] = 'L';
+    elf_header->magic[3] = 'F';
+    elf_header->size_value = /*64-bit*/2;
+    elf_header->endianess_value = /*little*/1;
+    elf_header->elf_header_version = 1;
+    elf_header->abi = /*ELFOSABI_NONE*/0;
+    elf_header->abi_version = 0;
+    elf_header->object_file_type = /*ET_REL*/1;
+    elf_header->machine_type = /*x64*/0x3E;
+    elf_header->elf_version = 1;
+    elf_header->flags = 0;
+    elf_header->elf_header_size = sizeof(*elf_header);
+    elf_header->program_header_table_entry_size = 0;
+    elf_header->program_header_table_entry_count = 0;
+    elf_header->section_header_table_entry_size = sizeof(struct elf_section_header);
+    elf_header->section_header_table_entry_count = (u16)section_header_count;
+    elf_header->section_name_section_table_index = (u16)shstrtab_section_index;
+    
+    // 
+    // .text
+    // 
+    
+    push_zero_align(arena, 16);
+    u8 *text_section_start = arena_current(arena);
+    
+    for_ast_list(defined_functions){
+        struct ast_function *function = (struct ast_function *)it->value;
+        
+        push_zero_align(arena, 16);
+        
+        u8 *memory_for_function = push_uninitialized_data(arena, u8, function->byte_size);
+        memcpy(memory_for_function, function->memory_location, function->byte_size);
+        
+        function->offset_in_text_section   = memory_for_function - text_section_start;
+        function->memory_location          = memory_for_function;
+        function->relative_virtual_address = memory_for_function - text_section_start;
+    }
+    
+    u64 text_section_offset = (u64)(text_section_start - elf_base);
+    u64 text_section_size   = (u64)(arena_current(arena) - text_section_start);
+    
+    // 
+    // .rodata
+    // 
+    
+    push_zero_align(arena, 16);
+    u8 *rodata_section_start = arena_current(arena);
+    
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for(struct ir_emitted_float_literal *lit = thread_context->emitted_float_literals.first; lit; lit = lit->next){
+            if(lit->literal.type == &globals.typedef_f32){
+                push_zero_align(arena, 4);
+                f32 *value = push_struct(arena, f32);
+                *value = (f32)lit->literal._f32;
+                lit->relative_virtual_address = (u32)((u8 *)value - rodata_section_start);
+            }else{
+                assert(lit->literal.type == &globals.typedef_f64);
+                push_zero_align(arena, 8);
+                f64 *value = push_struct(arena, f64);
+                *value = lit->literal._f64;
+                lit->relative_virtual_address = (u32)((u8 *)value - rodata_section_start);
+            }
+        }
+    }
+    
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        
+        for(struct ir_string_literal *lit = thread_context->string_literals.first; lit; lit = lit->next){
+            // :string_kind_is_element_size
+            smm element_size = (smm)lit->string_kind;
+            
+            push_zero_align(arena, element_size);
+            
+            u8 *base = push_string_copy(arena, lit->value).data;
+            push_data(arena, u8, element_size);
+            
+            lit->relative_virtual_address = (u32)(base - rodata_section_start);
+        }
+    }
+    
+    u64 rodata_section_offset = (u64)(rodata_section_start - elf_base);
+    u64 rodata_section_size   = (u64)(arena_current(arena) - rodata_section_start);
+    
+    // 
+    // .data
+    // 
+    
+    u64 data_section_alignment = 1;
+    for_ast_list(initialized_declarations){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        smm alignment = get_declaration_alignment(decl);
+        if((u64)alignment > data_section_alignment) data_section_alignment = (u64)alignment;
+    }
+    
+    push_zero_align(arena, data_section_alignment);
+    u8 *data_section_start = arena_current(arena);
+    
+    for_ast_list(initialized_declarations){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        smm alignment = get_declaration_alignment(decl);
+        smm decl_size = get_declaration_size(decl);
+        
+        if(decl_size == 0) decl_size = 1;
+        
+        push_zero_align(arena, alignment);
+        
+        u8 *memory_for_declaration = push_uninitialized_data(arena, u8, decl_size);
+        
+        if(decl->memory_location){
+            memcpy(memory_for_declaration, decl->memory_location, decl_size);
+        }else{
+            memset(memory_for_declaration, 0, decl_size);
+        }
+        
+        decl->memory_location = memory_for_declaration;
+        decl->relative_virtual_address = memory_for_declaration - data_section_start;
+    }
+    
+    u64 data_section_offset = (u64)(data_section_start - elf_base);
+    u64 data_section_size   = (u64)(arena_current(arena) - data_section_start);
+    
+    // 
+    // .bss
+    // 
+    
+    u64 bss_section_alignment = 1;
+    for_ast_list(uninitialized_declarations){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        smm alignment = get_declaration_alignment(decl);
+        if((u64)alignment > bss_section_alignment) bss_section_alignment = (u64)alignment;
+    }
+    
+    push_zero_align(arena, bss_section_alignment);
+    u64 bss_section_offset = (u64)(arena_current(arena) - elf_base);
+    u64 bss_section_size = 0;
+    
+    for_ast_list(uninitialized_declarations){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        smm alignment = get_declaration_alignment(decl);
+        smm decl_size = get_declaration_size(decl);
+        
+        if(decl_size == 0) decl_size = 1;
+        if(alignment == 0) alignment = 1; // Incomplete types have no alignment.
+        
+        bss_section_size = (u64)align_up((smm)bss_section_size, alignment);
+        decl->relative_virtual_address = (smm)bss_section_size;
+        bss_section_size += (u64)decl_size;
+    }
+    
+    // 
+    // .symtab and .strtab
+    // 
+    // The local symbols have to come before the global symbols, the first
+    // non-local symbol index is stored in 'sh_info' of the .symtab section.
+    // 
+    
+    push_zero_align(arena, 8);
+    u8 *symtab_section_start = arena_current(arena);
+    
+    struct string_list symbol_names = zero_struct;
+    u32 symbol_name_offset = 1; // The first byte of the string table is the empty string.
+    u32 symbol_count = 0;
+    
+    // The null symbol.
+    push_struct(arena, struct elf_symbol);
+    symbol_count += 1;
+    
+    // The STT_FILE symbol.
+    {
+        struct string file_name = zero_struct;
+        if(globals.first_compilation_unit && globals.first_compilation_unit->main_file){
+            file_name = strip_file_path(string_from_cstring(globals.first_compilation_unit->main_file->absolute_file_path));
+        }
+        
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, file_name, STB_LOCAL, STT_FILE, SHN_ABS, 0, 0);
+        symbol_count += 1;
+    }
+    
+    // The section symbols, used for references to string and float literals.
+    struct string section_symbol_name = zero_struct;
+    
+    push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, section_symbol_name, STB_LOCAL, STT_SECTION, (u16)text_section_index, 0, 0);
+    symbol_count += 1;
+    
+    push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, section_symbol_name, STB_LOCAL, STT_SECTION, (u16)data_section_index, 0, 0);
+    symbol_count += 1;
+    
+    push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, section_symbol_name, STB_LOCAL, STT_SECTION, (u16)bss_section_index, 0, 0);
+    symbol_count += 1;
+    
+    u32 rodata_section_symbol_index = symbol_count;
+    push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, section_symbol_name, STB_LOCAL, STT_SECTION, (u16)rodata_section_index, 0, 0);
+    symbol_count += 1;
+    
+    // 
+    // Local definitions.
+    // 
+    
+    for_ast_list(defined_functions){
+        struct ast_function *function = (struct ast_function *)it->value;
+        
+        if(!(function->as_decl.flags & DECLARATION_FLAGS_is_static)) continue;
+        
+        function->symbol_table_index = symbol_count;
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(function->identifier), STB_LOCAL, STT_FUNC, (u16)text_section_index, (u64)function->relative_virtual_address, (u64)function->byte_size);
+        symbol_count += 1;
+    }
+    
+    for_ast_list(initialized_declarations){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        if(!(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist | DECLARATION_FLAGS_is_unnamed))) continue;
+        
+        decl->symbol_table_index = symbol_count;
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, elf_object_symbol_name(scratch, decl, symbol_count), STB_LOCAL, STT_OBJECT, (u16)data_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
+        symbol_count += 1;
+    }
+    
+    for_ast_list(uninitialized_declarations){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        if(!(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist | DECLARATION_FLAGS_is_unnamed))) continue;
+        
+        decl->symbol_table_index = symbol_count;
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, elf_object_symbol_name(scratch, decl, symbol_count), STB_LOCAL, STT_OBJECT, (u16)bss_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
+        symbol_count += 1;
+    }
+    
+    u32 first_non_local_symbol = symbol_count;
+    
+    // 
+    // Global definitions.
+    // 
+    
+    for_ast_list(defined_functions){
+        struct ast_function *function = (struct ast_function *)it->value;
+        
+        if(function->as_decl.flags & DECLARATION_FLAGS_is_static) continue;
+        
+        function->symbol_table_index = symbol_count;
+        // 'extern inline' functions are emitted as weak symbols so that the
+        // definitions from multiple translation units can be merged.
+        u8 binding = (function->as_decl.flags & DECLARATION_FLAGS_is_selectany) ? STB_WEAK : STB_GLOBAL;
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(function->identifier), binding, STT_FUNC, (u16)text_section_index, (u64)function->relative_virtual_address, (u64)function->byte_size);
+        symbol_count += 1;
+    }
+    
+    for_ast_list(initialized_declarations){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist | DECLARATION_FLAGS_is_unnamed)) continue;
+        
+        decl->symbol_table_index = symbol_count;
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(decl->identifier), STB_GLOBAL, STT_OBJECT, (u16)data_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
+        symbol_count += 1;
+    }
+    
+    for_ast_list(uninitialized_declarations){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist | DECLARATION_FLAGS_is_unnamed)) continue;
+        
+        decl->symbol_table_index = symbol_count;
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(decl->identifier), STB_GLOBAL, STT_OBJECT, (u16)bss_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
+        symbol_count += 1;
+    }
+    
+    // 
+    // Undefined symbols.
+    // 
+    
+    for_ast_list(external_functions){
+        struct ast_function *function = (struct ast_function *)it->value;
+        
+        function->symbol_table_index = symbol_count;
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(function->identifier), STB_GLOBAL, STT_FUNC, SHN_UNDEF, 0, 0);
+        symbol_count += 1;
+    }
+    
+    for_ast_list(external_variables){
+        struct ast_declaration *decl = (struct ast_declaration *)it->value;
+        
+        decl->symbol_table_index = symbol_count;
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(decl->identifier), STB_GLOBAL, STT_OBJECT, SHN_UNDEF, 0, (u64)get_declaration_size(decl));
+        symbol_count += 1;
+    }
+    
+    u64 symtab_section_size = (u64)(arena_current(arena) - symtab_section_start);
+    
+    // 
+    // .strtab
+    // 
+    
+    u8 *strtab_section_start = arena_current(arena);
+    
+    *push_struct(arena, u8) = 0;
+    
+    for(struct string_list_node *node = symbol_names.list.first; node; node = node->next){
+        push_zero_terminated_string_copy(arena, node->string);
+    }
+    
+    u64 strtab_section_size = (u64)(arena_current(arena) - strtab_section_start);
+    
+    // 
+    // .rela.text
+    // 
+    
+    u64 rela_text_section_offset = 0;
+    u64 rela_text_section_size = 0;
+    
+    if(text_relocation_count){
+        push_zero_align(arena, 8);
+        u8 *rela_text_section_start = arena_current(arena);
+        
+        struct elf_relocation_addend *relocations = push_uninitialized_data(arena, struct elf_relocation_addend, text_relocation_count);
+        u64 relocation_at = 0;
+        
+        for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+            struct context *thread_context = globals.thread_infos[thread_index].context;
+            
+            for(struct patch_node *patch = thread_context->local_patch_list.first; patch; patch = patch->next){
+                
+                struct ast_declaration *dest_declaration = patch->dest_declaration;
+                if(!(dest_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                if(dest_declaration->kind != IR_function) continue;
+                if(patch->kind != PATCH_rip_relative) continue;
+                
+                struct ast_function *function = (struct ast_function *)dest_declaration;
+                
+                assert(patch->rip_at >= 0);
+                
+                // The relocation is applied at the offset of the displacement, so
+                // the addend only has to account for the bytes between the
+                // displacement and the end of the instruction.
+                smm displacement_to_instruction_end = patch->rip_at - patch->location_offset_in_dest_declaration;
+                
+                u32 source_symbol_index = 0;
+                smm addend = 0;
+                
+                enum ir_kind source_kind = patch->source->kind;
+                
+                if(source_kind == IR_function || source_kind == IR_declaration){
+                    struct ast_declaration *source_declaration = (struct ast_declaration *)patch->source;
+                    
+                    source_symbol_index = (u32)source_declaration->symbol_table_index;
+                    addend = patch->location_offset_in_source_declaration - displacement_to_instruction_end;
+                }else if(source_kind == IR_emitted_float_literal){
+                    struct ir_emitted_float_literal *lit = (struct ir_emitted_float_literal *)patch->source;
+                    
+                    source_symbol_index = rodata_section_symbol_index;
+                    addend = (smm)lit->relative_virtual_address - displacement_to_instruction_end;
+                }else if(source_kind == IR_string_literal){
+                    struct ir_string_literal *lit = (struct ir_string_literal *)patch->source;
+                    
+                    source_symbol_index = rodata_section_symbol_index;
+                    addend = (smm)lit->relative_virtual_address + patch->location_offset_in_source_declaration - displacement_to_instruction_end;
+                }else invalid_code_path;
+                
+                // A direct call is encoded as 'e8 <rel32>' and should use the PLT
+                // when the callee is defined in another object or shared library.
+                u32 relocation_type = /*R_X86_64_PC32*/2;
+                if(patch->location_offset_in_dest_declaration > 0){
+                    u8 opcode = function->memory_location[patch->location_offset_in_dest_declaration - 1];
+                    if(opcode == 0xE8) relocation_type = /*R_X86_64_PLT32*/4;
+                }
+                
+                struct elf_relocation_addend *relocation = relocations + relocation_at++;
+                relocation->offset = (u64)(function->offset_in_text_section + patch->location_offset_in_dest_declaration);
+                relocation->info   = ((u64)source_symbol_index << 32) | relocation_type;
+                relocation->addend = (u64)addend;
+            }
+        }
+        
+        assert(relocation_at == text_relocation_count);
+        
+        rela_text_section_offset = (u64)(rela_text_section_start - elf_base);
+        rela_text_section_size = (u64)(arena_current(arena) - rela_text_section_start);
+    }
+    
+    // 
+    // .rela.data
+    // 
+    
+    u64 rela_data_section_offset = 0;
+    u64 rela_data_section_size = 0;
+    
+    if(data_relocation_count){
+        push_zero_align(arena, 8);
+        u8 *rela_data_section_start = arena_current(arena);
+        
+        struct elf_relocation_addend *relocations = push_uninitialized_data(arena, struct elf_relocation_addend, data_relocation_count);
+        u64 relocation_at = 0;
+        
+        for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+            struct context *thread_context = globals.thread_infos[thread_index].context;
+            
+            for(struct patch_node *patch = thread_context->local_patch_list.first; patch; patch = patch->next){
+                
+                struct ast_declaration *dest_declaration = patch->dest_declaration;
+                if(!(dest_declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                if(dest_declaration->kind != IR_declaration) continue;
+                if(patch->kind != PATCH_absolute) continue;
+                
+                u32 source_symbol_index = 0;
+                smm addend = 0;
+                
+                enum ir_kind source_kind = patch->source->kind;
+                
+                if(source_kind == IR_function || source_kind == IR_declaration){
+                    struct ast_declaration *source_declaration = (struct ast_declaration *)patch->source;
+                    
+                    source_symbol_index = (u32)source_declaration->symbol_table_index;
+                    addend = patch->location_offset_in_source_declaration;
+                }else if(source_kind == IR_string_literal){
+                    struct ir_string_literal *lit = (struct ir_string_literal *)patch->source;
+                    
+                    source_symbol_index = rodata_section_symbol_index;
+                    addend = (smm)lit->relative_virtual_address + patch->location_offset_in_source_declaration;
+                }else if(source_kind == IR_emitted_float_literal){
+                    struct ir_emitted_float_literal *lit = (struct ir_emitted_float_literal *)patch->source;
+                    
+                    source_symbol_index = rodata_section_symbol_index;
+                    addend = (smm)lit->relative_virtual_address;
+                }else invalid_code_path;
+                
+                struct elf_relocation_addend *relocation = relocations + relocation_at++;
+                relocation->offset = (u64)(dest_declaration->relative_virtual_address + patch->location_offset_in_dest_declaration);
+                relocation->info   = ((u64)source_symbol_index << 32) | /*R_X86_64_64*/1;
+                relocation->addend = (u64)addend;
+            }
+        }
+        
+        assert(relocation_at == data_relocation_count);
+        
+        rela_data_section_offset = (u64)(rela_data_section_start - elf_base);
+        rela_data_section_size = (u64)(arena_current(arena) - rela_data_section_start);
+    }
+    
+    // 
+    // .shstrtab
+    // 
+    
+    struct string_list section_names = zero_struct;
+    u32 section_name_offset = 1;
+    
+    u8 *shstrtab_section_start = arena_current(arena);
+    *push_struct(arena, u8) = 0;
+    
+    u32 *section_name_offsets = push_data(scratch, u32, section_header_count);
+    
+#define elf_object_section_name(index, literal){                           \
+    section_name_offsets[index] = section_name_offset;                    \
+    string_list_postfix(&section_names, scratch, string(literal));        \
+    section_name_offset += (u32)sizeof(literal);                          \
+}
+    
+    elf_object_section_name(text_section_index,      ".text");
+    elf_object_section_name(data_section_index,      ".data");
+    elf_object_section_name(bss_section_index,       ".bss");
+    elf_object_section_name(rodata_section_index,    ".rodata");
+    if(rela_text_section_index) elf_object_section_name(rela_text_section_index, ".rela.text");
+    if(rela_data_section_index) elf_object_section_name(rela_data_section_index, ".rela.data");
+    elf_object_section_name(symtab_section_index,    ".symtab");
+    elf_object_section_name(strtab_section_index,    ".strtab");
+    elf_object_section_name(shstrtab_section_index,  ".shstrtab");
+    elf_object_section_name(gnu_stack_section_index, ".note.GNU-stack");
+    
+#undef elf_object_section_name
+    
+    for(struct string_list_node *node = section_names.list.first; node; node = node->next){
+        push_zero_terminated_string_copy(arena, node->string);
+    }
+    
+    u64 shstrtab_section_size = (u64)(arena_current(arena) - shstrtab_section_start);
+    
+    // 
+    // .note.GNU-stack (empty, marks the stack as non-executable).
+    // 
+    
+    u64 gnu_stack_section_offset = (u64)(arena_current(arena) - elf_base);
+    
+    // 
+    // Fill in the section headers.
+    // 
+    
+    push_zero_align(arena, 8);
+    u64 section_header_table_offset = (u64)(arena_current(arena) - elf_base);
+    
+    struct elf_section_header *section_headers = push_data(arena, struct elf_section_header, section_header_count);
+    
+#define fill_elf_object_section_header(index, section_type, section_flags, section_offset, section_size, section_link, section_info, section_alignment, section_entry_size){ \
+    section_headers[index].name_offset    = section_name_offsets[index];                       \
+    section_headers[index].type           = (section_type);                                    \
+    section_headers[index].flags          = (section_flags);                                   \
+    section_headers[index].address        = 0;                                                 \
+    section_headers[index].offset         = (section_offset);                                  \
+    section_headers[index].size           = (section_size);                                    \
+    section_headers[index].linked_section = (section_link);                                    \
+    section_headers[index].info           = (section_info);                                    \
+    section_headers[index].alignment      = (section_alignment);                               \
+    section_headers[index].entry_size     = (section_entry_size);                              \
+}
+    
+    section_headers[0].type = SHT_NULL;
+    
+    fill_elf_object_section_header(text_section_index, SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, text_section_offset, text_section_size, 0, 0, 16, 0);
+    fill_elf_object_section_header(data_section_index, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, data_section_offset, data_section_size, 0, 0, data_section_alignment, 0);
+    fill_elf_object_section_header(bss_section_index,  SHT_NOBITS,   SHF_ALLOC | SHF_WRITE, bss_section_offset, bss_section_size, 0, 0, bss_section_alignment, 0);
+    fill_elf_object_section_header(rodata_section_index, SHT_PROGBITS, SHF_ALLOC, rodata_section_offset, rodata_section_size, 0, 0, 16, 0);
+    
+    if(rela_text_section_index){
+        fill_elf_object_section_header(rela_text_section_index, SHT_RELA, 0, rela_text_section_offset, rela_text_section_size, symtab_section_index, text_section_index, 8, sizeof(struct elf_relocation_addend));
+    }
+    
+    if(rela_data_section_index){
+        fill_elf_object_section_header(rela_data_section_index, SHT_RELA, 0, rela_data_section_offset, rela_data_section_size, symtab_section_index, data_section_index, 8, sizeof(struct elf_relocation_addend));
+    }
+    
+    fill_elf_object_section_header(symtab_section_index, SHT_SYMTAB, 0, (u64)(symtab_section_start - elf_base), symtab_section_size, strtab_section_index, first_non_local_symbol, 8, sizeof(struct elf_symbol));
+    fill_elf_object_section_header(strtab_section_index, SHT_STRTAB, 0, (u64)(strtab_section_start - elf_base), strtab_section_size, 0, 0, 1, 0);
+    fill_elf_object_section_header(shstrtab_section_index, SHT_STRTAB, 0, (u64)(shstrtab_section_start - elf_base), shstrtab_section_size, 0, 0, 1, 0);
+    fill_elf_object_section_header(gnu_stack_section_index, SHT_PROGBITS, 0, gnu_stack_section_offset, 0, 0, 0, 1, 0);
+    
+#undef fill_elf_object_section_header
+    
+    elf_header->section_header_table_offset = section_header_table_offset;
+    elf_header->entry_point = 0;
+    elf_header->program_header_table_offset = 0;
+    
+    u64 elf_size = (u64)(arena_current(arena) - elf_base);
+    
+    if(!globals.cli_options.dont_print_the_files){
+        char *elf_name = push_cstring_from_string(arena, output_file_path);
+        
+        HANDLE file_handle = os_open_file(elf_name, OS_OPEN_write);
+        
+        int success = os_file_write(file_handle, elf_base, elf_size);
+        
+        os_close_handle(file_handle);
+        
+        if(success){
+            if(!globals.cli_options.quiet) print("Wrote file: '%s'\n", elf_name);
+        }else{
+            print("Error: Unable to write file '%s'.\n", elf_name);
+            globals.an_error_has_occurred = true;
+        }
+    }
 }
 
 
