@@ -1051,6 +1051,23 @@ __declspec(inline_asm) unsigned __int64 _byteswap_uint64(unsigned __int64 val){
 }
 
 
+__declspec(inline_asm) unsigned short __builtin_bswap16(unsigned short val){
+    ror val, 8
+    return val
+}
+
+__declspec(inline_asm) unsigned long __builtin_bswap32(unsigned long val){
+    bswap val
+    return val
+}
+
+__declspec(inline_asm) unsigned __int64 __builtin_bswap64(unsigned __int64 val){
+    bswap val
+    return val
+}
+
+
+
 __declspec(inline_asm) void __faststorefence(void){
     lock or dword ptr [rsp], 0
 }
@@ -1106,6 +1123,20 @@ __declspec(inline_asm) int __builtin_clz(unsigned int x){
     bsr eax, ecx
     xor eax, 31
     return eax
+}
+
+__declspec(inline_asm) int __builtin_clzl(unsigned long x){
+#ifdef _WIN32
+    mov ecx, x
+    bsr eax, ecx
+    xor eax, 31
+    return eax
+#else
+    mov rcx, x
+    bsr rax, rcx
+    xor eax, 63
+    return eax
+#endif
 }
 
 __declspec(inline_asm) int __builtin_ffs(int x){
