@@ -1,3 +1,4 @@
+// os windows
 // compile -obj
 
 #pragma comment(lib, "Shell32.lib")
