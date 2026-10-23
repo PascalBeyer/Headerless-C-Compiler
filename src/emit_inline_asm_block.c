@@ -707,6 +707,16 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 emit_register_relative_extended(context, no_prefix(), two_byte_opcode(0xae), 7, operand);
             }break;
             
+            case MEMONIC_ldmxcsr:{
+                assert(operand->state == EMIT_LOCATION_register_relative);
+                emit_register_relative_extended(context, user_prefixes, two_byte_opcode(0xae), 2, operand);
+            }break;
+            
+            case MEMONIC_stmxcsr:{
+                assert(operand->state == EMIT_LOCATION_register_relative);
+                emit_register_relative_extended(context, user_prefixes, two_byte_opcode(0xae), 3, operand);
+            }break;
+            
             case MEMONIC_rdtsc:{
                 asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_A, 8);
                 asm_block_load_registers_which_was_used_by_user(context, REGISTER_KIND_gpr, REGISTER_D, 8);
