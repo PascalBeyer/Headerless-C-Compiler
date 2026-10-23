@@ -10453,6 +10453,20 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             
             struct token *open_index = next_token(context);
             
+            // C99 allows type qualifiers and 'static' inside the brackets of an
+            // array declarator, for example:
+            //     void f(int a[restrict]);
+            //     void f(int a[static 16]);
+            // They only affect the parameter adjustment, so skip them here.
+            while(true){
+                struct token *begin = get_current_token(context);
+                if(peek_token_eat(context, TOKEN_restrict)) {}
+                if(peek_token_eat(context, TOKEN_const))    {}
+                if(peek_token_eat(context, TOKEN_volatile)) {}
+                if(peek_token_eat(context, TOKEN_static))   {}
+                if(get_current_token(context) == begin) break;
+            }
+            
             struct ast_array_type *array_type = parser_type_push(context, array_type);
             
             if(peek_token_eat(context, TOKEN_closed_index)){ // u32 arr[];
