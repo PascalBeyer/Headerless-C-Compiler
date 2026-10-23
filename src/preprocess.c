@@ -3655,6 +3655,13 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 arguments.count += 1;
                                 
                                 eat_whitespace_and_comments_raw(context);
+                                
+                                if(peek_token_eat_raw(context, TOKEN_dotdotdot)){
+                                    // gcc extension to name va-args argument.
+                                    is_varargs = true;
+                                    break;
+                                }
+                                
                             }while(peek_token_eat_raw(context, TOKEN_comma));
                             
                             expect_token_raw(context, &defined_identifier, TOKEN_closed_paren, "Expected ')' at the end of function-like macro definition.");
