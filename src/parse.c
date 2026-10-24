@@ -5183,7 +5183,21 @@ case NUMBER_KIND_##type:{ \
                 if(peek_token_eat(context, TOKEN_default)){
                     expect_token(context, TOKEN_colon, "Expected ':' after 'default' while parsing a _Generic association list.");
                     
-                    default_expression = parse_expression(context, /*skip_comma_expression*/1);
+                    struct expr expression = parse_expression(context, /*skip_comma_expression*/1);
+                    
+                    if(default_expression.ir){
+                        begin_error_report(context);
+                        report_error(context, expression.token, "More than one 'default' association.");
+                        report_error(context, default_expression.token, "... Here is the previous 'default' association.");
+                        end_error_report(context);
+                    }
+                    
+                    if(choosen_expression.ir){
+                        memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
+                        context->ir_arena.current = ir_arena_start;
+                    }else{
+                        default_expression = expression;
+                    }
                 }else{
                     struct type_info_return type_name = maybe_parse_type_for_cast_or_sizeof(context);
                     if(!type_name.type){
@@ -5194,11 +5208,30 @@ case NUMBER_KIND_##type:{ \
                     
                     expect_token(context, TOKEN_colon, "Expected ':' after the type-name while parsing a _Generic association list.");
                     
-                    struct expr expression = parse_expression(context, /*skip_comma_expression*/1);
-                    
                     if(types_are_equal(type_name.type, choice)){
+                        
+                        if(default_expression.ir){
+                            memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
+                            context->ir_arena.current = ir_arena_start;
+                            memset(&default_expression, 0, sizeof(default_expression));
+                        }
+                        
+                        struct expr expression = parse_expression(context, /*skip_comma_expression*/1);
+                        
+                        if(choosen_expression.ir){
+                            begin_error_report(context);
+                            struct string type_string = push_type_string(&context->scratch, &context->scratch, choice);
+                            report_error(context, choice_expression.token, "The expression of type '%.*s' matches two associations.", type_string.size, type_string.data);
+                            report_error(context, choosen_expression.token, "... Here is the first match.");
+                            report_error(context, expression.token, "... Here is the second match.");
+                            end_error_report(context);
+                        }
+                        
                         choosen_expression = expression;
+                        ir_arena_start = arena_current(&context->ir_arena);
                     }else{
+                        parse_expression(context, /*skip_comma_expression*/1);
+                        
                         memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
                         context->ir_arena.current = ir_arena_start;
                     }
