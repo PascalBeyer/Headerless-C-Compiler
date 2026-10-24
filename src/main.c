@@ -550,6 +550,9 @@ static struct{
     struct atom keyword_dllexport;
     struct atom keyword_thread;
     struct atom keyword_align;
+    struct atom keyword_aligned;
+    struct atom keyword_transparent_union;
+    struct atom keyword___transparent_union__;
     struct atom keyword_noreturn;
     struct atom keyword_Noreturn;
     struct atom keyword_noinline;
@@ -4490,6 +4493,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.keyword_dllexport   = atom_for_string(string("dllexport"));
         globals.keyword_thread      = atom_for_string(string("thread"));
         globals.keyword_align       = atom_for_string(string("align"));
+        globals.keyword_aligned     = atom_for_string(string("aligned"));
         globals.keyword_noreturn    = atom_for_string(string("noreturn"));
         globals.keyword_Noreturn    = atom_for_string(string("_Noreturn"));
         globals.keyword_noinline    = atom_for_string(string("noinline"));

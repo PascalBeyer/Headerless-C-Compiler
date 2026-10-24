@@ -8323,7 +8323,7 @@ case TOKEN_##type_name:{                                                 \
                                     width = 0;
                                 }
                                 
-                                // "As a special case, a bit-field struture member with a width of 0 indicates 
+                                // "As a special case, a bit-field structure member with a width of 0 indicates 
                                 //  that no further bit-field is to be packed into the unit in which the previous 
                                 //  bitfield, if any, was placed."
                                 if(width == 0){
@@ -8469,7 +8469,7 @@ case TOKEN_##type_name:{                                                 \
                         }while(peek_token_eat(context, TOKEN_comma));
                         
                         // If we should sleep, break such that we don't waste time parsing the rest
-                        // of the structure, otherwise, try to parse the rest of the stucture.
+                        // of the structure, otherwise, try to parse the rest of the structure.
                         if(context->should_sleep) break;
                         
                         if(expect_token(context, TOKEN_semicolon, "Expected ';' after member declaration.")->type != TOKEN_semicolon){
@@ -8519,6 +8519,141 @@ case TOKEN_##type_name:{                                                 \
                     }
                     
                     specifiers.type_specifier = &compound->base;
+                    
+                    if(peek_token_eat(context, TOKEN_declspec)){
+                        expect_token(context, TOKEN_open_paren, "Expected '(' after '__declspec'.");
+                        struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
+                        
+                        smm trailing_alignment = 1;
+                        b32 has_trailing_alignment = false;
+                        
+                        do{
+                            struct token *directive = next_token(context);
+                            
+                            if(directive->type != TOKEN_identifier && !(TOKEN_first_keyword <= directive->type && directive->type <= TOKEN_one_past_last_keyword)){
+                                report_error(context, directive, "Expected a directive after '__declspec'.");
+                            }
+                            
+                            struct atom directive_string = directive->atom;
+                            
+                            if(atoms_match(directive_string, globals.keyword_packed)){
+                                
+                                if(!is_packed && compound->base.size >= 0){
+                                    
+                                    if(compound->base.kind == AST_union){
+                                        size = 0;
+                                        
+                                        for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
+                                            struct compound_member *member = &compound->members[member_index];
+                                            member->offset_in_type = 0;
+                                            size = max_of(size, member->type->size);
+                                        }
+                                        
+                                    }else{
+                                        
+                                        size = 0;
+                                        
+                                        b32 previous_was_bitfield = false;
+                                        smm previous_bitfield_initial_offset = 0;
+                                        smm current_bitfield_storage_offset = 0;
+                                        
+                                        for(smm member_index = 0; member_index < compound->amount_of_members; ){
+                                            struct compound_member *member = &compound->members[member_index];
+                                            smm old_offset = member->offset_in_type;
+                                            
+                                            if(member->next_member_increment > 1){
+                                                // :next_member_increment and :member_list_contains_both_linear_and_nested
+                                                // 
+                                                // This is a nested member. We have to move not only the "linear", but also the "nested" entries.
+                                                // 
+                                                member->offset_in_type = size;
+                                                
+                                                smm delta = size - old_offset;
+                                                
+                                                for(smm nested_index = 1; nested_index < member->next_member_increment; nested_index++){
+                                                    compound->members[member_index + nested_index].offset_in_type += delta;
+                                                }
+                                                
+                                                member_index += member->next_member_increment;
+                                                size += member->type->size;
+                                                
+                                                previous_was_bitfield = false;
+                                                continue;
+                                            }
+                                            
+                                            if(member->type->kind == AST_bitfield_type){
+                                                struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)member->type;
+                                                
+                                                
+                                                b32 starts_new_storage_unit = !previous_was_bitfield || old_offset != previous_bitfield_initial_offset;
+                                                
+                                                if(starts_new_storage_unit){
+                                                    member->offset_in_type = size;
+                                                    current_bitfield_storage_offset = size;
+                                                    bitfield->bit_index = 0;
+                                                    size += bitfield->base_type->size;
+                                                }else{
+                                                    member->offset_in_type = current_bitfield_storage_offset;
+                                                }
+                                                
+                                                previous_was_bitfield = true;
+                                                previous_bitfield_initial_offset = old_offset;
+                                                member_index += 1;
+                                                continue;
+                                            }
+                                            
+                                            // A regular member, or a named nested compound.
+                                            member->offset_in_type = size;
+                                            size += member->type->size;
+                                            
+                                            previous_was_bitfield = false;
+                                            member_index += 1;
+                                        }
+                                    }
+                                    
+                                    compound->base.size = align_up(size, declspec_alignment);
+                                    compound->base.alignment = declspec_alignment;
+                                    
+                                    is_packed = true;
+                                }
+                            }else if(atoms_match(directive_string, globals.keyword_align) || atoms_match(directive_string, globals.keyword_aligned)){
+                                expect_token(context, TOKEN_open_paren, "Expected '(' to follow 'align'.");
+                                
+                                struct expr const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
+                                
+                                smm value = integer_literal_as_u64(&const_expr);
+                                
+                                if(!is_power_of_two(value)){
+                                    report_error(context, directive, "Alignment must be a power of two.");
+                                    value = 1;
+                                }
+                                
+                                trailing_alignment = max_of(trailing_alignment, value);
+                                has_trailing_alignment = true;
+                                
+                                expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'align'.");
+                            }else{
+                                report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
+                                
+                                struct token *argument_open = peek_token_eat(context, TOKEN_open_paren);
+                                if(argument_open){
+                                    skip_until_tokens_are_balanced(context, argument_open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
+                                }
+                            }
+                        }while(peek_token_eat(context, TOKEN_comma));
+                        
+                        expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__declspec'.");
+                        
+                        if(double_open){
+                            expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__attribute__(()'.");
+                        }
+                        
+                        if(has_trailing_alignment){
+                            compound->base.alignment = max_of(compound->base.alignment, trailing_alignment);
+                            compound->base.size = align_up(compound->base.size, compound->base.alignment);
+                            compound->base.flags |= TYPE_FLAG_is_user_aligned;
+                        }
+                    }
                 }
             }break;
             
