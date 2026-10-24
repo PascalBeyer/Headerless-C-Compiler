@@ -1571,13 +1571,38 @@ func struct emit_location *emit_load_into_specific_gpr(struct context *context, 
             struct ast_type *type = source->type;
             if(source_size == 2) source->type = &globals.typedef_u32;
             
+            struct emit_location *ret = 0;
+            
+            if(source->prevent_freeing){
+                // 
+                // If the source is prevented from freeing,
+                // we need to already reserve the `register_to_load_into`.
+                // Otherwise, it may be loaded as either the base or the index register,
+                // then the emit_register_relative_register would overwrite that register, 
+                // but the emit location would not be aware of that.
+                // Hence, if we then cannot free it, the overwritten register may be spilled 
+                // and reloaded.
+                // 
+                // On the other hand, we cannot universally reserve the `register_to_load_into`,
+                // as a chain of register_relative emit locations might otherwise cause all registers 
+                // to be exhausted.
+                // 
+                ret = emit_location_loaded(context, type, register_to_load_into);
+                emit_location_prevent_spilling(context, ret);
+            }
+            
             emit_register_relative_register(context, create_prefixes(0), opcode, register_to_load_into, source);
             
             if(source_size == 2) source->type = type; // might still be relevant after free, if it was marked to prevent freeing.
             
             free_emit_location(context, source);
-            allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
-            return emit_location_loaded(context, type, register_to_load_into);
+            
+            if(ret){
+                emit_location_allow_spilling(context, ret);
+            }else{
+                ret = emit_location_loaded(context, type, register_to_load_into);
+            }
+            return ret;
         }break;
         case EMIT_LOCATION_conditional:{
             // Usually conditionals are of size 4 (int) by cspec, but for cast to _Bool we load them as size 1.
@@ -1990,7 +2015,7 @@ func struct emit_location *emit_divide_or_mod_or_multiply__internal(struct conte
     if(is_assignment) emit_location_prevent_spilling(context, lhs);
     emit_location_allow_spilling(context, lower_part);
     
-    lower_part = emit_load_into_specific_gpr(context, lhs, rax);
+    lower_part = emit_load_into_specific_gpr(context, lhs, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_A)); // @cleanup: this spills rax for no reason?
     emit_location_prevent_spilling(context, lower_part);
     
     
