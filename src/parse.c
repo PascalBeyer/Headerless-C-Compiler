@@ -5585,7 +5585,38 @@ case NUMBER_KIND_##type:{ \
                             
                             // "the arguments are implicitly converted, as if by assignment"
                             maybe_load_address_for_array_or_function(context, IR_load_address, &expr);
-                            maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, decl->type, decl->defined_type, &expr, expr.token);
+                            
+                            if((decl->type->flags & TYPE_FLAG_is_transparent_union) && expr.resolved_type->kind == AST_pointer_type){
+                                struct ast_compound_type *union_type = (struct ast_compound_type *)decl->type;
+                                
+                                // @cleanup: 0 literal should also work.
+                                //           gcc also allows any pointer if the union contains a void *pointer, but that seems like a useless feature to me.
+                                
+                                int match = 0;
+                                
+                                if(expr.resolved_type != &globals.typedef_void_pointer.base){
+                                    match = 1;
+                                }else{
+                                    for(u32 member_index = 0; member_index < union_type->amount_of_members; member_index++){
+                                        struct compound_member *member = &union_type->members[member_index];
+                                        if(types_are_equal(member->type, expr.resolved_type)){
+                                            match = 1;
+                                        }
+                                    }
+                                }
+                                
+                                if(!match){
+                                    struct string type_string = push_type_string(context->arena, &context->scratch, expr.resolved_type);
+                                    struct string union_name = token_get_string(union_type->identifier);
+                                    
+                                    begin_error_report(context);
+                                    report_error(context, expr.token, "Expression of type '%.*s' matches none of the members of __attribute__((transparent_union))-%.*s.", type_string.size, type_string.data, union_name.size, union_name.data);
+                                    report_error(context, union_type->identifier, "... Here is the union.");
+                                    end_error_report(context);
+                                }
+                            }else{
+                                maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, decl->type, decl->defined_type, &expr, expr.token);
+                            }
                             
                             function_argument_iterator = function_argument_iterator->next;
                         }else{
@@ -6533,7 +6564,7 @@ case NUMBER_KIND_##type:{ \
                 
                 // @cleanup: this seems sus to me, but all compilers seem to do this.
                 //           This needs to be before msvc_extension_maybe_insert_cast_from_pointer_to_u64 to avoid warning.
-                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs); 
+                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs);
                 
                 msvc_extension_maybe_insert_cast_from_pointer_to_u64(context, op_lhs, op_rhs, stack_entry->token);
                 maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
@@ -8085,6 +8116,9 @@ case TOKEN_##type_name:{                                                 \
                 b32 is_intrin_type = false;
                 b32 is_packed = false;
                 b32 has_declspec_alignment = false;
+                
+                struct token *transparent_union_token = null;
+                
                 while(peek_token_eat(context, TOKEN_declspec)){
                     struct token *open = expect_token(context, TOKEN_open_paren, "Expected '(' to follow '__declspec'.");
                     struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
@@ -8126,6 +8160,8 @@ case TOKEN_##type_name:{                                                 \
                         is_intrin_type = true;
                     }else if(atoms_match(declspec->atom, globals.keyword_packed)){
                         is_packed = true;
+                    }else if(atoms_match(declspec->atom, globals.keyword_transparent_union) || atoms_match(declspec->atom, globals.keyword___transparent_union__)){
+                        transparent_union_token = declspec;
                     }else{
                         unsupported = true;
                     }
@@ -8550,7 +8586,6 @@ case TOKEN_##type_name:{                                                 \
                                         }
                                         
                                     }else{
-                                        
                                         size = 0;
                                         
                                         b32 previous_was_bitfield = false;
@@ -8616,6 +8651,8 @@ case TOKEN_##type_name:{                                                 \
                                     
                                     is_packed = true;
                                 }
+                            }else if(atoms_match(directive_string, globals.keyword_transparent_union) || atoms_match(directive_string, globals.keyword___transparent_union__)){
+                                transparent_union_token = directive;
                             }else if(atoms_match(directive_string, globals.keyword_align) || atoms_match(directive_string, globals.keyword_aligned)){
                                 expect_token(context, TOKEN_open_paren, "Expected '(' to follow 'align'.");
                                 
@@ -8653,6 +8690,27 @@ case TOKEN_##type_name:{                                                 \
                             compound->base.size = align_up(compound->base.size, compound->base.alignment);
                             compound->base.flags |= TYPE_FLAG_is_user_aligned;
                         }
+                    }
+                    
+                    if(transparent_union_token){
+                        if(compound->base.kind != AST_union){
+                            report_error(context, transparent_union_token, "'transparent_union' can only be applied to a union.");
+                        }
+                        
+                        if(compound->amount_of_members == 0){
+                            report_error(context, transparent_union_token, "'transparent_union' union must have at least one pointer member.");
+                        }
+                        
+                        for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
+                            if(compound->members[member_index].type->kind != AST_pointer_type){
+                                begin_error_report(context);
+                                report_error(context, transparent_union_token, "'transparent_union' is currently only supported for unions whose members are all pointer types.");
+                                report_error(context, compound->members[member_index].name, "... This member is not a pointer.");
+                                end_error_report(context);
+                            }
+                        }
+                        
+                        compound->base.flags |= TYPE_FLAG_is_transparent_union;
                     }
                 }
             }break;
@@ -10789,13 +10847,42 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
         struct token *directive = next_token(context);
         
-        // @cleanup: support declspecs here!
-        int skip = true;
-        report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
-        skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
-        
-        if(!skip){
+        if(atoms_match(directive->atom, globals.keyword_transparent_union) || atoms_match(directive->atom, globals.keyword___transparent_union__)){
+            
+            if(ret.type->kind == AST_union){
+                if(!(ret.type->flags & TYPE_FLAG_is_transparent_union)){
+                    struct ast_compound_type *original = (struct ast_compound_type *)ret.type;
+                    
+                    struct ast_compound_type *new_compound = parser_compound_type_push(context, union);
+                    *new_compound = *original;
+                    new_compound->base.flags |= TYPE_FLAG_is_transparent_union;
+                    
+                    if(original->amount_of_members == 0){
+                        begin_error_report(context);
+                        report_error(context, directive, "'transparent_union' union must have at least one pointer member.");
+                        report_error(context, original->identifier, "... Here is the union type.");
+                        end_error_report(context);
+                    }
+                    
+                    for(u32 member_index = 0; member_index < original->amount_of_members; member_index++){
+                        if(original->members[member_index].type->kind != AST_pointer_type){
+                            begin_error_report(context);
+                            report_error(context, directive, "'transparent_union' is currently only supported for unions whose members are all pointer types.");
+                            report_error(context, original->members[member_index].name, "... This member is not a pointer.");
+                            end_error_report(context);
+                        }
+                    }
+                    
+                    ret.type = &new_compound->base;
+                }
+            }else{
+                report_error(context, directive, "'transparent_union' can only be applied to a union.");
+            }
             expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__declspec'.");
+        }else{
+            // @cleanup: support declspecs here!
+            report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
+            skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
         }
         
         if(double_open){
