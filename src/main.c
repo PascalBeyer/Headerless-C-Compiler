@@ -409,6 +409,8 @@ static struct{
     enum output_file_type output_file_type;
     struct atom entry_point_name;
     
+    int compile_to_object;
+    
     struct ast_function *entry_point;
     
     struct string_list system_include_directories;     // full paths
@@ -444,7 +446,7 @@ static struct{
             } *macro_expansion_records;
             u64 amount_of_macro_expansion_records;
             
-        }  hacky_global_compilation_unit;
+        } hacky_global_compilation_unit;
         
         struct{
             struct compilation_unit *first_compilation_unit;
