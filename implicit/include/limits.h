@@ -18,10 +18,15 @@
 #define UINT_MAX 4294967295ui32
 #define ULLONG_MAX 18446744073709551615ui64
 
-// @note: For now assume windows and we don't care about int vs long.
+#if _WIN32
 #define LONG_MIN INT_MIN
 #define LONG_MAX INT_MAX
 #define ULONG_MAX UINT_MAX
+#else
+#define LONG_MIN LLONG_MIN
+#define LONG_MAX LLONG_MAX
+#define ULONG_MAX ULLONG_MAX
+#endif
 
 // Microsoft specific
 //   see https://learn.microsoft.com/en-us/cpp/c-runtime-library/data-type-constants?view=msvc-170
