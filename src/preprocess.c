@@ -4073,7 +4073,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             }
                             
                             maybe_push_file_to_include_stack(context, file);
-                            
                             continue;
                         }else{
                             assert(!have_postponed_directive);
@@ -4095,6 +4094,17 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             goto end;
                         }
                         
+                        // We have do handle the junk ourselves, as we will push new tokens.
+                        eat_whitespace_and_comments_raw(context);
+                        if(!peek_token_raw(context, TOKEN_newline)){
+                            report_warning(context, WARNING_junk_after_directive, push_token_copy(&context->scratch, get_current_token_raw(context)), "Junk after '#%.*s'.", directive_string.size, directive_string.data);
+                        }
+                        
+                        while(!peek_token_raw(context, TOKEN_newline)){
+                            next_token_raw(context);
+                        }
+                        got_newline = true;
+                        
                         struct file *parent_file = globals.file_table.data[directive.location_index];
                         
                         struct file *next_include = get_or_load_file_by_walking_system_include_directories(context, file_name, parent_file);
@@ -4104,6 +4114,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         }
                         
                         maybe_push_file_to_include_stack(context, next_include);
+                        continue;
                     }else if(directive_kind == DIRECTIVE_embed){
                         assert(!have_postponed_directive); // @paranoid
                         
