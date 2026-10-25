@@ -1003,7 +1003,16 @@ struct system_v_type_classification{
 } system_v_classify_type(struct context *context, struct ast_type *root_type){
     
     struct system_v_type_classification ret = {0};
-    if(root_type->kind == AST_void_type){
+    if(root_type->flags & TYPE_FLAG_is_intrin_type){
+        // * "Arguments of types _float128, _Decimal128, and _m128 are split into two halves.
+        //    The least significant ones belong to the class SSE, the most significant one to class SSEUP."
+        // * "Arguments of type __m256 are split into four eightbyte chunks.
+        //    The least significant one belongs to class SSE and all the others to SSEUP."
+        ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_sse;
+        for(u32 index = 1; index < root_type->size/8; index++){
+            ret.classification[index] = SYSTEM_V_TYPE_CLASSIFICATION_sse_upper;
+        }
+    }else if(root_type->kind == AST_void_type){
         ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_none;
     }else if(root_type->kind == AST_integer_type || root_type->kind == AST_atomic_integer_type || root_type->kind == AST_pointer_type){
         // "Arguments of types _Bool, char, short, int, long, long long and pointers are INTEGER."
@@ -1011,20 +1020,11 @@ struct system_v_type_classification{
     }else if(root_type->kind == AST_float_type){
         // "Arguments of types float, double, _Decimal32, _Decimal64 and __m64 are SSE."
         ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_sse;
-    }else if(root_type->flags & TYPE_FLAG_is_intrin_type){
-        // * "Arguments of types _float128, _Decimal128, and _m128 are split into two halves.
-        //    The least significant ones belong to the class SSE, the most significat one to class SSEUP."
-        // * "Arguments of type __m256 are split into four eightbyte chunks.
-        //    The least significant one belogs to class SSE and all the others to SSEUP."
-        ret.classification[0] = SYSTEM_V_TYPE_CLASSIFICATION_sse;
-        for(u32 index = 1; index < root_type->size/8; index++){
-            ret.classification[index] = SYSTEM_V_TYPE_CLASSIFICATION_sse_upper;
-        }
     }else if(root_type->size <= (4 * 8) && !(root_type->flags & TYPE_FLAG_contains_unaligned_type)){
         assert(root_type->kind == AST_struct || root_type->kind == AST_union);
         
         // "Each field of an object is classified recursively so that always two fields are considered.
-        //  The resulting class is calculated according to thelasses of the fields in the eightbyte."
+        //  The resulting class is calculated according to the classes of the fields in the eightbyte."
         
         struct compound_stack_entry{
             u64 root_offset;
@@ -1061,7 +1061,7 @@ struct system_v_type_classification{
                         ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
                     }else if(type->flags & TYPE_FLAG_is_intrin_type){
                         ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
-                        for(u32 index = 1; index < root_type->size/8; index++){
+                        for(u32 index = 1; index < type->size/8; index++){
                             ret.classification[classification_index + index] = system_v_combine_type_classification(ret.classification[classification_index + index], SYSTEM_V_TYPE_CLASSIFICATION_sse_upper);
                         }
                     }else if(type->kind == AST_struct || type->kind == AST_union || type->kind == AST_array_type){
@@ -1098,7 +1098,7 @@ struct system_v_type_classification{
                         u64 offset = root_offset + element_type_size * element_index;
                         u64 classification_index = offset / 8;
                         ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
-                        for(u32 index = 1; index < root_type->size/8; index++){
+                        for(u32 index = 1; index < element_type->size/8; index++){
                             ret.classification[classification_index + index] = system_v_combine_type_classification(ret.classification[classification_index + index], SYSTEM_V_TYPE_CLASSIFICATION_sse_upper);
                         }
                     }
