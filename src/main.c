@@ -1997,12 +1997,16 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     // @cleanup: How do we handle this eventually...?
                     // 
                     
-                    if((redecl->flags & DECLARATION_FLAGS_is_extern) && !(decl->flags & DECLARATION_FLAGS_is_extern)){
-                        redecl->flags &= ~DECLARATION_FLAGS_is_extern;
-                    }
-                    
                     if((redecl->flags & DECLARATION_FLAGS_is_extern) && (decl->flags & DECLARATION_FLAGS_is_static)){
                         redecl->flags |= DECLARATION_FLAGS_is_static;
+                    }
+                    
+                    if((redecl->flags & DECLARATION_FLAGS_is_extern) && !(decl->flags & DECLARATION_FLAGS_is_extern)){
+                        redecl->flags &= ~DECLARATION_FLAGS_is_extern;
+                        
+                        if(decl->flags & DECLARATION_FLAGS_has_no_storage_class_specifier){
+                            redecl->flags |= DECLARATION_FLAGS_has_no_storage_class_specifier;
+                        }
                     }
                     
                     assert(!decl->assign_expr);
@@ -3910,11 +3914,13 @@ int main(int argc, char *argv[]){
     
     if(globals.cli_options.EP) globals.cli_options.quiet = 1;
     
+    #if 0
     // @cleanup: Warn when we compile to an .exe that none of these options are valid.
     if(globals.cli_options.MD + globals.cli_options.MDd + globals.cli_options.MT + globals.cli_options.MTd > 1){
         print("Error: More than one of the command line options /MD /MDd /MT /MTd are specified.\n");
         return 1;
     }
+    #endif
     
     // 
     // Deduce the files we have to parse.
@@ -4193,6 +4199,11 @@ int main(int argc, char *argv[]){
     
     globals.compile_to_object = globals.output_file_type == OUTPUT_FILE_obj || (globals.output_file_type == OUTPUT_FILE_elf && globals.cli_options.obj); 
     
+    if(globals.cli_options.fPIC && !(globals.output_file_type == OUTPUT_FILE_elf && globals.compile_to_object)){
+        print("Error: The '-fPIC' option is only supported when compiling ELF object files.\n");
+        return 1;
+    }
+    
     if(globals.compile_to_object) globals.cli_options.no_entry = 1;
     
     int no_standard_library = globals.cli_options.no_stdlib;
@@ -4445,9 +4456,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 
                 string_list_postfix_no_copy(&predefines, arena, hardcoded_predefines);
                 
-                if(globals.cli_options.MD || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _DLL 1\n"));
-                if(globals.cli_options.MT || globals.cli_options.MTd || globals.cli_options.MD || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _MT 1\n"));
-                if(globals.cli_options.MTd || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _DEBUG 1\n"));
+                // if(globals.cli_options.MD || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _DLL 1\n"));
+                // if(globals.cli_options.MT || globals.cli_options.MTd || globals.cli_options.MD || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _MT 1\n"));
+                // if(globals.cli_options.MTd || globals.cli_options.MDd) string_list_postfix_no_copy(&predefines, arena, string("#define _DEBUG 1\n"));
                 
                 const char months[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
                 

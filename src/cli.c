@@ -23,6 +23,8 @@ enum cli_option_kind{
     CLI_OPTION_entry,
     CLI_OPTION_no_entry,
     CLI_OPTION_dll,
+    CLI_OPTION_shared,
+    CLI_OPTION_fPIC,
     CLI_OPTION_obj,
     CLI_OPTION_thread_count,
     CLI_OPTION_MP,
@@ -31,19 +33,18 @@ enum cli_option_kind{
     CLI_OPTION_D,
     CLI_OPTION_Wall,
     CLI_OPTION_Wnone,
+    CLI_OPTION_Wl,
     CLI_OPTION_W,
     CLI_OPTION_Wno,
     CLI_OPTION_incremental,
-    CLI_OPTION_MF,
     CLI_OPTION_l,
     CLI_OPTION_quiet,
     CLI_OPTION_EP,
     CLI_OPTION_P,
     CLI_OPTION_Fi,
-    CLI_OPTION_MD,
-    CLI_OPTION_MDd,
+    CLI_OPTION_write_dependencies,
     CLI_OPTION_MT,
-    CLI_OPTION_MTd,
+    CLI_OPTION_MF,
     CLI_OPTION_std,
     CLI_OPTION_warning_limit,
     CLI_OPTION_error_limit,
@@ -97,37 +98,42 @@ struct cli_option_hash_table_entry{
     [33] = {{3, (u8 *)"dll"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
     [22] = {{2, (u8 *)"ld"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
     [25] = {{3, (u8 *)"ldd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
+    [28] = {{6, (u8 *)"shared"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_shared, -1},
+    [8] = {{4, (u8 *)"fpic"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_fPIC, -1},
     [32] = {{3, (u8 *)"obj"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
-    [8] = {{1, (u8 *)"c"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
+    [9] = {{1, (u8 *)"c"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
     [70] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
     [66] = {{2, (u8 *)"mp"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MP, -1},
     [14] = {{1, (u8 *)"i"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
+    [83] = {{7, (u8 *)"isystem"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
+    [63] = {{9, (u8 *)"idirafter"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [42] = {{7, (u8 *)"libpath"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_LIBPATH, 0},
-    [9] = {{1, (u8 *)"d"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_D, 0},
+    [10] = {{1, (u8 *)"d"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_D, 0},
     [23] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
     [12] = {{5, (u8 *)"wnone"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wnone, -1},
-    [28] = {{1, (u8 *)"w"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_W, 0},
+    [11] = {{2, (u8 *)"wl"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_Wl, 0},
+    [30] = {{1, (u8 *)"w"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_W, 0},
     [57] = {{3, (u8 *)"wno"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_Wno, 0},
     [0] = {{2, (u8 *)"wd"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_Wno, 0},
     [119] = {{11, (u8 *)"incremental"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_incremental, 0},
-    [56] = {{2, (u8 *)"mf"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_MF, 0},
     [17] = {{1, (u8 *)"l"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_l, 0},
     [15] = {{5, (u8 *)"quiet"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
     [51] = {{6, (u8 *)"nologo"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
     [58] = {{2, (u8 *)"ep"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_EP, -1},
+    [16] = {{1, (u8 *)"e"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_EP, -1},
     [24] = {{1, (u8 *)"p"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_P, -1},
     [85] = {{2, (u8 *)"fi"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_Fi, 0},
-    [55] = {{2, (u8 *)"md"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MD, -1},
-    [92] = {{3, (u8 *)"mdd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MDd, -1},
-    [71] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MT, -1},
-    [106] = {{3, (u8 *)"mtd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MTd, -1},
+    [88] = {{17, (u8 *)"writedependencies"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_write_dependencies, -1},
+    [55] = {{2, (u8 *)"md"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_write_dependencies, -1},
+    [71] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_MT, 0},
+    [56] = {{2, (u8 *)"mf"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_MF, 0},
     [112] = {{3, (u8 *)"std"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_std, 0},
     [59] = {{12, (u8 *)"warninglimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_warning_limit, 0},
     [46] = {{10, (u8 *)"errorlimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_error_limit, 0},
     [74] = {{11, (u8 *)"syntaxcheck"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
     [114] = {{2, (u8 *)"zs"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
     [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
-    [94] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
+    [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [43] = {{6, (u8 *)"ignore"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_ignore, 0},
     [52] = {{4, (u8 *)"link"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_link, -1},
@@ -152,6 +158,7 @@ enum std{
     STD_c17     =  3, // Use c17 standard.
     STD_c23     =  4, // Use c23 standard.
     STD_clatest =  5, // Use the newest c standard.
+    STD_gnu99   =  6, // Use GNU 99 standard.
 };
 
 enum warning{
@@ -220,6 +227,8 @@ struct cli_options{
     struct string entry; // Explicitly set the entry point symbol.
     int no_entry; // Indicates that there is no entry point. This option implies /DLL.
     int dll; // Produce a Dynamic Link Library.
+    int shared; // Produce a shared library.
+    int fPIC; // Generate position-independent code for ELF object files.
     int obj; // Produce an object file instead of an executable.
     int thread_count_specified;
     u64 thread_count; // Sets the amount of threads to be used during compilation. Default: 1
@@ -229,17 +238,16 @@ struct cli_options{
     struct string_list D; // Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
     int Wall; // Enable all warnings.
     int Wnone; // Disable all warnings.
+    struct string_list Wl; // Pass options to the system linker.
     enum incremental incremental; // Does nothing, here for MSVC cli-compatibility.
-    struct string MF; // Currently ignored, is supposed to produce a .dep file?
     struct string_list l; // Link to the specified library.
     int quiet; // Print as little as necessary.
     int EP; // Print the preprocessed file to stdout.
     int P; // Print the preprocessed file to stdout.
     struct string Fi; // Sets the output file name for the preprocessed file.
-    int MD; // Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.
-    int MDd; // Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.
-    int MT; // Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.
-    int MTd; // Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.
+    int write_dependencies; // Write a dependency file.
+    struct string MT; // Sets the target name in the dependency file.
+    struct string MF; // Sets the file name of the dependency file.
     enum std std; // The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
     int warning_limit_specified;
     u64 warning_limit; // A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.
@@ -438,6 +446,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }else if(string_front_match_eat(&option, "D")){
                 option_argument_type = CLI_ARGUMENT_TYPE_string_list;
                 option_kind          = CLI_OPTION_D;
+            }else if(string_front_match_eat(&option, "Wl")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
+                option_kind          = CLI_OPTION_Wl;
             }else if(string_front_match_eat(&option, "W")){
                 option_argument_type = CLI_ARGUMENT_TYPE_warning;
                 option_kind          = CLI_OPTION_W;
@@ -447,15 +458,18 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }else if(string_front_match_eat(&option, "wd")){
                 option_argument_type = CLI_ARGUMENT_TYPE_warning;
                 option_kind          = CLI_OPTION_Wno;
-            }else if(string_front_match_eat(&option, "MF")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string;
-                option_kind          = CLI_OPTION_MF;
             }else if(string_front_match_eat(&option, "l")){
                 option_argument_type = CLI_ARGUMENT_TYPE_string_list;
                 option_kind          = CLI_OPTION_l;
             }else if(string_front_match_eat(&option, "Fi")){
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_Fi;
+            }else if(string_front_match_eat(&option, "MT")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_MT;
+            }else if(string_front_match_eat(&option, "MF")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_MF;
             }else if(string_front_match_eat(&option, "std")){
                 option_argument_type = CLI_ARGUMENT_TYPE_enum;
                 option_kind          = CLI_OPTION_std;
@@ -673,6 +687,20 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "If the program is using a DllMain\n"
                             "", 95);
                 }break;
+                case CLI_OPTION_shared:{
+                    print("-shared | Produce a shared library.\n\n");
+                    os_print_string(
+                            "This passes '-shared' to the system linker and does not link the C runtime\n"
+                            "startup object, which is only valid for executables.\n"
+                            "", 128);
+                }break;
+                case CLI_OPTION_fPIC:{
+                    print("-fPIC | Generate position-independent code for ELF object files.\n\n");
+                    os_print_string(
+                            "Only valid together with '-c'. Global data is accessed through the GOT so the\n"
+                            "resulting object can be linked into a shared library.\n"
+                            "", 132);
+                }break;
                 case CLI_OPTION_obj:{
                     print("-obj | Produce an object file instead of an executable.\n\n");
                     os_print_string(
@@ -724,6 +752,14 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "Disable all implemented warnings. To see a list of all warnings use `hlc.exe --help W`.\n"
                             "", 88);
                 }break;
+                case CLI_OPTION_Wl:{
+                    print("-Wl <options> | Pass options to the system linker.\n\n");
+                    os_print_string(
+                            "The argument is a comma separated list of linker options, matching the GCC\n"
+                            "'-Wl,' syntax. For example, '-Wl,-soname,libfoo.so.1' is passed to the\n"
+                            "linker as '-soname libfoo.so.1'.\n"
+                            "", 179);
+                }break;
                 case CLI_OPTION_W:{
                     print("-W <warning> | Enable specific warnings.\n\n");
                     os_print_string(
@@ -753,12 +789,6 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "no (2)                                  | This is what we do anyway :)\n"
                                 , 166);
                     }
-                }break;
-                case CLI_OPTION_MF:{
-                    print("-MF <file> | Currently ignored, is supposed to produce a .dep file?\n\n");
-                    os_print_string(
-                            "@incomplete\n"
-                            "", 12);
                 }break;
                 case CLI_OPTION_l:{
                     print("-l <library> | Link to the specified library.\n\n");
@@ -795,31 +825,40 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "E.g.: For `hlc /E test.c` it would be `test.id`.\n"
                             "", 113);
                 }break;
-                case CLI_OPTION_MD:{
-                    print("-MD | Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.\n\n");
+                case CLI_OPTION_write_dependencies:{
+                    print("-write_dependencies | Write a dependency file.\n\n");
                     os_print_string(
-                            "See https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170.\n"
-                            "", 103);
-                }break;
-                case CLI_OPTION_MDd:{
-                    print("-MDd | Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.\n\n");
-                    os_print_string(
-                            "See https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170.\n"
-                            "", 103);
+                            "The default dependency file is determined by the output file, simply appending \".d\".\n"
+                            "For example, for a simple file:\n"
+                            "\n"
+                            "> // hello.c\n"
+                            "> #include <stdio.h>\n"
+                            "> int main(){ print(\"Hello, World!\\n\"); }\n"
+                            "\n"
+                            "When compiled as `hlc hello.c -c -MD` will produce a file called `simple.d` looking as follows:\n"
+                            "\n"
+                            "> simple.o: simple.c /usr/include/stdc-predef.h /usr/include/stdio.h \\\n"
+                            ">  /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \\\n"
+                            ">  /usr/include/features.h /usr/include/features-time64.h \\\n"
+                            ">  /usr/include/x86_64-linux-gnu/bits/wordsize.h \\\n"
+                            ">  /usr/include/x86_64-linux-gnu/bits/timesize.h \\\n"
+                            ">  /usr/include/x86_64-linux-gnu/sys/cdefs.h \\\n"
+                            ">  ...\n"
+                            "\n"
+                            "These are used by build-systems for incremental compilation.\n"
+                            "", 701);
                 }break;
                 case CLI_OPTION_MT:{
-                    print("-MT | Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.\n\n");
+                    print("-MT <file> | Sets the target name in the dependency file.\n\n");
                     os_print_string(
-                            " \n"
-                            "https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170\n"
-                            "", 100);
+                            "TODO\n"
+                            "", 5);
                 }break;
-                case CLI_OPTION_MTd:{
-                    print("-MTd | Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.\n\n");
+                case CLI_OPTION_MF:{
+                    print("-MF <file> | Sets the file name of the dependency file.\n\n");
                     os_print_string(
-                            " \n"
-                            "https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170\n"
-                            "", 100);
+                            "TODO\n"
+                            "", 5);
                 }break;
                 case CLI_OPTION_std:{
                     print("-std <standard> | The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n\n");
@@ -831,7 +870,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "c17 (3)                                 | Use c17 standard.\n"
                                 "c23 (4)                                 | Use c23 standard.\n"
                                 "clatest (5)                             | Use the newest c standard.\n"
-                                , 309);
+                                "gnu99 (6)                               | Use GNU 99 standard.\n"
+                                , 372);
                     }
                 }break;
                 case CLI_OPTION_warning_limit:{
@@ -962,6 +1002,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -entry <name>               | Explicitly set the entry point symbol.\n"
                             "  -no_entry                   | Indicates that there is no entry point. This option implies /DLL.\n"
                             "  -dll                        | Produce a Dynamic Link Library.\n"
+                            "  -shared                     | Produce a shared library.\n"
+                            "  -fPIC                       | Generate position-independent code for ELF object files.\n"
                             "  -obj                        | Produce an object file instead of an executable.\n"
                             "  -thread_count <u64>         | Sets the amount of threads to be used during compilation. Default: 1\n"
                             "  -MP                         | Sets the amount of threads to the number of processors on the system.\n"
@@ -970,25 +1012,24 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -D <name[=<text>]>          | Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.\n"
                             "  -Wall                       | Enable all warnings.\n"
                             "  -Wnone                      | Disable all warnings.\n"
+                            "  -Wl <options>               | Pass options to the system linker.\n"
                             "  -W <warning>                | Enable specific warnings.\n"
                             "  -Wno <warning>              | Disable specific warnings.\n"
                             "  -incremental <enum>         | Does nothing, here for MSVC cli-compatibility.\n"
-                            "  -MF <file>                  | Currently ignored, is supposed to produce a .dep file?\n"
                             "  -l <library>                | Link to the specified library.\n"
                             "  -quiet                      | Print as little as necessary.\n"
                             "  -EP                         | Print the preprocessed file to stdout.\n"
                             "  -P                          | Print the preprocessed file to stdout.\n"
                             "  -Fi <file>                  | Sets the output file name for the preprocessed file.\n"
-                            "  -MD                         | Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.\n"
-                            "  -MDd                        | Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.\n"
-                            "  -MT                         | Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.\n"
-                            "  -MTd                        | Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.\n"
+                            "  -write_dependencies         | Write a dependency file.\n"
+                            "  -MT <file>                  | Sets the target name in the dependency file.\n"
+                            "  -MF <file>                  | Sets the file name of the dependency file.\n"
                             "  -std <standard>             | The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n"
                             "  -warning_limit <u64>        | A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.\n"
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 3267);
+                    , 3138);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1043,6 +1084,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             case CLI_OPTION_no_entry: cli_options->no_entry = 1; break;
             case CLI_OPTION_dll: cli_options->dll = 1; break;
+            case CLI_OPTION_shared: cli_options->shared = 1; break;
+            case CLI_OPTION_fPIC: cli_options->fPIC = 1; break;
             case CLI_OPTION_obj: cli_options->obj = 1; break;
             
             case CLI_OPTION_thread_count:{
@@ -1064,6 +1107,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             case CLI_OPTION_Wall: memset(warning_enabled, 1, sizeof(warning_enabled)); break;
             case CLI_OPTION_Wnone: memset(warning_enabled, 0, sizeof(warning_enabled)); break;
+            
+            case CLI_OPTION_Wl:{
+                string_list_postfix(&cli_options->Wl, arena, argument_string);
+            }break;
             
             case CLI_OPTION_W:{
                 int is_number = 1;
@@ -1170,10 +1217,6 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 }
             }break;
             
-            case CLI_OPTION_MF:{
-                cli_options->MF = argument_string;
-            }break;
-            
             case CLI_OPTION_l:{
                 string_list_postfix(&cli_options->l, arena, argument_string);
             }break;
@@ -1184,10 +1227,15 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_Fi:{
                 cli_options->Fi = argument_string;
             }break;
-            case CLI_OPTION_MD: cli_options->MD = 1; break;
-            case CLI_OPTION_MDd: cli_options->MDd = 1; break;
-            case CLI_OPTION_MT: cli_options->MT = 1; break;
-            case CLI_OPTION_MTd: cli_options->MTd = 1; break;
+            case CLI_OPTION_write_dependencies: cli_options->write_dependencies = 1; break;
+            
+            case CLI_OPTION_MT:{
+                cli_options->MT = argument_string;
+            }break;
+            
+            case CLI_OPTION_MF:{
+                cli_options->MF = argument_string;
+            }break;
             
             case CLI_OPTION_std:{
                 if(string_match_case_insensitive(argument_string, string("c99"))){
@@ -1200,6 +1248,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                     cli_options->std = STD_c23;
                 }else if(string_match_case_insensitive(argument_string, string("clatest"))){
                     cli_options->std = STD_clatest;
+                }else if(string_match_case_insensitive(argument_string, string("gnu99"))){
+                    cli_options->std = STD_gnu99;
                 }else{
                     print("Error: Unhandled value '%.*s' for command line option '%s'.\n", argument_string.size, argument_string.data, option_cstring);
                     return 0;

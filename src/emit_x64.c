@@ -2552,6 +2552,9 @@ struct emit_location *get_emit_location_for_declaration(struct context *context,
             struct emit_location *address = emit_location_rip_relative(context, &globals.typedef_u64, &decl->base);
             ret = emit_location_register_relative(context, decl->type, address, 0, 0);
         }
+    }else if(globals.cli_options.fPIC && (decl->flags & (DECLARATION_FLAGS_is_extern|DECLARATION_FLAGS_has_no_storage_class_specifier)) && decl->kind == IR_declaration){
+        struct emit_location *got_entry = emit_location_rip_relative(context, &globals.typedef_u64, &decl->base);
+        ret = emit_location_register_relative(context, decl->type, got_entry, 0, 0);
     }else if(decl->flags & (DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_local_persist)){
         ret = emit_location_rip_relative(context, decl->type, &decl->base);
     }else{
@@ -5365,6 +5368,15 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 smm location = emit_location_stack_at - 1 - (ir_kind == IR_load_address_lhs);
                 
                 struct emit_location *loc = emit_location_stack[location];
+                
+                if(globals.cli_options.fPIC && loc->ir && loc->ir->kind == IR_function){
+                    struct ast_declaration *decl = (struct ast_declaration *)loc->ir;
+                    
+                    if(decl->flags & (DECLARATION_FLAGS_is_extern|DECLARATION_FLAGS_has_no_storage_class_specifier)){
+                        struct emit_location *got_entry = emit_location_rip_relative(context, &globals.typedef_u64, loc->ir);
+                        loc = emit_location_register_relative(context, decl->type, got_entry, 0, 0);
+                    }
+                }
                 
                 struct emit_location *loaded = emit_load_address(context, loc, allocate_register(context, REGISTER_KIND_gpr));
                 free_emit_location(context, loc);

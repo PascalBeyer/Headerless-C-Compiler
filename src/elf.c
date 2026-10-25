@@ -3500,13 +3500,25 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
                 u32 source_symbol_index = 0;
                 smm addend = 0;
                 
+                u8 opcode = function->memory_location[patch->location_offset_in_dest_declaration - 1];
+                
                 enum ir_kind source_kind = patch->source->kind;
+                
+                u32 relocation_type = 0;
                 
                 if(source_kind == IR_function || source_kind == IR_declaration){
                     struct ast_declaration *source_declaration = (struct ast_declaration *)patch->source;
                     
                     source_symbol_index = (u32)source_declaration->symbol_table_index;
                     addend = patch->location_offset_in_source_declaration - displacement_to_instruction_end;
+                    
+                    if(globals.cli_options.fPIC && (source_declaration->flags & (DECLARATION_FLAGS_is_extern|DECLARATION_FLAGS_has_no_storage_class_specifier))){
+                        if(source_kind == IR_function && opcode == 0xe8){
+                            relocation_type = /*R_X86_64_PLT32*/4;
+                        }else{
+                            relocation_type = /*R_X86_64_GOTPCREL*/9;
+                        }
+                    }
                 }else if(source_kind == IR_emitted_float_literal){
                     struct ir_emitted_float_literal *lit = (struct ir_emitted_float_literal *)patch->source;
                     
@@ -3519,12 +3531,11 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
                     addend = (smm)lit->relative_virtual_address + patch->location_offset_in_source_declaration - displacement_to_instruction_end;
                 }else invalid_code_path;
                 
-                // A direct call is encoded as 'e8 <rel32>' and should use the PLT
-                // when the callee is defined in another object or shared library.
-                u32 relocation_type = /*R_X86_64_PC32*/2;
-                if(patch->location_offset_in_dest_declaration > 0){
-                    u8 opcode = function->memory_location[patch->location_offset_in_dest_declaration - 1];
-                    if(opcode == 0xE8) relocation_type = /*R_X86_64_PLT32*/4;
+                if(!relocation_type){
+                    relocation_type = /*R_X86_64_PC32*/2;
+                    if(patch->location_offset_in_dest_declaration > 0){
+                        if(opcode == 0xE8) relocation_type = /*R_X86_64_PLT32*/4;
+                    }
                 }
                 
                 struct elf_relocation_addend *relocation = relocations + relocation_at++;

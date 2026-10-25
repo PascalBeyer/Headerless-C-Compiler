@@ -1153,10 +1153,10 @@ void write_obj(struct string output_file_path, struct memory_arena *arena, struc
     // Options to control the crt:
     //     https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170
     struct string crtlib = string("/DEFAULTLIB:\"LIBCMTD\" ");
-    if(globals.cli_options.MD)  crtlib = string("/DEFAULTLIB:\"MSVCRT\" ");
-    if(globals.cli_options.MDd) crtlib = string("/DEFAULTLIB:\"MSVCRTD\" ");
-    if(globals.cli_options.MT)  crtlib = string("/DEFAULTLIB:\"LIBCMT\" ");
-    if(globals.cli_options.MTd) crtlib = string("/DEFAULTLIB:\"LIBCMTD\" ");
+    // if(globals.cli_options.MD)  crtlib = string("/DEFAULTLIB:\"MSVCRT\" ");
+    // if(globals.cli_options.MDd) crtlib = string("/DEFAULTLIB:\"MSVCRTD\" ");
+    // if(globals.cli_options.MT)  crtlib = string("/DEFAULTLIB:\"LIBCMT\" ");
+    // if(globals.cli_options.MTd) crtlib = string("/DEFAULTLIB:\"LIBCMTD\" ");
     
     string_list_postfix(&directives, scratch, crtlib);
     string_list_postfix(&directives, scratch, string("/DEFAULTLIB:\"OLDNAMES\" /STACK:0x1000000,0x1000000 "));

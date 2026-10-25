@@ -557,6 +557,7 @@ func void ast_list_append(struct ast_list *list, struct memory_arena *arena, enu
 #define DECLARATION_FLAGS_is_reachable_from_entry                  0x40
 #define DECLARATION_FLAGS_is_static                                0x80
 
+#define DECLARATION_FLAGS_has_no_storage_class_specifier           0x100
 #define DECLARATION_FLAGS_is_dllimport                             0x200
 #define DECLARATION_FLAGS_is_dllexport                             0x400
 #define DECLARATION_FLAGS_is_selectany                             0x800

@@ -9140,10 +9140,17 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             function->offset_in_text_section = -1; // Set atomically when done emitting.
             function->compilation_unit = context->current_compilation_unit;
             
-            if(!context->current_scope) function->as_decl.flags |= DECLARATION_FLAGS_is_global;
-            
+            if(specifiers.specifier_flags & SPECIFIER_extern)    function->as_decl.flags |= DECLARATION_FLAGS_is_extern;
             if(specifiers.specifier_flags & SPECIFIER_static)    function->as_decl.flags |= DECLARATION_FLAGS_is_static;
             if(specifiers.specifier_flags & SPECIFIER_selectany) function->as_decl.flags |= DECLARATION_FLAGS_is_selectany;
+            
+            if(!context->current_scope){
+                function->as_decl.flags |= DECLARATION_FLAGS_is_global;
+                
+                if(!(specifiers.specifier_flags & (SPECIFIER_typedef|SPECIFIER_extern|SPECIFIER_static|SPECIFIER_thread_local|SPECIFIER_dllimport|SPECIFIER_dllexport))){
+                    function->as_decl.flags |= DECLARATION_FLAGS_has_no_storage_class_specifier;
+                }
+            }
             
             if(specifiers.specifier_flags & SPECIFIER_inline_asm){
                 
@@ -9364,7 +9371,13 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(specifiers.specifier_flags & SPECIFIER_thread_local) decl->flags |= DECLARATION_FLAGS_is_thread_local;
             
-            if(!context->current_scope) decl->flags |= DECLARATION_FLAGS_is_global;
+            if(!context->current_scope){
+                decl->flags |= DECLARATION_FLAGS_is_global;
+                
+                if(!(specifiers.specifier_flags & (SPECIFIER_typedef|SPECIFIER_extern|SPECIFIER_static|SPECIFIER_thread_local|SPECIFIER_dllimport|SPECIFIER_dllexport))){
+                    decl->flags |= DECLARATION_FLAGS_has_no_storage_class_specifier;
+                }
+            }
             
             decl->compilation_unit = context->current_compilation_unit;
             

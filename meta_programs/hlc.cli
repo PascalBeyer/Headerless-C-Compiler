@@ -116,6 +116,16 @@ For example:
 This option is used to set the output file type to be a DLL.
 If the program is using a DllMain
 
+/shared - Produce a shared library.
+
+This passes '-shared' to the system linker and does not link the C runtime
+startup object, which is only valid for executables.
+
+/fPIC - Generate position-independent code for ELF object files.
+
+Only valid together with '-c'. Global data is accessed through the GOT so the
+resulting object can be linked into a shared library.
+
 /obj | /c - Produce an object file instead of an executable.
 
 Using the /obj option allows you to compile in "more classic" c-compiler fashion.
@@ -134,7 +144,7 @@ The number of threads must be between 1 and 10 times the amount of cores your sy
 
 This is the "whatever" throw some cores at it option.
 
-/I <dir_list> - Specify an additional include directory.
+/I <dir_list> | /isystem <dir_list> | /idirafter <dir_list> - Specify an additional include directory.
 
 This makes it possible to use your own headers in <>-includes.
 
@@ -151,6 +161,12 @@ Enable all implemented warnings. To see a list of all warnings use `hlc.exe --he
 /Wnone - Disable all warnings.
 
 Disable all implemented warnings. To see a list of all warnings use `hlc.exe --help W`.
+
+/Wl <options:string_list> - Pass options to the system linker.
+
+The argument is a comma separated list of linker options, matching the GCC
+'-Wl,' syntax. For example, '-Wl,-soname,libfoo.so.1' is passed to the
+linker as '-soname libfoo.so.1'.
 
 /W <warning> - Enable specific warnings.
 
@@ -172,10 +188,6 @@ Otherwise, -INCREMENTAL:no would be interpreted as -I NCREMENTAL:no, but "NCREME
 
 -> no - This is what we do anyway :)
 
-/MF <file:string> - Currently ignored, is supposed to produce a .dep file?
-
-@incomplete
-
 /l <library:string_list> - Link to the specified library.
 
 Option is equivalent to passing `library.lib` on the command line.
@@ -188,7 +200,7 @@ Equivalent to
 
 For everyone that enjoys their silence.
 
-/EP - Print the preprocessed file to stdout.
+/EP | /E - Print the preprocessed file to stdout.
 
 This is very incomplete and mostly here to make build-systems happy.
 
@@ -201,21 +213,34 @@ This is very incomplete and mostly here to make build-systems happy.
 Default is derived from the name of the first compilation unit.
 E.g.: For `hlc /E test.c` it would be `test.id`.
 
-/MD - Use `MSVCRT.lib` as run-time library. (Object Only). Define `_MT` and `_DLL`.
+/write_dependencies | /MD - Write a dependency file.
 
-See https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170.
+The default dependency file is determined by the output file, simply appending ".d".
+For example, for a simple file:
 
-/MDd - Use `MSVCRTD.lib` as run-time library. (Object Only).  Define `_DEBUG`, `_MT` and `_DLL`.
+> // hello.c
+> #include <stdio.h>
+> int main(){ print("Hello, World!\n"); }
 
-See https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170.
+When compiled as `hlc hello.c -c -MD` will produce a file called `simple.d` looking as follows:
 
-/MT - Use `LIBCMT.lib` as run-time library. (Object Only). Define `_MT`.
- 
-https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170
+> simple.o: simple.c /usr/include/stdc-predef.h /usr/include/stdio.h \
+>  /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
+>  /usr/include/features.h /usr/include/features-time64.h \
+>  /usr/include/x86_64-linux-gnu/bits/wordsize.h \
+>  /usr/include/x86_64-linux-gnu/bits/timesize.h \
+>  /usr/include/x86_64-linux-gnu/sys/cdefs.h \
+>  ...
 
-/MTd - Use `LIBCMTD.lib` as run-time library. (Object Only). Define `_DEBUG` and `_MT`. This is the default.
- 
-https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170
+These are used by build-systems for incremental compilation.
+
+/MT <file:string> - Sets the target name in the dependency file.
+
+TODO
+
+/MF <file:string> - Sets the file name of the dependency file.
+
+TODO
 
 /std <standard:enum> - The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
 
@@ -228,6 +253,8 @@ https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-libr
 -> c23 - Use c23 standard.
 
 -> clatest - Use the newest c standard.
+
+-> gnu99 - Use GNU 99 standard.
 
 /warning_limit <u64> - A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis. 
 
