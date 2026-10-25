@@ -4736,7 +4736,9 @@ case NUMBER_KIND_##type:{ \
                     explicit_number_kind_case(u32, ui32);
                     explicit_number_kind_case(u64, ui64);
                     
+#ifdef _WIN32
                     case NUMBER_KIND_long:
+#endif
                     case NUMBER_KIND_int:{
                         
                         if(val <= max_s32){
@@ -4762,6 +4764,9 @@ case NUMBER_KIND_##type:{ \
                             operand.defined_type  = null;
                         }
                     }break;
+#ifndef _WIN32
+                    case NUMBER_KIND_long:
+#endif
                     case NUMBER_KIND_long_long:{
                         if(val <= max_s64){
                             lit->_s64 = (s64)val;
@@ -4773,7 +4778,10 @@ case NUMBER_KIND_##type:{ \
                             operand.defined_type  = null;
                         }
                     }break;
+                    
+#ifdef _WIN32
                     case NUMBER_KIND_unsigned_long:
+#endif
                     case NUMBER_KIND_unsigned:{
                         if(val <= max_u32){
                             lit->_u32 = (u32)val;
@@ -4785,6 +4793,10 @@ case NUMBER_KIND_##type:{ \
                             operand.defined_type  = null;
                         }
                     }break;
+                    
+#ifndef _WIN32
+                    case NUMBER_KIND_unsigned_long:
+#endif
                     case NUMBER_KIND_unsigned_long_long:{
                         lit->_u64 = val;
                         operand.resolved_type = &globals.typedef_u64;
@@ -4825,7 +4837,9 @@ case NUMBER_KIND_##type:{ \
                     
 #undef explicit_number_kind_case
                     
-                    case NUMBER_KIND_long: // @cleanup: if we do long vs int think about this
+#ifdef _WIN32
+                    case NUMBER_KIND_long:
+#endif
                     case NUMBER_KIND_int:{
                         if(val <= max_s32){
                             enum ast_kind *defined_type = 0;
@@ -4839,6 +4853,9 @@ case NUMBER_KIND_##type:{ \
                             break;
                         }
                     } // fallthrough
+#ifndef _WIN32
+                    case NUMBER_KIND_long:
+#endif
                     case NUMBER_KIND_long_long:{
                         if(val <= max_s64){
                             lit->_s64 = (s64)val;
@@ -4851,7 +4868,9 @@ case NUMBER_KIND_##type:{ \
                         operand.defined_type  = null;
                         report_warning(context, WARNING_integer_literal_too_large_to_be_signed, lit_token, "Integer literal exceeds the maximum value representable as a signed integer and is interpreted as unsigned.");
                     }break;
-                    case NUMBER_KIND_unsigned_long: // @cleanup: long vs int
+#ifdef _WIN32
+                    case NUMBER_KIND_unsigned_long:
+#endif
                     case NUMBER_KIND_unsigned:{
                         if(val <= max_u32){
                             lit->_u32 = (u32)val;
@@ -4863,6 +4882,9 @@ case NUMBER_KIND_##type:{ \
                             operand.defined_type  = null;
                         }
                     } break;
+#ifndef _WIN32
+                    case NUMBER_KIND_unsigned_long:
+#endif
                     case NUMBER_KIND_unsigned_long_long:{
                         lit->_u64 = val;
                         operand.resolved_type = &globals.typedef_u64;
@@ -8086,7 +8108,7 @@ case TOKEN_##type_name:{                                                 \
             
             case TOKEN_long:{
                 if(c_type & C_TYPE_long_long){
-                    report_syntax_error(context, token, "Tripple 'long'.");
+                    report_syntax_error(context, token, "Triple 'long'.");
                 }else if(c_type & C_TYPE_long){
                     c_type |= C_TYPE_long_long;
                 }else{
