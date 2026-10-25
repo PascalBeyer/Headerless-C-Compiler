@@ -1653,6 +1653,7 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
     enum ast_kind *defined_type_specifier = null;
     
     struct token *token = get_current_token(context);
+    
     switch(token->type){
         case TOKEN_identifier:{
             struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, token, /*silent*/true);
@@ -1675,7 +1676,7 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
         // 
         // All tokens staring a type-name:
         // 
-        case TOKEN_volatile: case TOKEN_const: case TOKEN_unaligned: case TOKEN_restrict: case TOKEN_atomic:
+        case TOKEN_volatile: case TOKEN_const: case TOKEN_unaligned: case TOKEN_restrict: case TOKEN_atomic: case TOKEN_typeof:
         
         case TOKEN_signed: case TOKEN_unsigned:
         
@@ -8853,6 +8854,20 @@ case TOKEN_##type_name:{                                                 \
                 }
             }break;
             
+            case TOKEN_typeof:{
+                expect_token(context, TOKEN_open_paren, "Expected '(' after typeof.");
+                
+                u8 *ir_arena_start = arena_current(&context->ir_arena);
+                struct expr operand = parse_expression(context, /*should_skip_comma_expression*/false);
+                expect_token(context, TOKEN_closed_paren, "Expected ')' after typeof expression.");
+                
+                // The operand of typeof is not evaluated.
+                memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
+                context->ir_arena.current = ir_arena_start;
+                
+                specifiers.type_specifier = operand.resolved_type;
+            }break;
+            
             default:{
                 prev_token(context);
                 should_break = 1;
@@ -10097,6 +10112,7 @@ func void parse_statement(struct context *context){
         }break;
         
         // @cleanup: noreturn, inline, ?
+        case TOKEN_typeof:
         case TOKEN_alignas: case TOKEN_atomic: 
         case TOKEN_declspec:
         case TOKEN_unaligned: case TOKEN_restrict:

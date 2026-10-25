@@ -92,6 +92,7 @@ enum token_type{
     
     TOKEN_sizeof,
     TOKEN_alignof,
+    TOKEN_typeof,
     
     TOKEN_while,
     TOKEN_if,
@@ -181,6 +182,11 @@ static struct{
     {const_string("_Alignof"),      TOKEN_alignof},
     {const_string("__alignof"),     TOKEN_alignof},
     {const_string("__builtin_alignof"),     TOKEN_alignof}, // Apperantly, this is supported by MSVC.
+    
+    {const_string("typeof"), TOKEN_typeof},
+    {const_string("__typeof"), TOKEN_typeof},
+    {const_string("__typeof__"), TOKEN_typeof},
+    
     {const_string("return"),        TOKEN_return},
     {const_string("__unaligned"),   TOKEN_unaligned},
     {const_string("__restrict"),    TOKEN_restrict},
