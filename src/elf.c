@@ -752,6 +752,15 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         }
     }
     
+    u64 absolute_patches = 0;
+    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
+        struct context *thread_context = globals.thread_infos[thread_index].context;
+        for(struct patch_node *patch = thread_context->local_patch_list.first; patch; patch = patch->next){
+            if(patch->kind == PATCH_absolute){
+                absolute_patches++;
+            }
+        }
+    }
     
     // 
     // Start writing the ELF file
@@ -762,6 +771,10 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     //    Program headers
     //    section headers
     //    
+    
+    
+    b32 no_dynamic_base = globals.cli_options.no_dynamic_base;
+    b32 needs_dynamic = (imports.count || data_imports.count || (absolute_patches && !no_dynamic_base)) != 0;
     
     push_align(arena, 0x1000);
     
@@ -801,7 +814,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     elf_header->abi = 3;
     elf_header->abi_version = 0;
     elf_header->object_file_type = /*ET_DYN*/3;
-    if(globals.cli_options.no_dynamic_base){
+    if(no_dynamic_base){
         elf_header->object_file_type = /*ET_EXEC*/2;
     }
     
@@ -873,7 +886,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
 }
     
     u64 virtual_image_base = 0;
-    if(globals.cli_options.no_dynamic_base) virtual_image_base = 0x400000;
+    if(no_dynamic_base) virtual_image_base = 0x400000;
     if(globals.cli_options.image_base_specified) virtual_image_base = globals.cli_options.image_base;
     
     u64 current_relative_virtual_address = 0;
@@ -1051,7 +1064,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     
     {
         // 
-        // @note: string literals are loaded rip realtive so emit them here in rdata
+        // @note: string literals are loaded rip relative so emit them here in rdata
         // 
         smm amount_of_strings = 0;
         
@@ -1116,7 +1129,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         fill_section_header(rodata, "rodata", SHT_PROGBITS, SHF_ALLOC, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
     }
     
-    if(imports.count || data_imports.count){
+    if(needs_dynamic){
         u8 *interp_section_start = arena_current(arena);
         u8 *interp_segment_start = interp_section_start;
         push_zero_terminated_string_copy(arena, string("/lib64/ld-linux-x86-64.so.2"));
@@ -1134,7 +1147,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     
     u32 hash_section_rva = 0;
     
-    if(imports.count || data_imports.count){
+    if(needs_dynamic){
         dynstr_section_index = section_header_at;
         dynstr_section_start = arena_current(arena);
         dynstr_section_rva = make_relative_virtual_address(ro_segment_start, dynstr_section_start);
@@ -1202,6 +1215,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             u32 *hash_section_header = push_data(arena, u32, 2);
             
             u32 hash_bucket_count = (u32)(2 * (imports.count + data_imports.count));
+            if(hash_bucket_count == 0) hash_bucket_count = 1; // The loader must never divide by zero.
             u32 hash_chain_count  = (u32)(imports.count + data_imports.count + 1);
             u32 *hash_buckets = push_data(arena, u32, hash_bucket_count);
             u32 *hash_chains  = push_data(arena, u32, hash_chain_count);
@@ -1266,24 +1280,13 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         fill_section_header(rela_plt, "rela.plt", SHT_RELA, SHF_ALLOC | SHF_INFO_LINK, /*alignment*/8, /*link*/(u32)dynsym_section_index, /*info(to be filled in)*/0, /*entry_size*/sizeof(struct elf_relocation_addend));
     }
     
-    
     u64 rela_dyn_section_index = 0;
     u32 rela_dyn_section_rva  = 0;
     u64 rela_dyn_section_size = 0;
     
     struct elf_relocation_addend *rela_dyn_relocations = 0;
     
-    u64 absolute_patches = 0;
-    for(smm thread_index = 0; thread_index < globals.thread_count; thread_index++){
-        struct context *thread_context = globals.thread_infos[thread_index].context;
-        for(struct patch_node *patch = thread_context->local_patch_list.first; patch; patch = patch->next){
-            if(patch->kind == PATCH_absolute){
-                absolute_patches++;
-            }
-        }
-    }
-    
-    if(data_imports.count || absolute_patches){
+    if(data_imports.count || (absolute_patches && !no_dynamic_base)){
         push_align(arena, 8);
         u8 *rela_dyn_section_start = arena_current(arena);
         rela_dyn_section_rva = make_relative_virtual_address(ro_segment_start, rela_dyn_section_start);
@@ -1442,7 +1445,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     
     u8 *rw_segment_start = arena_current(arena);
     
-    if(imports.count || data_imports.count || absolute_patches){
+    if(needs_dynamic){
         push_align(arena, 8);
         
         u8 *got_plt_section_start = arena_current(arena);
@@ -1516,7 +1519,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 // Now that we know where the got is, fill out the rela.dyn relocations:
                 
                 for(smm symbol_index = 0; symbol_index < data_imports.count; symbol_index++){
-                    struct elf_relocation_addend *relocation = rela_dyn_relocations + symbol_index;
+                    struct elf_relocation_addend *relocation = rela_dyn_relocations + absolute_patches + symbol_index;
                     relocation->info = ((imports.count + symbol_index + 1) << 32) | /*R_X86_64_GLOB_DAT*/6;
                     relocation->offset = virtual_image_base + got_section_rva + 8 * symbol_index;
                     relocation->addend = 0;
@@ -1534,7 +1537,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct(arena, u64) = import_library_node->name.data - dynstr_section_start;
         }
         
-        if(imports.count || data_imports.count){
+        if(needs_dynamic){
             *push_struct(arena, u64) = /*DT_HASH*/4;
             *push_struct(arena, u64) = virtual_image_base + hash_section_rva;
             
@@ -1552,6 +1555,12 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             *push_struct(arena, u64) = /*DT_FLAGS*/0x1e;
             *push_struct(arena, u64) = /*DF_BIND_NOW*/8;
+            
+            *push_struct(arena, u64) = /*DT_DEBUG*/21;
+            *push_struct(arena, u64) = 0;
+            
+            *push_struct(arena, u64) = /*DT_FLAGS_1*/0x6ffffffb;
+            *push_struct(arena, u64) = /*DF_1_NOW*/1 | /*DF_1_PIE*/0x08000000;
         }
         
         if(imports.count){
@@ -1568,7 +1577,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             *push_struct(arena, u64) = virtual_image_base + rela_plt_section_rva;
         }
         
-        if(data_imports.count || absolute_patches){
+        if(data_imports.count || (absolute_patches && !no_dynamic_base)){
             *push_struct(arena, u64) = /*DT_RELA*/7;
             *push_struct(arena, u64) = virtual_image_base + rela_dyn_section_rva;
             
@@ -1577,6 +1586,10 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             *push_struct(arena, u64) = /*DT_RELAENT*/9;
             *push_struct(arena, u64) = sizeof(struct elf_relocation_addend);
+            
+            // This tells the dynamic linker, that the first `absolute_patches` many relocations are `R_X86_64_RELATIVE` relocations.
+            *push_struct(arena, u64) = /*DT_RELACOUNT*/0x6ffffff9;
+            *push_struct(arena, u64) = absolute_patches;
         }
         
         *push_struct(arena, u64) = /*DT_NONE*/0;
@@ -1792,8 +1805,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 
                 *(smm *)memory_location = source_location;
                 
-                if(!globals.cli_options.no_dynamic_base){
-                    struct elf_relocation_addend *relocation = rela_dyn_relocations + data_imports.count + absolute_patch_relocation_at++;
+                if(!no_dynamic_base){
+                    struct elf_relocation_addend *relocation = rela_dyn_relocations + absolute_patch_relocation_at++;
                     relocation->info   = /*R_X86_64_RELATIVE*/8;
                     relocation->offset = virtual_image_base + patch->dest_declaration->relative_virtual_address + patch->location_offset_in_dest_declaration;
                     relocation->addend = source_location;
@@ -1802,7 +1815,9 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         }
     }
     
-    assert(absolute_patch_relocation_at == absolute_patches);
+    if(!no_dynamic_base){
+        assert(absolute_patch_relocation_at == absolute_patches);
+    }
     
     // 
     // Debug information:
