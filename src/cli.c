@@ -153,12 +153,17 @@ enum incremental{
 };
 
 enum std{
-    STD_c99     =  1, // Use c99 standard.
-    STD_c11     =  2, // Use c11 standard.
-    STD_c17     =  3, // Use c17 standard.
-    STD_c23     =  4, // Use c23 standard.
-    STD_clatest =  5, // Use the newest c standard.
-    STD_gnu99   =  6, // Use GNU 99 standard.
+    STD_c89     =  1, // Use c89 standard.
+    STD_c90     =  2, // Use c90 standard.
+    STD_c99     =  3, // Use c99 standard.
+    STD_c11     =  4, // Use c11 standard.
+    STD_c17     =  5, // Use c17 standard.
+    STD_c23     =  6, // Use c23 standard.
+    STD_clatest =  7, // Use the newest c standard.
+    STD_gnu89   =  8, // Use GNU dialect of ISO C90.
+    STD_gnu90   =  9, // Use GNU dialect of ISO C90.
+    STD_gnu99   = 10, // Use GNU dialect of ISO C99.
+    STD_gnu11   = 11, // Use GNU dialect of ISO C11.
 };
 
 enum warning{
@@ -248,7 +253,7 @@ struct cli_options{
     int write_dependencies; // Write a dependency file.
     struct string MT; // Sets the target name in the dependency file.
     struct string MF; // Sets the file name of the dependency file.
-    enum std std; // The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
+    enum std std; // The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.
     int warning_limit_specified;
     u64 warning_limit; // A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.
     int error_limit_specified;
@@ -861,17 +866,22 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "", 5);
                 }break;
                 case CLI_OPTION_std:{
-                    print("-std <standard> | The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n\n");
+                    print("-std <standard> | The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.\n\n");
                     if(option_argument){
                     }else{
                         os_print_string(
-                                "c99 (1)                                 | Use c99 standard.\n"
-                                "c11 (2)                                 | Use c11 standard.\n"
-                                "c17 (3)                                 | Use c17 standard.\n"
-                                "c23 (4)                                 | Use c23 standard.\n"
-                                "clatest (5)                             | Use the newest c standard.\n"
-                                "gnu99 (6)                               | Use GNU 99 standard.\n"
-                                , 372);
+                                "c89 (1)                                 | Use c89 standard.\n"
+                                "c90 (2)                                 | Use c89 standard.\n"
+                                "c99 (3)                                 | Use c99 standard.\n"
+                                "c11 (4)                                 | Use c11 standard.\n"
+                                "c17 (5)                                 | Use c17 standard.\n"
+                                "c23 (6)                                 | Use c23 standard.\n"
+                                "clatest (7)                             | Use the newest c standard.\n"
+                                "gnu89 (8)                               | Use GNU dialect of ISO C90.\n"
+                                "gnu90 (9)                               | Use GNU dialect of ISO C90.\n"
+                                "gnu99 (10)                              | Use GNU dialect of ISO C99.\n"
+                                "gnu11 (11)                              | Use GNU dialect of ISO C11.\n"
+                                , 713);
                     }
                 }break;
                 case CLI_OPTION_warning_limit:{
@@ -1024,7 +1034,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -write_dependencies         | Write a dependency file.\n"
                             "  -MT <file>                  | Sets the target name in the dependency file.\n"
                             "  -MF <file>                  | Sets the file name of the dependency file.\n"
-                            "  -std <standard>             | The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.\n"
+                            "  -std <standard>             | The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.\n"
                             "  -warning_limit <u64>        | A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.\n"
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
@@ -1238,7 +1248,11 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             
             case CLI_OPTION_std:{
-                if(string_match_case_insensitive(argument_string, string("c99"))){
+                if(string_match_case_insensitive(argument_string, string("c89"))){
+                    cli_options->std = STD_c89;
+                }else if(string_match_case_insensitive(argument_string, string("c90"))){
+                    cli_options->std = STD_c90;
+                }else if(string_match_case_insensitive(argument_string, string("c99"))){
                     cli_options->std = STD_c99;
                 }else if(string_match_case_insensitive(argument_string, string("c11"))){
                     cli_options->std = STD_c11;
@@ -1248,8 +1262,14 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                     cli_options->std = STD_c23;
                 }else if(string_match_case_insensitive(argument_string, string("clatest"))){
                     cli_options->std = STD_clatest;
+                }else if(string_match_case_insensitive(argument_string, string("gnu89"))){
+                    cli_options->std = STD_gnu89;
+                }else if(string_match_case_insensitive(argument_string, string("gnu90"))){
+                    cli_options->std = STD_gnu90;
                 }else if(string_match_case_insensitive(argument_string, string("gnu99"))){
                     cli_options->std = STD_gnu99;
+                }else if(string_match_case_insensitive(argument_string, string("gnu11"))){
+                    cli_options->std = STD_gnu11;
                 }else{
                     print("Error: Unhandled value '%.*s' for command line option '%s'.\n", argument_string.size, argument_string.data, option_cstring);
                     return 0;

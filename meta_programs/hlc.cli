@@ -242,7 +242,11 @@ TODO
 
 TODO
 
-/std <standard:enum> - The standard to use e.g: c99, c11, c17, c23. This currently only sets __STDC__ and is otherwise ignored.
+/std <standard:enum> - The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.
+
+-> c89 - Use c89 standard.
+
+-> c90 - Use c90 standard.
 
 -> c99 - Use c99 standard.
 
@@ -254,7 +258,13 @@ TODO
 
 -> clatest - Use the newest c standard.
 
--> gnu99 - Use GNU 99 standard.
+-> gnu89 - Use GNU dialect of ISO C90.
+
+-> gnu90 - Use GNU dialect of ISO C90.
+
+-> gnu99 - Use GNU dialect of ISO C99.
+
+-> gnu11 - Use GNU dialect of ISO C11.
 
 /warning_limit <u64> - A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis. 
 
