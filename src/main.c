@@ -578,8 +578,6 @@ static struct{
     struct atom keyword_size;
     struct atom keyword_main;
     
-    b32 have_absolute_patch;
-    
     // We build a graph of all global declaration-references:
     // for executables  this will be all dllexports and the entry point.
     // for object files this will be all declaration with external storage class.
@@ -1037,10 +1035,6 @@ func void emit_patch(struct context *context, enum patch_kind kind, struct ir *s
     
     if(kind == PATCH_absolute){
         assert(patch_node->location_offset_in_dest_declaration + 8 <= get_declaration_size(dest_declaration));
-    }
-    
-    if(!globals.have_absolute_patch && kind == PATCH_absolute){
-        globals.have_absolute_patch = true;
     }
     
     sll_push_back(context->local_patch_list, patch_node);
