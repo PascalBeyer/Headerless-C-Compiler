@@ -641,3 +641,9 @@ For the longest time this compiler did not support octal constants, but sadly so
 Example:
 > int a, *b;
 > a == b; // Warning: Comparing integer to pointer: Left 'int', Right 'int*'.
+
+-> preprocessor_warning - The #warning preprocessor directive was used.
+
+Example:
+#warning Warn me please :) // Warning: Warn me please :)
+

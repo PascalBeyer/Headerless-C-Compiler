@@ -4236,8 +4236,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     }else invalid_code_path;
                 }break;
                 case DIRECTIVE_error:{
-                    // @note: this whole block is contained inside of an if that checks, that we are not
-                    //        '#if 0'ed out.
+                    eat_whitespace_and_comments_raw(context);
+                    
                     struct string_list error_list = zero_struct;
                     while(!peek_token_raw(context, TOKEN_newline)){
                         struct token token = next_token_raw(context);
@@ -4247,9 +4247,23 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     
                     struct string flattened = string_list_flatten(error_list, &context->scratch);
                     
-                    report_error(context, &directive, "'#error': '%.*s'", flattened.size, flattened.data);
+                    report_error(context, &directive, "#error: %.*s", flattened.size, flattened.data);
                     goto end;
                 }break; 
+                case DIRECTIVE_warning:{
+                    eat_whitespace_and_comments_raw(context);
+                    
+                    struct string_list warning_list = zero_struct;
+                    while(!peek_token_raw(context, TOKEN_newline)){
+                        struct token token = next_token_raw(context);
+                        struct string token_string = push_token_string(context, &token, true);
+                        string_list_postfix(&warning_list, &context->scratch, token_string);
+                    }
+                    
+                    struct string flattened = string_list_flatten(warning_list, &context->scratch);
+                    
+                    report_warning(context, WARNING_preprocessor_warning, &directive, "#warning: %.*s", flattened.size, flattened.data);
+                }break;
                 case DIRECTIVE_pragma:{
                     eat_whitespace_and_comments_raw(context);
                     

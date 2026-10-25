@@ -213,6 +213,7 @@ enum warning{
     WARNING_pragma_pack_pop_with_empty_stack              = 44, // The `#pragma pack(pop)` directive was used when the pragma pack stack was empty.
     WARNING_octal_constant_used                           = 45, // Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.
     WARNING_comparing_integer_to_pointer                  = 46, // Comparing an integer to a pointer without a cast is an MSVC extension.
+    WARNING_preprocessor_warning                          = 47, // The #warning preprocessor directive was used.
 };
 
 struct cli_options{
@@ -269,7 +270,7 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 47
+#define WARNING_count 48
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -323,6 +324,7 @@ struct warning_table_entry{
     [45] = {{27, (u8 *)"pragmapackpopwithemptystack"}, WARNING_pragma_pack_pop_with_empty_stack},
     [5] = {{17, (u8 *)"octalconstantused"}, WARNING_octal_constant_used},
     [7] = {{25, (u8 *)"comparingintegertopointer"}, WARNING_comparing_integer_to_pointer},
+    [8] = {{19, (u8 *)"preprocessorwarning"}, WARNING_preprocessor_warning},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -871,7 +873,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                     }else{
                         os_print_string(
                                 "c89 (1)                                 | Use c89 standard.\n"
-                                "c90 (2)                                 | Use c89 standard.\n"
+                                "c90 (2)                                 | Use c90 standard.\n"
                                 "c99 (3)                                 | Use c99 standard.\n"
                                 "c11 (4)                                 | Use c11 standard.\n"
                                 "c17 (5)                                 | Use c17 standard.\n"
@@ -881,7 +883,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "gnu90 (9)                               | Use GNU dialect of ISO C90.\n"
                                 "gnu99 (10)                              | Use GNU dialect of ISO C99.\n"
                                 "gnu11 (11)                              | Use GNU dialect of ISO C11.\n"
-                                , 713);
+                                , 709);
                     }
                 }break;
                 case CLI_OPTION_warning_limit:{
@@ -978,7 +980,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "pragma_pack_pop_with_empty_stack (44)   | The `#pragma pack(pop)` directive was used when the pragma pack stack was empty.\n"
                                 "octal_constant_used (45)                | Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.\n"
                                 "comparing_integer_to_pointer (46)       | Comparing an integer to a pointer without a cast is an MSVC extension.\n"
-                                , 4895);
+                                "preprocessor_warning (47)               | The #warning preprocessor directive was used.\n"
+                                , 4983);
                     }
                 }break;
                 invalid_default_case();
@@ -1039,7 +1042,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 3138);
+                    , 3184);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.

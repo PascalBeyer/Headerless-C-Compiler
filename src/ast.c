@@ -273,6 +273,7 @@ enum preprocessor_directive{
     DIRECTIVE_include_next,
     DIRECTIVE_embed,
     DIRECTIVE_error,
+    DIRECTIVE_warning,
     DIRECTIVE_pragma,
     DIRECTIVE_line,
     
@@ -303,6 +304,7 @@ static struct{
     { const_string("include_next"), DIRECTIVE_include_next },
     { const_string("embed"), DIRECTIVE_embed },
     { const_string("error"), DIRECTIVE_error },
+    { const_string("warning"), DIRECTIVE_warning },
     { const_string("pragma"), DIRECTIVE_pragma },
     { const_string("line"), DIRECTIVE_line },
 };
