@@ -1051,12 +1051,12 @@ __declspec(inline_asm) unsigned __int64 _byteswap_uint64(unsigned __int64 val){
 }
 
 
-__declspec(inline_asm) unsigned short __builtin_bswap16(unsigned short val){
+__declspec(inline_asm) unsigned __int16 __builtin_bswap16(unsigned __int16 val){
     ror val, 8
     return val
 }
 
-__declspec(inline_asm) unsigned long __builtin_bswap32(unsigned long val){
+__declspec(inline_asm) unsigned __int32 __builtin_bswap32(unsigned __int32 val){
     bswap val
     return val
 }
