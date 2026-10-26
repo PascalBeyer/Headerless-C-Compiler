@@ -938,6 +938,7 @@ struct context{
     smm temporary_stack_high_water_mark;
     
     smm va_reg_save_area_offset;
+    smm va_overflow_arg_area_offset;
     
     u32 va_float_register_start;
     u32 va_integer_register_start;

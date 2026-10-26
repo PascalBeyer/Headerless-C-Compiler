@@ -2680,7 +2680,9 @@ func struct emit_location *emit_intrinsic(struct context *context, struct ast_fu
         struct emit_location *va_reg_save_area = emit_location_stack_relative(context, &globals.typedef_u64, context->va_reg_save_area_offset);
         va_reg_save_area = emit_load_address(context, va_reg_save_area, allocate_register(context, REGISTER_KIND_gpr));
         
-        struct emit_location *overflow_arg_area = emit_location_stack_relative(context, &globals.typedef_u64, -(8 * (s32)__popcnt(context->current_function->pushed_register_mask)) - 8);
+        // This points just past all named arguments that were passed on
+        // the stack. It is computed by the variadic function prologue.
+        struct emit_location *overflow_arg_area = emit_location_stack_relative(context, &globals.typedef_u64, -context->va_overflow_arg_area_offset);
         overflow_arg_area = emit_load_address(context, overflow_arg_area, allocate_register(context, REGISTER_KIND_gpr));
         
         struct emit_location *valist = emit_load_gpr(context, argument_locations[0]);
@@ -6267,8 +6269,9 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
             
             function->stack_space_needed = align_up(function->stack_space_needed, 0x10);
             
-            context->va_float_register_start   = float_register_at;
-            context->va_integer_register_start = integer_register_at;
+            context->va_float_register_start      = float_register_at;
+            context->va_integer_register_start    = integer_register_at;
+            context->va_overflow_arg_area_offset  = stack_argument_at;
             
             // ; check the va args flags
             //    test al, al
