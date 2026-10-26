@@ -5184,6 +5184,7 @@ case NUMBER_KIND_##type:{ \
             expect_token(context, TOKEN_open_paren, "Expected a '(' after '_Generic'.");
             
             u8 *ir_arena_start = arena_current(&context->ir_arena);
+            u8 *ir_arena_reset = ir_arena_start;
             
             struct expr choice_expression = parse_expression(context, /*skip_comma_expression*/1);
             maybe_load_address_for_array_or_function(context, IR_load_address, &choice_expression);
@@ -5191,6 +5192,7 @@ case NUMBER_KIND_##type:{ \
             
             struct ast_type *choice = choice_expression.resolved_type;
             
+            memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
             context->ir_arena.current = ir_arena_start;
             
             struct expr default_expression = zero_struct;
@@ -5214,10 +5216,11 @@ case NUMBER_KIND_##type:{ \
                     }
                     
                     if(choosen_expression.ir){
-                        memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
-                        context->ir_arena.current = ir_arena_start;
+                        memset(ir_arena_reset, 0, context->ir_arena.current - ir_arena_reset);
+                        context->ir_arena.current = ir_arena_reset;
                     }else{
                         default_expression = expression;
+                        ir_arena_reset = arena_current(&context->ir_arena);
                     }
                 }else{
                     struct type_info_return type_name = maybe_parse_type_for_cast_or_sizeof(context);
@@ -5249,12 +5252,12 @@ case NUMBER_KIND_##type:{ \
                         }
                         
                         choosen_expression = expression;
-                        ir_arena_start = arena_current(&context->ir_arena);
+                        ir_arena_reset = arena_current(&context->ir_arena);
                     }else{
                         parse_expression(context, /*skip_comma_expression*/1);
                         
-                        memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
-                        context->ir_arena.current = ir_arena_start;
+                        memset(ir_arena_reset, 0, context->ir_arena.current - ir_arena_reset);
+                        context->ir_arena.current = ir_arena_reset;
                     }
                 }
             }
