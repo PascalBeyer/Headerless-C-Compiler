@@ -164,6 +164,7 @@ tokens {
     question_mark,
     
     comma,
+    dotdot,
     dotdotdot,
 }
 
@@ -288,7 +289,7 @@ hash:
     _ -> @default
 
 dot:
-   "." -> dotdot
+   "." -> dotdot, dotdot
    number -> pp-float, float_literal
    _ -> @default
 

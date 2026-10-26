@@ -3,7 +3,6 @@
 
 // @cleanup: make errors take asts, so we can print whole token ranges
 enum token_type{
-    
     TOKEN_invalid = 0,
     TOKEN_error = 1,
     TOKEN_hash = 2,
@@ -60,7 +59,8 @@ enum token_type{
     TOKEN_logical_or = 53,
     TOKEN_question_mark = 54,
     TOKEN_comma = 55,
-    TOKEN_dotdotdot = 56,
+    TOKEN_dotdot = 56,
+    TOKEN_dotdotdot = 57,
     
     TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro,
     
