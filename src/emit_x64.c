@@ -2319,10 +2319,17 @@ func struct emit_location *emit_load_bitfield(struct context *context, struct em
         emit(bit_size - bitfield->width);
     }
     
-    emit_location_allow_spilling(context, loc);
+    // Integer promotion for bit-fields. The value has been extracted using
+    // the storage width above, but its type is the promoted type.
+    if(bitfield->width < 32){
+        loc->type = &globals.typedef_s32;
+    }else if(bitfield->width == 32){
+        loc->type = type_is_signed(bitfield->base_type) ? &globals.typedef_s32 : &globals.typedef_u32;
+    }else{
+        loc->type = bitfield->base_type;
+    }
     
-    // Manually adjust the size to the size we expect.
-    // loc->size = (bitfield->width <= 32) ? 4 : 8; @hmm: what was this about?
+    emit_location_allow_spilling(context, loc);
     
     return loc;
 }

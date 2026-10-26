@@ -671,7 +671,7 @@ func void maybe_insert_cast_from_special_int_to_int(struct context *context, str
         struct ast_bitfield_type *bitfield = cast(struct ast_bitfield_type *)operand->resolved_type;
         
         // 
-        // "If an int can represent all values of the originaly type (as restricted by the width, 
+        // "If an int can represent all values of the original type (as restricted by the width, 
         //  for a bit-field), the value is converted to an int; otherwise it is converted to an
         //  unsigned int." (This assumes all bitfields are either _Bool, signed int or unsigned int).
         // 
