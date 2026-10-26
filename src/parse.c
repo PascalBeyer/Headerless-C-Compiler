@@ -1865,12 +1865,10 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
             
             struct ir_pointer_literal *pointer_literal_deref = (struct ir_pointer_literal *)lhs->ir;
             pointer_literal_deref->pointer += array->element_type->size * integer_literal_as_u64(index); // @cleanup: overflow?
+            pointer_literal_deref->type = array->element_type;
             
-            struct ast_type *pointer_type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type);
-            pointer_literal_deref->type = pointer_type;
-            
-            lhs->resolved_type = pointer_type;
-            lhs->defined_type = null;
+            lhs->resolved_type = array->element_type;
+            lhs->defined_type = array->element_type_defined_type;
             
             pop_from_ir_arena(context, (struct ir_integer_literal *)index->ir);
             return;
