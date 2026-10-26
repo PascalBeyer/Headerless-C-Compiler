@@ -5617,7 +5617,7 @@ case NUMBER_KIND_##type:{ \
                                 
                                 int match = 0;
                                 
-                                if(expr.resolved_type != &globals.typedef_void_pointer.base){
+                                if(expr.resolved_type == &globals.typedef_void_pointer.base){
                                     match = 1;
                                 }else{
                                     for(u32 member_index = 0; member_index < union_type->amount_of_members; member_index++){
