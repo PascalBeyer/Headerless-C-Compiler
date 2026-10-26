@@ -3091,7 +3091,7 @@ struct emit_location *system_v_load_oddly_sized_type_into_register(struct contex
     
     switch(odd_size){
         case 0:{
-            ret = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+            ret = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into));
         }break;
         
         case 3:{
@@ -3101,11 +3101,11 @@ struct emit_location *system_v_load_oddly_sized_type_into_register(struct contex
             // or reg, ecx
             emit_location->offset += 2;
             emit_location->type = &globals.typedef_u8;
-            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, scratch_register));
             
             emit_location->offset -= 2;
             emit_location->type = &globals.typedef_u16;
-            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into));
             
             lower_part->type = &globals.typedef_u32;
             upper_part->type = &globals.typedef_u32;
@@ -3125,11 +3125,11 @@ struct emit_location *system_v_load_oddly_sized_type_into_register(struct contex
             // or reg, ecx
             emit_location->offset += 4;
             emit_location->type = &globals.typedef_u8;
-            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, scratch_register));
             
             emit_location->offset -= 4;
             emit_location->type = &globals.typedef_u32;
-            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into));
             
             lower_part->type = &globals.typedef_u64;
             upper_part->type = &globals.typedef_u64;
@@ -3149,11 +3149,11 @@ struct emit_location *system_v_load_oddly_sized_type_into_register(struct contex
             // or reg, ecx
             emit_location->offset += 4;
             emit_location->type = &globals.typedef_u16;
-            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, scratch_register));
             
             emit_location->offset -= 4;
             emit_location->type = &globals.typedef_u32;
-            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into));
             
             lower_part->type = &globals.typedef_u64;
             upper_part->type = &globals.typedef_u64;
@@ -3177,11 +3177,11 @@ struct emit_location *system_v_load_oddly_sized_type_into_register(struct contex
             
             emit_location->offset += 4;
             emit_location->type = &globals.typedef_u16;
-            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            struct emit_location *upper_part = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, scratch_register));
             
             emit_location->offset -= 4;
             emit_location->type = &globals.typedef_u32;
-            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, register_to_load_into);
+            struct emit_location *lower_part = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into));
             
             lower_part->type = &globals.typedef_u64;
             upper_part->type = &globals.typedef_u64;
@@ -3195,7 +3195,7 @@ struct emit_location *system_v_load_oddly_sized_type_into_register(struct contex
             
             emit_location->offset += 6;
             emit_location->type = &globals.typedef_u8;
-            upper_part = emit_load_into_specific_gpr(context, emit_location, scratch_register);
+            upper_part = emit_load_into_specific_gpr(context, emit_location, allocate_specific_register(context, REGISTER_KIND_gpr, scratch_register));
             
             lower_part->type = &globals.typedef_u64;
             upper_part->type = &globals.typedef_u64;
