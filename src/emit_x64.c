@@ -1834,7 +1834,7 @@ func void emit_store(struct context *context, struct emit_location *dest, struct
     smm dest_size = dest->type->size;
     smm source_size = source->type->size;
     
-    assert(dest_size /*==*/ >= source_size); // @cleanup: There currently is a problem with 'b ? u32 : 1ull'.
+    assert(dest_size == source_size);
     
     if(source_size == 0){
         goto end; // nothing to do here!

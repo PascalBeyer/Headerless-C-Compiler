@@ -191,12 +191,17 @@ func struct emit_location *_asm_block_resolve_and_allocate_operand(struct contex
                 //
                 // We are in case '1)' either a 'stack relative' or 'rip relative' variable.
                 // Evaluate the expression, which should only be members and one identifier.
-                //
-                smm bytes_emitted_for_assert = get_bytes_emitted(context);
+                // 
+                smm bytes_emitted_for_assert = get_bytes_emitted(context); // @cleanup: This does not work for dllimports and -fPIC I'm pretty sure?
                 ret = get_emit_location_for_declaration(context, decl);
                 ret->offset += operand->declaration_offset;
                 assert(bytes_emitted_for_assert == get_bytes_emitted(context));
                 assert(ret->state == EMIT_LOCATION_register_relative);
+            }
+            
+            // Propergate the actual type for things like a.b.c or arr[10].
+            if(operand->kind == ASM_ARG_declaration_reference && !operand->is_inline_asm_function_argument){
+                ret->type = operand->type;
             }
             
             if(operand->kind == ASM_ARG_declaration_dereference){

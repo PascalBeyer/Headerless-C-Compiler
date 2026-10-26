@@ -99,6 +99,7 @@ struct asm_operand{
     enum asm_arg_kind kind;
     enum register_kind register_kind_when_loaded;
     smm size;
+    struct ast_type *type;
     
     union{
         struct{ // ASM_ARG_register
@@ -458,6 +459,7 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     }
     
     operand.kind = ASM_ARG_declaration_reference;
+    operand.type = expr.resolved_type;
     operand.size = expr.resolved_type->size;
     
     if(context->in_inline_asm_function && expr.ir->kind == IR_identifier){
