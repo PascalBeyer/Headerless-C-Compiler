@@ -754,6 +754,10 @@ int main(int argc, char *argv[]){
             u64 canonicalized_name_size = 0;
             
             struct string option_name = alias->string;
+            
+            // Don't add short options to the table.
+            if(option_name.size <= 3) continue;
+            
             for(u64 index = 0; index < option_name.size; index++){
                 char c = option_name.data[index];
                 if(c == '-' || c == '_') continue;
@@ -775,7 +779,7 @@ int main(int argc, char *argv[]){
                 }
                 
                 if(string_match(option_table[hash_index], canonicalized_name)){
-                    print("Error: Canonicalization collision between to options. One of which is '%.*s' and the canoncialized version is '%.*s'.\n", option_name.size, option_name.data, canonicalized_name.size, canonicalized_name.data);
+                    print("Error: Canonicalization collision between to options. One of which is '%.*s' and the canonicalized version is '%.*s'.\n", option_name.size, option_name.data, canonicalized_name.size, canonicalized_name.data);
                     return 1;
                 }
             }
@@ -889,7 +893,7 @@ int main(int argc, char *argv[]){
             }
             
             if(string_match(warning_table[hash_index], canonicalized_name)){
-                print("Error: Canonicalization collision between to warnings. One of which is '%.*s' and the canoncialized version is '%.*s'.\n", warning_name.size, warning_name.data, canonicalized_name.size, canonicalized_name.data);
+                print("Error: Canonicalization collision between to warnings. One of which is '%.*s' and the canonicalized version is '%.*s'.\n", warning_name.size, warning_name.data, canonicalized_name.size, canonicalized_name.data);
                 return 1;
             }
         }
@@ -996,7 +1000,7 @@ int main(int argc, char *argv[]){
             "            option_kind          = option_hash_table_entry->option_kind;\n"
             "            argument_is_optional = option_hash_table_entry->argument_is_optional;\n"
             "        }else{\n"
-            "            // @note: Short options need to match case-sensatively.\n"
+            "            // @note: Short options need to match case-sensitively.\n"
             "            struct string option = string_from_cstring(option_cstring);\n"
             "            "
             );
@@ -1006,20 +1010,22 @@ int main(int argc, char *argv[]){
         // Generate all short-argument matches.
         //
         int first_short_argument = 1;
-        for(struct option *option = options; option; option = option->next){
-            if(option->option_argument_type == CLI_ARGUMENT_TYPE_none) continue;
-            
-            for(struct string_list_node *alias = option->option_aliases; alias; alias = alias->next){
-                if(alias->string.size > 3) continue;
-                char *else_string = "}else ";
-                if(first_short_argument){
-                    first_short_argument = 0;
-                    else_string = "";
+        for(u64 index = 3; index != 0; index--){
+            for(struct option *option = options; option; option = option->next){
+                for(struct string_list_node *alias = option->option_aliases; alias; alias = alias->next){
+                    if(alias->string.size != index) continue;
+                    
+                    char *else_string = "}else ";
+                    if(first_short_argument){
+                        first_short_argument = 0;
+                        else_string = "";
+                    }
+                    
+                    print("            %sif(string_front_match_eat(&option, \"%.*s\")){\n", else_string, alias->string.size, alias->string.data);
+                    print("                option_argument_type = %s;\n", option_argument_type_strings[option->option_argument_type]);
+                    print("                option_kind          = CLI_OPTION_%.*s;\n", option->option_name.size, option->option_name.data);
+                    print("                argument_is_optional = %d;\n", option->is_optional_argument);
                 }
-                
-                print("            %sif(string_front_match_eat(&option, \"%.*s\")){\n", else_string, alias->string.size, alias->string.data);
-                print("                option_argument_type = %s;\n", option_argument_type_strings[option->option_argument_type]);
-                print("                option_kind          = CLI_OPTION_%.*s;\n", option->option_name.size, option->option_name.data);
             }
         }
         print("            }\n");
@@ -1031,9 +1037,15 @@ int main(int argc, char *argv[]){
             "                continue;\n"
             "            }\n"
             "            \n"
-            "            // We have eaten the option from 'option' so now its just the argument.\n"
-            "            option_argument = (char *)option.data;\n"
-            "            argument_is_optional = 0; // If we get here, there was an argument (otherwise the hash-table lookup would have worked), so we can safely set this to 0.\n"
+            "            if(option.size){\n"
+            "                // We have eaten the option from 'option' so now its just the argument.\n"
+            "                option_argument = (char *)option.data;\n"
+            "                if(*option_argument == '=' || *option_argument == ':'){\n"
+            "                    option_argument += 1;\n"
+            "                }\n"
+            "            }else{\n"
+            "                // The `option_argument` is already set from previously.\n"
+            "            }\n"
             "        }\n"
             "        \n"
             "        if(should_print_help && option_index + 1 >= argc) argument_is_optional = true;\n"

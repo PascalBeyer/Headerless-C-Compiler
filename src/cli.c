@@ -41,6 +41,7 @@ enum cli_option_kind{
     CLI_OPTION_quiet,
     CLI_OPTION_EP,
     CLI_OPTION_P,
+    CLI_OPTION_dM,
     CLI_OPTION_Fi,
     CLI_OPTION_write_dependencies,
     CLI_OPTION_MT,
@@ -78,9 +79,7 @@ struct cli_option_hash_table_entry{
     int argument_is_optional;
 } cli_option_hash_table[0x80] = {
     [110] = {{4, (u8 *)"help"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
-    [13] = {{1, (u8 *)"h"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
-    [100] = {{1, (u8 *)"?"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
-    [101] = {{8, (u8 *)"nostdlib"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_stdlib, -1},
+    [100] = {{8, (u8 *)"nostdlib"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_stdlib, -1},
     [7] = {{12, (u8 *)"nopredefines"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_predefines, -1},
     [41] = {{7, (u8 *)"nodebug"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_debug, -1},
     [98] = {{13, (u8 *)"nodynamicbase"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_dynamic_base, -1},
@@ -89,49 +88,23 @@ struct cli_option_hash_table_entry{
     [91] = {{5, (u8 *)"stack"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_stack_size, 0},
     [93] = {{12, (u8 *)"showincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_show_includes, -1},
     [20] = {{9, (u8 *)"subsystem"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_subsystem, 0},
-    [29] = {{3, (u8 *)"out"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
-    [21] = {{1, (u8 *)"o"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
-    [80] = {{2, (u8 *)"fe"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
-    [90] = {{2, (u8 *)"fo"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_out, 0},
     [87] = {{5, (u8 *)"entry"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_entry, 0},
     [84] = {{7, (u8 *)"noentry"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_entry, -1},
-    [33] = {{3, (u8 *)"dll"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
-    [22] = {{2, (u8 *)"ld"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
-    [25] = {{3, (u8 *)"ldd"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dll, -1},
     [28] = {{6, (u8 *)"shared"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_shared, -1},
     [8] = {{4, (u8 *)"fpic"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_fPIC, -1},
-    [32] = {{3, (u8 *)"obj"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
-    [9] = {{1, (u8 *)"c"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_obj, -1},
     [70] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
-    [66] = {{2, (u8 *)"mp"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_MP, -1},
-    [14] = {{1, (u8 *)"i"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [83] = {{7, (u8 *)"isystem"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [63] = {{9, (u8 *)"idirafter"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [42] = {{7, (u8 *)"libpath"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_LIBPATH, 0},
-    [10] = {{1, (u8 *)"d"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_D, 0},
-    [23] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
+    [21] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
     [12] = {{5, (u8 *)"wnone"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wnone, -1},
-    [11] = {{2, (u8 *)"wl"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_Wl, 0},
-    [30] = {{1, (u8 *)"w"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_W, 0},
-    [57] = {{3, (u8 *)"wno"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_Wno, 0},
-    [0] = {{2, (u8 *)"wd"}, CLI_ARGUMENT_TYPE_warning, CLI_OPTION_Wno, 0},
     [119] = {{11, (u8 *)"incremental"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_incremental, 0},
-    [17] = {{1, (u8 *)"l"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_l, 0},
-    [15] = {{5, (u8 *)"quiet"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
+    [13] = {{5, (u8 *)"quiet"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
     [51] = {{6, (u8 *)"nologo"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
-    [58] = {{2, (u8 *)"ep"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_EP, -1},
-    [16] = {{1, (u8 *)"e"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_EP, -1},
-    [24] = {{1, (u8 *)"p"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_P, -1},
-    [85] = {{2, (u8 *)"fi"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_Fi, 0},
     [88] = {{17, (u8 *)"writedependencies"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_write_dependencies, -1},
-    [55] = {{2, (u8 *)"md"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_write_dependencies, -1},
-    [71] = {{2, (u8 *)"mt"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_MT, 0},
-    [56] = {{2, (u8 *)"mf"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_MF, 0},
-    [112] = {{3, (u8 *)"std"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_std, 0},
-    [59] = {{12, (u8 *)"warninglimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_warning_limit, 0},
+    [58] = {{12, (u8 *)"warninglimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_warning_limit, 0},
     [46] = {{10, (u8 *)"errorlimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_error_limit, 0},
     [74] = {{11, (u8 *)"syntaxcheck"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
-    [114] = {{2, (u8 *)"zs"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
     [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
     [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
@@ -240,7 +213,7 @@ struct cli_options{
     u64 thread_count; // Sets the amount of threads to be used during compilation. Default: 1
     int MP; // Sets the amount of threads to the number of processors on the system.
     struct string_list I; // Specify an additional include directory.
-    struct string_list LIBPATH; // Specify an additional seach path for .lib files.
+    struct string_list LIBPATH; // Specify an additional search path for .lib/.so files.
     struct string_list D; // Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
     int Wall; // Enable all warnings.
     int Wnone; // Disable all warnings.
@@ -250,6 +223,7 @@ struct cli_options{
     int quiet; // Print as little as necessary.
     int EP; // Print the preprocessed file to stdout.
     int P; // Print the preprocessed file to stdout.
+    int dM; // Dump macros instead of preprocessed file.
     struct string Fi; // Sets the output file name for the preprocessed file.
     int write_dependencies; // Write a dependency file.
     struct string MT; // Sets the target name in the dependency file.
@@ -426,60 +400,129 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             option_kind          = option_hash_table_entry->option_kind;
             argument_is_optional = option_hash_table_entry->argument_is_optional;
         }else{
-            // @note: Short options need to match case-sensatively.
+            // @note: Short options need to match case-sensitively.
             struct string option = string_from_cstring(option_cstring);
             
-            if(string_front_match_eat(&option, "h")){
-                option_argument_type = CLI_ARGUMENT_TYPE_option;
-                option_kind          = CLI_OPTION_help;
-            }else if(string_front_match_eat(&option, "?")){
-                option_argument_type = CLI_ARGUMENT_TYPE_option;
-                option_kind          = CLI_OPTION_help;
-            }else if(string_front_match_eat(&option, "out")){
+            if(string_front_match_eat(&option, "out")){
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_out;
-            }else if(string_front_match_eat(&option, "o")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string;
-                option_kind          = CLI_OPTION_out;
-            }else if(string_front_match_eat(&option, "Fe")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string;
-                option_kind          = CLI_OPTION_out;
-            }else if(string_front_match_eat(&option, "Fo")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string;
-                option_kind          = CLI_OPTION_out;
-            }else if(string_front_match_eat(&option, "I")){
-                option_argument_type = CLI_ARGUMENT_TYPE_directory_list;
-                option_kind          = CLI_OPTION_I;
-            }else if(string_front_match_eat(&option, "D")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
-                option_kind          = CLI_OPTION_D;
-            }else if(string_front_match_eat(&option, "Wl")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
-                option_kind          = CLI_OPTION_Wl;
-            }else if(string_front_match_eat(&option, "W")){
-                option_argument_type = CLI_ARGUMENT_TYPE_warning;
-                option_kind          = CLI_OPTION_W;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "dll")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_dll;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "LDd")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_dll;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "obj")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_obj;
+                argument_is_optional = -1;
             }else if(string_front_match_eat(&option, "Wno")){
                 option_argument_type = CLI_ARGUMENT_TYPE_warning;
                 option_kind          = CLI_OPTION_Wno;
-            }else if(string_front_match_eat(&option, "wd")){
-                option_argument_type = CLI_ARGUMENT_TYPE_warning;
-                option_kind          = CLI_OPTION_Wno;
-            }else if(string_front_match_eat(&option, "l")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
-                option_kind          = CLI_OPTION_l;
-            }else if(string_front_match_eat(&option, "Fi")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string;
-                option_kind          = CLI_OPTION_Fi;
-            }else if(string_front_match_eat(&option, "MT")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string;
-                option_kind          = CLI_OPTION_MT;
-            }else if(string_front_match_eat(&option, "MF")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string;
-                option_kind          = CLI_OPTION_MF;
+                argument_is_optional = 0;
             }else if(string_front_match_eat(&option, "std")){
                 option_argument_type = CLI_ARGUMENT_TYPE_enum;
                 option_kind          = CLI_OPTION_std;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "Fe")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_out;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "Fo")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_out;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "LD")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_dll;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "MP")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_MP;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "Wl")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
+                option_kind          = CLI_OPTION_Wl;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "wd")){
+                option_argument_type = CLI_ARGUMENT_TYPE_warning;
+                option_kind          = CLI_OPTION_Wno;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "EP")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_EP;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "dM")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_dM;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "Fi")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_Fi;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "MD")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_write_dependencies;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "MT")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_MT;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "MF")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_MF;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "Zs")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_syntax_check;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "h")){
+                option_argument_type = CLI_ARGUMENT_TYPE_option;
+                option_kind          = CLI_OPTION_help;
+                argument_is_optional = 1;
+            }else if(string_front_match_eat(&option, "?")){
+                option_argument_type = CLI_ARGUMENT_TYPE_option;
+                option_kind          = CLI_OPTION_help;
+                argument_is_optional = 1;
+            }else if(string_front_match_eat(&option, "o")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_out;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "c")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_obj;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "I")){
+                option_argument_type = CLI_ARGUMENT_TYPE_directory_list;
+                option_kind          = CLI_OPTION_I;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "L")){
+                option_argument_type = CLI_ARGUMENT_TYPE_directory_list;
+                option_kind          = CLI_OPTION_LIBPATH;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "D")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
+                option_kind          = CLI_OPTION_D;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "W")){
+                option_argument_type = CLI_ARGUMENT_TYPE_warning;
+                option_kind          = CLI_OPTION_W;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "l")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
+                option_kind          = CLI_OPTION_l;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "E")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_EP;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "P")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_P;
+                argument_is_optional = -1;
             }
             
             if(option_kind == CLI_OPTION_none){
@@ -487,9 +530,15 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 continue;
             }
             
-            // We have eaten the option from 'option' so now its just the argument.
-            option_argument = (char *)option.data;
-            argument_is_optional = 0; // If we get here, there was an argument (otherwise the hash-table lookup would have worked), so we can safely set this to 0.
+            if(option.size){
+                // We have eaten the option from 'option' so now its just the argument.
+                option_argument = (char *)option.data;
+                if(*option_argument == '=' || *option_argument == ':'){
+                    option_argument += 1;
+                }
+            }else{
+                // The `option_argument` is already set from previously.
+            }
         }
         
         if(should_print_help && option_index + 1 >= argc) argument_is_optional = true;
@@ -739,7 +788,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "", 63);
                 }break;
                 case CLI_OPTION_LIBPATH:{
-                    print("-LIBPATH <dir_list> | Specify an additional seach path for .lib files.\n\n");
+                    print("-LIBPATH <dir_list> | Specify an additional search path for .lib/.so files.\n\n");
                     os_print_string(
                             "@incomplete:\n"
                             "", 13);
@@ -824,6 +873,12 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                     os_print_string(
                             "This is very incomplete and mostly here to make build-systems happy.\n"
                             "", 69);
+                }break;
+                case CLI_OPTION_dM:{
+                    print("-dM | Dump macros instead of preprocessed file.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
                 }break;
                 case CLI_OPTION_Fi:{
                     print("-Fi <file> | Sets the output file name for the preprocessed file.\n\n");
@@ -1021,7 +1076,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -thread_count <u64>         | Sets the amount of threads to be used during compilation. Default: 1\n"
                             "  -MP                         | Sets the amount of threads to the number of processors on the system.\n"
                             "  -I <dir_list>               | Specify an additional include directory.\n"
-                            "  -LIBPATH <dir_list>         | Specify an additional seach path for .lib files.\n"
+                            "  -LIBPATH <dir_list>         | Specify an additional search path for .lib/.so files.\n"
                             "  -D <name[=<text>]>          | Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.\n"
                             "  -Wall                       | Enable all warnings.\n"
                             "  -Wnone                      | Disable all warnings.\n"
@@ -1033,6 +1088,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -quiet                      | Print as little as necessary.\n"
                             "  -EP                         | Print the preprocessed file to stdout.\n"
                             "  -P                          | Print the preprocessed file to stdout.\n"
+                            "  -dM                         | Dump macros instead of preprocessed file.\n"
                             "  -Fi <file>                  | Sets the output file name for the preprocessed file.\n"
                             "  -write_dependencies         | Write a dependency file.\n"
                             "  -MT <file>                  | Sets the target name in the dependency file.\n"
@@ -1042,7 +1098,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 3184);
+                    , 3263);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1236,6 +1292,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_quiet: cli_options->quiet = 1; break;
             case CLI_OPTION_EP: cli_options->EP = 1; break;
             case CLI_OPTION_P: cli_options->P = 1; break;
+            case CLI_OPTION_dM: cli_options->dM = 1; break;
             
             case CLI_OPTION_Fi:{
                 cli_options->Fi = argument_string;

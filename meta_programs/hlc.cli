@@ -148,7 +148,7 @@ This is the "whatever" throw some cores at it option.
 
 This makes it possible to use your own headers in <>-includes.
 
-/LIBPATH <dir_list> - Specify an additional seach path for .lib files.
+/LIBPATH <dir_list> | /L <dir_list> - Specify an additional search path for .lib/.so files.
 
 @incomplete:
 
@@ -207,6 +207,10 @@ This is very incomplete and mostly here to make build-systems happy.
 /P - Print the preprocessed file to stdout.
 
 This is very incomplete and mostly here to make build-systems happy.
+
+/dM - Dump macros instead of preprocessed file.
+
+TODO
 
 /Fi <file:string> - Sets the output file name for the preprocessed file.
 
