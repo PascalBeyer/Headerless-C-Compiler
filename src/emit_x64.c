@@ -2506,41 +2506,102 @@ struct emit_location *get_emit_location_for_declaration(struct context *context,
     
     struct emit_location *ret = null;
     if(decl->flags & DECLARATION_FLAGS_is_thread_local){
-        // 
-        // Loading thread locals:
-        // 
-        //     mov eax, offset(<var>)
-        //     mov ecx, [_tls_index]
-        //     mov rdx, gs:[58h]
-        //     mov rcx, [rdx + rcx*8]
-        //     return [rcx + rax]
-        // 
         
-        // mov <offset_reg>, offset_in_tls(<decl>)
-        struct emit_location *offset_reg = emit_location_loaded(context, &globals.typedef_u32, allocate_register(context, REGISTER_KIND_gpr));
-        if(register_is_extended(offset_reg->loaded_register)) emit(REXB);
-        emit(MOVE_REG_IMMEDIATE + (offset_reg->loaded_register & 7));
-        smm byte_offset = emit_u32(0);
-        smm rip_at = get_bytes_emitted(context);
-        emit_patch(context, PATCH_section_offset, &decl->base, 0, &context->current_function->as_decl, byte_offset, rip_at);
-        
-        struct emit_location *tls_index = emit_location_rip_relative(context, &globals.typedef_u32, &globals.tls_index_declaration->base);
-        
-        // mov <tls_slots>, gs:[58h]
-        struct emit_location *tls_slots = emit_location_loaded(context, &globals.typedef_u64, allocate_register(context, REGISTER_KIND_gpr));
-        emit(LEGACY_GS_SEGMENT_OVERRIDE_PREFIX);
-        if(register_is_extended(tls_slots->loaded_register)) emit(REXW | REXR); else emit(REXW);
-        emit(MOVE_REG_REGM);
-        emit(make_modrm(MODRM_REGM, (/*reg*/tls_slots->loaded_register & 7), REGISTER_SIB_EXTENSION));
-        emit(make_sib(0, /*no-index*/REGISTER_SP, /*no-base*/REGISTER_BP));
-        emit_u32(0x58);
-        
-        // mov tls_slot, [rdx + rcx*8]
-        struct emit_location *tls_slot_register_relative = emit_location_register_relative(context, &globals.typedef_u64, tls_slots, tls_index, /*offset*/0);
-        tls_slot_register_relative->log_index_scale = 3;
-        struct emit_location *tls_slot = emit_load_gpr(context, tls_slot_register_relative);
-        
-        ret = emit_location_register_relative(context, decl->type, tls_slot, offset_reg, 0);
+        if(globals.output_file_type == OUTPUT_FILE_elf){
+            
+            if(globals.cli_options.fPIC){
+                
+                // Initial-exec TLS for PIC/shared ELF objects:
+                // 
+                //     mov <out>, [rip + tls_offset@gottpoff]
+                //     mov <tcb>, fs:0
+                //     add <out>, <tcb>
+                //     return [<out>]
+                
+                struct emit_location *out = emit_location_loaded(context, &globals.typedef_u64, allocate_register(context, REGISTER_KIND_gpr));
+                if(register_is_extended(out->loaded_register)) emit(REXW | REXR); else emit(REXW);
+                emit(MOVE_REG_REGM);
+                emit(make_modrm(MODRM_REGM, (/*reg*/out->loaded_register & 7), REGISTER_BP));
+                smm byte_offset = emit_u32(0);
+                smm rip_at = get_bytes_emitted(context);
+                emit_patch(context, PATCH_tls_gottpoff, &decl->base, 0, &context->current_function->as_decl, byte_offset, rip_at);
+                
+                struct emit_location *tcb = emit_location_loaded(context, &globals.typedef_u64, allocate_register(context, REGISTER_KIND_gpr));
+                emit(LEGACY_FS_SEGMENT_OVERRIDE_PREFIX);
+                if(register_is_extended(tcb->loaded_register)) emit(REXW | REXR); else emit(REXW);
+                emit(MOVE_REG_REGM);
+                emit(make_modrm(MODRM_REGM, (/*reg*/tcb->loaded_register & 7), REGISTER_SIB_EXTENSION));
+                emit(make_sib(0, /*no-index*/REGISTER_SP, /*no-base*/REGISTER_BP));
+                emit_u32(0);
+                
+                emit_register_register(context, no_prefix(), one_byte_opcode(ADD_REG_REGM), out, tcb);
+                free_emit_location(context, tcb);
+                
+                ret = emit_location_register_relative(context, decl->type, out, 0, 0);
+            }else{
+                
+                // Local-exec TLS for non-PIC ELF objects:
+                // 
+                //     mov <out>, fs:0
+                //     add <out>, tls_offset
+                //     return [<out>]
+                // 
+                // @note: LEA does not add the FS segment base, 
+                //        so the thread pointer must be loaded with MOV first.
+                
+                struct emit_location *out = emit_location_loaded(context, &globals.typedef_u64, allocate_register(context, REGISTER_KIND_gpr));
+                emit(LEGACY_FS_SEGMENT_OVERRIDE_PREFIX);
+                if(register_is_extended(out->loaded_register)) emit(REXW | REXR); else emit(REXW);
+                emit(MOVE_REG_REGM);
+                emit(make_modrm(MODRM_REGM, (/*reg*/out->loaded_register & 7), REGISTER_SIB_EXTENSION));
+                emit(make_sib(0, /*no-index*/REGISTER_SP, /*no-base*/REGISTER_BP));
+                emit_u32(0);
+                
+                // add <out>, offset_in_tls(<decl>)
+                emit_reg_extended_op(context, no_prefix(), one_byte_opcode(REG_EXTENDED_OPCODE_REGM_IMMIDIATE), REG_OPCODE_ADD, out);
+                smm byte_offset = emit_u32(0);
+                smm rip_at = get_bytes_emitted(context);
+                emit_patch(context, PATCH_section_offset, &decl->base, 0, &context->current_function->as_decl, byte_offset, rip_at);
+                
+                ret = emit_location_register_relative(context, decl->type, out, 0, 0);
+            }
+        }else{
+            // 
+            // Loading thread locals:
+            // 
+            //     mov eax, offset(<var>)
+            //     mov ecx, [_tls_index]
+            //     mov rdx, gs:[58h]
+            //     mov rcx, [rdx + rcx*8]
+            //     return [rcx + rax]
+            // 
+            
+            // mov <offset_reg>, offset_in_tls(<decl>)
+            struct emit_location *offset_reg = emit_location_loaded(context, &globals.typedef_u32, allocate_register(context, REGISTER_KIND_gpr));
+            if(register_is_extended(offset_reg->loaded_register)) emit(REXB);
+            emit(MOVE_REG_IMMEDIATE + (offset_reg->loaded_register & 7));
+            smm byte_offset = emit_u32(0);
+            smm rip_at = get_bytes_emitted(context);
+            emit_patch(context, PATCH_section_offset, &decl->base, 0, &context->current_function->as_decl, byte_offset, rip_at);
+            
+            struct emit_location *tls_index = emit_location_rip_relative(context, &globals.typedef_u32, &globals.tls_index_declaration->base);
+            
+            // mov <tls_slots>, gs:[58h]
+            struct emit_location *tls_slots = emit_location_loaded(context, &globals.typedef_u64, allocate_register(context, REGISTER_KIND_gpr));
+            emit(LEGACY_GS_SEGMENT_OVERRIDE_PREFIX);
+            if(register_is_extended(tls_slots->loaded_register)) emit(REXW | REXR); else emit(REXW);
+            emit(MOVE_REG_REGM);
+            emit(make_modrm(MODRM_REGM, (/*reg*/tls_slots->loaded_register & 7), REGISTER_SIB_EXTENSION));
+            emit(make_sib(0, /*no-index*/REGISTER_SP, /*no-base*/REGISTER_BP));
+            emit_u32(0x58);
+            
+            // mov tls_slot, [rdx + rcx*8]
+            struct emit_location *tls_slot_register_relative = emit_location_register_relative(context, &globals.typedef_u64, tls_slots, tls_index, /*offset*/0);
+            tls_slot_register_relative->log_index_scale = 3;
+            struct emit_location *tls_slot = emit_load_gpr(context, tls_slot_register_relative);
+            
+            ret = emit_location_register_relative(context, decl->type, tls_slot, offset_reg, 0);
+        }
     }else if(decl->flags & DECLARATION_FLAGS_is_dllimport){
         // :dllimport_loading
         // 

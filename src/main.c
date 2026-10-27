@@ -1010,7 +1010,8 @@ enum patch_kind{
     PATCH_none,
     PATCH_absolute,
     PATCH_rip_relative,
-    PATCH_section_offset, // used for thread local storage.
+    PATCH_section_offset, // Used for thread local storage.
+    PATCH_tls_gottpoff,   // Used for thread local storage if -fPIC is used.
     PATCH_count,
 };
 

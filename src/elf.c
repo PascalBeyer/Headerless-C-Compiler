@@ -918,6 +918,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         SHF_ALLOC = 2,
         SHF_EXECINSTR = 4,
         SHF_INFO_LINK = 0x40,
+        SHF_TLS = 1 << 10,
     };
     
     struct elf_section_header{
@@ -1443,6 +1444,46 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         fill_program_header(ro, PT_LOAD, PF_READ, 0x1000);
     }
     
+    u64 tls_section_size = 0;
+    
+    if(tls_declarations.count){
+        u8 *tls_segment_start = arena_current(arena);
+        u8 *tls_section_start = tls_segment_start;
+        
+        smm max_alignment = 0;
+        
+        for_ast_list(tls_declarations){
+            struct ast_declaration *decl = (struct ast_declaration *)it->value;
+            
+            smm alignment = get_declaration_alignment(decl);
+            smm decl_size = get_declaration_size(decl);
+            
+            max_alignment = max_of(alignment, max_alignment);
+            
+            push_zero_align(arena, alignment);
+            
+            if(decl_size == 0) decl_size = 1; // Ensure even zero-sized declarations have unique addresses.
+            
+            u8 *mem = push_uninitialized_data(arena, u8, decl_size);
+            
+            if(decl->memory_location){
+                memcpy(mem, decl->memory_location, decl_size);
+            }else{
+                memset(mem, 0, decl_size);
+            }
+            
+            decl->memory_location = mem;
+            decl->relative_virtual_address = mem - tls_section_start;
+        }
+        
+        push_zero_align(arena, max_alignment);
+        
+        tls_section_size = arena_current(arena) - tls_section_start;
+        
+        fill_section_header(tls, "tdata", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE | SHF_TLS, /*alignment*/max_alignment, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_program_header(tls, PT_TLS, PF_READ, /*alignment*/(u32)max_alignment);
+    }
+    
     u8 *rw_segment_start = arena_current(arena);
     
     if(needs_dynamic){
@@ -1598,7 +1639,6 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         fill_section_header(dynamic, "dynamic", SHT_DYNAMIC, SHF_ALLOC | SHF_WRITE, /*alignment*/8, /*link*/(u32)dynstr_section_index, /*info*/0, /*entry_size*/0x10);
         fill_program_header(dynamic, PT_DYNAMIC, PF_READ | PF_WRITE, /*alignment*/8);
     }
-    
     
     u8 *data_section_start = arena_current(arena);
     
@@ -1811,7 +1851,15 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                     relocation->offset = virtual_image_base + patch->dest_declaration->relative_virtual_address + patch->location_offset_in_dest_declaration;
                     relocation->addend = source_location;
                 }
-            }else not_implemented;
+            }else{
+                assert(patch->kind == PATCH_section_offset);
+                struct ast_declaration *source_declaration = cast(struct ast_declaration *)patch->source;
+                assert(source_declaration->flags & DECLARATION_FLAGS_is_thread_local);
+                
+                u32 source_location = (u32)(source_declaration->relative_virtual_address - tls_section_size);
+                
+                *cast(u32 *)memory_location = source_location;
+            }
         }
     }
     
