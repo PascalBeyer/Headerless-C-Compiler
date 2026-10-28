@@ -1327,6 +1327,21 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 if(!open_paren) return null;
                 
                 eat_whitespace_and_comments_define(context);
+                
+                
+                if(peek_token_define(context, TOKEN_string_literal)){
+                    
+                    // C99 _Pragma operator: _Pragma("...")
+                    
+                    struct token *string_literal = next_token_define(context);
+                    eat_whitespace_and_comments_define(context);
+                    
+                    report_warning(context, WARNING_unsupported_pragma, string_literal, "_Pragma(\"<string>\") currently ignored.");
+                    
+                    expect_token_define(context, token_to_expand, TOKEN_closed_paren, "Expected ')' after _Pragma(\"<string>\").");
+                    return null;
+                }
+                
                 struct token *pragma_directive = expect_token_define(context, token_to_expand, TOKEN_identifier, "Expected a directive after '__pragma('.");
                 
                 if(atoms_match(pragma_directive->atom, globals.pragma_pack)){
