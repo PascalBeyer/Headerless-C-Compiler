@@ -10450,6 +10450,19 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             if(peek_token_eat(context, TOKEN_volatile))  type_qualifiers |= QUALIFIER_volatile;
             if(peek_token_eat(context, TOKEN_atomic))    type_qualifiers |= QUALIFIER_atomic;
             
+            if(peek_token_eat(context, TOKEN_declspec)){
+                // 
+                // GCC allows attributes between '*' and the declarator name, e.g.:
+                //     
+                //     static int *__attribute__((unused)) pointer;
+                // 
+                struct token *open = expect_token(context, TOKEN_open_paren, "Expected '(' after '__attribute__'.");
+                
+                report_warning(context, WARNING_unsupported_declspec, open, "__attribute__ ignored in this place.");
+                
+                skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in attribute.");
+            }
+            
             if(get_current_token(context) == begin) break;
         }
         
