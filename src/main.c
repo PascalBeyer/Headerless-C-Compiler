@@ -2841,6 +2841,84 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
     
     if(globals.preprocessed_file_handle){
         
+        if(globals.cli_options.dM){
+            char *preprocessed_file_start = (char *)arena_current(&context->scratch);
+            
+            for(u64 slot_index = 0; slot_index < context->define_table.capacity; slot_index++){
+                for(struct define_node *node = context->define_table.lists[slot_index].first; node; node = node->next){
+                    if(node->builtin_define_type) continue;
+                    
+                    push_format_string(&context->scratch, "#define %.*s", node->name.size, node->name.data);
+                    context->scratch.current -= 1; // @hack: remove the zero-terminator.
+                    
+                    if(node->is_function_like){
+                        *push_uninitialized_struct(&context->scratch, char) = '(';
+                        if(node->arguments.first == null){
+                            *push_uninitialized_struct(&context->scratch, char) = ')';
+                            *push_uninitialized_struct(&context->scratch, char) = ' ';
+                        }else{
+                            for(struct define_argument *argument = node->arguments.first; argument; argument = argument->next){
+                                if(argument->next){
+                                    push_format_string(&context->scratch, "%.*s, ", argument->argument.size, argument->argument.data);
+                                    context->scratch.current -= 1; // @hack: remove the zero-terminator.
+                                }else if(node->is_varargs){
+                                    if(atoms_match(globals.keyword__VA_ARGS__, argument->argument)){
+                                        push_format_string(&context->scratch, "...) ");
+                                        context->scratch.current -= 1; // @hack: remove the zero-terminator.
+                                    }else{
+                                        push_format_string(&context->scratch, "%.*s...) ", argument->argument.size, argument->argument.data);
+                                        context->scratch.current -= 1; // @hack: remove the zero-terminator.
+                                    }
+                                }else{
+                                    push_format_string(&context->scratch, "%.*s) ", argument->argument.size, argument->argument.data);
+                                    context->scratch.current -= 1; // @hack: remove the zero-terminator.
+                                }
+                            }
+                        }
+                    }else{
+                        *push_uninitialized_struct(&context->scratch, char) = ' ';
+                    }
+                    
+                    for(struct define_replacement_node *replacement = node->replacement_list.first; replacement; replacement = replacement->next){
+                        
+                        switch(replacement->kind){
+                            case DEFINE_REPLACEMENT_tokens:{
+                                struct token_array tokens = replacement->tokens;
+                                for(smm index = 0; index < tokens.size; index++){
+                                    struct token *token = &tokens.data[index];
+                                    memcpy(push_uninitialized_data(&context->scratch, char, token->size), token->data, token->size);
+                                }
+                            }break;
+                            case DEFINE_REPLACEMENT_argument:{
+                                struct define_argument *argument = replacement->argument;
+                                memcpy(push_uninitialized_data(&context->scratch, char, argument->argument.size), argument->argument.data, argument->argument.size);
+                            }break;
+                            case DEFINE_REPLACEMENT_hash:{
+                                *push_uninitialized_struct(&context->scratch, char) = '#';
+                            }break;
+                            case DEFINE_REPLACEMENT_hashhash:{
+                                *push_uninitialized_struct(&context->scratch, char) = '#';
+                                *push_uninitialized_struct(&context->scratch, char) = '#';
+                            }break;
+                            invalid_default_case();
+                        }
+                    }
+                    
+                    *push_uninitialized_struct(&context->scratch, char) = '\n';
+                }
+            }
+            
+            smm preprocessed_file_size = (char *)arena_current(&context->scratch) - preprocessed_file_start;
+            smm write_at = 0;
+            for(smm read_at = 0; read_at < preprocessed_file_size; read_at++){
+                if(preprocessed_file_start[read_at] != '\0'){
+                    preprocessed_file_start[write_at++] = preprocessed_file_start[read_at];
+                }
+            }
+            os_file_write(globals.preprocessed_file_handle, preprocessed_file_start, write_at);
+            return;
+        }
+        
         if(globals.cli_options.EP){
             char buffer[0x100];
             int length = snprintf(buffer, sizeof(buffer), "%.*s\n", (int)work_tokenize_file->absolute_file_path.size, work_tokenize_file->absolute_file_path.data);
