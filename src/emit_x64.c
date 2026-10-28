@@ -5705,7 +5705,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     // 
                     // @cleanup: This is a bad solution... We would really like to just have `emit_store` change the rhs if it needs to and then have the result loaded.
                     // 
-                    if(rhs->state != EMIT_LOCATION_immediate && rhs->state != EMIT_LOCATION_loaded && !size_is_big_or_oddly_sized(rhs->type->size)) rhs = emit_load(context, rhs);
+                    if(rhs->state != EMIT_LOCATION_immediate && rhs->state != EMIT_LOCATION_loaded && rhs->type->kind != AST_struct && rhs->type->kind != AST_union) rhs = emit_load(context, rhs);
                     
                     emit_location_prevent_freeing(context, rhs);
                     emit_store(context, lhs, rhs);
