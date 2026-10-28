@@ -221,6 +221,7 @@ static struct{
     {const_string("goto"),          TOKEN_goto},
     {const_string("__declspec"),    TOKEN_declspec},
     {const_string("__attribute__"), TOKEN_declspec},
+    {const_string("__attribute"),   TOKEN_declspec},
     {const_string("__sptr"),        TOKEN_sptr},
     {const_string("__uptr"),        TOKEN_uptr},
     {const_string("__ptr32"),       TOKEN_ptr32},
@@ -259,6 +260,7 @@ static struct{
     
     {const_string("_Generic"), TOKEN_generic},
     {const_string("_Thread_local"), TOKEN_thread_local},
+    {const_string("__thread"),      TOKEN_thread_local},
     
     {const_string("__try"), TOKEN_seh_try},
     {const_string("__except"), TOKEN_seh_except},
