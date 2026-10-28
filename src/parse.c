@@ -525,7 +525,7 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
             if(lhs_or_rhs == AST_cast_lhs) ir_cast += 1;
             cast_what->ir = push_ir(context, ir_cast);
         }else{
-            static enum ir_kind ir_kind_for_cast[IR_TYPE_padding1][IR_TYPE_padding1] = {
+            static enum ir_kind ir_kind_for_cast[IR_TYPE_padding][IR_TYPE_padding] = {
                 // 
                 // Sign extending integers
                 // 
@@ -637,7 +637,7 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
                 [IR_TYPE_s64][IR_TYPE_s32] = IR_truncate_to_u32,
             };
             
-            assert(ir_cast_what < IR_TYPE_padding1 && ir_cast_to < IR_TYPE_padding1);
+            assert(ir_cast_what < IR_TYPE_padding && ir_cast_to < IR_TYPE_padding);
             enum ir_kind ir_cast = ir_kind_for_cast[ir_cast_what][ir_cast_to];
             if(ir_cast){
                 if(lhs_or_rhs == AST_cast_lhs) ir_cast += 1;
@@ -1684,7 +1684,7 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
         case TOKEN_char: case TOKEN_short: case TOKEN_int:   case TOKEN_long:
         case TOKEN_int8: case TOKEN_int16: case TOKEN_int32: case TOKEN_int64:
         
-        case TOKEN_float: case TOKEN_double:
+        case TOKEN_float: case TOKEN_double: case TOKEN_float128:
         
         case TOKEN_struct: case TOKEN_union: case TOKEN_enum: break;
         
@@ -7887,7 +7887,8 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
         C_TYPE_int64     = 0x800,
         C_TYPE_float     = 0x1000,
         C_TYPE_double    = 0x2000,
-        C_TYPE_void      = 0x4000,
+        C_TYPE_float128  = 0x4000,
+        C_TYPE_void      = 0x8000,
     } c_type = 0;
     
     enum type_qualifiers type_qualifiers = 0;
@@ -8123,6 +8124,8 @@ case TOKEN_##type_name:{                                                 \
             case_c_type(int64);
             case_c_type(float);
             case_c_type(double);
+            case_c_type(float128);
+            
             case_c_type(void);
             
             case TOKEN_struct: case TOKEN_union:{
@@ -8982,7 +8985,13 @@ case TOKEN_##type_name:{                                                 \
             
             case C_TYPE_float:    specifiers.type_specifier = &globals.typedef_f32; break;
             case C_TYPE_double:   specifiers.type_specifier = &globals.typedef_f64; break;
+            case C_TYPE_float128: specifiers.type_specifier = &globals.typedef_f128; break;
+            
+#ifdef _WIN32
             case (C_TYPE_long | C_TYPE_double): specifiers.type_specifier = &globals.typedef_f64; break;
+#else
+            case (C_TYPE_long | C_TYPE_double): specifiers.type_specifier = &globals.typedef_f80; break;
+#endif
             
             default:{
                 prev_token(context); // This token is valid, as we just now got a c type.
@@ -10143,7 +10152,7 @@ func void parse_statement(struct context *context){
         case TOKEN_register: case TOKEN_signed:   case TOKEN_unsigned:
         case TOKEN_void:     case TOKEN_Bool:     case TOKEN_char:   case TOKEN_short:  case TOKEN_int: case TOKEN_long:
         case TOKEN_int8:     case TOKEN_int16:    case TOKEN_int32:  case TOKEN_int64:
-        case TOKEN_float:    case TOKEN_double:
+        case TOKEN_float:    case TOKEN_double:   case TOKEN_float128:
         case TOKEN_struct:   case TOKEN_union:    case TOKEN_enum:{
             prev_token(context);
             int is_function_definition = parse_declaration_list_in_imperative_scope(context, null, null);

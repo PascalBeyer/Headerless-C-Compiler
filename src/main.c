@@ -612,8 +612,10 @@ static struct{
     
     struct ast_type typedef_f32;
     struct ast_type typedef_f64;
+    struct ast_type typedef_f80;
+    struct ast_type typedef_f128;
     
-    struct ast_type padding[3]; // @note: This padding is here so we can calculate the unsigned types using 'type_index/2 + == f64'.
+    struct ast_type padding[1]; // @note: This padding is here so we can calculate the unsigned types using 'type_index/2 + == f64'.
     struct ast_type typedef_atomic_bool;
     
     struct ast_type typedef_atomic_s8;
@@ -642,6 +644,8 @@ static struct{
     struct ast_pointer_type typedef_u64_pointer;
     struct ast_pointer_type typedef_f32_pointer;
     struct ast_pointer_type typedef_f64_pointer;
+    struct ast_pointer_type typedef_f80_pointer;
+    struct ast_pointer_type typedef_f128_pointer;
     
     struct ast_type typedef_m128;
     struct ast_type typedef_m256;
@@ -1133,6 +1137,8 @@ func struct string basic_type_string(struct ast_type *type){
         
         [IR_TYPE_f32] = const_string("float"),
         [IR_TYPE_f64] = const_string("double"),
+        [IR_TYPE_f80] = const_string("long double"),
+        [IR_TYPE_f128] = const_string("__float128"),
         
         [IR_TYPE_atomic_bool] = const_string("_Atomic(_Bool)"),
         
@@ -4354,6 +4360,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         make_const_typedef(f32,  TOKEN_float,    AST_float_type,   "float",              4, 4);
         make_const_typedef(f64,  TOKEN_double,   AST_float_type,   "double",             8, 8);
+        make_const_typedef(f80,  TOKEN_double,   AST_float_type,   "long double",        16, 16);
+        make_const_typedef(f128,  TOKEN_double,   AST_float_type,  "__float128",          16, 16);
         make_const_typedef(poison, TOKEN_void,   AST_void_type,    "poison",             8, 8);
         
         // @note: only used during asm.
@@ -4706,7 +4714,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         end_counter(context, create_perfect_keyword_tables);
         
-        for(struct ast_type *basic_type = &globals.typedef_void; basic_type <= &globals.typedef_f64; basic_type++){
+        for(struct ast_type *basic_type = &globals.typedef_void; basic_type <= &globals.typedef_f80; basic_type++){
             
             struct ast_pointer_type *base = &globals.typedef_void_pointer;
             u64 index = basic_type - &globals.typedef_void;

@@ -2114,6 +2114,8 @@ string_lexically_smaller( \
     pdb_init_basic_type_index(u64);
     pdb_init_basic_type_index(f32);
     pdb_init_basic_type_index(f64);
+    pdb_init_basic_type_index(f80);
+    pdb_init_basic_type_index(f128);
     
     globals.typedef_s8_pointer.base.pdb_type_index = CV_s8_pointer;
     globals.typedef_u8_pointer.base.pdb_type_index = CV_u8_pointer;

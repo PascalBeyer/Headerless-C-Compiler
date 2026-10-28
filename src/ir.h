@@ -17,11 +17,10 @@ enum ir_type{
     
     IR_TYPE_f32,
     IR_TYPE_f64,
+    IR_TYPE_f80,
+    IR_TYPE_f128,
     
-    IR_TYPE_padding1,
-    IR_TYPE_padding2,
-    
-    IR_TYPE_padding3,
+    IR_TYPE_padding,
     IR_TYPE_atomic_bool,
     
     IR_TYPE_atomic_s8, 
@@ -505,6 +504,8 @@ static int ir_type_size[] = {
     
     [IR_TYPE_f32] = 4,
     [IR_TYPE_f64] = 8, 
+    [IR_TYPE_f80] = 16,
+    [IR_TYPE_f128] = 16,
     
     [IR_TYPE_pointer] = 8,
 };
