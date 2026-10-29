@@ -4449,29 +4449,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
         {
             struct string_list predefines = {0};
             
-            for(struct string_list_node *predefine_node = globals.cli_options.D.list.first; predefine_node; predefine_node = predefine_node->next){
-                struct string root_option = predefine_node->string;
-                
-                struct string define_to = root_option;
-                struct string to_define = string_eat_until_characters_front(&define_to, " #=");
-                
-                if(to_define.size == 0){
-                    print("Error: Expected an identifier to immediately follow '-D', e.g. '-Ddefine=1'. Got: -D%.*s\n", root_option.size, root_option.data);
-                    return 1;
-                }
-                
-                if(define_to.size){
-                    string_eat_front(&define_to, 1); // Eat the delimiter.
-                }else{
-                    // "By default, the value associated with a symbol is 1."
-                    define_to = string("1");
-                }
-                
-                // We cannot simply patch up the value of the predefine node, as it would leave the total string size wrong.
-                struct string define = push_format_string(arena, "#define %.*s %.*s\n", to_define.size, to_define.data, define_to.size, define_to.data);
-                string_list_postfix_no_copy(&predefines, arena, define);
-            }
-            
             if(!globals.cli_options.no_predefines){
                 struct string hardcoded_predefines = string_from_cstring(
                         "#define __HLC__ 1\n"            
