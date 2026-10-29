@@ -5580,131 +5580,160 @@ case NUMBER_KIND_##type:{ \
                     pop_from_ir_arena(context, deref);
                 }
                 
-                // @note: For var_args functions the 'call_arguments_count' can differ from the 'function_type->argument_list.count'.
-                smm call_arguments_count = 0;
-                
-                struct ast_list_node* function_argument_iterator = function_type->argument_list.first;
-                if(!peek_token_eat(context, TOKEN_closed_paren)){
-                    while(1){
-                        struct expr expr = parse_expression(context, true);
-                        if(context->should_exit_statement) return expr;
-                        
-                        if(function_argument_iterator){
-                            
-                            assert(*function_argument_iterator->value == IR_declaration);
-                            struct ast_declaration *decl = cast(struct ast_declaration *)function_argument_iterator->value;
-                            
-                            if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return expr;
-                            
-                            if((function_type->flags & FUNCTION_TYPE_FLAGS_is_printlike) && function_argument_iterator->next == null){
-                                //
-                                // For a printlike function we do the parameter parsing ourselves.
-                                // This is because we want to be able to not have a 'format' argument. 
-                                // In this case we will _infer_ a 'format' argument.
-                                //
-                                parse_call_to_printlike_function_arguments(context, function_type, &operand, &expr, &call_arguments_count);
-                                call_arguments_count += 1;
-                                break;
-                            }
-                            
-                            // "the arguments are implicitly converted, as if by assignment"
-                            maybe_load_address_for_array_or_function(context, IR_load_address, &expr);
-                            
-                            if((decl->type->flags & TYPE_FLAG_is_transparent_union) && expr.resolved_type->kind == AST_pointer_type){
-                                struct ast_compound_type *union_type = (struct ast_compound_type *)decl->type;
-                                
-                                // @cleanup: 0 literal should also work.
-                                //           gcc also allows any pointer if the union contains a void *pointer, but that seems like a useless feature to me.
-                                
-                                int match = 0;
-                                
-                                if(expr.resolved_type == &globals.typedef_void_pointer.base){
-                                    match = 1;
-                                }else{
-                                    for(u32 member_index = 0; member_index < union_type->amount_of_members; member_index++){
-                                        struct compound_member *member = &union_type->members[member_index];
-                                        if(types_are_equal(member->type, expr.resolved_type)){
-                                            match = 1;
-                                        }
-                                    }
-                                }
-                                
-                                if(!match){
-                                    struct string type_string = push_type_string(context->arena, &context->scratch, expr.resolved_type);
-                                    struct string union_name = token_get_string(union_type->identifier);
-                                    
-                                    begin_error_report(context);
-                                    report_error(context, expr.token, "Expression of type '%.*s' matches none of the members of __attribute__((transparent_union))-%.*s.", type_string.size, type_string.data, union_name.size, union_name.data);
-                                    report_error(context, union_type->identifier, "... Here is the union.");
-                                    end_error_report(context);
-                                }
-                            }else{
-                                maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, decl->type, decl->defined_type, &expr, expr.token);
-                            }
-                            
-                            function_argument_iterator = function_argument_iterator->next;
-                        }else{
-                            if(!(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs)){
-                                // :Error
-                                report_error(context, call_token, "Too many arguments to function.");
-                                return expr;
-                            }else{
-                                if(expr.resolved_type == &globals.typedef_void){
-                                    report_error(context, expr.token, "Expression of type void cannot be used as function argument.");
-                                }
-                                
-                                maybe_insert_implicit_nodes_for_varargs_argument(context, &expr);
-                            }
+                if(function_type->flags & FUNCTION_TYPE_FLAGS_needs_custom_argument_parsing){
+                    // @cleanup: how to deal with derefing the function?
+                    
+                    struct ir_identifier *identifier = (struct ir_identifier *)operand.ir;
+                    
+                    if(atoms_match(call_token->atom, atom_for_string(string("__builtin_types_compatible_p")))){
+                        struct type_info_return type_info_a = maybe_parse_type_for_cast_or_sizeof(context);
+                        if(!type_info_a.type){
+                            report_error(context, get_current_token_for_error_report(context), "Expected a type. Arguments of __builtin_types_compatible_p need to be types.");
                         }
                         
-                        call_arguments_count += 1;
+                        expect_token(context, TOKEN_comma, "Expected ',' for __builtin_types_compatible_p(<type>, <type>).");
+                        struct type_info_return type_info_b = maybe_parse_type_for_cast_or_sizeof(context);
+                        if(!type_info_b.type){
+                            report_error(context, get_current_token_for_error_report(context), "Expected a type. Arguments of __builtin_types_compatible_p need to be types.");
+                        }
                         
-                        if(!peek_token_eat(context, TOKEN_comma)) break;
-                        if(peek_token(context, TOKEN_closed_paren)) break; // Allow trailling ',' in function calls.
+                        pop_from_ir_arena(context, identifier);
+                        
+                        int compatible = type_info_a.type && type_info_b.type && types_are_equal(type_info_a.type, type_info_b.type);
+                        operand = ast_push_s32_literal(context, compatible, call_token);
+                    }else{
+                        invalid_code_path;
                     }
                     
                     expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of parameter list.");
-                }
-                
-                if(function_type->argument_list.count > call_arguments_count){
-                    // :Error
-                    begin_error_report(context);
-                    struct string type_string = push_type_string(&context->scratch, &context->scratch, &function_type->base);
-                    report_error(context, call_token, "Too few arguments to function of type '%.*s'.", type_string.size, type_string.data);
+                }else{
                     
-                    // @note: Careful here, the we pop the operand when we are converting `(*function_pointer)()` to `function_pointer()`.
-                    //        Therefore, we also have to check that the token is an identifier.
-                    if(call_token->type == TOKEN_identifier && operand.ir->kind == IR_identifier){
-                        struct ir_identifier *ident = (struct ir_identifier *)operand.ir;
-                        report_error(context, ident->decl->identifier, "... Here is the declaration of the function.");
-                    }
-                    end_error_report(context);
-                    return operand;
-                }
-                
-                if((function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !context->in_conditional_expression){
-                    context->current_statement_returns_a_value = 1;
-                }
-                
-                if(function_type->flags & FUNCTION_TYPE_FLAGS_is_seh_intrinsic){
-                    struct string operand_string = token_get_string(operand.token);
-                    if(!context->in_exception_filter && (string_match(operand_string, string("_exception_info")) || string_match(operand_string, string("_exception_code")))){
-                        report_error(context, operand.token, "Cannot use '%.*s' outside of an exception filter.", operand_string.size, operand_string.data);
+                    // @note: For var_args functions the 'call_arguments_count' can differ from the 'function_type->argument_list.count'.
+                    smm call_arguments_count = 0;
+                    
+                    struct ast_list_node* function_argument_iterator = function_type->argument_list.first;
+                    if(!peek_token_eat(context, TOKEN_closed_paren)){
+                        while(1){
+                            struct expr expr = parse_expression(context, true);
+                            if(context->should_exit_statement) return expr;
+                            
+                            if(function_argument_iterator){
+                                
+                                assert(*function_argument_iterator->value == IR_declaration);
+                                struct ast_declaration *decl = cast(struct ast_declaration *)function_argument_iterator->value;
+                                
+                                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) return expr;
+                                
+                                if((function_type->flags & FUNCTION_TYPE_FLAGS_is_printlike) && function_argument_iterator->next == null){
+                                    //
+                                    // For a printlike function we do the parameter parsing ourselves.
+                                    // This is because we want to be able to not have a 'format' argument. 
+                                    // In this case we will _infer_ a 'format' argument.
+                                    //
+                                    parse_call_to_printlike_function_arguments(context, function_type, &operand, &expr, &call_arguments_count);
+                                    call_arguments_count += 1;
+                                    break;
+                                }
+                                
+                                // "the arguments are implicitly converted, as if by assignment"
+                                maybe_load_address_for_array_or_function(context, IR_load_address, &expr);
+                                
+                                if((decl->type->flags & TYPE_FLAG_is_transparent_union) && expr.resolved_type->kind == AST_pointer_type){
+                                    struct ast_compound_type *union_type = (struct ast_compound_type *)decl->type;
+                                    
+                                    // @cleanup: 0 literal should also work.
+                                    //           gcc also allows any pointer if the union contains a void *pointer, but that seems like a useless feature to me.
+                                    
+                                    int match = 0;
+                                    
+                                    if(expr.resolved_type == &globals.typedef_void_pointer.base){
+                                        match = 1;
+                                    }else{
+                                        for(u32 member_index = 0; member_index < union_type->amount_of_members; member_index++){
+                                            struct compound_member *member = &union_type->members[member_index];
+                                            if(types_are_equal(member->type, expr.resolved_type)){
+                                                match = 1;
+                                            }
+                                        }
+                                    }
+                                    
+                                    if(!match){
+                                        struct string type_string = push_type_string(context->arena, &context->scratch, expr.resolved_type);
+                                        struct string union_name = token_get_string(union_type->identifier);
+                                        
+                                        begin_error_report(context);
+                                        report_error(context, expr.token, "Expression of type '%.*s' matches none of the members of __attribute__((transparent_union))-%.*s.", type_string.size, type_string.data, union_name.size, union_name.data);
+                                        report_error(context, union_type->identifier, "... Here is the union.");
+                                        end_error_report(context);
+                                    }
+                                }else{
+                                    maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, decl->type, decl->defined_type, &expr, expr.token);
+                                }
+                                
+                                function_argument_iterator = function_argument_iterator->next;
+                            }else{
+                                if(!(function_type->flags & FUNCTION_TYPE_FLAGS_is_varargs)){
+                                    // :Error
+                                    report_error(context, call_token, "Too many arguments to function.");
+                                    return expr;
+                                }else{
+                                    if(expr.resolved_type == &globals.typedef_void){
+                                        report_error(context, expr.token, "Expression of type void cannot be used as function argument.");
+                                    }
+                                    
+                                    maybe_insert_implicit_nodes_for_varargs_argument(context, &expr);
+                                }
+                            }
+                            
+                            call_arguments_count += 1;
+                            
+                            if(!peek_token_eat(context, TOKEN_comma)) break;
+                            if(peek_token(context, TOKEN_closed_paren)) break; // Allow trailling ',' in function calls.
+                        }
+                        
+                        expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of parameter list.");
                     }
                     
-                    if(!context->in_finally_block && string_match(operand_string, string("_abnormal_termination"))){
-                        report_error(context, operand.token, "Cannot use '%.*s' outside of a __finally-block.", operand_string.size, operand_string.data);    
+                    if(function_type->argument_list.count > call_arguments_count){
+                        // :Error
+                        begin_error_report(context);
+                        struct string type_string = push_type_string(&context->scratch, &context->scratch, &function_type->base);
+                        report_error(context, call_token, "Too few arguments to function of type '%.*s'.", type_string.size, type_string.data);
+                        
+                        // @note: Careful here, the we pop the operand when we are converting `(*function_pointer)()` to `function_pointer()`.
+                        //        Therefore, we also have to check that the token is an identifier.
+                        if(call_token->type == TOKEN_identifier && operand.ir->kind == IR_identifier){
+                            struct ir_identifier *ident = (struct ir_identifier *)operand.ir;
+                            report_error(context, ident->decl->identifier, "... Here is the declaration of the function.");
+                        }
+                        end_error_report(context);
+                        return operand;
                     }
+                    
+                    if((function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !context->in_conditional_expression){
+                        context->current_statement_returns_a_value = 1;
+                    }
+                    
+                    if(function_type->flags & FUNCTION_TYPE_FLAGS_is_seh_intrinsic){
+                        struct string operand_string = token_get_string(operand.token);
+                        if(!context->in_exception_filter && (string_match(operand_string, string("_exception_info")) || string_match(operand_string, string("_exception_code")))){
+                            report_error(context, operand.token, "Cannot use '%.*s' outside of an exception filter.", operand_string.size, operand_string.data);
+                        }
+                        
+                        if(!context->in_finally_block && string_match(operand_string, string("_abnormal_termination"))){
+                            report_error(context, operand.token, "Cannot use '%.*s' outside of a __finally-block.", operand_string.size, operand_string.data);    
+                        }
+                    }
+                    
+                    struct ir_function_call *call = push_uninitialized_struct(&context->ir_arena, struct ir_function_call);
+                    call->base.kind = IR_function_call;
+                    call->function_type = function_type;
+                    call->call_arguments_count = call_arguments_count;
+                    
+                    operand.ir = &call->base;
+                    operand.resolved_type = function_type->return_type;
+                    operand.defined_type = function_type->return_type_defined_type;
                 }
-                
-                struct ir_function_call *call = push_uninitialized_struct(&context->ir_arena, struct ir_function_call);
-                call->base.kind = IR_function_call;
-                call->function_type = function_type;
-                call->call_arguments_count = call_arguments_count;
-                
-                operand.ir = &call->base;
-                operand.resolved_type = function_type->return_type;
-                operand.defined_type = function_type->return_type_defined_type;
                 
                 context->in_lhs_expression = false;
             }break;
