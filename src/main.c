@@ -4818,7 +4818,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         end_counter(context, create_perfect_keyword_tables);
         
-        for(struct ast_type *basic_type = &globals.typedef_void; basic_type <= &globals.typedef_f80; basic_type++){
+        for(struct ast_type *basic_type = &globals.typedef_void; basic_type <= &globals.typedef_f128; basic_type++){
             
             struct ast_pointer_type *base = &globals.typedef_void_pointer;
             u64 index = basic_type - &globals.typedef_void;

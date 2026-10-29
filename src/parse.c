@@ -104,7 +104,7 @@ func struct ast_type *_parser_type_push(struct context *context, smm size, u32 a
 
 func struct ast_type *parser_push_pointer_type(struct context *context, struct ast_type *pointer_to, enum ast_kind *defined_type){
     
-    if(&globals.typedef_void <= pointer_to && pointer_to <= &globals.typedef_f64){
+    if(&globals.typedef_void <= pointer_to && pointer_to <= &globals.typedef_f128){
         struct ast_pointer_type *base = &globals.typedef_void_pointer;
         return &base[pointer_to - &globals.typedef_void].base;
     }else{

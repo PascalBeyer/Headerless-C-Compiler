@@ -2699,7 +2699,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             push_zero_terminated_string_copy(arena, basic_type_string(type));
         }
         
-        for(struct ast_type *type = &globals.typedef_f32; type <= &globals.typedef_f64; type++){
+        for(struct ast_type *type = &globals.typedef_f32; type <= &globals.typedef_f128; type++){
             type->flags |= TYPE_FLAG_pdb_permanent | TYPE_FLAG_pdb_temporary;
             type->dwarf_form_offset = (u32)(arena_current(arena) - debug_info_base);
             *push_struct(arena, u8) = /*index*/ABBREV_base_type;
