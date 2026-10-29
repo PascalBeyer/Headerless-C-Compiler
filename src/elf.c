@@ -842,6 +842,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         PT_NOTE = 4,
         PT_PHDR = 6,
         PT_TLS = 7,
+        PT_GNU_EH_FRAME = 0x6474e550,
     };
     
     enum elf_program_header_flags{
@@ -1300,7 +1301,19 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     }
     
     if(defined_functions.count){
+        
+        push_zero_align(arena, 8);
+        
         u8 *eh_frame_section_start = arena_current(arena);
+        
+        struct eh_frame_hdr_entry{
+            u32 function_rva;
+            u32 fde_rva;
+        };
+        
+        u64 eh_frame_function_count = defined_functions.count;
+        struct eh_frame_hdr_entry *eh_frame_hdr_entries = push_uninitialized_data(scratch, struct eh_frame_hdr_entry, (smm)eh_frame_function_count);
+        u64 eh_frame_hdr_entry_at = 0;
         
         // 
         // The eh_frame_section is very simplified for our rbp based stack frames.
@@ -1400,10 +1413,15 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             *push_struct(arena, u8) = 0; // Augmentation Length;
             
+            // The entry point has no caller, so its return address is undefined.
+            if(function == globals.entry_point){
+                *push_struct(arena, u8) = /*DW_CFA_undefined*/0x07;
+                *push_struct(arena, u8) = /*rip*/0x10;
+            }
             
             static u8 common_instructions[] = {
                 0x41, // DW_CFA_advance_loc 1
-                0x0e, 0x10, // DW_CFA_def_cfa_offset 10
+                0x0e, 0x10, // DW_CFA_def_cfa_offset 16
                 0x86, 0x02, // DW_CFA_offset reg=6 (rbp) offset=2
                 
                 0x43, // DW_CFA_advance_loc 3
@@ -1434,11 +1452,47 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             push_zero_align(arena, 8);
             
             *length = (u32)(arena_current(arena) - start);
+            
+            eh_frame_hdr_entries[eh_frame_hdr_entry_at].function_rva = (u32)function->relative_virtual_address;
+            eh_frame_hdr_entries[eh_frame_hdr_entry_at].fde_rva = make_relative_virtual_address(ro_segment_start, length);
+            eh_frame_hdr_entry_at += 1;
+        }
+        assert(eh_frame_hdr_entry_at == eh_frame_function_count);
+        
+        // A zero-length CIE terminates the .eh_frame section.
+        *push_uninitialized_struct(arena, u32) = 0;
+        push_zero_align(arena, 8);
+        
+        fill_section_header(eh_frame, "eh_frame", SHT_PROGBITS, SHF_ALLOC, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/0);
+        
+        push_zero_align(arena, 4);
+        
+        u8 *eh_frame_hdr_segment_start = arena_current(arena);
+        u8 *eh_frame_hdr_section_start = eh_frame_hdr_segment_start;
+        
+        u32 eh_frame_hdr_rva = make_relative_virtual_address(ro_segment_start, eh_frame_hdr_section_start);
+        u32 eh_frame_rva     = make_relative_virtual_address(ro_segment_start, eh_frame_section_start);
+        
+        *push_uninitialized_struct(arena, u8) = 1;    // Version.
+        *push_uninitialized_struct(arena, u8) = 0x1b; // .eh_frame pointer encoding: pcrel|sdata4.
+        *push_uninitialized_struct(arena, u8) = 0x03; // FDE count encoding: udata4.
+        *push_uninitialized_struct(arena, u8) = 0x3b; // Table encoding: datarel|sdata4.
+        
+        *push_uninitialized_struct(arena, s32) = (s32)(eh_frame_rva - (eh_frame_hdr_rva + 4));
+        *push_uninitialized_struct(arena, u32) = (u32)eh_frame_function_count;
+        
+        // 
+        // The .eh_frame_hdr section must be sorted by the function_rva, 
+        // but they are already sorted as its the same order that we have emitted them in.
+        // 
+        for(u64 index = 0; index < eh_frame_function_count; index++){
+            *push_uninitialized_struct(arena, s32) = (s32)(eh_frame_hdr_entries[index].function_rva - eh_frame_hdr_rva);
+            *push_uninitialized_struct(arena, s32) = (s32)(eh_frame_hdr_entries[index].fde_rva      - eh_frame_hdr_rva);
         }
         
-        fill_section_header(eh_frame, "eh_frame", 0x70000001, SHF_ALLOC, /*alignment*/8, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_section_header(eh_frame_hdr, "eh_frame_hdr", SHT_PROGBITS, SHF_ALLOC, /*alignment*/4, /*link*/0, /*info*/0, /*entry_size*/0);
+        fill_program_header(eh_frame_hdr, PT_GNU_EH_FRAME, PF_READ, /*alignment*/4);
     }
-
     
     if(rodata_section_start != arena_current(arena)){
         fill_program_header(ro, PT_LOAD, PF_READ, 0x1000);
