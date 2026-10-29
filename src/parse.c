@@ -10224,15 +10224,33 @@ func void parse_statement(struct context *context){
         }break;
         
         case TOKEN_asm:{
-            struct ir_asm_block *asm_block = push_struct(&context->ir_arena, struct ir_asm_block);
-            asm_block->base.kind = IR_asm_block;
-            asm_block->token = initial_token;
+            // GCC allows '__asm__ volatile (...)' and '__asm__ __volatile__ (...)'.
+            if(peek_token(context, TOKEN_volatile)) next_token(context);
             
-            expect_token(context, TOKEN_open_curly, "Expected '{' after '__asm__'.");
-            
-            parse_asm_block(context, asm_block);
-            
-            needs_semicolon = false;
+            if(peek_token(context, TOKEN_open_curly)){
+                struct ir_asm_block *asm_block = push_struct(&context->ir_arena, struct ir_asm_block);
+                asm_block->base.kind = IR_asm_block;
+                asm_block->token = initial_token;
+                
+                expect_token(context, TOKEN_open_curly, "Expected '{' after '__asm__'.");
+                
+                parse_asm_block(context, asm_block);
+                
+                needs_semicolon = false;
+            }else if(peek_token(context, TOKEN_open_paren)){
+                
+                // GNU-style extended inline assembly, for example:
+                // 
+                //     __asm__ ("" : : "r"(ptr));
+                // 
+                
+                struct token *open = next_token(context);
+                report_error(context, initial_token, "GNU-style '__asm__' currently unsupported.");
+                
+                skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__asm__'.");
+            }else{
+                expect_token(context, TOKEN_open_curly, "Expected '{' after '__asm__'.");
+            }
         }break;
         
         case TOKEN_static_assert:{
