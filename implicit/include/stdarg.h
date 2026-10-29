@@ -22,6 +22,7 @@ typedef struct __va_list{
         ? **(type**)(((ap) += 1) - 1) \
         :  *(type *)(((ap) += 1) - 1))
 #define va_copy(dest, src) ((dest) = (src))
+#define __va_copy(dest, src) ((dest) = (src))
 #define va_end(ap) ((void)(ap))
 
 #else
@@ -36,6 +37,7 @@ typedef struct{
 #define va_start(list, ...)  __builtin_va_start(list)
 #define va_arg(list, type) *(type *)__builtin_va_arg((list))
 #define va_copy(dest, src) ((dest)[0] = (src)[0])
+#define __va_copy(dest, src) ((dest)[0] = (src)[0])
 #define va_end(list) (void)(list)
 
 #ifndef __GNUC_VA_LIST
