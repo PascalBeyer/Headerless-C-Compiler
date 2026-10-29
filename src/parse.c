@@ -5989,8 +5989,7 @@ case NUMBER_KIND_##type:{ \
             case AST_sizeof:{
                 
                 if(operand.resolved_type->kind == AST_function_type){
-                    report_error(context, stack_entry->token, "Expression of function type has undefined size.");
-                    return operand;
+                    report_warning(context, WARNING_sizeof_function, stack_entry->token, "Expression of function type has undefined size, returning 0.");
                 }
                 
                 if(operand.resolved_type == &globals.typedef_void){

@@ -649,5 +649,11 @@ Example:
 -> preprocessor_warning - The #warning preprocessor directive was used.
 
 Example:
-#warning Warn me please :) // Warning: Warn me please :)
+> #warning Warn me please :) // Warning: Warn me please :)
+
+-> sizeof_function - Using sizeof on a function is a GNU extension.
+
+Example:
+> int main(){ return sizeof(main) } // Warning: Expression of function type has undefined size, returning 0.
+
 

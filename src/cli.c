@@ -187,6 +187,7 @@ enum warning{
     WARNING_octal_constant_used                           = 45, // Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.
     WARNING_comparing_integer_to_pointer                  = 46, // Comparing an integer to a pointer without a cast is an MSVC extension.
     WARNING_preprocessor_warning                          = 47, // The #warning preprocessor directive was used.
+    WARNING_sizeof_function                               = 48, // Using sizeof on a function is a GNU extension.
 };
 
 struct cli_options{
@@ -244,7 +245,7 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 48
+#define WARNING_count 49
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -299,6 +300,7 @@ struct warning_table_entry{
     [5] = {{17, (u8 *)"octalconstantused"}, WARNING_octal_constant_used},
     [7] = {{25, (u8 *)"comparingintegertopointer"}, WARNING_comparing_integer_to_pointer},
     [8] = {{19, (u8 *)"preprocessorwarning"}, WARNING_preprocessor_warning},
+    [33] = {{14, (u8 *)"sizeoffunction"}, WARNING_sizeof_function},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -1036,7 +1038,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "octal_constant_used (45)                | Use an octal constant like 0420. These can be confusing and using 0o420 is recommended.\n"
                                 "comparing_integer_to_pointer (46)       | Comparing an integer to a pointer without a cast is an MSVC extension.\n"
                                 "preprocessor_warning (47)               | The #warning preprocessor directive was used.\n"
-                                , 4983);
+                                "sizeof_function (48)                    | Using sizeof on a function is a GNU extension.\n"
+                                , 5072);
                     }
                 }break;
                 invalid_default_case();
