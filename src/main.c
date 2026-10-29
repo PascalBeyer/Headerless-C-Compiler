@@ -4285,11 +4285,6 @@ int main(int argc, char *argv[]){
     
     globals.compile_to_object = globals.output_file_type == OUTPUT_FILE_obj || (globals.output_file_type == OUTPUT_FILE_elf && globals.cli_options.obj); 
     
-    if(globals.cli_options.fPIC && !(globals.output_file_type == OUTPUT_FILE_elf && globals.compile_to_object)){
-        print("Error: The '-fPIC' option is only supported when compiling ELF object files.\n");
-        return 1;
-    }
-    
     if(globals.compile_to_object) globals.cli_options.no_entry = 1;
     
     int no_standard_library = globals.cli_options.no_stdlib;
@@ -5217,6 +5212,12 @@ globals.typedef_##postfix = (struct ast_type){                                  
         }
         thread_count = 1;
     }
+    
+    if(globals.cli_options.fPIC && !(globals.output_file_type == OUTPUT_FILE_elf && globals.compile_to_object) && !globals.preprocessed_file_handle){
+        print("Error: The '-fPIC' option is only supported when compiling ELF object files.\n");
+        return 1;
+    }
+    
     
     // @note: thread '0' is the main thread
     struct thread_info *thread_infos = push_data(arena, struct thread_info, thread_count);
