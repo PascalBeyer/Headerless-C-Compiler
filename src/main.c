@@ -4452,21 +4452,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
             if(!globals.cli_options.no_predefines){
                 struct string hardcoded_predefines = string_from_cstring(
                         "#define __HLC__ 1\n"            
-                        "#define _M_X64 100\n"
-                        "#define _M_AMD64 100\n"
-                        
-                        "#define _MSC_EXTENSIONS 1\n"
-                        
-                        "#define _INTEGRAL_MAX_BITS 64\n"
-                        
-                        // I will define these for now.
-                        // In the future, these will only be defined by the "clang-cl.exe"-like variant of my compiler.
-                        // For the time being, we are more or less working on that variant.
-                        //                                                                             - 21.10.2024
-                        "#define _MSC_BUILD 0\n"
-                        "#define _MSC_FULL_VER 192829336\n"
-                        "#define _MSC_VER 1928\n"
-                        
                         "#define __assume(a) (void)0\n"
                         
                         // "#define __STDC_VERSION__ 201112L\n"
@@ -4483,6 +4468,13 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     struct string windows_predefines = string_from_cstring(
                             "#define _WIN64 1\n"
                             "#define _WIN32 1\n"
+                            "#define _M_X64 100\n"
+                            "#define _M_AMD64 100\n"
+                            "#define _MSC_EXTENSIONS 1\n"
+                            "#define _INTEGRAL_MAX_BITS 64\n"
+                            "#define _MSC_BUILD 0\n"
+                            "#define _MSC_FULL_VER 192829336\n"
+                            "#define _MSC_VER 1928\n"
                             );
                     string_list_postfix_no_copy(&predefines, arena, windows_predefines);
                 }
