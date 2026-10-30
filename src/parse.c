@@ -5604,6 +5604,19 @@ case NUMBER_KIND_##type:{ \
                         
                         int compatible = type_info_a.type && type_info_b.type && types_are_equal(type_info_a.type, type_info_b.type);
                         operand = ast_push_s32_literal(context, compatible, call_token);
+                    }else if(atoms_match(call_token->atom, atom_for_string(string("__builtin_constant_p")))){
+                        
+                        u8 *ir_arena_at = arena_current(&context->ir_arena);
+                        
+                        struct expr expr = parse_expression(context, /*skip_comma_expresssion*/false);
+                        int constant = (expr.ir->kind == IR_integer_literal || expr.ir->kind == IR_float_literal);
+                        
+                        memset(ir_arena_at, 0, context->ir_arena.current - ir_arena_at);
+                        context->ir_arena.current = ir_arena_at;
+                        
+                        pop_from_ir_arena(context, identifier);
+                        
+                        operand = ast_push_s32_literal(context, constant, call_token);
                     }else{
                         invalid_code_path;
                     }

@@ -5008,6 +5008,18 @@ globals.typedef_##postfix = (struct ast_type){                                  
             register_intrinsic_function_declaration(context, token, type);
         }
         
+        {   // 
+            // int __builtin_constant_p(type, type)
+            // 
+            struct token *token = push_dummy_token(arena, atom_for_string(string("__builtin_constant_p")), TOKEN_identifier);
+            
+            struct ast_function_type *type = parser_type_push(context, function_type);
+            type->return_type = &globals.typedef_s32;
+            type->flags |= FUNCTION_TYPE_FLAGS_needs_custom_argument_parsing;
+            
+            register_intrinsic_function_declaration(context, token, type);
+        }
+        
         globals.invalid_token.location_index = -1;
         globals.invalid_identifier_token = push_dummy_token(arena, globals.invalid_identifier, TOKEN_identifier);
         
