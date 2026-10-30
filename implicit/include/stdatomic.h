@@ -41,7 +41,7 @@
 // void atomic_store(volatile atomic_type *object, non_atomic_type desired);
 // void atomic_store_explicit(volatile atomic_type *object, non_atomic_type desired, memory_order order);
 #define atomic_store(object, desired) (void)(*(object) = (desired))
-#define atomic_store_explicit(object, desired, order) atomic_store(object, desired)
+#define atomic_store_explicit(object, desired, order) atomic_store((object), (desired))
 
 // non_atomic_type atomic_load(volatile *atomic_type *object);
 // non_atomic_type atomic_load_explicit(volatile *atomic_type *object, memory_order order);
@@ -64,8 +64,8 @@
         atomic_uint*:    __atomic_exchange_uint,          \
         atomic_ulong*:   __atomic_exchange_ulong,         \
         atomic_ullong*:  __atomic_exchange_ullong,        \
-)(object, value)
-#define atomic_exchange_explicit(object, value, order) atomic_exchange(object, value)
+)((object), (value))
+#define atomic_exchange_explicit(object, value, order) atomic_exchange((object), (value))
 
 // _Bool atomic_compare_exchange_strong(volatile atomic_type *object, non_atomic_type *expected, non_atomic_type desired);
 // _Bool atomic_compare_exchange_strong_explicit(volatile atomic_type *object, non_atomic_type *expected, non_atomic_type desired, memory_order order);
@@ -85,18 +85,18 @@
         atomic_ullong*:  __atomic_compare_exchange_ullong,                           \
                                                                                      \
         default:        __atomic_compare_exchange_pointer,                           \
-)(object, expected, desired)
+)((object), (expected), (desired))
 
-#define atomic_compare_exchange_strong_explicit(object, expected, desired, order) atomic_compare_exchange_strong(object, expected, desired)
+#define atomic_compare_exchange_strong_explicit(object, expected, desired, order) atomic_compare_exchange_strong((object), (expected), (desired))
 
 // _Bool atomic_compare_exchange_weak(volatile atomic_type *object, non_atomic_type *expected, non_atomic_type desired);
 // _Bool atomic_compare_exchange_weak_explicit(volatile atomic_type *object, non_atomic_type *expected, non_atomic_type desired, memory_order order);
-#define atomic_compare_exchange_weak(object, expected, desired) atomic_compare_exchange_strong(object, expected, desired)
-#define atomic_compare_exchange_weak_explicit(object, expected, desired, order) atomic_compare_exchange_strong(object, expected, desired)
+#define atomic_compare_exchange_weak(object, expected, desired) atomic_compare_exchange_strong((object), (expected), (desired))
+#define atomic_compare_exchange_weak_explicit(object, expected, desired, order) atomic_compare_exchange_strong((object), (expected), (desired))
 
 // non_atomic_type atomic_fetch_{add,sub,or,xor,and}(volatile atomic_type *object, non_atomic_type operand);
 // non_atomic_type atomic_fetch_{add,sub,or,xor,and}_explicit(volatile atomic_type *object, non_atomic_type operand, memory_order order);
-#define atomic_fetch_add(object, operand) _Generic((object), \
+#define atomic_fetch_add(object, operand) _Generic(operand)) \
         atomic_char*:    __atomic_fetch_add_char,            \
         atomic_short*:   __atomic_fetch_add_short,           \
         atomic_int*:     __atomic_fetch_add_int,             \
@@ -108,8 +108,8 @@
         atomic_uint*:    __atomic_fetch_add_uint,            \
         atomic_ulong*:   __atomic_fetch_add_ulong,           \
         atomic_ullong*:  __atomic_fetch_add_ullong,          \
-)(object, operand)
-#define atomic_fetch_sub(object, operand) _Generic((object), \
+)((object), (operand))
+#define atomic_fetch_sub(object, operand) _Generic(operand)) \
         atomic_char*:    __atomic_fetch_sub_char,            \
         atomic_short*:   __atomic_fetch_sub_short,           \
         atomic_int*:     __atomic_fetch_sub_int,             \
@@ -121,8 +121,8 @@
         atomic_uint*:    __atomic_fetch_sub_uint,            \
         atomic_ulong*:   __atomic_fetch_sub_ulong,           \
         atomic_ullong*:  __atomic_fetch_sub_ullong,          \
-)(object, operand)
-#define atomic_fetch_or(object, operand) _Generic((object),  \
+)((object), (operand))
+#define atomic_fetch_or(object, operand) _Generic(operand))  \
         atomic_char*:    __atomic_fetch_or_char,             \
         atomic_short*:   __atomic_fetch_or_short,            \
         atomic_int*:     __atomic_fetch_or_int,              \
@@ -134,8 +134,8 @@
         atomic_uint*:    __atomic_fetch_or_uint,             \
         atomic_ulong*:   __atomic_fetch_or_ulong,            \
         atomic_ullong*:  __atomic_fetch_or_ullong,           \
-)(object, operand)
-#define atomic_fetch_xor(object, operand) _Generic((object), \
+)((object), (operand))
+#define atomic_fetch_xor(object, operand) _Generic(operand)) \
         atomic_char*:    __atomic_fetch_xor_char,            \
         atomic_short*:   __atomic_fetch_xor_short,           \
         atomic_int*:     __atomic_fetch_xor_int,             \
@@ -147,8 +147,8 @@
         atomic_uint*:    __atomic_fetch_xor_uint,            \
         atomic_ulong*:   __atomic_fetch_xor_ulong,           \
         atomic_ullong*:  __atomic_fetch_xor_ullong,          \
-)(object, operand)
-#define atomic_fetch_and(object, operand) _Generic((object), \
+)((object), (operand))
+#define atomic_fetch_and(object, operand) _Generic(operand)) \
         atomic_char*:    __atomic_fetch_and_char,            \
         atomic_short*:   __atomic_fetch_and_short,           \
         atomic_int*:     __atomic_fetch_and_int,             \
@@ -160,13 +160,13 @@
         atomic_uint*:    __atomic_fetch_and_uint,            \
         atomic_ulong*:   __atomic_fetch_and_ulong,           \
         atomic_ullong*:  __atomic_fetch_and_ullong,          \
-)(object, operand)
-
-#define atomic_fetch_add_explicit(object, operand, order) atomic_fetch_add(object, operand)
-#define atomic_fetch_sub_explicit(object, operand, order) atomic_fetch_sub(object, operand)
-#define atomic_fetch_or_explicit(object, operand, order)  atomic_fetch_or(object, operand)
-#define atomic_fetch_xor_explicit(object, operand, order) atomic_fetch_xor(object, operand)
-#define atomic_fetch_and_explicit(object, operand, order) atomic_fetch_and(object, operand)
+)((object), (operand))
 
 #pragma compilation_unit("stdatomic.c")
+
+#define atomic_fetch_add_explicit(object, operand, order) atomic_fetch_add((object), (operand))
+#define atomic_fetch_sub_explicit(object, operand, order) atomic_fetch_sub((object), (operand))
+#define atomic_fetch_or_explicit(object, operand, order)  atomic_fetch_or((object), (operand))
+#define atomic_fetch_xor_explicit(object, operand, order) atomic_fetch_xor((object), (operand))
+#define atomic_fetch_and_explicit(object, operand, order) atomic_fetch_and((object), (operand))
 
