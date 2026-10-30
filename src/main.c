@@ -2050,13 +2050,11 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 
                 if(function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
                     if(!(redecl_function->type->flags & DECLARATION_FLAGS_is_dllexport)){
-                        // only set this if it is not set, to not polute write cache.
                         redecl_function->as_decl.flags |= DECLARATION_FLAGS_is_dllexport;
                     }
                 }
                 
                 if(redecl_function->as_decl.flags & DECLARATION_FLAGS_is_dllexport){
-                    // we own this decl so here its fine
                     function->as_decl.flags |= DECLARATION_FLAGS_is_dllexport;
                 }
                 
@@ -4022,7 +4020,7 @@ int main(int argc, char *argv[]){
         // If the file is not a source file, we should use the libraries paths to find the library file.
         // Hence, in this loop we don't want to handle it in any way.
         // 
-        if(string_match(extension, string(".lib")) || string_match(extension, string(".so"))){
+        if(string_match(extension, string(".lib")) || string_match(extension, string(".so")) || string_contains(strip_file_path(path), string(".so."))){
             add_specified_library(arena, path, null);
             continue;
         }else if(string_match(extension, string(".a"))){
@@ -4142,6 +4140,23 @@ int main(int argc, char *argv[]){
             string_list_postfix_no_copy(&command, arena, string("link.exe"));
 #else
             string_list_postfix_no_copy(&command, arena, string("ld"));
+            string_list_postfix_no_copy(&command, arena, string(" --eh-frame-hdr"));
+            
+            if(globals.cli_options.shared){
+                string_list_postfix_no_copy(&command, arena, string(" -shared"));
+            }else{
+                string_list_postfix_no_copy(&command, arena, string(
+                        " /usr/lib/x86_64-linux-gnu/Scrt1.o"
+                        " -dynamic-linker /lib64/ld-linux-x86-64.so.2"
+                        ));
+            }
+            
+            // This awefulness needs to exist here for now, because for shared objects, 
+            // it defines a __dso_handle that is used by the runtime to call exit handlers.
+            // This is necessary even for C, as atexit stuff needs to happen.
+            // In the future, we should maybe provide our own definitions of the __dso_handle,
+            // as well as a .fini_array entry that calls __cxa_finalize(__dso_handle).
+            string_list_postfix_no_copy(&command, arena, string(" /usr/lib/gcc/x86_64-linux-gnu/11/crtbeginS.o"));
 #endif
             
             for(struct string_list_node *object_file = object_files.list.first; object_file; object_file = object_file->next){
@@ -4149,11 +4164,7 @@ int main(int argc, char *argv[]){
             }
             
 #ifndef _WIN32
-            // 
-            // Pass directly specified libraries (for example, .a archives) to the
-            // system linker. Static archives need to appear after the object files
-            // that reference them.
-            // 
+            
             for(struct specified_library *library = globals.specified_libraries.first; library; library = library->next){
                 string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", library->library_path.size, library->library_path.data));
             }
@@ -4166,24 +4177,48 @@ int main(int argc, char *argv[]){
                 string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -l%.*s", library->string.size, library->string.data));
             }
             
+            // 
+            // '-Wl,' arguments are a comma separated list of linker options.
+            // Split them into individual arguments so that options taking a value
+            // (like '-soname libcurl.so.4') are passed as two tokens to ld.
+            // 
+            for(struct string_list_node *linker_option = globals.cli_options.Wl.list.first; linker_option; linker_option = linker_option->next){
+                struct string options = linker_option->string;
+                smm start = 0;
+                for(smm index = 0; index <= options.size; index++){
+                    if(index == options.size || options.data[index] == ','){
+                        if(index > start){
+                            string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", (int)(index - start), options.data + start));
+                        }
+                        start = index + 1;
+                    }
+                }
+            }
+            
             if(globals.cli_options.out.data){
                 // @cleanup: windows?
                 string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -o \"%.*s\"", globals.cli_options.out.size, globals.cli_options.out.data));
             }
             
-            string_list_postfix_no_copy(&command, arena, string(
-                    " /usr/lib/x86_64-linux-gnu/Scrt1.o"
-                    " -dynamic-linker /lib64/ld-linux-x86-64.so.2"
-                    " -lc"
-                    ));
-            
+            string_list_postfix_no_copy(&command, arena, string(" -lc"));
+            string_list_postfix_no_copy(&command, arena, string(" /usr/lib/gcc/x86_64-linux-gnu/11/crtendS.o"));
 #endif
             // 
             // @hack: To allow hlc.exe to be used as a linker, we check if only object files are specified
             //        and just call into system. In the future, we should just be a linker :)
             // 
             
+#ifdef _WIN32
             return system((char*)string_list_flatten(command, arena).data);
+#else
+            // 
+            // system() returns a wait status on POSIX, not the exit code but some wait status.
+            // 
+            int status = system((char*)string_list_flatten(command, arena).data);
+            if(status == -1) return 1;
+            if(WIFEXITED(status)) return WEXITSTATUS(status);
+            return 1;
+#endif
         }
         
         print("Error: No input files specified.\n");
