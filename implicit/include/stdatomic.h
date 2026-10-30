@@ -51,7 +51,7 @@
 // void atomic_exchange(volatile atomic_type *object, non_atomic_type value);
 // void atomic_exchange_explicit(volatile atomic_type *object, non_atomic_type value, memory_order order);
 #define atomic_exchange(object, value) _Generic((object), \
-        atomic_char*:    __atomic_exchange_bool,          \
+        atomic_bool*:    __atomic_exchange_bool,          \
                                                           \
         atomic_char*:    __atomic_exchange_char,          \
         atomic_short*:   __atomic_exchange_short,         \
@@ -96,7 +96,7 @@
 
 // non_atomic_type atomic_fetch_{add,sub,or,xor,and}(volatile atomic_type *object, non_atomic_type operand);
 // non_atomic_type atomic_fetch_{add,sub,or,xor,and}_explicit(volatile atomic_type *object, non_atomic_type operand, memory_order order);
-#define atomic_fetch_add(object, operand) _Generic(operand)) \
+#define atomic_fetch_add(object, operand) _Generic((object), \
         atomic_char*:    __atomic_fetch_add_char,            \
         atomic_short*:   __atomic_fetch_add_short,           \
         atomic_int*:     __atomic_fetch_add_int,             \
@@ -109,7 +109,7 @@
         atomic_ulong*:   __atomic_fetch_add_ulong,           \
         atomic_ullong*:  __atomic_fetch_add_ullong,          \
 )((object), (operand))
-#define atomic_fetch_sub(object, operand) _Generic(operand)) \
+#define atomic_fetch_sub(object, operand) _Generic((object), \
         atomic_char*:    __atomic_fetch_sub_char,            \
         atomic_short*:   __atomic_fetch_sub_short,           \
         atomic_int*:     __atomic_fetch_sub_int,             \
@@ -122,7 +122,7 @@
         atomic_ulong*:   __atomic_fetch_sub_ulong,           \
         atomic_ullong*:  __atomic_fetch_sub_ullong,          \
 )((object), (operand))
-#define atomic_fetch_or(object, operand) _Generic(operand))  \
+#define atomic_fetch_or(object, operand) _Generic((object),  \
         atomic_char*:    __atomic_fetch_or_char,             \
         atomic_short*:   __atomic_fetch_or_short,            \
         atomic_int*:     __atomic_fetch_or_int,              \
@@ -135,7 +135,7 @@
         atomic_ulong*:   __atomic_fetch_or_ulong,            \
         atomic_ullong*:  __atomic_fetch_or_ullong,           \
 )((object), (operand))
-#define atomic_fetch_xor(object, operand) _Generic(operand)) \
+#define atomic_fetch_xor(object, operand) _Generic((object), \
         atomic_char*:    __atomic_fetch_xor_char,            \
         atomic_short*:   __atomic_fetch_xor_short,           \
         atomic_int*:     __atomic_fetch_xor_int,             \
@@ -148,7 +148,7 @@
         atomic_ulong*:   __atomic_fetch_xor_ulong,           \
         atomic_ullong*:  __atomic_fetch_xor_ullong,          \
 )((object), (operand))
-#define atomic_fetch_and(object, operand) _Generic(operand)) \
+#define atomic_fetch_and(object, operand) _Generic((object), \
         atomic_char*:    __atomic_fetch_and_char,            \
         atomic_short*:   __atomic_fetch_and_short,           \
         atomic_int*:     __atomic_fetch_and_int,             \

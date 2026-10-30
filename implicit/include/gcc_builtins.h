@@ -132,7 +132,7 @@
 #define __SIZEOF_INT__ 4
 #define __SIZEOF_LONG__ 8
 #define __SIZEOF_LONG_LONG__ 8
-#define __SIZEOF_INT128__ 16
+// #define __SIZEOF_INT128__ 16
 
 #define __SIZEOF_POINTER__ 8
 
@@ -163,6 +163,7 @@
 
 // builtins
 
+#define __builtin_expect(x, expected) (x)
 #define __builtin_offsetof(type, member) ((long unsigned int)(&((type *)0)->member))
 #define __builtin_prefetch(a, ...) __builtin_prefetch__internal(a)
 
@@ -187,69 +188,99 @@
 #define __sync_synchronize() atomic_thread_fence(memory_order_seq_cst)
 
 #define __sync_fetch_and_add(object, value, ...) _Generic((object), \
-        char *:               __atomic_fetch_add_char,         \
-        short *:              __atomic_fetch_add_short,        \
-        int *:                __atomic_fetch_add_int,          \
-        long *:               __atomic_fetch_add_long,         \
-        /*long long *:          __atomic_fetch_add_llong,*/    \
-        unsigned char *:      __atomic_fetch_add_char,         \
-        unsigned short *:     __atomic_fetch_add_short,        \
-        unsigned int *:       __atomic_fetch_add_int,          \
-        unsigned long *:      __atomic_fetch_add_long,         \
-        /*unsigned long long *: __atomic_fetch_add_llong,*/    \
+        _Atomic char *:           __atomic_fetch_add_char,         \
+        char *:                   __atomic_fetch_add_char,         \
+        _Atomic short *:          __atomic_fetch_add_short,        \
+        short *:                  __atomic_fetch_add_short,        \
+        _Atomic int *:            __atomic_fetch_add_int,          \
+        int *:                    __atomic_fetch_add_int,          \
+        _Atomic long *:           __atomic_fetch_add_long,         \
+        long *:                   __atomic_fetch_add_long,         \
+        _Atomic unsigned char *:  __atomic_fetch_add_char,         \
+        unsigned char *:          __atomic_fetch_add_char,         \
+        _Atomic unsigned short *: __atomic_fetch_add_short,        \
+        unsigned short *:         __atomic_fetch_add_short,        \
+        _Atomic unsigned int *:   __atomic_fetch_add_int,          \
+        unsigned int *:           __atomic_fetch_add_int,          \
+        _Atomic unsigned long *:  __atomic_fetch_add_long,         \
+        unsigned long *:          __atomic_fetch_add_long,         \
 )((void *)(object), (value))
 
 #define __sync_fetch_and_sub(object, value, ...) _Generic((object), \
-        char *:               __atomic_fetch_sub_char,         \
-        short *:              __atomic_fetch_sub_short,        \
-        int *:                __atomic_fetch_sub_int,          \
-        long *:               __atomic_fetch_sub_long,         \
-        /*long long *:          __atomic_fetch_sub_llong,*/    \
-        unsigned char *:      __atomic_fetch_sub_char,         \
-        unsigned short *:     __atomic_fetch_sub_short,        \
-        unsigned int *:       __atomic_fetch_sub_int,          \
-        unsigned long *:      __atomic_fetch_sub_long,         \
-        /*unsigned long long *: __atomic_fetch_sub_llong,*/    \
+        _Atomic char *:           __atomic_fetch_sub_char,          \
+        char *:                   __atomic_fetch_sub_char,          \
+        _Atomic short *:          __atomic_fetch_sub_short,         \
+        short *:                  __atomic_fetch_sub_short,         \
+        _Atomic int *:            __atomic_fetch_sub_int,           \
+        int *:                    __atomic_fetch_sub_int,           \
+        _Atomic long *:           __atomic_fetch_sub_long,          \
+        long *:                   __atomic_fetch_sub_long,          \
+        _Atomic unsigned char *:  __atomic_fetch_sub_char,          \
+        unsigned char *:          __atomic_fetch_sub_char,          \
+        _Atomic unsigned short *: __atomic_fetch_sub_short,         \
+        unsigned short *:         __atomic_fetch_sub_short,         \
+        _Atomic unsigned int *:   __atomic_fetch_sub_int,           \
+        unsigned int *:           __atomic_fetch_sub_int,           \
+        _Atomic unsigned long *:  __atomic_fetch_sub_long,          \
+        unsigned long *:          __atomic_fetch_sub_long,          \
         )((void *)(object), (value))
 
 #define __sync_fetch_and_and(object, value, ...) _Generic((object), \
-        char *:               __atomic_fetch_and_char,         \
-        short *:              __atomic_fetch_and_short,        \
-        int *:                __atomic_fetch_and_int,          \
-        long *:               __atomic_fetch_and_long,         \
-        /*long long *:          __atomic_fetch_and_llong,*/    \
-        unsigned char *:      __atomic_fetch_and_char,         \
-        unsigned short *:     __atomic_fetch_and_short,        \
-        unsigned int *:       __atomic_fetch_and_int,          \
-        unsigned long *:      __atomic_fetch_and_long,         \
-        /*unsigned long long *: __atomic_fetch_and_llong,*/    \
-        )((void *)(object), (value))
+        _Atomic char *:           __atomic_fetch_and_char,          \
+        char *:                   __atomic_fetch_and_char,          \
+        _Atomic short *:          __atomic_fetch_and_short,         \
+        short *:                  __atomic_fetch_and_short,         \
+        _Atomic int *:            __atomic_fetch_and_int,           \
+        int *:                    __atomic_fetch_and_int,           \
+        _Atomic long *:           __atomic_fetch_and_long,          \
+        long *:                   __atomic_fetch_and_long,          \
+        _Atomic unsigned char *:  __atomic_fetch_and_char,          \
+        unsigned char *:          __atomic_fetch_and_char,          \
+        _Atomic unsigned short *: __atomic_fetch_and_short,         \
+        unsigned short *:         __atomic_fetch_and_short,         \
+        _Atomic unsigned int *:   __atomic_fetch_and_int,           \
+        unsigned int *:           __atomic_fetch_and_int,           \
+        _Atomic unsigned long *:  __atomic_fetch_and_long,          \
+        unsigned long *:          __atomic_fetch_and_long,          \
+)((void *)(object), (value))
 
 #define __sync_fetch_and_or(object, value, ...) _Generic((object), \
-        char *:               __atomic_fetch_or_char,         \
-        short *:              __atomic_fetch_or_short,        \
-        int *:                __atomic_fetch_or_int,          \
-        long *:               __atomic_fetch_or_long,         \
-        /*long long *:          __atomic_fetch_or_llong,*/    \
-        unsigned char *:      __atomic_fetch_or_char,         \
-        unsigned short *:     __atomic_fetch_or_short,        \
-        unsigned int *:       __atomic_fetch_or_int,          \
-        unsigned long *:      __atomic_fetch_or_long,         \
-        /*unsigned long long *: __atomic_fetch_or_llong,*/    \
-        )((void *)(object), (value))
+        _Atomic char *:           __atomic_fetch_or_char,          \
+        char *:                   __atomic_fetch_or_char,          \
+        _Atomic short *:          __atomic_fetch_or_short,         \
+        short *:                  __atomic_fetch_or_short,         \
+        _Atomic int *:            __atomic_fetch_or_int,           \
+        int *:                    __atomic_fetch_or_int,           \
+        _Atomic long *:           __atomic_fetch_or_long,          \
+        long *:                   __atomic_fetch_or_long,          \
+        _Atomic unsigned char *:  __atomic_fetch_or_char,          \
+        unsigned char *:          __atomic_fetch_or_char,          \
+        _Atomic unsigned short *: __atomic_fetch_or_short,         \
+        unsigned short *:         __atomic_fetch_or_short,         \
+        _Atomic unsigned int *:   __atomic_fetch_or_int,           \
+        unsigned int *:           __atomic_fetch_or_int,           \
+        _Atomic unsigned long *:  __atomic_fetch_or_long,          \
+        unsigned long *:          __atomic_fetch_or_long,          \
+)((void *)(object), (value))
 
 #define __sync_fetch_and_xor(object, value, ...) _Generic((object), \
-        char *:               __atomic_fetch_xor_char,         \
-        short *:              __atomic_fetch_xor_short,        \
-        int *:                __atomic_fetch_xor_int,          \
-        long *:               __atomic_fetch_xor_long,         \
-        /*long long *:          __atomic_fetch_xor_llong,*/    \
-        unsigned char *:      __atomic_fetch_xor_char,         \
-        unsigned short *:     __atomic_fetch_xor_short,        \
-        unsigned int *:       __atomic_fetch_xor_int,          \
-        unsigned long *:      __atomic_fetch_xor_long,         \
-        /*unsigned long long *: __atomic_fetch_xor_llong,*/    \
-        )((void *)(object), (value))
+        _Atomic char *:           __atomic_fetch_xor_char,          \
+        char *:                   __atomic_fetch_xor_char,          \
+        _Atomic short *:          __atomic_fetch_xor_short,         \
+        short *:                  __atomic_fetch_xor_short,         \
+        _Atomic int *:            __atomic_fetch_xor_int,           \
+        int *:                    __atomic_fetch_xor_int,           \
+        _Atomic long *:           __atomic_fetch_xor_long,          \
+        long *:                   __atomic_fetch_xor_long,          \
+        _Atomic unsigned char *:  __atomic_fetch_xor_char,          \
+        unsigned char *:          __atomic_fetch_xor_char,          \
+        _Atomic unsigned short *: __atomic_fetch_xor_short,         \
+        unsigned short *:         __atomic_fetch_xor_short,         \
+        _Atomic unsigned int *:   __atomic_fetch_xor_int,           \
+        unsigned int *:           __atomic_fetch_xor_int,           \
+        _Atomic unsigned long *:  __atomic_fetch_xor_long,          \
+        unsigned long *:          __atomic_fetch_xor_long,          \
+)((void *)(object), (value))
 
 
 #define __sync_add_and_fetch(ptr, value, ...) ({ __typeof__(*(ptr)) temp = (value); __sync_fetch_and_add((ptr), temp) + temp; })
@@ -261,19 +292,23 @@
 
 #define __sync_compare_and_swap__internal(object, expected, desired) _Generic((object), \
         _Bool*:    __atomic_compare_exchange_bool,                                   \
-                                                                                     \
         char *:    __atomic_compare_exchange_char,                                   \
         short*:   __atomic_compare_exchange_short,                                   \
         int*:     __atomic_compare_exchange_int,                                     \
         long*:    __atomic_compare_exchange_long,                                    \
-        /*atomic_llong*:   __atomic_compare_exchange_llong,*/                        \
-                                                                                     \
         unsigned char*:   __atomic_compare_exchange_uchar,                           \
         unsigned short*:  __atomic_compare_exchange_ushort,                          \
         unsigned int*:    __atomic_compare_exchange_uint,                            \
         unsigned long*:   __atomic_compare_exchange_ulong,                           \
-        /*atomic_ullong*:  __atomic_compare_exchange_ullong,*/                       \
-                                                                                     \
+        _Atomic _Bool*:    __atomic_compare_exchange_bool,                                   \
+        _Atomic char *:    __atomic_compare_exchange_char,                                   \
+        _Atomic short*:   __atomic_compare_exchange_short,                                   \
+        _Atomic int*:     __atomic_compare_exchange_int,                                     \
+        _Atomic long*:    __atomic_compare_exchange_long,                                    \
+        _Atomic unsigned char*:   __atomic_compare_exchange_uchar,                           \
+        _Atomic unsigned short*:  __atomic_compare_exchange_ushort,                          \
+        _Atomic unsigned int*:    __atomic_compare_exchange_uint,                            \
+        _Atomic unsigned long*:   __atomic_compare_exchange_ulong,                           \
         default:        __atomic_compare_exchange_pointer,                           \
         )((void *)(object), (expected), (desired))
 
@@ -302,7 +337,16 @@
         unsigned short*:     __atomic_exchange_ushort,  \
         unsigned int*:       __atomic_exchange_uint,    \
         unsigned long*:      __atomic_exchange_ulong,   \
-        /*unsigned long long*: __atomic_exchange_ullong,*/  \
+        _Atomic _Bool*:              __atomic_exchange_bool,    \
+        _Atomic char*:               __atomic_exchange_char,    \
+        _Atomic short*:              __atomic_exchange_short,   \
+        _Atomic int*:                __atomic_exchange_int,     \
+        _Atomic long*:               __atomic_exchange_long,    \
+        _Atomic long long*:          __atomic_exchange_llong,   \
+        _Atomic unsigned char*:      __atomic_exchange_uchar,   \
+        _Atomic unsigned short*:     __atomic_exchange_ushort,  \
+        _Atomic unsigned int*:       __atomic_exchange_uint,    \
+        _Atomic unsigned long*:      __atomic_exchange_ulong,   \
         )((void *)(ptr), (value))
 
 #define __sync_lock_release(ptr) __sync_lock_test_and_set((ptr), 0)
@@ -326,7 +370,7 @@
 #define __atomic_fetch_add __sync_fetch_and_add
 #define __atomic_fetch_sub __sync_fetch_and_sub
 #define __atomic_fetch_or  __sync_fetch_and_or
-#define __atomic_fetch_xor __sync_fetch_xor
+#define __atomic_fetch_xor __sync_fetch_and_xor
 #define __atomic_fetch_and __sync_fetch_and_and
 
 #define __atomic_exchange_n(ptr, value, order) _Generic((ptr), \
@@ -338,6 +382,14 @@
         unsigned int*:       __atomic_exchange_uint((unsigned int *)(ptr), (unsigned int)(value)), \
         long long*:          __atomic_exchange_llong((long long *)(ptr), (long long)(value)), \
         unsigned long long*: __atomic_exchange_ullong((unsigned long long *)(ptr), (unsigned long long)(value)), \
+        _Atomic char*:               __atomic_exchange_char((char *)(ptr), (char)(value)), \
+        _Atomic unsigned char*:      __atomic_exchange_uchar((unsigned char *)(ptr), (unsigned char)(value)), \
+        _Atomic short*:              __atomic_exchange_short((short *)(ptr), (short)(value)), \
+        _Atomic unsigned short*:     __atomic_exchange_ushort((unsigned short *)(ptr), (unsigned short)(value)), \
+        _Atomic int*:                __atomic_exchange_int((int *)(ptr), (int)(value)), \
+        _Atomic unsigned int*:       __atomic_exchange_uint((unsigned int *)(ptr), (unsigned int)(value)), \
+        _Atomic long long*:          __atomic_exchange_llong((long long *)(ptr), (long long)(value)), \
+        _Atomic unsigned long long*: __atomic_exchange_ullong((unsigned long long *)(ptr), (unsigned long long)(value)), \
         )
 
 #define __atomic_compare_exchange_n(ptr, expected, desired, weak, success_order, failure_order) _Generic((ptr), \
@@ -349,7 +401,15 @@
         unsigned int*:       __atomic_compare_exchange_uint((unsigned int *)(ptr), (unsigned int *)(expected), (unsigned int)(desired)), \
         long long*:          __atomic_compare_exchange_llong((long long *)(ptr), (long long *)(expected), (long long)(desired)), \
         unsigned long long*: __atomic_compare_exchange_ullong((unsigned long long *)(ptr), (unsigned long long *)(expected), (unsigned long long)(desired)), \
-        )
+        _Atomic char*:               __atomic_compare_exchange_char((char *)(ptr), (char *)(expected), (char)(desired)), \
+        _Atomic unsigned char*:      __atomic_compare_exchange_uchar((unsigned char *)(ptr), (unsigned char *)(expected), (unsigned char)(desired)), \
+        _Atomic short*:              __atomic_compare_exchange_short((short *)(ptr), (short *)(expected), (short)(desired)), \
+        _Atomic unsigned short*:     __atomic_compare_exchange_ushort((unsigned short *)(ptr), (unsigned short *)(expected), (unsigned short)(desired)), \
+        _Atomic int*:                __atomic_compare_exchange_int((int *)(ptr), (int *)(expected), (int)(desired)), \
+        _Atomic unsigned int*:       __atomic_compare_exchange_uint((unsigned int *)(ptr), (unsigned int *)(expected), (unsigned int)(desired)), \
+        _Atomic long long*:          __atomic_compare_exchange_llong((long long *)(ptr), (long long *)(expected), (long long)(desired)), \
+        _Atomic unsigned long long*: __atomic_compare_exchange_ullong((unsigned long long *)(ptr), (unsigned long long *)(expected), (unsigned long long)(desired)), \
+)
 
 #define __atomic_load(ptr, ret, order) ((void)(*(ret) = *(ptr)))
 #define __atomic_store(ptr, value, order) ((void)(*(ptr) = *(value)))
@@ -361,3 +421,8 @@
 #define __atomic_is_lock_free(size, ptr) 1
 #define __atomic_thread_fence(order) atomic_thread_fence(order)
 #define __atomic_signal_fence(order) atomic_signal_fence(order)
+
+
+#define __atomic_test_and_set(ptr, order) (__atomic_exchange_n((unsigned char *)(ptr), 1, order) != 0)
+#define __atomic_clear(ptr, order) ((void)__atomic_exchange_n((unsigned char *)(ptr), 0, order))
+
