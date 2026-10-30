@@ -10203,9 +10203,19 @@ func void parse_statement(struct context *context){
             
             prev_token(context);
             
-            parse_expression(context, false);
+            struct expr expr = parse_expression(context, false);
             
-            push_ir(context, IR_pop_expression);
+            if(peek_token_eat(context, TOKEN_semicolon)){
+                needs_semicolon = false;
+                
+                if(context->current_scope == context->statement_expression_scope && peek_token(context, TOKEN_closed_curly)){
+                    context->statement_expression_return = expr;
+                }else{
+                    push_ir(context, IR_pop_expression);
+                }
+            }else{
+                push_ir(context, IR_pop_expression);
+            }
         }break;
         
         // @cleanup: noreturn, inline, ?
