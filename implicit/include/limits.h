@@ -1,5 +1,14 @@
+
+#pragma once
+
 #define CHAR_BIT 8
+
+// For whatever reason there is a difference here.
+#ifdef _WIN32
 #define MB_LEN_MAX 5
+#else
+#define MB_LEN_MAX 16
+#endif
 
 #define SCHAR_MAX 127
 #define CHAR_MAX 127
@@ -46,3 +55,11 @@
 #define _UI16_MAX 0xffffui16
 #define _UI32_MAX 0xffffffffui32
 #define _UI64_MAX 0xffffffffffffffffui64
+
+
+#ifdef __unix__
+#define _GCC_LIMITS_H_
+#include_next <limits.h>
+#endif
+
+
