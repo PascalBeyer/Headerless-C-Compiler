@@ -5475,7 +5475,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
                     work_entry->data  = work;
                     
+                    globals.compile_stage = COMPILE_STAGE_tokenize_files; // Reset the compile stage before tokenizing, otherwise error tokens won't be copied.
+                    
                     worker_preprocess_file(context, work_entry); // This preprocesses the file and then adds things into the work_queue below.
+                    
+                    globals.compile_stage = COMPILE_STAGE_parse_global_scope_entries; // We are back!
                     
                     // Parse the new file.
                     while(globals.work_queue_parse_global_scope_entries.work_entries_in_flight > 0) worker_work(context, &globals.work_queue_parse_global_scope_entries, worker_parse_global_scope_entry);
