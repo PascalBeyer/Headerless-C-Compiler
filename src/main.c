@@ -1064,21 +1064,11 @@ func void add_global_reference_for_declaration(struct memory_arena *arena, struc
 }
 
 func void add_specified_library(struct memory_arena *arena, struct string library, struct token *pragma_compilation_unit_token){
+    struct specified_library *specified_library = push_struct(arena, struct specified_library);
+    specified_library->library_path = library;
+    specified_library->pragma_compilation_unit_token = pragma_compilation_unit_token;
     
-    int found = 0;
-    for(struct specified_library *node = globals.specified_libraries.first; node; node = node->next){
-        if(string_match(node->library_path, library)){
-            found = 1;
-        }
-    }
-    
-    if(!found){
-        struct specified_library *specified_library = push_struct(arena, struct specified_library);
-        specified_library->library_path = library;
-        specified_library->pragma_compilation_unit_token = pragma_compilation_unit_token;
-        
-        sll_push_back(globals.specified_libraries, specified_library);
-    }
+    sll_push_back(globals.specified_libraries, specified_library);
 }
 
 //_____________________________________________________________________________________________________________________
