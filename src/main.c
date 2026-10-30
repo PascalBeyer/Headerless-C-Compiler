@@ -4203,21 +4203,6 @@ int main(int argc, char *argv[]){
         return 1;
     }
     
-    for(struct string_list_node *dir = globals.cli_options.I.list.first; dir; dir = dir->next){
-        
-        // 
-        // Add all of the specified system include directories.
-        // 
-        
-        struct string file_path = dir->string;
-        canonicalize_slashes(file_path);
-        if(path_is_relative(file_path)){
-            file_path = concatenate_file_paths(arena, working_directory, file_path);
-        }
-        
-        add_system_include_directory(arena, file_path, string(""), true);
-    }
-    
     {
         // 
         // Try to determine the `output_file_type` from the options.
@@ -4279,7 +4264,31 @@ int main(int argc, char *argv[]){
     
     int no_standard_library = globals.cli_options.no_stdlib;
     
+    // 
+    // Include ordering:
+    //    
+    //    Because there were some #include_next problems, our headers have to come first.
+    //    Then the user-specified headers have to come, as we want the user to be able to overwrite 
+    //    any of the system headers. For example, if we are compiling a different version of openssl,
+    //    we don't want it to use the system openssl headers.
+    // 
+    
     add_system_include_directory(arena, strip_file_name(compiler_path), string("/implicit/include"), false);
+    
+    for(struct string_list_node *dir = globals.cli_options.I.list.first; dir; dir = dir->next){
+        
+        // 
+        // Add all of the specified system include directories.
+        // 
+        
+        struct string file_path = dir->string;
+        canonicalize_slashes(file_path);
+        if(path_is_relative(file_path)){
+            file_path = concatenate_file_paths(arena, working_directory, file_path);
+        }
+        
+        add_system_include_directory(arena, file_path, string(""), true);
+    }
     
     globals.library_paths = globals.cli_options.LIBPATH;
     string_list_add_uniquely(&globals.library_paths, arena, working_directory);
@@ -4365,6 +4374,7 @@ int main(int argc, char *argv[]){
     add_system_include_directory(arena, string("/usr/include"), string(""), false);
     
 #endif // linux
+    
     
 #ifdef PRINT_SYSTEM_INCLUDE_PATHS
     if(!globals.cli_options.quiet){
