@@ -4452,14 +4452,14 @@ globals.typedef_##postfix = (struct ast_type){                                  
             if(!globals.cli_options.no_predefines){
                 struct string hardcoded_predefines = string_from_cstring(
                         "#define __HLC__ 1\n"            
-                        "#define __assume(a) (void)0\n"
                         
+                        // @note: Don't define this as some Microsoft headers work differently if this is specified.
                         // "#define __STDC_VERSION__ 201112L\n"
-                        // "#define __STDC__ 1\n" @note: Don't define this as some Microsoft headers work differently if this is specified.
+                        // "#define __STDC__ 1\n" 
+                        // 
                         "#define __STDC_NO_COMPLEX__ 1\n"
                         "#define __STDC_NO_THREADS__ 1\n"
                         "#define __STDC_NO_VLA__     1\n"
-                        // "#define __STDC_NO_ATOMICS__ 1\n"
                         
                         );
                 
@@ -4475,20 +4475,51 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             "#define _MSC_BUILD 0\n"
                             "#define _MSC_FULL_VER 192829336\n"
                             "#define _MSC_VER 1928\n"
+                            
+                            "#define __assume(a) (void)0\n"
                             );
                     string_list_postfix_no_copy(&predefines, arena, windows_predefines);
                 }
                 
                 if(globals.output_file_type == OUTPUT_FILE_elf){
                     struct string linux_predefines = string_from_cstring(
-                            "#define __STDC__ 1\n" // @note: Don't define this on Windows as some Microsoft headers work differently if this is specified.
-                            "#define __x86_64__ 1\n"
-                            "#define __x86_64 1\n"
-                            "#define __GNUC_MINOR__ 2\n"
-                            "#define __GNUC_PATCHLEVEL__ 1\n"
-                            "#define __GNUC_STDC_INLINE__ 1\n"
+                            
+                            "#define __STDC__ 1\n"
+                            
+                            // Common Predefined Macros
+                            
                             "#define __GNUC__ 4\n"
-                            "#define __extension__\n"
+                            "#define __GNUC_MINOR__ 9\n"
+                            "#define __GNUC_PATCHLEVEL__ 0\n"
+                            "#define __GNUC_STDC_INLINE__ 1\n"
+                            "#define __VERSION__ \"4.9.0\"\n"
+                            
+                            "#define __ELF__ 1\n"
+                            
+                            "#define __LP64__ 1\n"
+                            "#define _LP64 1\n"
+                            
+                            // System-specific Predefines
+                            
+                            "#define unix 1\n"
+                            "#define __unix 1\n"
+                            "#define __unix__ 1\n"
+                            
+                            "#define linux 1\n"
+                            "#define __linux 1\n"
+                            "#define __linux__ 1\n"
+                            
+                            "#define __gnu_linux__ 1\n"
+                            
+                            "#define __amd64 1\n"
+                            "#define __amd64__ 1\n"
+                            "#define __x86_64 1\n"
+                            "#define __x86_64__ 1\n"
+                            
+                            "#define __SSE__ 1\n"
+                            "#define __SSE2__ 1\n"
+                            
+                            "#include <gcc_builtins.h>\n"
                             );
                     string_list_postfix_no_copy(&predefines, arena, linux_predefines);
                 }

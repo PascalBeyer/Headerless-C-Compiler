@@ -28,6 +28,8 @@ enum memonic{
     MEMONIC_jle,
     MEMONIC_jnle,
     
+    MEMONIC_jmp,
+    
     MEMONIC_lea,
     
     // @WARNING: ordered in the same way REG_OPCODE_* are!
@@ -411,18 +413,20 @@ static struct{
     [MEMONIC_jno] = {.memonic = const_string("jno"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
     [MEMONIC_jc] = {.memonic = const_string("jc"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
     [MEMONIC_jnc] = {.memonic = const_string("jnc"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
-    [MEMONIC_jz] = {.memonic = const_string("jz"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jz] = {.memonic = const_string("jz"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
     [MEMONIC_jnz] = {.memonic = const_string("jnz"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
-    [MEMONIC_jbe] = {.memonic = const_string("jbe"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
-    [MEMONIC_jnbe] = {.memonic = const_string("jnbe"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
-    [MEMONIC_js] = {.memonic = const_string("js"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
-    [MEMONIC_jns] = {.memonic = const_string("jns"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
-    [MEMONIC_jp] = {.memonic = const_string("jp"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
-    [MEMONIC_jnp] = {.memonic = const_string("jnp"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
-    [MEMONIC_jl] = {.memonic = const_string("jl"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
-    [MEMONIC_jnl] = {.memonic = const_string("jnl"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
-    [MEMONIC_jle] = {.memonic = const_string("jle"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
-    [MEMONIC_jnle] = {.memonic = const_string("jnle"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },    
+    [MEMONIC_jbe] = {.memonic = const_string("jbe"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jnbe] = {.memonic = const_string("jnbe"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_js] = {.memonic = const_string("js"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jns] = {.memonic = const_string("jns"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jp] = {.memonic = const_string("jp"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jnp] = {.memonic = const_string("jnp"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jl] = {.memonic = const_string("jl"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jnl] = {.memonic = const_string("jnl"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jle] = {.memonic = const_string("jle"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    [MEMONIC_jnle] = {.memonic = const_string("jnle"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
+    
+    [MEMONIC_jmp] = {.memonic = const_string("jmp"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_label },
     
     [MEMONIC_clflush] = {.memonic = const_string("clflush"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_any_regm & ~ASM_OP_KIND_any_reg},
     [MEMONIC_int]  = {.memonic = const_string("int"), .amount_of_operands = 1, .operand_kind_flags[0] = ASM_OP_KIND_imm8 },

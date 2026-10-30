@@ -90,6 +90,7 @@ enum asm_arg_kind{
     ASM_ARG_declaration_reference,   // e.g. s.member, array[0]
     ASM_ARG_declaration_dereference, // e.g. [s.member], *s.member, s.member[0]
     ASM_ARG_immediate,               // e.g. 1337, sizeof(int)
+    ASM_ARG_float_literal,           // e.g. 1.0f
     ASM_ARG_label,                   // e.g. label:
     
     ASM_ARG_count,
@@ -120,6 +121,12 @@ struct asm_operand{
         };
         struct{ // ASM_ARG_immediate
             u64 immediate;
+        };
+        struct{ // ASM_ARG_float_literal
+            union{
+                float _f32;
+                double _f64;
+            };
         };
         struct{
             u8 *data; // for MEMONIC_bytes
@@ -444,7 +451,6 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     
     u8 *expression_at = arena_current(&context->ir_arena);
     
-    // @cleanup: ASM_ARG_declaration_dereference for '*decl' and 'decl[10]'.
     struct expr expr = parse_expression(context, /*skip_comma = */true);
     if(context->should_exit_statement) return operand;
     
@@ -453,8 +459,28 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
         operand.kind      = ASM_ARG_immediate;
         operand.immediate = integer_literal_as_u64(&expr);
         operand.size      = expr.resolved_type->size;
+        operand.type      = expr.resolved_type;
         
         pop_from_ir_arena(context, (struct ir_integer_literal *)expr.ir);
+        return operand;
+    }
+    
+    if(expr.ir->kind == IR_float_literal){
+        // float literals are fine!
+        
+        struct ir_float_literal *lit = (struct ir_float_literal *)expr.ir;
+        
+        if(expr.resolved_type == &globals.typedef_f32){
+            operand._f32 = lit->_f32;
+        }else{
+            assert(expr.resolved_type == &globals.typedef_f64);
+            operand._f64 = lit->_f64;
+        }
+        operand.kind = ASM_ARG_float_literal;
+        operand.type = expr.resolved_type;
+        operand.size = expr.resolved_type->size;
+        
+        pop_from_ir_arena(context, lit);
         return operand;
     }
     
@@ -975,10 +1001,11 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                     report_error(context, operand_token, "Operand %u of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
                 }
             }break;
+            case ASM_ARG_float_literal:
             case ASM_ARG_declaration_reference:{
                 b32 should_error = false;
                 
-                struct ast_type *type = operand.declaration->type;
+                struct ast_type *type = operand.type;
                 if(operand.is_inline_asm_function_argument && type->kind == AST_integer_type){
                     
                     if((desired_operand_flags & ASM_OP_KIND_any_imm) == (desired_operand_flags & (ASM_OP_KIND_any_regm | ASM_OP_KIND_any_imm))){
@@ -1496,7 +1523,7 @@ func void parse_asm_block(struct context *context, struct ir_asm_block *asm_bloc
         ir_skip->base.kind = IR_skip;
     }
     
-    // note they should always 'ballance', thus this scope _should_ end but lets be careful
+    // note they should always 'balance', thus this scope _should_ end but lets be careful
     while(!peek_token_eat(context, TOKEN_closed_curly) && !peek_token(context, TOKEN_invalid)){
         
         struct asm_instruction *asm_instruction = parse_asm_instruction(context);

@@ -5031,7 +5031,10 @@ case NUMBER_KIND_##type:{ \
             // @cleanup: handle strtod errors
             
             if(endptr != cvalue + value.size){
-                report_error(context, float_token, "Invalid suffix '%.*s' on float literal.", suffix.size, suffix.data);
+                char *end = cvalue + value.size;
+                char *start = endptr;
+                
+                report_error(context, float_token, "Invalid suffix '%.*s' on float literal.", end - start, start);
             }
             
             struct ast_type *type = is_32_bit ? &globals.typedef_f32 : &globals.typedef_f64;

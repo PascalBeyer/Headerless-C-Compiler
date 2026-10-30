@@ -1,0 +1,182 @@
+
+#pragma compilation_unit("gcc_builtins.c")
+
+// Common Predefined Macros
+
+#define __SIZE_TYPE__ long unsigned int
+#define __PTRDIFF_TYPE__ long int
+#define __WCHAR_TYPE__ int
+#define __WINT_TYPE__ unsigned int
+#define __INTMAX_TYPE__ long int
+#define __UINTMAX_TYPE__ long unsigned int
+#define __SIG_ATOMIC_TYPE__ int
+
+#define __INT8_TYPE__ signed char
+#define __INT16_TYPE__ short int
+#define __INT32_TYPE__ int
+#define __INT64_TYPE__ long int
+
+#define __UINT8_TYPE__ unsigned char
+#define __UINT16_TYPE__ short unsigned int
+#define __UINT32_TYPE__ unsigned int
+#define __UINT64_TYPE__ long unsigned int
+
+#define __INT_FAST8_TYPE__ signed char
+#define __INT_FAST16_TYPE__ long int
+#define __INT_FAST32_TYPE__ long int
+#define __INT_FAST64_TYPE__ long int
+
+#define __UINT_FAST8_TYPE__ unsigned char
+#define __UINT_FAST16_TYPE__ long unsigned int
+#define __UINT_FAST32_TYPE__ long unsigned int
+#define __UINT_FAST64_TYPE__ long unsigned int
+
+#define __INT_LEAST8_TYPE__ signed char
+#define __INT_LEAST16_TYPE__ short int
+#define __INT_LEAST32_TYPE__ int
+#define __INT_LEAST64_TYPE__ long int
+
+#define __UINT_LEAST8_TYPE__ unsigned char
+#define __UINT_LEAST16_TYPE__ short unsigned int
+#define __UINT_LEAST32_TYPE__ unsigned int
+#define __UINT_LEAST64_TYPE__ long unsigned int
+
+#define __INTPTR_TYPE__ long int
+#define __UINTPTR_TYPE__ long unsigned int
+
+#define __CHAR16_TYPE__ short unsigned int
+#define __CHAR32_TYPE__ unsigned int
+
+#define __CHAR_BIT__ 8
+
+#define __SCHAR_MAX__ 0x7f
+#define __WCHAR_MAX__ 0x7fffffff
+
+#define __SHRT_MAX__ 0x7fff
+#define __INT_MAX__ 0x7fffffff
+#define __LONG_MAX__ 0x7fffffffffffffffL
+#define __LONG_LONG_MAX__ 0x7fffffffffffffffLL
+
+#define __WINT_MAX__ 0xffffffffU
+#define __SIZE_MAX__ 0xffffffffffffffffUL
+
+#define __PTRDIFF_MAX__ 0x7fffffffffffffffL
+
+#define __INTMAX_MAX__ 0x7fffffffffffffffL
+#define __UINTMAX_MAX__ 0xffffffffffffffffUL
+
+#define __SIG_ATOMIC_MAX__ 0x7fffffff
+
+#define __INT8_MAX__ 0x7f
+#define __INT16_MAX__ 0x7fff
+#define __INT32_MAX__ 0x7fffffff
+#define __INT64_MAX__ 0x7fffffffffffffffL
+
+#define __UINT8_MAX__ 0xff
+#define __UINT16_MAX__ 0xffff
+#define __UINT32_MAX__ 0xffffffffU
+#define __UINT64_MAX__ 0xffffffffffffffffUL
+
+#define __INT_LEAST8_MAX__ 0x7f
+#define __INT_LEAST16_MAX__ 0x7fff
+#define __INT_LEAST32_MAX__ 0x7fffffff
+#define __INT_LEAST64_MAX__ 0x7fffffffffffffffL
+
+#define __UINT_LEAST8_MAX__ 0xff
+#define __UINT_LEAST16_MAX__ 0xffff
+#define __UINT_LEAST32_MAX__ 0xffffffffU
+#define __UINT_LEAST64_MAX__ 0xffffffffffffffffUL
+
+#define __INT_FAST8_MAX__ 0x7f
+#define __INT_FAST16_MAX__ 0x7fffffffffffffffL
+#define __INT_FAST32_MAX__ 0x7fffffffffffffffL
+#define __INT_FAST64_MAX__ 0x7fffffffffffffffL
+
+#define __UINT_FAST8_MAX__ 0xff
+#define __UINT_FAST16_MAX__ 0xffffffffffffffffUL
+#define __UINT_FAST32_MAX__ 0xffffffffffffffffUL
+#define __UINT_FAST64_MAX__ 0xffffffffffffffffUL
+
+#define __UINTPTR_MAX__ 0xffffffffffffffffUL
+#define __INTPTR_MAX__ 0x7fffffffffffffffL
+
+#define __WCHAR_MIN__ (-__WCHAR_MAX__ - 1)
+#define __WINT_MIN__ 0U
+#define __SIG_ATOMIC_MIN__ (-__SIG_ATOMIC_MAX__ - 1)
+
+#define __SCHAR_WIDTH__ 8
+#define __SHRT_WIDTH__ 16
+#define __INT_WIDTH__ 32
+#define __LONG_WIDTH__ 64
+#define __LONG_LONG_WIDTH__ 64
+#define __PTRDIFF_WIDTH__ 64
+#define __SIG_ATOMIC_WIDTH__ 32
+#define __SIZE_WIDTH__ 64
+#define __WCHAR_WIDTH__ 32
+#define __WINT_WIDTH__ 32
+
+#define __INT_LEAST8_WIDTH__ 8
+#define __INT_LEAST16_WIDTH__ 16
+#define __INT_LEAST32_WIDTH__ 32
+#define __INT_LEAST64_WIDTH__ 64
+
+#define __INT_FAST8_WIDTH__ 8
+#define __INT_FAST16_WIDTH__ 64
+#define __INT_FAST32_WIDTH__ 64
+#define __INT_FAST64_WIDTH__ 64
+
+#define __INTPTR_WIDTH__ 64
+#define __INTMAX_WIDTH__ 64
+
+#define __SIZEOF_SHORT__ 2
+#define __SIZEOF_INT__ 4
+#define __SIZEOF_LONG__ 8
+#define __SIZEOF_LONG_LONG__ 8
+#define __SIZEOF_INT128__ 16
+
+#define __SIZEOF_POINTER__ 8
+
+#define __SIZEOF_FLOAT__ 4
+#define __SIZEOF_DOUBLE__ 8
+#define __SIZEOF_LONG_DOUBLE__ 16
+#define __SIZEOF_FLOAT80__ 16
+#define __SIZEOF_FLOAT128__ 16
+
+#define __SIZEOF_SIZE_T__ 8
+#define __SIZEOF_WCHAR_T__ 4
+#define __SIZEOF_WINT_T__ 4
+#define __SIZEOF_PTRDIFF_T__ 8
+
+#define __ORDER_LITTLE_ENDIAN__ 1234
+#define __ORDER_BIG_ENDIAN__ 4321
+#define __ORDER_PDP_ENDIAN__ 3412
+
+#define __BYTE_ORDER__ __ORDER_LITTLE_ENDIAN__
+#define __FLOAT_WORD_ORDER__ __ORDER_LITTLE_ENDIAN__
+
+#define __FLT32_MIN__ 1.17549435082228750796873653722224568e-38F
+#define __FLT32_MAX__ 3.40282346638528859811704183484516925e+38F
+
+#define __FLT64_MIN__ 2.22507385850720138309023271733240406e-308
+#define __FLT64_MAX__ 1.79769313486231570814527423731704357e+308
+
+
+
+// builtins
+
+#define __builtin_offsetof((long unsigned int)(&((type *)0)->member))
+
+#define __builtin_signbitl(x) ((x) < 0.0L || (1.0L/(x) < 0.0L))
+#define __builtin_nanf(x) (0.0f/0.0f)
+#define __builtin_nan(x) (0.0/0.0)
+#define __builtin_inff() (1.0f/0.0f)
+#define __builtin_inf() (1.0/0.0)
+#define __builtin_huge_valf() (1.0f/0.0f)
+#define __builtin_huge_val() (1.0/0.0)
+
+#define __builtin_isnan(x)      _Generic((x), float: __builtin_isnan_float(x),      double: __builtin_isnan_double(x))
+#define __builtin_isinf(x)      _Generic((x), float: __builtin_isinf_float(x),      double: __builtin_isinf_double(x))
+#define __builtin_isinf_sign(x) _Generic((x), float: __builtin_isinf_sign_float(x), double: __builtin_isinf_sign_double(x))
+#define __builtin_isnormal(x)   _Generic((x), float: __builtin_isnormal_float(x),   double: __builtin_isnormal_double(x))
+#define __builtin_isfinite(x)   _Generic((x), float: __builtin_isfinite_float(x),   double: __builtin_isfinite_double(x))
+

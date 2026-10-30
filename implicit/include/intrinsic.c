@@ -1050,24 +1050,6 @@ __declspec(inline_asm) unsigned __int64 _byteswap_uint64(unsigned __int64 val){
     return val
 }
 
-
-__declspec(inline_asm) unsigned __int16 __builtin_bswap16(unsigned __int16 val){
-    ror val, 8
-    return val
-}
-
-__declspec(inline_asm) unsigned __int32 __builtin_bswap32(unsigned __int32 val){
-    bswap val
-    return val
-}
-
-__declspec(inline_asm) unsigned __int64 __builtin_bswap64(unsigned __int64 val){
-    bswap val
-    return val
-}
-
-
-
 __declspec(inline_asm) void __faststorefence(void){
     lock or dword ptr [rsp], 0
 }
@@ -1107,65 +1089,6 @@ __declspec(inline_asm) void __iso_volatile_store32(volatile __int32 * Location, 
 
 __declspec(inline_asm) void __iso_volatile_store64(volatile __int64 * Location, __int64 Value){
     mov [Location], Value
-}
-
-//_____________________________________________________________________________________________________________________
-// GNU intrinsics
-
-__declspec(inline_asm) int __builtin_ctz(unsigned int x){
-    mov ecx, x
-    bsf eax, ecx
-    return eax
-}
-
-__declspec(inline_asm) int __builtin_clz(unsigned int x){
-    mov ecx, x
-    bsr eax, ecx
-    xor eax, 31
-    return eax
-}
-
-__declspec(inline_asm) int __builtin_clzl(unsigned long x){
-#ifdef _WIN32
-    mov ecx, x
-    bsr eax, ecx
-    xor eax, 31
-    return eax
-#else
-    mov rcx, x
-    bsr rax, rcx
-    xor eax, 63
-    return eax
-#endif
-}
-
-__declspec(inline_asm) int __builtin_ffs(int x){
-    mov edx, 0xffffffff
-    bsf eax, x
-    cmove eax, edx
-    add eax, 1
-    return eax
-}
-
-__declspec(inline_asm) int __builtin_ffsll(long long x){
-    mov edx, 0xffffffff
-    bsf rax, x
-    cmove eax, edx
-    add eax, 1
-    return eax
-}
-
-__declspec(inline_asm) int __builtin_expect(int __expression, int expected){
-    mov edx, expected // @cleanup: How to handle this, this is just here to get rid of unused warning. @note: This should not be an inline_asm function anyway so whatever.
-    return __expression
-}
-
-__declspec(inline_asm) void __builtin_trap(void){
-    bytes{0f 0b} // ud2
-}
-
-__declspec(inline_asm) void __builtin_unreachable(void){
-    bytes{0f 0b} // ud2
 }
 
 //_____________________________________________________________________________________________________________________
@@ -3515,3 +3438,4 @@ __declspec(inline_asm) __m256i _mm256_broadcastw_epi16(__m128i a){
     vpbroadcastw ymm0, a
     return ymm0
 }
+
