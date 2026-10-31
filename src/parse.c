@@ -7150,6 +7150,8 @@ case NUMBER_KIND_##type:{ \
                 maybe_load_address_for_array_or_function(context, IR_load_address, if_false);
                 maybe_insert_cast_from_special_int_to_int(context, if_false, /*is_lhs*/0);
                 
+                struct ast_type *result_type = null;
+                
                 // "one of the following shall hold":
                 
                 // "- both are arithmetic types"
@@ -7164,10 +7166,12 @@ case NUMBER_KIND_##type:{ \
                             if_true->ir->kind = IR_nop;
                         }
                     }
+                    
                     if(if_false->resolved_type != arithmetic_type){
                         push_cast(context, AST_cast, arithmetic_type, defined_type_for_promotion(if_false), if_false);
                     }
                     
+                    result_type = arithmetic_type;
                 }else{
                     
                     // "- one is a pointer to an object and the other is a pointer to void"
@@ -7176,23 +7180,35 @@ case NUMBER_KIND_##type:{ \
                     // "- one operand is a pointer and the other is a null pointer constant"
                     maybe_cast_literal_0_to_void_pointer(if_true, if_false);
                     
-                    // "- both operands have the same union or structure type"
-                    // "- both operands have void type"
-                    // "- both operands are pointers to compatible types"
-                    if(!types_are_equal(if_false->resolved_type, if_true->resolved_type)){
-                        report_type_mismatch_error(context, if_true->resolved_type, if_true->defined_type, if_false->resolved_type, if_false->defined_type, question_mark);
+                    if(if_true->resolved_type->kind == AST_void_type || if_false->resolved_type->kind == AST_void_type){
+                        
+                        // All compilers allow
+                        // 
+                        //    a ? (void)b : c
+                        //    a ? b : (void)c
+                        //    
+                        // to give void-expressions. This seems like an extension to me.
+                        
+                        if(if_true->resolved_type->kind != AST_void_type){
+                            // a ? (void)b : c;
+                            // Just insert a cast to void.
+                            push_ir(context, IR_cast_to_void);
+                        }
+                        
+                        result_type = &globals.typedef_void;
+                    }else{
+                        // "- both operands have the same union or structure type"
+                        // "- both operands have void type"
+                        // "- both operands are pointers to compatible types"
+                        if(!types_are_equal(if_false->resolved_type, if_true->resolved_type)){
+                            report_type_mismatch_error(context, if_true->resolved_type, if_true->defined_type, if_false->resolved_type, if_false->defined_type, question_mark);
+                        }
+                        
+                        result_type = if_false->resolved_type;
                     }
                 }
                 
-                // @cleanup: how should these defined_types propagate in this case?
-                enum ast_kind *defined_type = if_true->defined_type ? if_true->defined_type : if_false->defined_type;
-                
-                // 
-                // @cleanup: This is probably wrong.
-                // 
-                struct ast_type *bigger_type = if_true->resolved_type->size > if_false->resolved_type->size ? if_true->resolved_type : if_false->resolved_type;
-                
-                struct ast_declaration *temp_decl = push_unnamed_declaration(context, bigger_type, null, question_mark);
+                struct ast_declaration *temp_decl = push_unnamed_declaration(context, result_type, null, question_mark);
                 
                 temp1->decl = temp_decl;
                 temp2->decl = temp_decl;
@@ -7203,13 +7219,16 @@ case NUMBER_KIND_##type:{ \
                 struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                 end_label->label_number = end_jump->label_number;
                 
-                
                 struct ir_identifier *lhs = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
                 lhs->base.kind = IR_identifier;
                 lhs->decl = temp_decl;
+                
+                // @cleanup: how should these defined_types propagate in this case?
+                enum ast_kind *defined_type = if_true->defined_type ? if_true->defined_type : if_false->defined_type;
+                
                 operand.ir = &lhs->base;
-                operand.resolved_type = if_true->resolved_type;
-                operand.defined_type = defined_type;
+                operand.resolved_type = result_type;
+                operand.defined_type  = defined_type;
                 
                 context->in_lhs_expression = false;
                 context->in_conditional_expression -= 1;
@@ -7271,12 +7290,30 @@ case NUMBER_KIND_##type:{ \
                         }
                     }
                     
-                    
-                    // "- both operands have the same union or structure type"
-                    // "- both operands have void type"
-                    // "- both operands are pointers to compatible types"
-                    if(!types_are_equal(value->resolved_type, other->resolved_type)){
-                        report_type_mismatch_error(context, value->resolved_type, value->defined_type, other->resolved_type, other->defined_type, question_mark);
+                    if(value->resolved_type->kind == AST_void_type || other->resolved_type->kind == AST_void_type){
+                        
+                        // All compilers allow
+                        // 
+                        //    a ? (void)b : c
+                        //    a ? b : (void)c
+                        //    
+                        // to give void-expressions. This seems like an extension to me.
+                        
+                        if(value->resolved_type->kind != AST_void_type){
+                            // a ? (void)b : c;
+                            // Just insert a cast to void.
+                            value->ir = push_ir(context, IR_cast_to_void);
+                            value->resolved_type = &globals.typedef_void;
+                            value->defined_type = null;
+                        }
+                    }else{
+                        
+                        // "- both operands have the same union or structure type"
+                        // "- both operands have void type"
+                        // "- both operands are pointers to compatible types"
+                        if(!types_are_equal(value->resolved_type, other->resolved_type)){
+                            report_type_mismatch_error(context, value->resolved_type, value->defined_type, other->resolved_type, other->defined_type, question_mark);
+                        }
                     }
                 }
                 
@@ -7697,7 +7734,6 @@ case NUMBER_KIND_##type:{ \
                 return operand;
             }
             
-            
             context->in_conditional_expression += 1; // :tracking_conditional_expression_depth_for_noreturn_functions
             
             enum ast_kind conditional_expression_kind = AST_conditional_expression;
@@ -7765,7 +7801,7 @@ case NUMBER_KIND_##type:{ \
                 push_ir(context, IR_pop_expression);
                 
                 // 
-                // @WARINING: We assume we know the order of these nodes to get temp2 from end_jump.
+                // @WARNING: We assume we know the order of these nodes to get temp2 from end_jump.
                 // 
                 
                 struct ir_jump_node *end_jump = push_jump(context, IR_jump);
