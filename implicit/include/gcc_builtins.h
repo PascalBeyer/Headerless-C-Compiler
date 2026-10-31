@@ -181,6 +181,13 @@
 #define __builtin_isnormal(x)   _Generic((x), float: __builtin_isnormal_float(x),   double: __builtin_isnormal_double(x))
 #define __builtin_isfinite(x)   _Generic((x), float: __builtin_isfinite_float(x),   double: __builtin_isfinite_double(x))
 
+// @cleanup: Maybe these should either be actually intrinsics for optimizations
+//           or inline_asm routines, since there might not be available.
+//           The other idea might be to just write implementations for these functions.
+#define __builtin_memcpy(dest, source, size)  memcpy(dest, source, size)
+#define __builtin_memmove(dest, source, size) memmove(dest, source, size)
+#define __builtin_memset(dest, value, size)   memset(dest, value, size)
+
 // sync-routines
 
 #pragma compilation_unit("stdatomic.c")
