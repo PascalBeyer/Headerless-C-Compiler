@@ -838,7 +838,6 @@ func struct emit_location *emit_allocate_temporary_stack_location(struct context
 
 func void spill_register(struct context *context, enum register_kind allocator, enum register_encoding register_to_spill){
     
-    // assert(!context->in_inline_asm_function);
     assert(allocator == REGISTER_KIND_gpr || allocator == REGISTER_KIND_xmm);
     
     struct register_allocator *alloc = context->register_allocators + allocator;
@@ -849,13 +848,23 @@ func void spill_register(struct context *context, enum register_kind allocator, 
     struct emit_location *location_to_spill = alloc->emit_location_map[register_to_spill];
     u32 prevent_freeing = location_to_spill->prevent_freeing;
     
-    *location_to_spill = *emit_allocate_temporary_stack_location(context, location_to_spill->type);
+    struct ast_type *type = location_to_spill->type;
+    if(context->in_inline_asm_function && type->kind == AST_float_type){
+        // If we are spilling a float/double in inline_asm_mode,
+        // it might be reloaded with an instruction that expects 16-byte alignment.
+        // 
+        // @cleanup: Same should be true for asm block as well I think. 
+        //           Also there should maybe be a better solution.
+        type = &globals.typedef_m128;
+    }
+    
+    *location_to_spill = *emit_allocate_temporary_stack_location(context, type);
     location_to_spill->prevent_freeing = prevent_freeing;
     
     alloc->emit_location_map[register_to_spill] = null;
     
     smm offset = location_to_spill->offset;
-    smm size   = location_to_spill->type->size;
+    smm size   = type->size;
     
     //  Legacy prefix / sse prefix
     struct prefixes prefixes = no_prefix();
