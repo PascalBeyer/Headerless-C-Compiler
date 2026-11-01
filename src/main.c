@@ -6235,7 +6235,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     if(*ast == AST_function){
                         struct ast_function *function = (struct ast_function *)ast;
                         
-                        if(!(function->as_decl.flags & (DECLARATION_FLAGS_is_reachable_from_entry | DECLARATION_FLAGS_is_intrinsic))){
+                        if(!(function->as_decl.flags & (DECLARATION_FLAGS_is_reachable_from_entry | DECLARATION_FLAGS_is_intrinsic | DECLARATION_FLAGS_is_selectany)) && !(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm)){
                             if(function->scope){
                                 report_warning(context, WARNING_function_defined_but_unreachable, function->identifier, "Function was defined but unreachable.");
                             }else{
