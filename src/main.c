@@ -5095,7 +5095,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
     }
 #endif
     
-#if 1
+#if _WIN32
     {
         smm capacity = 0x8;
         smm count    = 0;
