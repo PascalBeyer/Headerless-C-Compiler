@@ -1158,12 +1158,12 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         for_ast_list(imports){
             struct ast_declaration *decl = (struct ast_declaration *)it->value;
-            push_zero_terminated_string_copy(arena, atom_get_string(decl->identifier->atom));
+            push_zero_terminated_string_copy(arena, get_declaration_symbol(decl));
         }
         
         for_ast_list(data_imports){
             struct ast_declaration *decl = (struct ast_declaration *)it->value;
-            push_zero_terminated_string_copy(arena, atom_get_string(decl->identifier->atom));
+            push_zero_terminated_string_copy(arena, get_declaration_symbol(decl));
         }
         
         for(struct import_library_node *import_library_node = globals.import_libraries.first; import_library_node; import_library_node = import_library_node->next){
@@ -1188,7 +1188,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             for_ast_list(imports){
                 struct ast_declaration *decl = (struct ast_declaration *)it->value;
                 struct elf_symbol *symbol = symbols + symbol_index++;
-                symbol->name_offset = symbol_name_offset; symbol_name_offset += decl->identifier->size + 1;
+                symbol->name_offset = symbol_name_offset; symbol_name_offset += (u32)get_declaration_symbol(decl).size + 1;
                 symbol->section_index = 0;
                 symbol->value = 0;
                 symbol->size = 0;
@@ -1198,7 +1198,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             for_ast_list(data_imports){
                 struct ast_declaration *decl = (struct ast_declaration *)it->value;
                 struct elf_symbol *symbol = symbols + symbol_index++;
-                symbol->name_offset = symbol_name_offset; symbol_name_offset += decl->identifier->size + 1;
+                symbol->name_offset = symbol_name_offset; symbol_name_offset += (u32)get_declaration_symbol(decl).size + 1;
                 symbol->section_index = 0;
                 symbol->value = 0;
                 symbol->size = 0;
@@ -1232,7 +1232,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 for_ast_list(ast_list){
                     struct ast_declaration *decl = (struct ast_declaration *)it->value;
                     
-                    u64 hash = elf_symbol_name_hash(atom_get_string(decl->identifier->atom));
+                    u64 hash = elf_symbol_name_hash(get_declaration_symbol(decl));
                     u32 hash_bucket_index = hash % hash_bucket_count;
                     
                     u32 collision_symbol_index = hash_buckets[hash_bucket_index];
@@ -2970,7 +2970,7 @@ static struct string elf_object_symbol_name(struct memory_arena *scratch, struct
         return push_format_string(scratch, ".Lslit%x", symbol_index);
     }
     
-    return token_get_string(decl->identifier);
+    return get_declaration_symbol(decl);
 }
 
 void write_elf_object(struct string output_file_path, struct memory_arena *arena, struct memory_arena *location_arena, struct memory_arena *scratch){
@@ -3585,7 +3585,7 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
         // 'extern inline' functions are emitted as weak symbols so that the
         // definitions from multiple translation units can be merged.
         u8 binding = (function->as_decl.flags & DECLARATION_FLAGS_is_selectany) ? STB_WEAK : STB_GLOBAL;
-        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(function->identifier), binding, STT_FUNC, (u16)text_section_index, (u64)function->relative_virtual_address, (u64)function->byte_size);
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, elf_object_symbol_name(scratch, &function->as_decl, symbol_count), binding, STT_FUNC, (u16)text_section_index, (u64)function->relative_virtual_address, (u64)function->byte_size);
         symbol_count += 1;
     }
     
@@ -3595,7 +3595,7 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
         if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist | DECLARATION_FLAGS_is_unnamed)) continue;
         
         decl->symbol_table_index = symbol_count;
-        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(decl->identifier), STB_GLOBAL, STT_OBJECT, (u16)data_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, elf_object_symbol_name(scratch, decl, symbol_count), STB_GLOBAL, STT_OBJECT, (u16)data_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
         symbol_count += 1;
     }
     
@@ -3605,7 +3605,7 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
         if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist | DECLARATION_FLAGS_is_unnamed)) continue;
         
         decl->symbol_table_index = symbol_count;
-        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(decl->identifier), STB_GLOBAL, STT_OBJECT, (u16)bss_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, elf_object_symbol_name(scratch, decl, symbol_count), STB_GLOBAL, STT_OBJECT, (u16)bss_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
         symbol_count += 1;
     }
     
@@ -3615,7 +3615,7 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
         if(decl->flags & (DECLARATION_FLAGS_is_static | DECLARATION_FLAGS_is_local_persist | DECLARATION_FLAGS_is_unnamed)) continue;
         
         decl->symbol_table_index = symbol_count;
-        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(decl->identifier), STB_GLOBAL, STT_TLS, (u16)tdata_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, elf_object_symbol_name(scratch, decl, symbol_count), STB_GLOBAL, STT_TLS, (u16)tdata_section_index, (u64)decl->relative_virtual_address, (u64)get_declaration_size(decl));
         symbol_count += 1;
     }
     
@@ -3627,7 +3627,7 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
         struct ast_function *function = (struct ast_function *)it->value;
         
         function->symbol_table_index = symbol_count;
-        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(function->identifier), STB_GLOBAL, STT_FUNC, SHN_UNDEF, 0, 0);
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, elf_object_symbol_name(scratch, &function->as_decl, symbol_count), STB_GLOBAL, STT_FUNC, SHN_UNDEF, 0, 0);
         symbol_count += 1;
     }
     
@@ -3637,7 +3637,7 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
         u8 symbol_type = (decl->flags & DECLARATION_FLAGS_is_thread_local) ? STT_TLS : STT_OBJECT;
         
         decl->symbol_table_index = symbol_count;
-        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, token_get_string(decl->identifier), STB_GLOBAL, symbol_type, SHN_UNDEF, 0, (u64)get_declaration_size(decl));
+        push_elf_object_symbol(arena, scratch, &symbol_names, &symbol_name_offset, elf_object_symbol_name(scratch, decl, symbol_count), STB_GLOBAL, symbol_type, SHN_UNDEF, 0, (u64)get_declaration_size(decl));
         symbol_count += 1;
     }
     

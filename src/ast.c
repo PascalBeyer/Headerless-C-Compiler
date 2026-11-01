@@ -589,6 +589,7 @@ struct ast_declaration{
     struct ast_type *type;
     enum ast_kind *defined_type; // Either 'AST_enum' or 'AST_typedef' or 'null' :defined_types
     struct token *identifier;
+    struct string asm_name; // For: void fake_name() __asm__("real_name")
     
     smm offset_on_stack; // - stack relative if the declarations  is in a function scope
     
@@ -682,6 +683,10 @@ static smm get_declaration_size(struct ast_declaration *decl){
         size += compound_literal->trailing_array_size;
     }
     return size;
+}
+
+static struct string get_declaration_symbol(struct ast_declaration *decl){
+    return decl->asm_name.data ? decl->asm_name : atom_get_string(decl->identifier->atom);
 }
 
 enum scope_flags{
@@ -807,6 +812,7 @@ struct ast_function{
             struct ast_function_type *type;
             struct ast *defined_type; // either 'AST_enum' or 'IR_typedef' or 'null'
             struct token *identifier;
+            struct string asm_name; // For: void fake_name() __asm__("real_name")
             smm offset_in_text_section;
             u8 *memory_location; // @cleanup: rename? this is where the thing onces emitted. here for patching
             smm relative_virtual_address; // needs to be 64 bit, as we point to it not knowing its size

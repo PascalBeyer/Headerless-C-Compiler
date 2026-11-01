@@ -329,20 +329,20 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     u64 coff_file_size = 0;
     struct elf_symbol *shared_object_symbol = 0;
     
-    struct atom identifier = declaration->identifier->atom;
+    struct string symbol_string = get_declaration_symbol(declaration); // @cleanup: I assume there are a bunch of errors, that should mention this.
     
     while(true){
         for(struct library_node *library = globals.libraries.first; library; library = library->next){
             
             if(library->kind == LIBRARY_NODE_shared_object){
-                struct elf_symbol *symbol = elf_lookup_symbol(library, atom_get_string(identifier));
+                struct elf_symbol *symbol = elf_lookup_symbol(library, symbol_string);
                 if(!symbol) continue;
                 
                 shared_object_symbol = symbol;
                 shared_object_name = library->path;
                 
             }else if(library->kind == LIBRARY_NODE_archive){
-                struct ar_symbol_lookup found = ar_lookup_symbol(library, atom_get_string(identifier));
+                struct ar_symbol_lookup found = ar_lookup_symbol(library, symbol_string);
                 if(found.lookup_result == AR_SYMBOL_LOOKUP_failed) continue;
                 
                 if(found.lookup_result == AR_SYMBOL_LOOKUP_import_header){
@@ -362,9 +362,11 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         
         if(!ar_import_header && !object_file_library_name.data && !shared_object_symbol){
             struct alternate_name *alternate_name = globals.alternate_names.first;
+            struct atom atom = atom_for_string(symbol_string);
+            
             for(; alternate_name; alternate_name = alternate_name->next){
-                if(atoms_match(alternate_name->source, identifier)){ // @cleanup: Cycles?
-                    identifier = alternate_name->destination;
+                if(atoms_match(alternate_name->source, atom)){ // @cleanup: Cycles?
+                    symbol_string = atom_get_string(alternate_name->destination);
                     break;
                 }
             }
@@ -418,7 +420,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         
         struct import_node *import_node = push_uninitialized_struct(context->arena, struct import_node);// @note: No need to zero, 'arena' never has any non-zero bytes.
         import_node->kind = IMPORT_NODE_so;
-        import_node->import_name = identifier;
+        import_node->import_name = symbol_string;
         
         sll_push_back(shared_object_node->import_list, import_node);
         shared_object_node->import_list.count += 1;
@@ -440,7 +442,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
         report_warning(context, WARNING_imported_function_is_also_defined, declaration->identifier, "%s is imported from '%.*s', but also defined in library '%.*s'.", Function_or_Declaration, import_library_name.size, import_library_name.data, object_file_library_name.size, object_file_library_name.data);
     }
     
-    u8 *library_name = (u8 *)(ar_import_header + 1) + identifier.size + 1;
+    u8 *library_name = (u8 *)(ar_import_header + 1) + symbol_string.size + 1;
     
     struct string dll_name = cstring_to_string((char *)library_name);
     
@@ -462,7 +464,7 @@ void lookup_declaration_in_libraries(struct context *context, struct ast_declara
     //        lookup table.
     
     struct import_node *import_node = push_uninitialized_struct(context->arena, struct import_node); // @note: No need to zero, 'arena' never has any non-zero bytes.
-    import_node->import_name  = identifier;
+    import_node->import_name  = symbol_string;
     import_node->ordinal_hint = ar_import_header->ordinal_hint;
     if(ar_import_header->name_type == /*IMPORT_OBJECT_ORDINAL*/0) import_node->import_by_ordinal = 1;
     

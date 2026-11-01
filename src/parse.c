@@ -1158,6 +1158,7 @@ enum type_qualifiers{
 
 struct declarator_return{
     struct token *ident;
+    struct string asm_name;
     struct ast_type *type;
     enum ast_kind *defined_type;
 };
@@ -4619,7 +4620,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                 case STRING_KIND_utf8:{ // u8'', ''
                     
                     // 
-                    // The promotion rules choosen by all compilers are really weird:
+                    // The promotion rules chosen by all compilers are really weird:
                     // 
                     //     '\xff' == -1
                     //     '\xff\xff' == 65535
@@ -9297,6 +9298,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             function->kind = IR_function;
             function->type = cast(struct ast_function_type *)declarator.type;
             function->identifier = declarator.ident;
+            function->asm_name = declarator.asm_name;
             function->memory_location = null;
             function->offset_in_text_section = -1; // Set atomically when done emitting.
             function->compilation_unit = context->current_compilation_unit;
@@ -11047,14 +11049,25 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         context->token_at = saved_marker;
     }
     
-    if(peek_token(context, TOKEN_asm)){
-        struct token *directive = next_token(context);
+    if(peek_token_eat(context, TOKEN_asm)){
         struct token *open  = expect_token(context, TOKEN_open_paren, "Expected '(' after '__asm__'.");
-        int skip = true;
-        report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__asm__' ignored.");
-        skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__asm__'.");
-        if(!skip){
+        
+        struct expr expr = parse_expression(context, /*skip_comma_expression*/true);
+        
+        if(expr.ir->kind == IR_string_literal){
+            struct ir_string_literal *string_literal = (struct ir_string_literal *)expr.ir;
+            
+            if(string_literal->string_kind != STRING_KIND_utf8){
+                report_error(context, expr.token, "Wide character strings not supported for '__asm__(\"<symbol-name>\")'.");
+            }else{
+                ret.asm_name = string_literal->value;
+            }
+            
+            pop_from_ir_arena(context, string_literal);
+            
             expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__asm__'.");
+        }else{
+            skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in '__asm__(\"<symbol-name>\"'.");
         }
     }
     

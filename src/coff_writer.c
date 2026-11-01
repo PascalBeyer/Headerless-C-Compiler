@@ -1255,7 +1255,7 @@ func void write_coff(struct string output_file_path, struct memory_arena *arena,
                     }else{
                         u16 *hint = push_struct(arena, u16);
                         *hint = import_node->ordinal_hint;
-                        push_cstring_from_string(arena, atom_get_string(import_node->import_name));
+                        push_cstring_from_string(arena, import_node->import_name);
                         
                         import_address_table[import_address_table_index] = make_relative_virtual_address(rdata_section_start, hint);
                     }

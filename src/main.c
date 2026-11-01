@@ -296,7 +296,7 @@ struct import_node{
     u16 ordinal_hint;
     u8 import_by_ordinal;
     
-    struct atom import_name;
+    struct string import_name;
     u8 *memory_location;
     
     // If the declaration has the DECLARATION_FLAGS_need_dllimport_stub_function flag set, we have to emit a stub as well.
@@ -5663,7 +5663,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             }
             
             struct import_node *import_node = push_struct(arena, struct import_node);
-            import_node->import_name = atom;
+            import_node->import_name = atom_get_string(atom);
             sll_push_back(ntdll->import_list, import_node);
             ntdll->import_list.count += 1;
             
