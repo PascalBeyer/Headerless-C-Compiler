@@ -4559,6 +4559,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             
                             "#define __extension__\n"
                             
+                            "#define _Complex\n"
+                            
                             "#include <gcc_builtins.h>\n"
                             );
                     string_list_postfix_no_copy(&predefines, arena, linux_predefines);
