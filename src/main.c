@@ -4530,6 +4530,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             "#define __VERSION__ \"4.9.0\"\n"
                             
                             "#define __ELF__ 1\n"
+                            "#define __USER_LABEL_PREFIX__\n"
                             
                             "#define __LP64__ 1\n"
                             "#define _LP64 1\n"
@@ -4553,6 +4554,10 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             
                             "#define __SSE__ 1\n"
                             "#define __SSE2__ 1\n"
+                            
+                            // hacks:
+                            
+                            "#define __extension__\n"
                             
                             "#include <gcc_builtins.h>\n"
                             );
