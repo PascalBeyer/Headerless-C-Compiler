@@ -4854,6 +4854,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 if(return_type == &globals.typedef_void){
                     // Do nothing.
+                    emit_location_stack_at -= 1;
                 }else{
                     emit_location_stack_at -= 1;
                     struct emit_location *return_location = emit_location_stack[emit_location_stack_at];
