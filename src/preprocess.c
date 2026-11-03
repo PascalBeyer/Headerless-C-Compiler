@@ -89,6 +89,7 @@ enum builtin_define_type{
     BUILTIN_DEFINE_defined,
     BUILTIN_DEFINE___FILE__,
     BUILTIN_DEFINE___LINE__,
+    BUILTIN_DEFINE___COUNTER__,
     BUILTIN_DEFINE__pragma,
     BUILTIN_DEFINE_has_include,
 };
@@ -1444,7 +1445,8 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 return token_to_expand;
             }break;
             case BUILTIN_DEFINE___FILE__:
-            case BUILTIN_DEFINE___LINE__:{
+            case BUILTIN_DEFINE___LINE__:
+            case BUILTIN_DEFINE___COUNTER__:{
                 struct token *token = push_uninitialized_struct(&context->scratch, struct token);
                 token->string_hash = 0;
                 token->location_index  = macro_expansion_record->macro_expansion_index;
@@ -1459,10 +1461,16 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     token->type = TOKEN_string_literal;
                     token->data = quoted_format_string.data;
                     token->size = (u32)quoted_format_string.size;
-                }else{
+                }else if(define->builtin_define_type == BUILTIN_DEFINE___LINE__){
                     struct token_location_information location = get_location_for_token(context->arena, context->current_compilation_unit, token);
                     
                     struct string integer_literal_string = push_format_string(context->arena, "%u", location.line);
+                    
+                    token->type = TOKEN_integer_literal;
+                    token->data = integer_literal_string.data;
+                    token->size = (u32)integer_literal_string.size;
+                }else if(define->builtin_define_type == BUILTIN_DEFINE___COUNTER__){
+                    struct string integer_literal_string = push_format_string(context->arena, "%u", context->counter_define_value++);
                     
                     token->type = TOKEN_integer_literal;
                     token->data = integer_literal_string.data;
@@ -2937,6 +2945,8 @@ struct static_if_stack_node{
 
 // @note: if we left the tokens in a linked list of buckets, we would not have to copy them
 func struct token_array file_tokenize_and_preprocess(struct context *context, struct string initial_absolute_file_path, smm file_size){
+    
+    context->counter_define_value = 0;
     
     {
         if(globals.cli_options.show_includes){

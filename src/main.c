@@ -815,6 +815,8 @@ struct context{
     
     u32 rescan_macro_expansion_index;
     
+    u64 counter_define_value;
+    
     //
     // parsing
     //
@@ -2830,6 +2832,14 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         defined___LINE__->is_builtin  = 1;
         defined___LINE__->defined_token = &globals.invalid_token;
         register_define(context, defined___LINE__);
+        
+        struct define_node *defined___COUNTER__ = push_struct(&context->scratch, struct define_node);
+        defined___COUNTER__->name = atom_for_string(string("__COUNTER__"));
+        defined___COUNTER__->builtin_define_type = BUILTIN_DEFINE___COUNTER__;
+        defined___COUNTER__->is_builtin  = 1;
+        defined___COUNTER__->defined_token = &globals.invalid_token;
+        register_define(context, defined___COUNTER__);
+        
         
     }
     sll_clear(context->pragma_once_file_list);
