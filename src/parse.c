@@ -7761,14 +7761,20 @@ case NUMBER_KIND_##type:{ \
                 
                 conditional_expression_kind = is_true ? AST_conditional_expression_true : AST_conditional_expression_false;
                 
-                pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
-                
-                struct expr if_true = parse_expression(context, false);
-                maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
-                maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
-                expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
-                if(context->should_exit_statement) return operand;
-                
+                struct expr if_true;
+                if(peek_token_eat(context, TOKEN_colon)){
+                    // Simply don't pop the operand.
+                    if_true = operand;
+                }else{
+                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
+                    
+                    if_true = parse_expression(context, false);
+                    maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
+                    maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
+                    expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
+                    if(context->should_exit_statement) return operand;
+                }
+                    
                 struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, &if_true);
                 
                 if(!is_true){
@@ -7787,24 +7793,47 @@ case NUMBER_KIND_##type:{ \
                 // Non-constant conditional. We have to insert jumps and such.
                 // 
                 
-                struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_false);
-                conditional_jump->label_number = context->jump_label_index++;
-                
-                struct ir_identifier *temp1 = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
-                temp1->base.kind = IR_identifier;
-                
-                struct expr if_true = parse_expression(context, false);
-                maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
-                maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
-                expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
-                if(context->should_exit_statement) return operand;
-                
+                struct ir_identifier *temp1;
+                struct ir_jump_node *conditional_jump;
                 struct ir *cast = null;
-                if(type_is_arithmetic(if_true.resolved_type)){
+                
+                struct expr if_true;
+                
+                if(peek_token_eat(context, TOKEN_colon)){
+                    if_true = operand;
+                    
+                    push_ir(context, IR_duplicate);
+                    
+                    temp1 = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
+                    temp1->base.kind = IR_identifier;
+                    
+                    push_ir(context, IR_swap_lhs_rhs);
+                    
                     cast = push_ir(context, IR_nop);
+                    push_ir(context, IR_store);
+                    push_ir(context, IR_pop_expression);
+                    
+                    conditional_jump = push_jump(context, IR_jump_if_false);
+                    conditional_jump->label_number = context->jump_label_index++;
+                }else{
+                    conditional_jump = push_jump(context, IR_jump_if_false);
+                    conditional_jump->label_number = context->jump_label_index++;
+                    
+                    temp1 = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
+                    temp1->base.kind = IR_identifier;
+                    
+                    if_true = parse_expression(context, false);
+                    maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
+                    maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
+                    expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
+                    if(context->should_exit_statement) return operand;
+                    
+                    if(type_is_arithmetic(if_true.resolved_type)){
+                        cast = push_ir(context, IR_nop);
+                    }
+                    push_ir(context, IR_store);
+                    push_ir(context, IR_pop_expression);
                 }
-                push_ir(context, IR_store);
-                push_ir(context, IR_pop_expression);
                 
                 // 
                 // @WARNING: We assume we know the order of these nodes to get temp2 from end_jump.
