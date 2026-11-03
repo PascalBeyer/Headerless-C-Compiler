@@ -54,8 +54,12 @@ func struct string report_type_mismatch__internal(struct context *context, char 
     if(defined_type){
         if(*defined_type == IR_typedef){
             struct ast_declaration *decl = cast(struct ast_declaration *)defined_type;
-            struct string lhs_string = push_type_string(context->arena, &context->scratch, decl->type);
-            ret = push_format_string(&context->scratch, "%s '%.*s' (aka %.*s)", prefix, decl->identifier->size, decl->identifier->data, lhs_string.amount, lhs_string.data);
+            if((decl->type->kind == AST_struct || decl->type->kind == AST_union) && ((struct ast_compound_type *)decl->type)->identifier->type != TOKEN_identifier){
+                ret = push_format_string(&context->scratch, "%s '%.*s'", prefix, decl->identifier->size, decl->identifier->data);
+            }else{
+                struct string lhs_string = push_type_string(context->arena, &context->scratch, decl->type);
+                ret = push_format_string(&context->scratch, "%s '%.*s' (aka %.*s)", prefix, decl->identifier->size, decl->identifier->data, lhs_string.amount, lhs_string.data);
+            }
             handled = true;
         }else if(*defined_type == AST_enum){
             struct string lhs_string = push_type_string(context->arena, &context->scratch, cast(struct ast_type *)defined_type);
