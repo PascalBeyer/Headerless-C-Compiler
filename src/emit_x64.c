@@ -3507,6 +3507,36 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 }
             }break;
             
+            case IR_range_initializer:{
+                struct ir_range_initializer *range_initializer = (struct ir_range_initializer *)ir;
+                ir_arena_at += sizeof(*range_initializer);
+                
+                struct emit_location *decl_location = emit_location_stack[emit_location_stack_at-1];
+                
+                struct ast_type *type = range_initializer->type;
+                
+                u64 offset = range_initializer->offset;
+                u64 count  = range_initializer->count;
+                u64 size   = type->size;
+                
+                struct emit_location *source = emit_location_stack_relative(context, type, 0);
+                source->offset = decl_location->offset + offset; // @cleanup: my system is way to confusing about stack offsets
+                
+                struct emit_location *dest = emit_location_stack_relative(context, type, 0);
+                
+                emit_location_prevent_freeing(context, source);
+                emit_location_prevent_freeing(context, dest);
+                
+                for(u32 index = 1; index < count; index++){
+                    dest->offset = decl_location->offset + offset + index * size; // @cleanup: my system is way to confusing about stack offsets
+                    emit_memcpy(context, dest, source);
+                }
+                
+                emit_location_allow_freeing(context, dest);
+                emit_location_allow_freeing(context, source);
+            }break;
+            
+            
             // 
             // Unary expressions:
             // 

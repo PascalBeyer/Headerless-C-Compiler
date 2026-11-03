@@ -2229,6 +2229,8 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         struct ast_type *current_object_type = null;
         struct token *site = get_current_token_for_error_report(context);
         
+        u64 range_initializer_count = 0;
+        
         if(peek_token(context, TOKEN_dot) || peek_token(context, TOKEN_open_index)){
             //
             // Parse a designator.
@@ -2306,10 +2308,8 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         goto error;
                     }
                     
-#if 0
-                    // :ir_refactor 
-                    if(peek_token(context, TOKEN_dotdotdot)){
-                        struct token *dotdotdot = next_token(context);
+                    if(peek_token_eat(context, TOKEN_dotdotdot)){
+                        
                         // Gnu extension:
                         // 
                         //    [1 ... 5] = 1,
@@ -2318,34 +2318,30 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         // and restart the loop.
                         // 
                         
-                        struct ast *end_index = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false);
-                        if(end_index->kind != IR_integer_literal){
-                            report_error(context, end_index->token, "Expected a constant integer expression in range designator. (e.g.: [1 ... moose]).");
-                            goto error;
-                        }
+                        struct expr end_index = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant array bound in range initializer.");
                         
                         u64 end_value;
-                        if(type_is_signed(end_index->resolved_type)){
-                            s64 signed_value = integer_literal_as_s64(end_index);
+                        if(type_is_signed(end_index.resolved_type)){
+                            s64 signed_value = integer_literal_as_s64(&end_index);
                             if(signed_value < 0){
-                                report_error(context, index->token, "Array subscript cannot be negative.");
+                                report_error(context, end_index.token, "Array subscript cannot be negative.");
                                 goto error;
                             }
                             
                             end_value = (u64)signed_value;
                         }else{
-                            end_value = integer_literal_as_u64(end_index);
+                            end_value = integer_literal_as_u64(&end_index);
                         }
                         
                         expect_token(context, TOKEN_closed_index, "Expected ']' at the end of range-designator (e.g.: `[1 ... `).");
                         
                         if(end_value <= value){
-                            report_error(context, end_index->token, "Invalid range [%llu, %llu] specified, second index must be larger than the first.", value, end_value);
+                            report_error(context, end_index.token, "Invalid range [%llu, %llu] specified, second index must be larger than the first.", value, end_value);
                             end_value = value + 1;
                         }
                         
                         if(!array->is_of_unknown_size && end_value >= (u64)array->amount_of_elements){
-                            report_error(context, index->token, "Range designator [%llu, %llu] overflows array bounds. Array has only '%lld' elements.", value, end_value, array->amount_of_elements);
+                            report_error(context, end_index.token, "Range designator [%llu, %llu] overflows array bounds. Array has only '%lld' elements.", value, end_value, array->amount_of_elements);
                             goto error;
                         }
                         
@@ -2353,28 +2349,17 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                             report_error(context, get_current_token(context), "Nested range designators are unsupported. (e.g.: `[1 .. 5][1 .. 3] = 1`).");
                         }
                         
-                        u64 new_offset = designator_stack.first->offset_at + end_value * array->element_type->size;
-                        designator_stack.first->array_at  = end_value;
-                        designator_stack.first->offset_at = new_offset;
-                        
-                        struct ast_range_initializer *range_initializer = push_expression(context, dotdotdot, array_range);
-                        range_initializer->offset_at = new_offset;
-                        range_initializer->
-                        range_initializer->start_index = value;
-                        range_initializer->end_index = end_value;
-                        
-                        set_resolved_type(&range_initializer->base, array->element_type, array->element_type_defined_type);
-                        
-                        check_for_basic_types__internal(context, &range_initializer->base, CHECK_basic, "@incomplete: Range designator", dotdotdot);
+                        u64 start_offset = designator_stack.first->offset_at + value * array->element_type->size;
+                        designator_stack.first->array_at  = value;
+                        designator_stack.first->offset_at = start_offset;
                         
                         struct designator_node *new_node = push_struct(&context->scratch, struct designator_node);
-                        new_node->lhs = &range_initializer->base;
+                        new_node->lhs_type  = array->element_type;
+                        new_node->offset_at = start_offset;
                         sll_push_front(designator_stack, new_node);
                         
-                    }else
-#endif
-                    
-                    {
+                        range_initializer_count = (end_value - value) + 1;
+                    }else{
                         
                         // 
                         // "Normal" array designator:
@@ -2446,7 +2431,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         // We are at the point where we are parsing an 'initializer' again.
         // An initializer is again either an expression or an initializer list.
         // We cannot actually use 'parse_initializer' here, as it requires knowing 
-        // the 'lhs' of the initalizer, but in the 'expression' case we don't.
+        // the 'lhs' of the initializer, but in the 'expression' case we don't.
         // Hence, we handle these two cases explicitly here ourselves.
         // 
         //                                                  15.10.2023
@@ -2543,6 +2528,8 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     initializer->offset = designator_stack.first ? designator_stack.first->offset_at : base_offset;
                     initializer->lhs_type = current_object_type;
                     
+                    assert(!range_initializer_count);
+                    
                     continue;
                 }
             }
@@ -2598,6 +2585,11 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                 struct ast_type *type = current_object_type;
                 
                 if(type->kind == AST_struct || type->kind == AST_union){
+                    
+                    if(range_initializer_count){
+                        report_type_mismatch_error(context, type, null, expression.resolved_type, expression.defined_type, site);
+                    }
+                    
                     struct ast_compound_type *compound = (struct ast_compound_type *)type;
                     
                     if(!compound->amount_of_members){
@@ -2630,6 +2622,19 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                 sll_push_front(designator_stack, new_node);
                 current_object_type = get_current_object_type_for_designator_node(designator_stack.first);
             }
+        }
+        
+        if(range_initializer_count){
+            struct designator_node *node = designator_stack.first;
+            
+            struct ir_range_initializer *range_initializer = push_struct(&context->ir_arena, struct ir_range_initializer);
+            range_initializer->base.kind = IR_range_initializer;
+            range_initializer->count  = range_initializer_count;
+            range_initializer->type   = current_object_type;
+            range_initializer->offset = node->offset_at;
+            
+            node->array_at  += (range_initializer_count-1);
+            node->offset_at += (range_initializer_count-1) * current_object_type->size;
         }
         
         int at_end = peek_token(context, TOKEN_closed_curly) != 0;

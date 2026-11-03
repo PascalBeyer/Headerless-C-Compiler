@@ -2534,8 +2534,6 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 if(ir_stack[ir_stack_at].is_address){
                     // 
                     // We have to emit an absolute patch.
-                    // 
-                    
                     smm offset_in_rhs = ir_stack[ir_stack_at].offset;
                     struct ir *rhs = ir_stack[ir_stack_at].ir;
                     
@@ -2645,6 +2643,23 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                             goto initializer_not_constant;
                         }break;
                     }
+                }
+            }break;
+            
+            case IR_range_initializer:{
+                struct ir_range_initializer *range_initializer = (struct ir_range_initializer *)ir_node;
+                ir_offset += sizeof(*range_initializer);
+                
+                u64 offset = range_initializer->offset;
+                u64 element_size = range_initializer->type->size;
+                u64 element_count = range_initializer->count;
+                
+                u8 *element_data = push_uninitialized_data(&context->scratch, u8, element_size);
+                
+                memcpy(element_data, data + offset, element_size);
+                
+                for(u64 index = 1; index < element_count; index++){
+                    memcpy(data + offset + element_size * index, element_data, element_size);
                 }
             }break;
             

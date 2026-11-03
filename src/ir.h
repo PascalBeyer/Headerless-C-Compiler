@@ -366,6 +366,7 @@ enum ir_kind{
     IR_nop,
     IR_embed,
     IR_initializer,
+    IR_range_initializer,
     IR_asm_block,
     
     IR_cast_to_void,
@@ -617,6 +618,13 @@ struct ir_initializer{
     struct ir base;
     u64 offset;
     struct ast_type *lhs_type;
+};
+
+struct ir_range_initializer{
+    struct ir base;
+    u64 offset;
+    u64 count;
+    struct ast_type *type;
 };
 
 struct ir_asm_block{
