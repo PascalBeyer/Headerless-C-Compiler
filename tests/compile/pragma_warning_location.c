@@ -1,4 +1,4 @@
-// check "(5,1): Warning 16 at 'arst': Unsupported __pragma ignored."
+// check "(5,15): Warning 16 at 'arst': Unsupported __pragma ignored."
 
 #define pragma_define() __pragma(arst)
 

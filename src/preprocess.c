@@ -85,6 +85,7 @@ struct define_replacement_node{
 };
 
 enum builtin_define_type{
+    BUILTIN_DEFINE_none,
     BUILTIN_DEFINE_defined,
     BUILTIN_DEFINE___FILE__,
     BUILTIN_DEFINE___LINE__,
@@ -1359,7 +1360,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                         if(token->type == TOKEN_invalid){
                             // :Error this should report the beginning and the end
                             report_error(context, open_paren, "Unmatched '(' after '__pragma('.");
-                            return false;
+                            return null;
                         }else if(token->type == TOKEN_closed_paren){
                             if (--count == 0) break;
                         }else if(token->type == TOKEN_open_paren){
@@ -1396,7 +1397,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 struct token *identifier = peek_token_eat_define(context, TOKEN_identifier);
                 if(!identifier){
                     report_error(context, token_to_expand, "Builtin macro 'defined' expected an identifier following it. Possible invocations are 'defined <identifier>' and 'defined(<identifer>)'.");
-                    return token_to_expand;
+                    return null;
                 }
                 
                 struct token *tokens = null;
@@ -1407,7 +1408,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     struct token *closed_paren = peek_token_eat_define(context, TOKEN_closed_paren);
                     if(!closed_paren){
                         report_error(context, token_to_expand, "Builtin macro 'defined' expected exactly one identifier in its argument list. Possible invocations are 'defined <identifier>' and 'defined(<identifier>)'.");
-                        return token_to_expand;
+                        return null;
                     }
                     
                     // @cleanup: is there a reason to have the '(' and the ')'?
@@ -1516,7 +1517,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                     if(paren_depth == 0) break;
                 }else if(token->type == TOKEN_invalid){
                     report_error(context, token_to_expand, "Expected a ')' while collecting arguments for macro expansion.");
-                    return token_to_expand;
+                    return null;
                 }
             }
             goto skip_define_argument_parsing_because_the_define_has_no_replacement_list;
@@ -1603,7 +1604,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                             report_error(context, token_to_expand, "Too many arguments in function-like macro invocation.");
                             report_error(context, define->defined_token, "... Here is the definition of the macro.");
                             end_error_report(context);
-                            return token_to_expand;
+                            return null;
                         }
                     }
                     
@@ -1632,14 +1633,14 @@ func struct token *expand_define(struct context *context, struct token *token_to
                             report_error(context, token_to_expand, "Too few arguments in function-like macro invocation.");
                             report_error(context, define->defined_token, "... Here is the definition of the macro.");
                             end_error_report(context);
-                            return token_to_expand;
+                            return null;
                         }else{
                             break;
                         }
                     }
                 }else if(token->type == TOKEN_invalid){
                     report_error(context, token_to_expand, "Expected a ')' while collecting arguments for macro expansion.");
-                    return token_to_expand;
+                    return null;
                 }
                 
                 if(arg->stringify_index != -1){
@@ -2989,12 +2990,24 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
     } postponed_directive = zero_struct;
     
     b32 got_newline = true;
+    int got_function_like_define_this_token = 0;
+    struct define_node *got_function_like_define = 0;
+    struct token define_token = {0};
     
     struct compilation_unit *current_compilation_unit = context->current_compilation_unit;
     
     u64 macro_expansion_record_capacity = 0x10;
     current_compilation_unit->macro_expansion_records = push_data(context->arena, struct macro_expansion_record, macro_expansion_record_capacity);
     current_compilation_unit->amount_of_macro_expansion_records = 0;
+    
+    u64 define_parsing_stack_capacity = 0x10;
+    u64 define_parsing_stack_size = 0;
+    u64 define_parsing_paren_depth = 0;
+    struct define_parsing_stack{
+        struct define_node *define;
+        u64 paren_depth;
+        struct token *parameter_token_start;
+    } *define_parsing_stack = push_data(context->arena, struct define_parsing_stack, define_parsing_stack_capacity);
     
     while(1){
         
@@ -3011,220 +3024,49 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 
                 struct raw_token *raw_token = &tokens.data[token_index];
                 
-                if(raw_token->type == TOKEN_whitespace) continue;
+                if(define_parsing_stack_size == 0 && raw_token->type == TOKEN_whitespace) continue;
                 
                 if(raw_token->type == TOKEN_hash && got_newline){
                     include_stack_node->at = token_index + 1;
                     include_stack_node->offset = offset + raw_token->size;
+                    got_function_like_define = 0;
+                    got_function_like_define_this_token = 0;
                     
                     goto handle_directive;
                 }
                 
+                struct define_node *define_to_expand = null;
                 u32 raw_token_string_hash = 0;
                 
                 if(raw_token->type == TOKEN_identifier){
+                    
                     struct atom raw_token_atom = atom_for_string(create_string(include_file->contents.data + offset, raw_token->size));
                     raw_token_string_hash = raw_token_atom.string_hash;
                     
-                    struct define_node *initial_define = lookup_define(context, raw_token_atom);
-                    
-                    if(initial_define){
-                        assert(!initial_define->is_disabled);
+                    if(define_parsing_stack_size == 0){
+                        struct define_node *define = lookup_define(context, raw_token_atom);
                         
-                        struct token *token = &(struct token){
-                            .type = raw_token->type,
-                            .location_index = include_file->file_index,
-                            .atom = raw_token_atom,
-                        };
-                        
-                        struct define_node *define = initial_define;
-                        
-                        token_index += 1; // Skip past the identifier.
-                        offset += raw_token->size;
-                        
-                        dynarray_maybe_grow(struct macro_expansion_record, context->arena, current_compilation_unit->macro_expansion_records, current_compilation_unit->amount_of_macro_expansion_records, macro_expansion_record_capacity);
-                        u64 macro_expansion_record_index = current_compilation_unit->amount_of_macro_expansion_records++;
-                        
-                        struct macro_expansion_record *macro_expansion_record = &current_compilation_unit->macro_expansion_records[macro_expansion_record_index];
-                        macro_expansion_record->file_index = include_file->file_index;
-                        macro_expansion_record->macro_expansion_index = (u32)(0x80000000 | macro_expansion_record_index); // @cleanup: Bounds-check?
-                        macro_expansion_record->expanded_token = raw_token_atom.data;
-                        macro_expansion_record->defined_token = define->name.data;
-                        
-                        context->rescan_macro_expansion_index = macro_expansion_record->macro_expansion_index;
-                        
-                        // 
-                        // Rescan Macro loop.
-                        // 
-                        while(token != &globals.invalid_token){
+                        if(define){
+                            assert(!define->is_disabled);
                             
-                            int skip = 0;
-                            
-                            int is_function_like = define->is_function_like;
-                            
-                            smm identifier_token_index = token_index;
-                            smm identifier_offset = offset;
-                            
-                            if(context->in_static_if_condition){
+                            if(context->in_static_if_condition && got_function_like_define && got_function_like_define->builtin_define_type == BUILTIN_DEFINE_defined){
+                                // Don't expand the define.
+                            }else{
+                                define_token = (struct token){
+                                    .type = TOKEN_identifier,
+                                    .location_index = include_file->file_index,
+                                    .atom = raw_token_atom,
+                                };;
                                 
-                                if(define->is_builtin && define->builtin_define_type == BUILTIN_DEFINE_defined){
-                                    // Sigh: defined is weird. There are two different ways to use it.
-                                    //       One function like. one non-function like, but still with argument.
-                                    
-                                    struct raw_token *other = &globals.invalid_raw_token;
-                                    for(; token_index < tokens.size; token_index++){
-                                        other = &tokens.data[token_index];
-                                        if(other->type != TOKEN_whitespace && other->type != TOKEN_newline){
-                                            break;
-                                        }
-                                        
-                                        offset += other->size;
-                                    }
-                                    
-                                    if(other->type == TOKEN_open_paren){
-                                        is_function_like = 1;
-                                    }else if(other->type == TOKEN_identifier){
-                                        
-                                        struct token *other_copy = push_struct(&context->scratch, struct token);
-                                        other_copy->type = other->type;
-                                        other_copy->location_index = include_file->file_index;
-                                        other_copy->atom = atom_for_string(create_string(include_file->contents.data + offset, other->size));
-                                        
-                                        struct token_array parameter_tokens = (struct token_array){
-                                            .data = other_copy,
-                                            .size = 1,
-                                        };
-                                        push_to_token_stack(context, parameter_tokens, 0, null);
-                                        
-                                        token_index += 1;
-                                        offset += other->size;
-                                    }
-                                }
-                            }
-                            
-                            if(is_function_like){
-                                eat_whitespace_comments_and_newlines_define(context);
-                                
-                                if(peek_token_define(context, TOKEN_open_paren)){
-                                    // We are good, it's a function-like define.
-                                }else if(peek_token_define(context, TOKEN_invalid)){
-                                    struct raw_token *other = &globals.invalid_raw_token;
-                                    for(; token_index < tokens.size; token_index++){
-                                        other = &tokens.data[token_index];
-                                        if(other->type != TOKEN_whitespace && other->type != TOKEN_newline){
-                                            break;
-                                        }
-                                        
-                                        offset += other->size;
-                                    }
-                                    
-                                    if(other->type != TOKEN_open_paren){
-                                        // This was not the function-like define, undo the last token and continue.
-                                        skip = true;
-                                    }else{
-                                        // 
-                                        // Push the arguments onto the define token stack.
-                                        // 
-                                        
-                                        struct token *parameter_token_start = push_data(&context->scratch, struct token, 0);
-                                        
-                                        smm depth = 0;
-                                        do{
-                                            struct raw_token *source = &tokens.data[token_index++];
-                                            
-                                            struct token *pushed = push_uninitialized_struct(&context->scratch, struct token);
-                                            pushed->type = source->type;
-                                            pushed->location_index = include_file->file_index;
-                                            pushed->data = include_file->contents.data + offset;
-                                            pushed->size = (u32)source->size;
-                                            pushed->string_hash = (pushed->type == TOKEN_identifier) ? (u32)string_djb2_hash(token_get_string(pushed)) : 0;
-                                            
-                                            offset += source->size;
-                                            
-                                            if(pushed->type == TOKEN_open_paren){
-                                                depth += 1;
-                                            }else if(pushed->type == TOKEN_closed_paren){
-                                                depth -= 1;
-                                                if(depth == 0) break;
-                                            }
-                                        }while(token_index < tokens.size);
-                                        
-                                        if(depth){
-                                            report_error(context, parameter_token_start, "Function-like define is missing ')' at the end of its parameter list.");
-                                        }
-                                        
-                                        smm parameter_token_size = push_data(&context->scratch, struct token, 0) - parameter_token_start;
-                                        
-                                        struct token_array parameter_tokens = (struct token_array){
-                                            .data = parameter_token_start,
-                                            .size = parameter_token_size,
-                                        };
-                                        
-                                        push_to_token_stack(context, parameter_tokens, 0, null);
-                                    }
+                                if(define->is_function_like){
+                                    got_function_like_define = define;
+                                    got_function_like_define_this_token = 1;
                                 }else{
-                                    skip = 1;
-                                    
-                                    token_index = identifier_token_index;
-                                    offset = identifier_offset;
-                                }
-                            }
-                            
-                            if(!skip){
-                                token = expand_define(context, token, define, macro_expansion_record);
-                            }
-                            
-                            if(token){
-                                struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
-                                out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
-                                if(define == initial_define){
-                                    out_token->location_index = include_file->file_index;
-                                }else{
-                                    out_token->location_index = macro_expansion_record->macro_expansion_index;
-                                }
-                                out_token->atom = token->atom;
-                                
-                                if(!have_postponed_directive){
-                                    u64 index = out_token->string_hash & (globals.keyword_table_size - 1);
-                                    if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
-                                        out_token->type = globals.keyword_table[index].type;
-                                    }
-                                } 
-                            }
-                            
-                            for(token = next_token_define(context); token != &globals.invalid_token; token = next_token_define(context)){
-                                
-                                if(token->type == TOKEN_whitespace) continue;
-                                
-                                if(token->type == TOKEN_identifier){
-                                    define = lookup_define(context, token->atom);
-                                    if(define && !define->is_disabled) break;
-                                }
-                                
-                                struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
-                                out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
-                                out_token->location_index = macro_expansion_record->macro_expansion_index; // @cleanup: For argument tokens we could do better than this.
-                                out_token->atom = token->atom;
-                                
-                                if(out_token->type == TOKEN_identifier){
-                                    
-                                    // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
-                                    //        things like defined(__int64) will error.
-                                    if(!have_postponed_directive){
-                                        u64 index = out_token->string_hash & (globals.keyword_table_size - 1);
-                                        if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
-                                            out_token->type = globals.keyword_table[index].type;
-                                        }
-                                    } 
+                                    define_to_expand = define;
+                                    goto skip_copy_out_for_object_like_define;
                                 }
                             }
                         }
-                        
-                        context->rescan_macro_expansion_index = 0;
-                        
-                        token_index -= 1;
-                        offset -= tokens.data[token_index].size;
-                        continue;
                     }
                 }
                 
@@ -3303,30 +3145,246 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     continue;
                 }
                 
+                {
+                    // 
+                    // Copy out token.
+                    // 
+                    
+                    struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
+                    out_token->type = (raw_token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : raw_token->type;
+                    out_token->location_index = include_file->file_index;
+                    out_token->data = include_file->contents.data + offset;
+                    out_token->size = raw_token->size;
+                    out_token->string_hash = raw_token_string_hash;
+                    
+                    if(out_token->type == TOKEN_identifier){
+                        
+                        // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
+                        //        things like defined(__int64) will error.
+                        if(!have_postponed_directive && define_parsing_stack_size == 0){
+                            u64 index = raw_token_string_hash & (globals.keyword_table_size - 1);
+                            if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
+                                out_token->type = globals.keyword_table[index].type;
+                            }
+                        } 
+                    }
+                }
+                
+                if(raw_token->type == TOKEN_whitespace) continue; // We get here when collecting macro arguments.
+                
                 got_newline = false;
                 
                 // 
-                // Copy out token.
+                // Macro handling.
                 // 
                 
-                struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
-                out_token->type = (raw_token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : raw_token->type;
-                out_token->location_index = include_file->file_index;
-                out_token->data = include_file->contents.data + offset;
-                out_token->size = raw_token->size;
-                out_token->string_hash = raw_token_string_hash;
-                
-                if(out_token->type == TOKEN_identifier){
+                if(raw_token->type == TOKEN_open_paren){
+                    define_parsing_paren_depth += 1;
                     
-                    // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
-                    //        things like defined(__int64) will error.
-                    if(!have_postponed_directive){
-                        u64 index = raw_token_string_hash & (globals.keyword_table_size - 1);
-                        if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
-                            out_token->type = globals.keyword_table[index].type;
+                    if(got_function_like_define){
+                        // This is a function-like define.
+                        // Record it to the stack.
+                        
+                        dynarray_maybe_grow(struct define_parsing_stack, scratch, define_parsing_stack, define_parsing_stack_size, define_parsing_stack_capacity);
+                        u64 define_parsing_stack_index = define_parsing_stack_size++;
+                        
+                        struct define_parsing_stack *node = &define_parsing_stack[define_parsing_stack_index];
+                        node->define = got_function_like_define;
+                        node->paren_depth = define_parsing_paren_depth-1;
+                        node->parameter_token_start = push_data(&context->emit_arena, struct token, 0) - 1; // @note: We just emitted the '('.
+                        
+                        if(got_function_like_define->builtin_define_type == BUILTIN_DEFINE_defined){
+                            continue; // Don't reset `got_function_like_define`.
                         }
-                    } 
+                    }
                 }
+                
+                if(raw_token->type == TOKEN_closed_paren){
+                    define_parsing_paren_depth -= 1;
+                    
+                    if(define_parsing_stack_size && define_parsing_paren_depth == define_parsing_stack[define_parsing_stack_size-1].paren_depth){
+                        struct define_parsing_stack *node = &define_parsing_stack[--define_parsing_stack_size];
+                        
+                        define_to_expand = node->define;
+                        define_token = node->parameter_token_start[-1];
+                        
+                        // Copy the parameter tokens.
+                        struct token *parameter_token_start = node->parameter_token_start;
+                        struct token *parameter_token_end   = push_data(&context->emit_arena, struct token, 0);
+                        
+                        smm parameter_token_count = parameter_token_end - parameter_token_start;
+                        
+                        parameter_token_start = memcpy(push_data(&context->scratch, struct token, parameter_token_count), parameter_token_start, parameter_token_count * sizeof(struct token));
+                        
+                        struct token_array parameter_tokens = (struct token_array){
+                            .data = parameter_token_start,
+                            .size = parameter_token_count,
+                        };
+                        
+                        push_to_token_stack(context, parameter_tokens, 0, null);
+                        
+                        context->emit_arena.current = (u8 *)(node->parameter_token_start - 1); // We emitted the identifier erroneously just in case it was not the define.
+                    }
+                }
+                
+                if(define_to_expand){
+                    skip_copy_out_for_object_like_define:;
+                    got_function_like_define = 0;
+                    got_function_like_define_this_token = 0;
+                    
+                    struct define_node *define = define_to_expand;
+                    
+                    dynarray_maybe_grow(struct macro_expansion_record, context->arena, current_compilation_unit->macro_expansion_records, current_compilation_unit->amount_of_macro_expansion_records, macro_expansion_record_capacity);
+                    u64 macro_expansion_record_index = current_compilation_unit->amount_of_macro_expansion_records++;
+                    
+                    // 
+                    // @cleanup: Currently, for a function-like define, the macro-expansion-record points to the ending ')'.
+                    //           Instead, it should probably point to the defined identifier. 
+                    //           This identifier however, might come from another define. Therefore, the `file_index` should 
+                    //           really be a `location_index` that points to the macro-expansion-record for the previous macro.
+                    //           
+                    //                                                                                 - 03.11.2026
+                    // 
+                    
+                    struct macro_expansion_record *macro_expansion_record = &current_compilation_unit->macro_expansion_records[macro_expansion_record_index];
+                    macro_expansion_record->file_index = include_file->file_index;
+                    macro_expansion_record->macro_expansion_index = (u32)(0x80000000 | macro_expansion_record_index); // @cleanup: Bounds-check?
+                    macro_expansion_record->expanded_token = include_file->contents.data + offset;
+                    macro_expansion_record->defined_token  = define->name.data;
+                    
+                    context->rescan_macro_expansion_index = macro_expansion_record->macro_expansion_index;
+                    
+                    struct token *token = &define_token;
+                    
+                    while(token != &globals.invalid_token){
+                        
+                        token = expand_define(context, token, define, macro_expansion_record);
+                        
+                        if(token){
+                            // 
+                            // There may be a single token returned, mostly for builtin defines.
+                            // 
+                            
+                            struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
+                            out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
+                            if(define == /*initial_define*/define_to_expand){
+                                out_token->location_index = include_file->file_index;
+                            }else{
+                                out_token->location_index = macro_expansion_record->macro_expansion_index;
+                            }
+                            out_token->atom = token->atom;
+                            
+                            if(!have_postponed_directive && define_parsing_stack_size == 0){
+                                u64 index = out_token->string_hash & (globals.keyword_table_size - 1);
+                                if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
+                                    out_token->type = globals.keyword_table[index].type;
+                                }
+                            } 
+                        }
+                        
+                        for(token = next_token_define(context); token != &globals.invalid_token; token = next_token_define(context)){
+                            
+                            if(token->type == TOKEN_whitespace) continue;
+                            
+                            if(token->type == TOKEN_identifier){
+                                if(define_parsing_stack_size == 0){
+                                    define = lookup_define(context, token->atom);
+                                    if(define && !define->is_disabled){
+                                        
+                                        if(define->is_function_like){
+                                            // Handle the define, if there is a ')' only after we have found it.
+                                            got_function_like_define = define;
+                                            got_function_like_define_this_token = 1;
+                                        }else{
+                                            define_token = *token;
+                                            // Handle the define immediately.
+                                            break;
+                                        }
+                                    }
+                                }   
+                            }
+                            
+                            struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
+                            out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
+                            out_token->location_index = macro_expansion_record->macro_expansion_index; // @cleanup: For argument tokens we could do better than this.
+                            out_token->atom = token->atom;
+                            
+                            if(out_token->type == TOKEN_identifier){
+                                
+                                // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
+                                //        things like defined(__int64) will error.
+                                if(!have_postponed_directive){
+                                    u64 index = out_token->string_hash & (globals.keyword_table_size - 1);
+                                    if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
+                                        out_token->type = globals.keyword_table[index].type;
+                                    }
+                                } 
+                            }
+                            
+                            if(token->type == TOKEN_open_paren){
+                                define_parsing_paren_depth += 1;
+                                
+                                if(got_function_like_define){
+                                    // This is a function-like define.
+                                    // Record it to the stack.
+                                    
+                                    dynarray_maybe_grow(struct define_parsing_stack, scratch, define_parsing_stack, define_parsing_stack_size, define_parsing_stack_capacity);
+                                    u64 define_parsing_stack_index = define_parsing_stack_size++;
+                                    
+                                    struct define_parsing_stack *node = &define_parsing_stack[define_parsing_stack_index];
+                                    node->define = got_function_like_define;
+                                    node->paren_depth = define_parsing_paren_depth++;
+                                    node->parameter_token_start = push_data(&context->emit_arena, struct token, 0) - 1;
+                                    
+                                    if(got_function_like_define->builtin_define_type == BUILTIN_DEFINE_defined){
+                                        continue; // Don't reset `got_function_like_define`.
+                                    }
+                                }
+                            }
+                            
+                            if(token->type == TOKEN_closed_paren){
+                                define_parsing_paren_depth -= 1;
+                                
+                                if(define_parsing_stack_size && define_parsing_paren_depth == define_parsing_stack[define_parsing_stack_size-1].paren_depth){
+                                    struct define_parsing_stack *node = &define_parsing_stack[--define_parsing_stack_size];
+                                    
+                                    define = node->define;
+                                    define_token = node->parameter_token_start[-1];
+                                    
+                                    // Copy the parameter tokens.
+                                    struct token *parameter_token_start = node->parameter_token_start;
+                                    struct token *parameter_token_end   = push_data(&context->emit_arena, struct token, 0);
+                                    
+                                    smm parameter_token_count = parameter_token_end - parameter_token_start;
+                                    
+                                    parameter_token_start = memcpy(push_data(&context->scratch, struct token, parameter_token_count), parameter_token_start, parameter_token_count * sizeof(struct token));
+                                    
+                                    struct token_array parameter_tokens = (struct token_array){
+                                        .data = parameter_token_start,
+                                        .size = parameter_token_count,
+                                    };
+                                    
+                                    push_to_token_stack(context, parameter_tokens, 0, null);
+                                    
+                                    context->emit_arena.current = (u8 *)(node->parameter_token_start - 1);
+                                    
+                                    // Handle the function-like define.
+                                    break;
+                                }
+                            }
+                            
+                            if(!got_function_like_define_this_token) got_function_like_define = null;
+                            got_function_like_define_this_token = 0;
+                        }
+                    }
+                    
+                    context->rescan_macro_expansion_index = 0;
+                    
+                    continue;
+                }
+                
+                if(!got_function_like_define_this_token) got_function_like_define = null;
+                got_function_like_define_this_token = 0;
             }
             
             context->include_stack.size -= 1;
@@ -4499,7 +4557,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 jump_because_a_postponed_static_if_was_disabled_and_we_should_search_for_the_next_directive:;
                 
                 // 
-                // If we are in a diabled static if, we search for a newline into hash.
+                // If we are in a disabled static if, we search for a newline into hash.
                 // 
                 while(true){
                     // no need to expand the token, if we are in a '#if 0' block.
@@ -4535,6 +4593,11 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
     if(static_if_stack.first){
         struct token *token = static_if_stack.first->token;
         report_error(context, token, "'#%.*s' without matching '#endif'.", token->size, token->data);
+    }
+    
+    if(define_parsing_stack_size != 0){
+        struct define_parsing_stack *stack_node = &define_parsing_stack[0];
+        report_error(context, stack_node->parameter_token_start, "Function-like define is missing ')' at the end of its parameter list.");
     }
     
     end:;

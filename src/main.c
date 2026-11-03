@@ -2774,6 +2774,7 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         defined_builtin->name = atom_for_string(string("defined"));
         defined_builtin->builtin_define_type = BUILTIN_DEFINE_defined;
         defined_builtin->is_builtin = 1;
+        defined_builtin->is_function_like = 1;
         defined_builtin->defined_token = &globals.invalid_token;
         register_define(context, defined_builtin);
         

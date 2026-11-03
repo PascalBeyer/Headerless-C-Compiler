@@ -1,4 +1,4 @@
-// fail "(14,5): Error at '_Format': Undeclared identifier."
+// fail "(14,37): Error at '_Format': Undeclared identifier."
 
 typedef struct __va_list{
     __int64 unused;

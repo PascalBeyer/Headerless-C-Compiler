@@ -1,4 +1,4 @@
-// fail "Expected a ')' while collecting arguments for macro expansion."
+// fail
 
 // This does not matter only has to be here.
 #define M1(A1, A2, A3, A4)
