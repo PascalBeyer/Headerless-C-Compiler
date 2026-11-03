@@ -7970,6 +7970,40 @@ case NUMBER_KIND_##type:{ \
     return operand;
 }
 
+void parse_static_assert(struct context *context, struct token *static_assert_token){
+    
+    expect_token(context, TOKEN_open_paren, "Expected a '(' after _Static_assert.");
+    struct expr constant_expression = parse_constant_integer_expression(context, /*should_skip_comma_expression*/true, "First argument to '_Static_assert' is not constant.");
+    
+    s64 value = integer_literal_as_s64(&constant_expression);
+    
+    struct string string_literal = {0};
+    
+    if(peek_token_eat(context, TOKEN_comma)){
+        struct expr string_literal_expression = parse_expression(context, /*should_skip_comma_expression*/true);
+        if(string_literal_expression.ir->kind != IR_string_literal){
+            report_error(context, string_literal_expression.token, "Second argument to _Static_assert needs to be a string literal.");
+        }else{
+            struct ir_string_literal *ir_string_literal = (struct ir_string_literal *)string_literal_expression.ir;
+            string_literal = ir_string_literal->value;
+            pop_from_ir_arena(context, ir_string_literal);
+        }
+    }
+    
+    if(!context->error){
+        if(value == 0){
+            if(string_literal.data && string_literal.size){
+                // @cleanup: wide characters?
+                report_error(context, static_assert_token, "%.*s", string_literal.size, string_literal.data);
+            }else{
+                report_error(context, static_assert_token, "_Static_assert fired.");
+            }
+        }
+    }
+    
+    expect_token(context, TOKEN_closed_paren, "Expected a ')' at the end of _Static_assert.");
+}
+
 func void check_and_set_declaration_specifier_flag(struct context *context, struct declaration_specifiers *specifiers, enum declaration_specifier_flag flag, struct token *site, char *error_name){
     if(specifiers->specifier_flags & flag){
         report_warning(context, WARNING_double_specifier, site, "Double '%s'.", error_name);
@@ -8422,6 +8456,12 @@ case TOKEN_##type_name:{                                                 \
                         
                         if(peek_token(context, TOKEN_semicolon)){
                             report_warning(context, WARNING_extraneous_semicolon, next_token(context), "Extraneous ';' in struct.");
+                            continue;
+                        }
+                        
+                        if(peek_token(context, TOKEN_static_assert)){
+                            parse_static_assert(context, next_token(context));
+                            peek_token_eat(context, TOKEN_semicolon);
                             continue;
                         }
                         
@@ -9670,40 +9710,6 @@ void maybe_report_warning_for_assignment_in_condition(struct context *context, s
     if(TOKEN_equals <= token->type && token->type <= TOKEN_mod_equals){
         report_warning(context, WARNING_assignment_in_condition, token, "Assignment within condition, did you mean '=='?");
     }
-}
-
-void parse_static_assert(struct context *context, struct token *static_assert_token){
-    
-    expect_token(context, TOKEN_open_paren, "Expected a '(' after _Static_assert.");
-    struct expr constant_expression = parse_constant_integer_expression(context, /*should_skip_comma_expression*/true, "First argument to '_Static_assert' is not constant.");
-    
-    s64 value = integer_literal_as_s64(&constant_expression);
-    
-    struct string string_literal = {0};
-    
-    if(peek_token_eat(context, TOKEN_comma)){
-        struct expr string_literal_expression = parse_expression(context, /*should_skip_comma_expression*/true);
-        if(string_literal_expression.ir->kind != IR_string_literal){
-            report_error(context, string_literal_expression.token, "Second argument to _Static_assert needs to be a string literal.");
-        }else{
-            struct ir_string_literal *ir_string_literal = (struct ir_string_literal *)string_literal_expression.ir;
-            string_literal = ir_string_literal->value;
-            pop_from_ir_arena(context, ir_string_literal);
-        }
-    }
-    
-    if(!context->error){
-        if(value == 0){
-            if(string_literal.data && string_literal.size){
-                // @cleanup: wide characters?
-                report_error(context, static_assert_token, "%.*s", string_literal.size, string_literal.data);
-            }else{
-                report_error(context, static_assert_token, "_Static_assert fired.");
-            }
-        }
-    }
-    
-    expect_token(context, TOKEN_closed_paren, "Expected a ')' at the end of _Static_assert.");
 }
 
 func void parse_statement(struct context *context){
