@@ -6251,7 +6251,13 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct ast_declaration *decl = (struct ast_declaration *)it->value;
             decl->memory_location = evaluate_static_initializer(thread_context, decl);
         }
+        
+        if(thread_context->error){
+            globals.an_error_has_occurred = true;
+        }
     }
+    
+    
     
     stage_three_emit_code_time = os_get_time_in_seconds() - stage_three_emit_code_time;
     
