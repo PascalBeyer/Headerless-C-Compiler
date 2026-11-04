@@ -3155,23 +3155,22 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     continue;
                 }
                 
-                {
-                    // 
+                {   // 
                     // Copy out token.
                     // 
                     
                     struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
-                    out_token->type = (raw_token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : raw_token->type;
+                    out_token->type = raw_token->type;
                     out_token->location_index = include_file->file_index;
                     out_token->data = include_file->contents.data + offset;
                     out_token->size = raw_token->size;
                     out_token->string_hash = raw_token_string_hash;
                     
-                    if(out_token->type == TOKEN_identifier){
-                        
-                        // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
-                        //        things like defined(__int64) will error.
-                        if(!have_postponed_directive && define_parsing_stack_size == 0){
+                    if(!have_postponed_directive && define_parsing_stack_size == 0){
+                        if(out_token->type == TOKEN_identifier){
+                            // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
+                            //        things like defined(__int64) will error.
+                            
                             u64 index = raw_token_string_hash & (globals.keyword_table_size - 1);
                             if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
                                 out_token->type = globals.keyword_table[index].type;
@@ -3276,7 +3275,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             // 
                             
                             struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
-                            out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
+                            out_token->type = token->type;
                             if(define == /*initial_define*/define_to_expand){
                                 out_token->location_index = include_file->file_index;
                             }else{
@@ -3284,12 +3283,19 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             }
                             out_token->atom = token->atom;
                             
-                            if(!have_postponed_directive && define_parsing_stack_size == 0){
-                                u64 index = out_token->string_hash & (globals.keyword_table_size - 1);
-                                if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
-                                    out_token->type = globals.keyword_table[index].type;
-                                }
-                            } 
+                            if(define_parsing_stack_size == 0){
+                                out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
+                                
+                                if(!have_postponed_directive && out_token->type == TOKEN_identifier){
+                                    // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
+                                    //        things like defined(__int64) will error.
+                                    
+                                    u64 index = out_token->string_hash & (globals.keyword_table_size - 1);
+                                    if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
+                                        out_token->type = globals.keyword_table[index].type;
+                                    }
+                                } 
+                            }
                         }
                         
                         for(token = next_token_define(context); token != &globals.invalid_token; token = next_token_define(context)){
@@ -3315,15 +3321,17 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             }
                             
                             struct token *out_token = push_uninitialized_struct(&context->emit_arena, struct token);
-                            out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
+                            out_token->type = token->type;
                             out_token->location_index = macro_expansion_record->macro_expansion_index; // @cleanup: For argument tokens we could do better than this.
                             out_token->atom = token->atom;
                             
-                            if(out_token->type == TOKEN_identifier){
+                            if(define_parsing_stack_size == 0){
+                                out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
                                 
-                                // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
-                                //        things like defined(__int64) will error.
-                                if(!have_postponed_directive){
+                                if(!have_postponed_directive && out_token->type == TOKEN_identifier){
+                                    // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
+                                    //        things like defined(__int64) will error.
+                                    
                                     u64 index = out_token->string_hash & (globals.keyword_table_size - 1);
                                     if(atoms_match(globals.keyword_table[index].keyword, out_token->atom)){
                                         out_token->type = globals.keyword_table[index].type;
