@@ -5635,6 +5635,40 @@ case NUMBER_KIND_##type:{ \
                         pop_from_ir_arena(context, identifier);
                         
                         operand = ast_push_s32_literal(context, constant, call_token);
+                    }else if(atoms_match(call_token->atom, atom_for_string(string("__builtin_choose_expr")))){
+                        
+                        pop_from_ir_arena(context, identifier);
+                        
+                        struct expr constant_expression = parse_constant_integer_expression(context, /*should_skip_comma_expression*/true, "Expected a constant expression as the first argument to '__builtin_choose_expr'.");
+                        
+                        expect_token(context, TOKEN_comma, "Expected ','."); // :Error
+                        
+                        struct expr result;
+                        
+                        u64 value = integer_literal_as_u64(&constant_expression);
+                        if(value){
+                            // Choose the first expression.
+                            result = parse_expression(context, /*skip_comma_expresssion*/true);
+                            expect_token(context, TOKEN_comma, "Expected ','."); // :Error
+                            
+                            u8 *ir_arena_at = arena_current(&context->ir_arena);
+                            parse_expression(context, /*skip_comma_expresssion*/true);
+                            memset(ir_arena_at, 0, context->ir_arena.current - ir_arena_at);
+                            context->ir_arena.current = ir_arena_at;
+                        }else{
+                            // Choose the second expression.
+                            
+                            u8 *ir_arena_at = arena_current(&context->ir_arena);
+                            parse_expression(context, /*skip_comma_expresssion*/true);
+                            memset(ir_arena_at, 0, context->ir_arena.current - ir_arena_at);
+                            context->ir_arena.current = ir_arena_at;
+                            
+                            expect_token(context, TOKEN_comma, "Expected ','."); // :Error
+                            
+                            result = parse_expression(context, /*skip_comma_expresssion*/true);
+                        }
+                        
+                        operand = result;
                     }else{
                         invalid_code_path;
                     }
