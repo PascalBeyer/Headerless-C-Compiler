@@ -279,7 +279,8 @@ enum memonic{
     
     MEMONIC_palignr,
     
-    MEMONIC_aesdec,
+    MEMONIC_aesdec, MEMONIC_aesenc, MEMONIC_aesdeclast, MEMONIC_aesenclast, MEMONIC_aesimc,
+    MEMONIC_pclmulqdq,
     
     MEMONIC_vmovdqu,
     MEMONIC_vmovdqa,
@@ -851,6 +852,11 @@ static struct{
     // AES
     //
     [MEMONIC_aesdec] = {.memonic = const_string("aesdec"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128 },
+    [MEMONIC_aesenc] = {.memonic = const_string("aesenc"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128 },
+    [MEMONIC_aesdeclast] = {.memonic = const_string("aesdeclast"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128 },
+    [MEMONIC_aesenclast] = {.memonic = const_string("aesenclast"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128 },
+    [MEMONIC_aesimc] = {.memonic = const_string("aesimc"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128 },
+    [MEMONIC_pclmulqdq] = {.memonic = const_string("pclmulqdq"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmmm128, .operand_kind_flags[2] = ASM_OP_KIND_imm8 },
     
     
     //

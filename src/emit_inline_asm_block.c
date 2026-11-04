@@ -397,7 +397,10 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 [MEMONIC_pshuflw] = ASM_PREFIX_F2, [MEMONIC_pshufhw] = ASM_PREFIX_F3, [MEMONIC_pshufd]  = ASM_PREFIX_66,
                 [MEMONIC_shufps] = ASM_PREFIX_none, [MEMONIC_shufpd] = ASM_PREFIX_66,
                 
-                [MEMONIC_aesdec]  = ASM_PREFIX_66,
+                [MEMONIC_aesdec]  = ASM_PREFIX_66, [MEMONIC_aesenc] = ASM_PREFIX_66,
+                [MEMONIC_aesdeclast] = ASM_PREFIX_66, [MEMONIC_aesenclast] = ASM_PREFIX_66,
+                [MEMONIC_aesimc] = ASM_PREFIX_66,
+                [MEMONIC_pclmulqdq] = ASM_PREFIX_66,
                 [MEMONIC_pshufb]  = ASM_PREFIX_66,
                 
                 [MEMONIC_vshufps]  = ASM_PREFIX_VEX | ASM_PREFIX_SSE_packed_float,
@@ -575,7 +578,10 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 
                 [MEMONIC_ptest]  = 0x17,
                 [MEMONIC_vptest] = 0x17,
-                [MEMONIC_aesdec] = 0xDE,
+                [MEMONIC_aesdec] = 0xDE, [MEMONIC_aesenc] = 0xDC,
+                [MEMONIC_aesdeclast] = 0xDF, [MEMONIC_aesenclast] = 0xDD,
+                [MEMONIC_aesimc] = 0xDB,
+                [MEMONIC_pclmulqdq] = 0x44,
                 [MEMONIC_pshufb] = 0x00,
                 
                 [MEMONIC_pextrb] = 0x14,
@@ -1493,7 +1499,9 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             // 3byte-38-op xmm, xmm128 or ymm, ymm256
             case MEMONIC_pmulld:
             case MEMONIC_pmuldq:
-            case MEMONIC_aesdec: case MEMONIC_pshufb:
+            case MEMONIC_aesdec: case MEMONIC_aesenc: case MEMONIC_aesdeclast:
+            case MEMONIC_aesenclast: case MEMONIC_aesimc:
+            case MEMONIC_pshufb:
             case MEMONIC_ptest:
             case MEMONIC_vptest:{
                 struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
@@ -1507,6 +1515,25 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     assert(rhs->state == EMIT_LOCATION_register_relative);
                     emit_register_relative_register(context, prefix, opcode, loaded->loaded_register, rhs);
                 }
+                
+                if(loaded != lhs) emit_store(context, lhs, loaded);
+            }break;
+            
+            case MEMONIC_pclmulqdq:{
+                struct emit_location *loaded = emit_load_without_freeing_float(context, lhs);
+                
+                struct prefixes prefix = create_prefixes(ASM_PREFIX_66);
+                struct opcode opcode   = three_byte_opcode(0x3A, memonic_to_opcode[inst->memonic]);
+                
+                if(rhs->state == EMIT_LOCATION_loaded){
+                    emit_register_register(context, prefix, opcode, loaded, rhs);
+                }else{
+                    assert(rhs->state == EMIT_LOCATION_register_relative);
+                    emit_register_relative_register(context, prefix, opcode, loaded->loaded_register, rhs);
+                }
+                
+                assert(operands[2]->state == EMIT_LOCATION_immediate);
+                emit(operands[2]->value);
                 
                 if(loaded != lhs) emit_store(context, lhs, loaded);
             }break;

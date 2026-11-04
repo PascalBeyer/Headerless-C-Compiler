@@ -1231,7 +1231,9 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
             }
         }break;
         
-        case MEMONIC_aesdec: case MEMONIC_pshufb:
+        case MEMONIC_aesdec: case MEMONIC_aesenc: case MEMONIC_aesdeclast:
+        case MEMONIC_aesenclast: case MEMONIC_aesimc:
+        case MEMONIC_pshufb:
         case MEMONIC_movntps: // op xmm/m, xmm
         case MEMONIC_movntpd:
         case MEMONIC_movntdq:

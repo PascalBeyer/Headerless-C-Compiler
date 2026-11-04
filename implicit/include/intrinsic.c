@@ -3195,6 +3195,31 @@ __declspec(inline_asm) __m128i _mm_aesdec_si128(__m128i a, __m128i RoundKey){
     return a
 }
 
+__declspec(inline_asm) __m128i _mm_aesdeclast_si128(__m128i a, __m128i RoundKey){
+    aesdeclast a, RoundKey
+    return a
+}
+
+__declspec(inline_asm) __m128i _mm_aesenc_si128(__m128i a, __m128i RoundKey){
+    aesenc a, RoundKey
+    return a
+}
+
+__declspec(inline_asm) __m128i _mm_aesenclast_si128(__m128i a, __m128i RoundKey){
+    aesenclast a, RoundKey
+    return a
+}
+
+__declspec(inline_asm) __m128i _mm_aesimc_si128(__m128i a){
+    aesimc a, a
+    return a
+}
+
+__declspec(inline_asm) __m128i _mm_clmulepi64_si128(__m128i a, __m128i b, const int imm8){
+    pclmulqdq a, b, imm8
+    return a
+}
+
 __declspec(inline_asm) __m128i _mm_alignr_epi8(__m128i a, __m128i b, int imm8){
     palignr a, b, imm8
     return a
