@@ -4549,11 +4549,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             
                             // Common Predefined Macros
                             
-                            "#define __GNUC__ 4\n"
-                            "#define __GNUC_MINOR__ 9\n"
+                            "#define __GNUC__ 11\n"
+                            "#define __GNUC_MINOR__ 4\n"
                             "#define __GNUC_PATCHLEVEL__ 0\n"
                             "#define __GNUC_STDC_INLINE__ 1\n"
-                            "#define __VERSION__ \"4.9.0\"\n"
+                            "#define __VERSION__ \"11.4.0\"\n"
                             
                             "#define __ELF__ 1\n"
                             "#define __USER_LABEL_PREFIX__\n"
