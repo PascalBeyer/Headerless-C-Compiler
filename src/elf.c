@@ -3197,6 +3197,7 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
         SHT_STRTAB   = 3,
         SHT_RELA     = 4,
         SHT_NOBITS   = 8,
+        SHT_INIT_ARRAY = 14,
     };
     
     enum elf_section_header_flags{
@@ -3247,16 +3248,24 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
     
     u32 section_index_at = 0;
     
+    u32 constructor_count = 0;
+    for_ast_list(defined_functions){
+        struct ast_function *function = (struct ast_function *)it->value;
+        if(function->type->flags & FUNCTION_TYPE_FLAGS_is_constructor) constructor_count += 1;
+    }
+    
     u32 text_section_index     = ++section_index_at;
     u32 data_section_index     = ++section_index_at;
     u32 bss_section_index      = ++section_index_at;
     u32 rodata_section_index   = ++section_index_at;
     u32 tdata_section_index    = ++section_index_at;
     u32 eh_frame_section_index = ++section_index_at;
+    u32 init_array_section_index = constructor_count ? ++section_index_at : 0;
     u32 rela_text_section_index  = text_relocation_count ? ++section_index_at : 0;
     u32 rela_data_section_index  = data_relocation_count ? ++section_index_at : 0;
     u32 rela_tdata_section_index = tdata_relocation_count ? ++section_index_at : 0;
     u32 rela_eh_frame_section_index = ++section_index_at;
+    u32 rela_init_array_section_index = constructor_count ? ++section_index_at : 0;
     u32 symtab_section_index   = ++section_index_at;
     u32 strtab_section_index   = ++section_index_at;
     u32 shstrtab_section_index = ++section_index_at;
@@ -3489,6 +3498,26 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
         bss_section_size = (u64)align_up((smm)bss_section_size, alignment);
         decl->relative_virtual_address = (smm)bss_section_size;
         bss_section_size += (u64)decl_size;
+    }
+    
+    // 
+    // .init_array
+    // 
+    
+    u64 init_array_section_offset = 0;
+    u64 init_array_section_size = 0;
+    
+    if(constructor_count){
+        push_zero_align(arena, 8);
+        init_array_section_offset = (u64)(arena_current(arena) - elf_base);
+        
+        for_ast_list(defined_functions){
+            struct ast_function *function = (struct ast_function *)it->value;
+            if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_constructor)) continue;
+            *push_uninitialized_struct(arena, u64) = 0;
+        }
+        
+        init_array_section_size = (u64)(arena_current(arena) - elf_base) - init_array_section_offset;
     }
     
     // 
@@ -4020,6 +4049,31 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
     u64 rela_eh_frame_section_offset = (u64)(rela_eh_frame_section_start - elf_base);
     u64 rela_eh_frame_section_size = (u64)(arena_current(arena) - rela_eh_frame_section_start);
     
+    u64 rela_init_array_section_offset = 0;
+    u64 rela_init_array_section_size = 0;
+    
+    if(constructor_count){
+        push_zero_align(arena, 8);
+        u8 *rela_init_array_section_start = arena_current(arena);
+        
+        struct elf_relocation_addend *relocations = push_uninitialized_data(arena, struct elf_relocation_addend, (smm)constructor_count);
+        u32 index = 0;
+        
+        for_ast_list(defined_functions){
+            struct ast_function *function = (struct ast_function *)it->value;
+            if(!(function->type->flags & FUNCTION_TYPE_FLAGS_is_constructor)) continue;
+            
+            relocations[index].offset = (u64)index * 8;
+            relocations[index].info   = ((u64)text_section_symbol_index << 32) | /*R_X86_64_64*/1;
+            relocations[index].addend = (u64)function->relative_virtual_address;
+            index += 1;
+        }
+        assert(index == constructor_count);
+        
+        rela_init_array_section_offset = (u64)(rela_init_array_section_start - elf_base);
+        rela_init_array_section_size = (u64)(arena_current(arena) - rela_init_array_section_start);
+    }
+    
     // 
     // .shstrtab
     // 
@@ -4044,10 +4098,12 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
     elf_object_section_name(rodata_section_index,    ".rodata");
     elf_object_section_name(tdata_section_index,     ".tdata");
     elf_object_section_name(eh_frame_section_index,  ".eh_frame");
+    if(init_array_section_index) elf_object_section_name(init_array_section_index, ".init_array");
     if(rela_text_section_index)  elf_object_section_name(rela_text_section_index, ".rela.text");
     if(rela_data_section_index)  elf_object_section_name(rela_data_section_index, ".rela.data");
     if(rela_tdata_section_index) elf_object_section_name(rela_tdata_section_index, ".rela.tdata");
     elf_object_section_name(rela_eh_frame_section_index, ".rela.eh_frame");
+    if(rela_init_array_section_index) elf_object_section_name(rela_init_array_section_index, ".rela.init_array");
     elf_object_section_name(symtab_section_index,    ".symtab");
     elf_object_section_name(strtab_section_index,    ".strtab");
     elf_object_section_name(shstrtab_section_index,  ".shstrtab");
@@ -4098,6 +4154,10 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
     fill_elf_object_section_header(tdata_section_index, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE | SHF_TLS, tdata_section_offset, tdata_section_size, 0, 0, tdata_section_alignment, 0);
     fill_elf_object_section_header(eh_frame_section_index, SHT_PROGBITS, SHF_ALLOC, eh_frame_section_offset, eh_frame_section_size, 0, 0, 8, 0);
     
+    if(init_array_section_index){
+        fill_elf_object_section_header(init_array_section_index, SHT_INIT_ARRAY, SHF_ALLOC | SHF_WRITE, init_array_section_offset, init_array_section_size, 0, 0, 8, 8);
+    }
+    
     if(rela_text_section_index){
         fill_elf_object_section_header(rela_text_section_index, SHT_RELA, 0, rela_text_section_offset, rela_text_section_size, symtab_section_index, text_section_index, 8, sizeof(struct elf_relocation_addend));
     }
@@ -4111,6 +4171,10 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
     }
     
     fill_elf_object_section_header(rela_eh_frame_section_index, SHT_RELA, 0, rela_eh_frame_section_offset, rela_eh_frame_section_size, symtab_section_index, eh_frame_section_index, 8, sizeof(struct elf_relocation_addend));
+    
+    if(rela_init_array_section_index){
+        fill_elf_object_section_header(rela_init_array_section_index, SHT_RELA, 0, rela_init_array_section_offset, rela_init_array_section_size, symtab_section_index, init_array_section_index, 8, sizeof(struct elf_relocation_addend));
+    }
     
     fill_elf_object_section_header(symtab_section_index, SHT_SYMTAB, 0, (u64)(symtab_section_start - elf_base), symtab_section_size, strtab_section_index, first_non_local_symbol, 8, sizeof(struct elf_symbol));
     fill_elf_object_section_header(strtab_section_index, SHT_STRTAB, 0, (u64)(strtab_section_start - elf_base), strtab_section_size, 0, 0, 1, 0);

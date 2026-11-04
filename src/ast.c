@@ -791,6 +791,7 @@ struct ast_function_type{
         FUNCTION_TYPE_FLAGS_is_inline_asm = 0x8,
         FUNCTION_TYPE_FLAGS_is_seh_intrinsic = 0x10,
         FUNCTION_TYPE_FLAGS_is_seh_filter = 0x20,
+        FUNCTION_TYPE_FLAGS_is_constructor = 0x40,
         FUNCTION_TYPE_FLAGS_needs_custom_argument_parsing = 0x80,
     } flags;
     

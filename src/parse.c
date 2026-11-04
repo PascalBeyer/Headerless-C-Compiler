@@ -9459,6 +9459,10 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
             
             if(specifiers.specifier_flags & SPECIFIER_noreturn)  function->type->flags |= FUNCTION_TYPE_FLAGS_is_noreturn;
+            if(specifiers.specifier_flags & SPECIFIER_constructor){
+                function->type->flags |= FUNCTION_TYPE_FLAGS_is_constructor;
+                add_global_reference_for_declaration(context->arena, &function->as_decl);
+            }
             
             if(specifiers.specifier_flags & SPECIFIER_dllexport){
                 if(specifiers.specifier_flags & SPECIFIER_static){
