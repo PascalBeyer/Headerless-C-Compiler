@@ -1162,7 +1162,6 @@ enum type_qualifiers{
 
 struct declarator_return{
     struct token *ident;
-    struct string asm_name;
     struct ast_type *type;
     enum ast_kind *defined_type;
 };
@@ -1214,6 +1213,13 @@ enum declaration_specifier_flag{
     // 
     SPECIFIER_inline_asm = 0x1000,
     SPECIFIER_printlike  = 0x2000,
+    SPECIFIER_constructor = 0x4000,
+    
+    // 
+    // Type specifiers.
+    // 
+    SPECIFIER_intrin_type = 0x8000,
+    SPECIFIER_transparent_union = 0x10000,
     
 };
 
@@ -1221,9 +1227,11 @@ struct declaration_specifiers{
     
     enum ast_kind *defined_type_specifier;
     struct ast_type *type_specifier;
-    u64 specifier_flags;
     
+    u64 specifier_flags;
     u64 alignment;
+    
+    struct token *transparent_union_token;
 };
 
 func struct expr invalid_ast(struct context *context){
@@ -8012,6 +8020,112 @@ func void check_and_set_declaration_specifier_flag(struct context *context, stru
     }
 }
 
+func void parse_extended_attribute(struct context *context, struct declaration_specifiers *specifiers){
+    
+    expect_token(context, TOKEN_open_paren, "Expected '(' after '__declspec'.");
+    struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
+    
+    b32 skip = false;
+    
+    do{
+        struct token *directive = next_token(context);
+        
+        if(directive->type == TOKEN_closed_paren){
+            skip = 1;
+            break;
+        }
+        
+        if(directive->type != TOKEN_identifier && !(TOKEN_first_keyword <= directive->type && directive->type <= TOKEN_one_past_last_keyword)){
+            report_error(context, directive, "Expected a directive after '__declspec'.");
+        }
+        
+        struct atom directive_string = directive->atom;
+        
+        if(atoms_match(directive_string, globals.keyword_dllimport)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_dllimport, directive, "__declspec(dllimport)");
+        }else if(atoms_match(directive_string, globals.keyword_dllexport)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_dllexport, directive, "__declspec(dllexport)");
+        }else if(atoms_match(directive_string, globals.keyword_Noreturn)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_noreturn, directive, "__declspec(_Noreturn)");
+        }else if(atoms_match(directive_string, globals.keyword_noreturn)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_noreturn, directive, "__declspec(noreturn)");
+        }else if(atoms_match(directive_string, globals.keyword_noinline)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_noinline, directive, "__declspec(noinline)");
+        }else if(atoms_match(directive_string, globals.keyword_align) || atoms_match(directive_string, globals.keyword_aligned)){
+            u64 value = 16; // Maximum useful alignment on the supported x64 targets.
+            
+            // GCC permits the alignment argument to be omitted, in which case
+            // it uses the maximum useful alignment for the target.
+            if(peek_token_eat(context, TOKEN_open_paren)){
+                struct expr const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
+                
+                value = integer_literal_as_u64(&const_expr);
+                
+                if(!is_power_of_two(value)){
+                    report_error(context, directive, "Alignment must be a power of two.");
+                    value = 1;
+                }
+                
+                expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'align'.");
+            }
+            
+            //
+            // struct __declspec(align(0x100)) asd;
+            //
+            // @note: the difference between '__declspec(align(#)) struct asd {int asd; } asd;'
+            //        and                    'struct __declspec(align(#)) asd {int asd; } asd;'
+            // is whether all instances of 'struct asd' are #-aligned or just 'asd'.
+            //
+            
+            if(specifiers->alignment){
+                // @cleanup: warn here!
+                // report_warning(context, WARNING_alignment_specified_more_then_once, "Alignment");
+                specifiers->alignment = max_of(specifiers->alignment, value);
+            }else{
+                specifiers->alignment = value;
+            }
+        }else if(atoms_match(directive_string, globals.keyword_selectany)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_selectany, directive, "__declspec(selectany)");
+        }else if(atoms_match(directive_string, globals.keyword_inline_asm)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_inline_asm, directive, "__declspec(inline_asm)");
+        }else if(atoms_match(directive_string, globals.keyword_packed)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_packed, directive, "__declspec(packed)");
+        }else if(atoms_match(directive_string, globals.keyword_printlike)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_printlike, directive, "__declspec(printlike)");
+        }else if(atoms_match(directive_string, globals.keyword_thread)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_thread_local, directive, "__declspec(thread)");
+        }else if(atoms_match(directive_string, atom_for_string(string("constructor"))) || atoms_match(directive_string, atom_for_string(string("__constructor__")))){
+            
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_constructor, directive, "constructor");
+            
+            struct token *constructor_argument = peek_token_eat(context, TOKEN_open_paren);
+            if(constructor_argument){
+                skip_until_tokens_are_balanced(context, constructor_argument, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in constructor priority.");
+            }
+        }else if(atoms_match(directive_string, globals.keyword_intrin_type)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_intrin_type, directive, "__declspec(intrin_type)");
+        }else if(atoms_match(directive_string, globals.keyword_transparent_union) || atoms_match(directive->atom, globals.keyword___transparent_union__)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_transparent_union, directive, "__declspec(transparent_union)");
+            specifiers->transparent_union_token = directive;
+        }else{
+            report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
+            
+            struct token *argument_open = peek_token_eat(context, TOKEN_open_paren);
+            if(argument_open){
+                skip_until_tokens_are_balanced(context, argument_open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
+            }
+        }
+    }while(peek_token_eat(context, TOKEN_comma));
+    
+    if(!skip){
+        expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__declspec'.");
+    }
+    
+    if(double_open){
+        expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__attribute__(()'.");
+    }
+}
+
 func struct declaration_specifiers parse_declaration_specifiers(struct context *context, struct ast_type *optional_type_specifier, enum ast_kind *optional_defined_type_specifier){
     
     struct declaration_specifiers specifiers = zero_struct;
@@ -8170,91 +8284,7 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             // __declspec (storage-class specifier).
             //
             case TOKEN_declspec:{
-                expect_token(context, TOKEN_open_paren, "Expected '(' after '__declspec'.");
-                struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
-                
-                b32 skip = false;
-                
-                do{
-                    struct token *directive = next_token(context);
-                    
-                    if(directive->type == TOKEN_closed_paren){
-                        skip = 1;
-                        break;
-                    }
-                    
-                    if(directive->type != TOKEN_identifier && !(TOKEN_first_keyword <= directive->type && directive->type <= TOKEN_one_past_last_keyword)){
-                        report_error(context, directive, "Expected a directive after '__declspec'.");
-                    }
-                    
-                    struct atom directive_string = directive->atom;
-                    
-                    if(atoms_match(directive_string, globals.keyword_dllimport)){
-                        check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_dllimport, directive, "__declspec(dllimport)");
-                    }else if(atoms_match(directive_string, globals.keyword_dllexport)){
-                        check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_dllexport, directive, "__declspec(dllexport)");
-                    }else if(atoms_match(directive_string, globals.keyword_Noreturn)){
-                        check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_noreturn, directive, "__declspec(_Noreturn)");
-                    }else if(atoms_match(directive_string, globals.keyword_noreturn)){
-                        check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_noreturn, directive, "__declspec(noreturn)");
-                    }else if(atoms_match(directive_string, globals.keyword_noinline)){
-                        check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_noinline, directive, "__declspec(noinline)");
-                    }else if(atoms_match(directive_string, globals.keyword_align)){
-                        expect_token(context, TOKEN_open_paren, "Expected '(' to follow 'align'.");
-                        
-                        struct expr const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
-                        
-                        u64 value = integer_literal_as_u64(&const_expr);
-                        
-                        //
-                        // struct __declspec(align(0x100)) asd;
-                        //
-                        // @note: the difference between '__declspec(align(#)) struct asd {int asd; } asd;'
-                        //        and                    'struct __declspec(align(#)) asd {int asd; } asd;'
-                        // is whether all instances of 'struct asd' are #-aligned or just 'asd'.
-                        //
-                        
-                        if(!is_power_of_two(value)){
-                            report_error(context, directive, "Alignment must be a power of two.");
-                            value = 1;
-                        }
-                        
-                        if(specifiers.alignment){
-                            // @cleanup: warn here!
-                            // report_warning(context, WARNING_alignment_specified_more_then_once, "Alignment");
-                            specifiers.alignment = max_of(specifiers.alignment, value);
-                        }else{
-                            specifiers.alignment = value;
-                        }
-                        
-                        expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'align'.");
-                    }else if(atoms_match(directive_string, globals.keyword_selectany)){
-                        check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_selectany, directive, "__declspec(selectany)");
-                    }else if(atoms_match(directive_string, globals.keyword_inline_asm)){
-                        check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_inline_asm, directive, "__declspec(inline_asm)");
-                    }else if(atoms_match(directive_string, globals.keyword_packed)){
-                        report_error(context, directive, "A declaration cannot be '__declspec(packed)'. Please declare a __declspec(packed)-type instead. (I.e please use 'struct __declspec(packed) packed_type' instead of '__declspec(packed) struct packed_type'.");
-                    }else if(atoms_match(directive_string, globals.keyword_printlike)){
-                        check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_printlike, directive, "__declspec(printlike)");
-                    }else if(atoms_match(directive_string, globals.keyword_thread)){
-                        check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_thread_local, directive, "__declspec(thread)");
-                    }else{
-                        report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
-                        
-                        struct token *argument_open = peek_token_eat(context, TOKEN_open_paren);
-                        if(argument_open){
-                            skip_until_tokens_are_balanced(context, argument_open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
-                        }
-                    }
-                }while(peek_token_eat(context, TOKEN_comma));
-                
-                if(!skip){
-                    expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__declspec'.");
-                }
-                
-                if(double_open){
-                    expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__attribute__(()'.");
-                }
+                parse_extended_attribute(context, &specifiers);
             }break;
             
 #define case_c_type(type_name)                                \
@@ -8303,87 +8333,22 @@ case TOKEN_##type_name:{                                                 \
                 
                 b32 is_union = (token->type == TOKEN_union);
                 
-                u64 declspec_alignment = 1;
-                b32 is_intrin_type = false;
-                b32 is_packed = false;
-                b32 has_declspec_alignment = false;
-                
                 struct token *transparent_union_token = null;
                 
+                struct declaration_specifiers extended_type_attributes = {0};
+                
                 while(peek_token_eat(context, TOKEN_declspec)){
-                    expect_token(context, TOKEN_open_paren, "Expected '(' to follow '__declspec'.");
-                    struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
+                    parse_extended_attribute(context, &extended_type_attributes);
                     
-                    b32 skip = false;
-                    do{
-                        struct token *declspec = next_token(context);
-                        
-                        if(declspec->type == TOKEN_closed_paren){
-                            skip = 1;
-                            break;
-                        }
-                        
-                        if(declspec->type != TOKEN_identifier && !(TOKEN_first_keyword <= declspec->type && declspec->type <= TOKEN_one_past_last_keyword)){
-                            report_error(context, declspec, "Expected a directive after '__declspec'.");
-                        }
-                        
-                        if(atoms_match(declspec->atom, globals.keyword_align)){
-                            expect_token(context, TOKEN_open_paren, "Expected '(' to follow 'align'.");
-                            
-                            struct expr const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
-                            
-                            u64 value = integer_literal_as_u64(&const_expr);
-                            
-                            has_declspec_alignment = true;
-                            
-                            //
-                            // struct __declspec(align(0x100)) asd;
-                            //
-                            // @note: the difference between '__declspec(align(#)) struct asd {int asd; } asd;'
-                            //        and                    'struct __declspec(align(#)) asd {int asd; } asd;'
-                            // is whether all instances of 'struct asd' are #-aligned or just 'asd'.
-                            //
-                            
-                            if(!is_power_of_two(value)){
-                                report_error(context, declspec, "Alignment must be a power of two.");
-                                value = 1;
-                            }
-                            
-                            if(declspec_alignment != 1){
-                                // @cleanup: warning.
-                                declspec_alignment = max_of(declspec_alignment, value);
-                            }else{
-                                declspec_alignment = value;
-                            }
-                            
-                            expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'align'.");
-                        }else if(atoms_match(declspec->atom, globals.keyword_intrin_type)){
-                            is_intrin_type = true;
-                        }else if(atoms_match(declspec->atom, globals.keyword_packed)){
-                            is_packed = true;
-                        }else if(atoms_match(declspec->atom, globals.keyword_transparent_union) || atoms_match(declspec->atom, globals.keyword___transparent_union__)){
-                            transparent_union_token = declspec;
-                        }else if(declspec->size == 1 && declspec->data[0] == ')'){
-                            skip = 1;
-                            break;
-                        }else{
-                            report_warning(context, WARNING_unsupported_declspec, declspec, "Unsupported '__declspec' ignored.");
-                            
-                            struct token *argument_open = peek_token_eat(context, TOKEN_open_paren);
-                            if(argument_open){
-                                skip_until_tokens_are_balanced(context, argument_open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
-                            }
-                        }
-                    }while(peek_token_eat(context, TOKEN_comma));
-                    
-                    if(!skip){
-                        expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of '__declspec'.");
-                    }
-                    
-                    if(double_open){
-                        expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__attribute__(()'.");
+                    if(extended_type_attributes.specifier_flags & SPECIFIER_transparent_union){
+                        transparent_union_token = extended_type_attributes.transparent_union_token;
                     }
                 }
+                
+                u64 declspec_alignment = extended_type_attributes.alignment ? extended_type_attributes.alignment : 1;
+                b32 has_declspec_alignment = extended_type_attributes.alignment != 0;
+                b32 is_intrin_type = (extended_type_attributes.specifier_flags & SPECIFIER_intrin_type) != 0;
+                b32 is_packed = (extended_type_attributes.specifier_flags & SPECIFIER_packed) != 0;
                 
                 if(context->should_exit_statement) break;
                 
@@ -8645,6 +8610,10 @@ case TOKEN_##type_name:{                                                 \
                                 current_bitfield_index = 0;
                             }
                             
+                            while(peek_token_eat(context, TOKEN_declspec)){
+                                parse_extended_attribute(context, &struct_specifiers);
+                            }
+                            
                             smm decl_alignment = declarator.type->alignment;
                             if(struct_specifiers.alignment){ 
                                 decl_alignment = struct_specifiers.alignment; // Member specifiers are the most inner so they should take precedence.
@@ -8765,151 +8734,101 @@ case TOKEN_##type_name:{                                                 \
                         // @incomplete: Check the type to be a known intrin type.
                     }
                     
-                    specifiers.type_specifier = &compound->base;
+                    struct declaration_specifiers trailing_attributes = {0};
                     
-                    if(peek_token_eat(context, TOKEN_declspec)){
-                        expect_token(context, TOKEN_open_paren, "Expected '(' after '__declspec'.");
-                        struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
+                    while(peek_token_eat(context, TOKEN_declspec)){
+                        parse_extended_attribute(context, &trailing_attributes);
                         
-                        smm trailing_alignment = 1;
-                        b32 has_trailing_alignment = false;
-                        
-                        int skip = 0;
-                        
-                        do{
-                            struct token *directive = next_token(context);
+                        if(!is_packed && (trailing_attributes.specifier_flags & SPECIFIER_packed) && compound->base.size >= 0){ // Why is the third condition here?
                             
-                            if(directive->type == TOKEN_closed_paren){
-                                skip = 1;
-                                break;
-                            }
-                            
-                            if(directive->type != TOKEN_identifier && !(TOKEN_first_keyword <= directive->type && directive->type <= TOKEN_one_past_last_keyword)){
-                                report_error(context, directive, "Expected a directive after '__declspec'.");
-                            }
-                            
-                            struct atom directive_string = directive->atom;
-                            
-                            if(atoms_match(directive_string, globals.keyword_packed)){
+                            if(compound->base.kind == AST_union){
+                                size = 0;
                                 
-                                if(!is_packed && compound->base.size >= 0){
+                                for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
+                                    struct compound_member *member = &compound->members[member_index];
+                                    member->offset_in_type = 0;
+                                    size = max_of(size, member->type->size);
+                                }
+                                
+                            }else{
+                                size = 0;
+                                
+                                b32 previous_was_bitfield = false;
+                                smm previous_bitfield_initial_offset = 0;
+                                smm current_bitfield_storage_offset = 0;
+                                
+                                for(smm member_index = 0; member_index < compound->amount_of_members; ){
+                                    struct compound_member *member = &compound->members[member_index];
+                                    smm old_offset = member->offset_in_type;
                                     
-                                    if(compound->base.kind == AST_union){
-                                        size = 0;
+                                    if(member->next_member_increment > 1){
+                                        // :next_member_increment and :member_list_contains_both_linear_and_nested
+                                        // 
+                                        // This is a nested member. We have to move not only the "linear", but also the "nested" entries.
+                                        // 
+                                        member->offset_in_type = size;
                                         
-                                        for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
-                                            struct compound_member *member = &compound->members[member_index];
-                                            member->offset_in_type = 0;
-                                            size = max_of(size, member->type->size);
+                                        smm delta = size - old_offset;
+                                        
+                                        for(smm nested_index = 1; nested_index < member->next_member_increment; nested_index++){
+                                            compound->members[member_index + nested_index].offset_in_type += delta;
                                         }
                                         
-                                    }else{
-                                        size = 0;
+                                        member_index += member->next_member_increment;
+                                        size += member->type->size;
                                         
-                                        b32 previous_was_bitfield = false;
-                                        smm previous_bitfield_initial_offset = 0;
-                                        smm current_bitfield_storage_offset = 0;
-                                        
-                                        for(smm member_index = 0; member_index < compound->amount_of_members; ){
-                                            struct compound_member *member = &compound->members[member_index];
-                                            smm old_offset = member->offset_in_type;
-                                            
-                                            if(member->next_member_increment > 1){
-                                                // :next_member_increment and :member_list_contains_both_linear_and_nested
-                                                // 
-                                                // This is a nested member. We have to move not only the "linear", but also the "nested" entries.
-                                                // 
-                                                member->offset_in_type = size;
-                                                
-                                                smm delta = size - old_offset;
-                                                
-                                                for(smm nested_index = 1; nested_index < member->next_member_increment; nested_index++){
-                                                    compound->members[member_index + nested_index].offset_in_type += delta;
-                                                }
-                                                
-                                                member_index += member->next_member_increment;
-                                                size += member->type->size;
-                                                
-                                                previous_was_bitfield = false;
-                                                continue;
-                                            }
-                                            
-                                            if(member->type->kind == AST_bitfield_type){
-                                                struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)member->type;
-                                                
-                                                
-                                                b32 starts_new_storage_unit = !previous_was_bitfield || old_offset != previous_bitfield_initial_offset;
-                                                
-                                                if(starts_new_storage_unit){
-                                                    member->offset_in_type = size;
-                                                    current_bitfield_storage_offset = size;
-                                                    bitfield->bit_index = 0;
-                                                    size += bitfield->base_type->size;
-                                                }else{
-                                                    member->offset_in_type = current_bitfield_storage_offset;
-                                                }
-                                                
-                                                previous_was_bitfield = true;
-                                                previous_bitfield_initial_offset = old_offset;
-                                                member_index += 1;
-                                                continue;
-                                            }
-                                            
-                                            // A regular member, or a named nested compound.
-                                            member->offset_in_type = size;
-                                            size += member->type->size;
-                                            
-                                            previous_was_bitfield = false;
-                                            member_index += 1;
-                                        }
+                                        previous_was_bitfield = false;
+                                        continue;
                                     }
                                     
-                                    compound->base.size = align_up(size, declspec_alignment);
-                                    compound->base.alignment = declspec_alignment;
+                                    if(member->type->kind == AST_bitfield_type){
+                                        struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)member->type;
+                                        
+                                        
+                                        b32 starts_new_storage_unit = !previous_was_bitfield || old_offset != previous_bitfield_initial_offset;
+                                        
+                                        if(starts_new_storage_unit){
+                                            member->offset_in_type = size;
+                                            current_bitfield_storage_offset = size;
+                                            bitfield->bit_index = 0;
+                                            size += bitfield->base_type->size;
+                                        }else{
+                                            member->offset_in_type = current_bitfield_storage_offset;
+                                        }
+                                        
+                                        previous_was_bitfield = true;
+                                        previous_bitfield_initial_offset = old_offset;
+                                        member_index += 1;
+                                        continue;
+                                    }
                                     
-                                    is_packed = true;
-                                }
-                            }else if(atoms_match(directive_string, globals.keyword_transparent_union) || atoms_match(directive_string, globals.keyword___transparent_union__)){
-                                transparent_union_token = directive;
-                            }else if(atoms_match(directive_string, globals.keyword_align) || atoms_match(directive_string, globals.keyword_aligned)){
-                                expect_token(context, TOKEN_open_paren, "Expected '(' to follow 'align'.");
-                                
-                                struct expr const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
-                                
-                                smm value = integer_literal_as_u64(&const_expr);
-                                
-                                if(!is_power_of_two(value)){
-                                    report_error(context, directive, "Alignment must be a power of two.");
-                                    value = 1;
-                                }
-                                
-                                trailing_alignment = max_of(trailing_alignment, value);
-                                has_trailing_alignment = true;
-                                
-                                expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'align'.");
-                            }else{
-                                report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
-                                
-                                struct token *argument_open = peek_token_eat(context, TOKEN_open_paren);
-                                if(argument_open){
-                                    skip_until_tokens_are_balanced(context, argument_open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
+                                    // A regular member, or a named nested compound.
+                                    member->offset_in_type = size;
+                                    size += member->type->size;
+                                    
+                                    previous_was_bitfield = false;
+                                    member_index += 1;
                                 }
                             }
-                        }while(peek_token_eat(context, TOKEN_comma));
-                        
-                        if(!skip){
-                            expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__declspec'.");
+                            
+                            compound->base.size = align_up(size, declspec_alignment);
+                            compound->base.alignment = declspec_alignment;
+                            
+                            is_packed = true;
                         }
                         
-                        if(double_open){
-                            expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__attribute__(()'.");
+                        if(trailing_attributes.specifier_flags & SPECIFIER_transparent_union){
+                            transparent_union_token = trailing_attributes.transparent_union_token;
                         }
-                        
-                        if(has_trailing_alignment){
-                            compound->base.alignment = max_of(compound->base.alignment, trailing_alignment);
-                            compound->base.size = align_up(compound->base.size, compound->base.alignment);
-                            compound->base.flags |= TYPE_FLAG_is_user_aligned;
-                        }
+                    }
+                    
+                    u64 trailing_alignment = trailing_attributes.alignment ? trailing_attributes.alignment : 1;
+                    b32 has_trailing_alignment = trailing_attributes.alignment != 0;
+                    
+                    if(has_trailing_alignment){
+                        compound->base.alignment = max_of(compound->base.alignment, (s64)trailing_alignment);
+                        compound->base.size = align_up(compound->base.size, compound->base.alignment);
+                        compound->base.flags |= TYPE_FLAG_is_user_aligned;
                     }
                     
                     if(transparent_union_token){
@@ -8932,6 +8851,8 @@ case TOKEN_##type_name:{                                                 \
                         
                         compound->base.flags |= TYPE_FLAG_is_transparent_union;
                     }
+                    
+                    specifiers.type_specifier = &compound->base;
                 }
             }break;
             
@@ -9241,6 +9162,10 @@ func struct declaration_list parse_declaration_list(struct context *context, str
     struct declaration_specifiers specifiers = parse_declaration_specifiers(context, type_specifier, defined_type_specifier);
     if(context->should_exit_statement) goto end;
     
+    if(specifiers.specifier_flags & SPECIFIER_packed){
+        report_error(context, get_current_token_for_error_report(context), "A declaration cannot be '__declspec(packed)'. Please declare a __declspec(packed)-type instead. (I.e please use 'struct __declspec(packed) packed_type' instead of '__declspec(packed) struct packed_type'.");
+    }
+    
     // :unresolved_types
     //
     // The 'specifiers.type_specifier' might be an unresolved type, i.e
@@ -9265,6 +9190,65 @@ func struct declaration_list parse_declaration_list(struct context *context, str
     do{
         struct declarator_return declarator = parse_declarator(context, ret.type_specifier, ret.defined_type_specifier, DECLARATOR_identifier);
         if(should_set_sleeping_ident) context->sleeping_ident = declarator.ident;
+        
+        struct string asm_name = zero_struct;
+        if(peek_token_eat(context, TOKEN_asm)){
+            struct token *open  = expect_token(context, TOKEN_open_paren, "Expected '(' after 'void <decl>()  __asm__'.");
+            
+            struct expr expr = parse_expression(context, /*skip_comma_expression*/true);
+            
+            if(expr.ir->kind == IR_string_literal){
+                struct ir_string_literal *string_literal = (struct ir_string_literal *)expr.ir;
+                
+                if(string_literal->string_kind != STRING_KIND_utf8){
+                    report_error(context, expr.token, "Wide character strings not supported for '__asm__(\"<symbol-name>\")'.");
+                }else{
+                    asm_name = string_literal->value;
+                }
+                
+                pop_from_ir_arena(context, string_literal);
+                
+                expect_token(context, TOKEN_closed_paren, "Expected ')' ending 'void <decl>() __asm__'.");
+            }else{
+                skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in '__asm__(\"<symbol-name>\"'.");
+            }
+        }
+        
+        struct declaration_specifiers post_decl_specifiers = {0};
+        while(peek_token_eat(context, TOKEN_declspec)){
+            parse_extended_attribute(context, &post_decl_specifiers);
+        }
+        
+        if((post_decl_specifiers.specifier_flags & SPECIFIER_transparent_union) && !(declarator.type->flags & TYPE_FLAG_is_transparent_union)){
+            if(declarator.type->kind == AST_union){
+                
+                struct ast_compound_type *original = (struct ast_compound_type *)declarator.type;
+                
+                struct ast_compound_type *new_compound = parser_compound_type_push(context, union);
+                *new_compound = *original;
+                new_compound->base.flags |= TYPE_FLAG_is_transparent_union;
+                
+                if(original->amount_of_members == 0){
+                    begin_error_report(context);
+                    report_error(context, post_decl_specifiers.transparent_union_token, "'transparent_union' union must have at least one pointer member.");
+                    report_error(context, original->identifier, "... Here is the union type.");
+                    end_error_report(context);
+                }
+                
+                for(u32 member_index = 0; member_index < original->amount_of_members; member_index++){
+                    if(original->members[member_index].type->kind != AST_pointer_type){
+                        begin_error_report(context);
+                        report_error(context, post_decl_specifiers.transparent_union_token, "'transparent_union' is currently only supported for unions whose members are all pointer types.");
+                        report_error(context, original->members[member_index].name, "... This member is not a pointer.");
+                        end_error_report(context);
+                    }
+                }
+                
+                declarator.type = &new_compound->base;
+            }else{
+                report_error(context, post_decl_specifiers.transparent_union_token, "'transparent_union' can only be applied to a union.");
+            }
+        }
         
         if(context->should_exit_statement) goto end;
         
@@ -9376,7 +9360,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             function->kind = IR_function;
             function->type = cast(struct ast_function_type *)declarator.type;
             function->identifier = declarator.ident;
-            function->asm_name = declarator.asm_name;
+            function->asm_name = asm_name;
             function->memory_location = null;
             function->offset_in_text_section = -1; // Set atomically when done emitting.
             function->compilation_unit = context->current_compilation_unit;
@@ -10639,16 +10623,9 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             if(peek_token_eat(context, TOKEN_atomic))    type_qualifiers |= QUALIFIER_atomic;
             
             if(peek_token_eat(context, TOKEN_declspec)){
-                // 
-                // GCC allows attributes between '*' and the declarator name, e.g.:
-                //     
-                //     static int *__attribute__((unused)) pointer;
-                // 
-                struct token *open = expect_token(context, TOKEN_open_paren, "Expected '(' after '__attribute__'.");
-                
-                report_warning(context, WARNING_unsupported_declspec, open, "__attribute__ ignored in this place.");
-                
-                skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in attribute.");
+                report_warning(context, WARNING_unsupported_declspec, get_current_token_for_error_report(context), "__attribute__ ignored in this place.");
+                struct declaration_specifiers pointer_specifiers = {0};
+                parse_extended_attribute(context, &pointer_specifiers);
             }
             
             if(get_current_token(context) == begin) break;
@@ -10859,7 +10836,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                         break;
                     }
                     
-                    if(peek_token(context, TOKEN_closed_paren)) break; // Allow trailling comma.
+                    if(peek_token(context, TOKEN_closed_paren)) break; // Allow trailing comma.
                     
                     // 
                     // parameter-declaration:
@@ -11091,95 +11068,6 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         if(context->should_exit_statement) return ret;
         
         context->token_at = saved_marker;
-    }
-    
-    if(peek_token_eat(context, TOKEN_asm)){
-        struct token *open  = expect_token(context, TOKEN_open_paren, "Expected '(' after '__asm__'.");
-        
-        struct expr expr = parse_expression(context, /*skip_comma_expression*/true);
-        
-        if(expr.ir->kind == IR_string_literal){
-            struct ir_string_literal *string_literal = (struct ir_string_literal *)expr.ir;
-            
-            if(string_literal->string_kind != STRING_KIND_utf8){
-                report_error(context, expr.token, "Wide character strings not supported for '__asm__(\"<symbol-name>\")'.");
-            }else{
-                ret.asm_name = string_literal->value;
-            }
-            
-            pop_from_ir_arena(context, string_literal);
-            
-            expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__asm__'.");
-        }else{
-            skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in '__asm__(\"<symbol-name>\"'.");
-        }
-    }
-    
-    while(peek_token_eat(context, TOKEN_declspec)){
-        expect_token(context, TOKEN_open_paren, "Expected '(' after '__declspec'.");
-        struct token *double_open = peek_token_eat(context, TOKEN_open_paren);
-        
-        int skip = 0;
-        do{
-            struct token *directive = next_token(context);
-            
-            if(directive->type == TOKEN_closed_paren){
-                skip = 1;
-                break;
-            }
-            
-            if(directive->type != TOKEN_identifier && !(TOKEN_first_keyword <= directive->type && directive->type <= TOKEN_one_past_last_keyword)){
-                report_error(context, directive, "Expected a directive after '__declspec'.");
-            }
-            
-            if(atoms_match(directive->atom, globals.keyword_transparent_union) || atoms_match(directive->atom, globals.keyword___transparent_union__)){
-                
-                if(ret.type->kind == AST_union){
-                    if(!(ret.type->flags & TYPE_FLAG_is_transparent_union)){
-                        struct ast_compound_type *original = (struct ast_compound_type *)ret.type;
-                        
-                        struct ast_compound_type *new_compound = parser_compound_type_push(context, union);
-                        *new_compound = *original;
-                        new_compound->base.flags |= TYPE_FLAG_is_transparent_union;
-                        
-                        if(original->amount_of_members == 0){
-                            begin_error_report(context);
-                            report_error(context, directive, "'transparent_union' union must have at least one pointer member.");
-                            report_error(context, original->identifier, "... Here is the union type.");
-                            end_error_report(context);
-                        }
-                        
-                        for(u32 member_index = 0; member_index < original->amount_of_members; member_index++){
-                            if(original->members[member_index].type->kind != AST_pointer_type){
-                                begin_error_report(context);
-                                report_error(context, directive, "'transparent_union' is currently only supported for unions whose members are all pointer types.");
-                                report_error(context, original->members[member_index].name, "... This member is not a pointer.");
-                                end_error_report(context);
-                            }
-                        }
-                        
-                        ret.type = &new_compound->base;
-                    }
-                }else{
-                    report_error(context, directive, "'transparent_union' can only be applied to a union.");
-                }
-            }else{
-                report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
-                
-                struct token *argument_open = peek_token_eat(context, TOKEN_open_paren);
-                if(argument_open){
-                    skip_until_tokens_are_balanced(context, argument_open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__declspec'.");
-                }
-            }
-        }while(peek_token_eat(context, TOKEN_comma));
-        
-        if(!skip){
-            expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__declspec'.");
-        }
-        
-        if(double_open){
-            expect_token(context, TOKEN_closed_paren, "Expected ')' ending '__attribute__(()'.");
-        }
     }
     
     return ret;
