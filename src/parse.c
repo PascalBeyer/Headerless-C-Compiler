@@ -1232,6 +1232,7 @@ struct declaration_specifiers{
     u64 alignment;
     
     struct token *transparent_union_token;
+    struct token *cleanup_function;
 };
 
 func struct expr invalid_ast(struct context *context){
@@ -8129,7 +8130,6 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
         }else if(atoms_match(directive_string, globals.keyword_thread)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_thread_local, directive, "__declspec(thread)");
         }else if(atoms_match(directive_string, atom_for_string(string("constructor"))) || atoms_match(directive_string, atom_for_string(string("__constructor__")))){
-            
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_constructor, directive, "constructor");
             
             struct token *constructor_argument = peek_token_eat(context, TOKEN_open_paren);
@@ -8141,6 +8141,17 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
         }else if(atoms_match(directive_string, globals.keyword_transparent_union) || atoms_match(directive->atom, globals.keyword___transparent_union__)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_transparent_union, directive, "__declspec(transparent_union)");
             specifiers->transparent_union_token = directive;
+        }else if(atoms_match(directive_string, atom_for_string(string("cleanup")))){
+            expect_token(context, TOKEN_open_paren, "Expected '('. cleanup attribute needs an argument.");
+            struct token *cleanup_function = expect_token(context, TOKEN_identifier, "Expected a function as argument of cleanup attribute.");
+            if(specifiers->cleanup_function){
+                begin_error_report(context);
+                report_error(context, cleanup_function, "Cannot register more than one cleanup-function per declaration.");
+                report_error(context, specifiers->cleanup_function, "... Here was the earlier cleanup-specifier.");
+                end_error_report(context);
+            }
+            specifiers->cleanup_function = cleanup_function;
+            expect_token(context, TOKEN_closed_paren, "Expected '(' at the end of `cleanup(<function>`.");
         }else{
             report_warning(context, WARNING_unsupported_declspec, directive, "Unsupported '__declspec' ignored.");
             
@@ -9248,7 +9259,9 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
         }
         
-        struct declaration_specifiers post_decl_specifiers = {0};
+        struct declaration_specifiers post_decl_specifiers = {
+            .cleanup_function = specifiers.cleanup_function,
+        };
         while(peek_token_eat(context, TOKEN_declspec)){
             parse_extended_attribute(context, &post_decl_specifiers);
         }
@@ -9711,6 +9724,50 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
         }
         
+        if(post_decl_specifiers.cleanup_function){
+            if(!context->current_scope){
+                report_error(context, post_decl_specifiers.cleanup_function, "Cannot use the extended attribute `cleanup` at global scope.");
+            }else{
+                struct ast_function *function = (struct ast_function *)lookup_declaration(context->current_scope, context->current_compilation_unit, post_decl_specifiers.cleanup_function->atom);
+                struct ast_type *function_argument_type = function->type->argument_list.first ? ((struct ast_declaration *)function->type->argument_list.first->value)->type : null;
+                
+                struct ast_type *pointer_to_decl = parser_push_pointer_type(context, decl->type, decl->defined_type);
+                
+                if(!function){
+                    report_error(context, post_decl_specifiers.cleanup_function, "Undeclared function name in argument to cleanup-attribute.");
+                }else if(function->kind != AST_function){
+                    report_error(context, post_decl_specifiers.cleanup_function, "Argument of cleanup-attribute is not a function.");
+                }else if(decl->kind != AST_declaration){
+                    report_error(context, post_decl_specifiers.cleanup_function, "cleanup-attribute only applies to declarations (not functions or typedefs).");
+                }else if(function->type->return_type != &globals.typedef_void || function->type->argument_list.count != 1 || !(function_argument_type == &globals.typedef_void_pointer.base || types_are_equal(function_argument_type, pointer_to_decl))){
+                    struct string function_identifier = token_get_string(function->identifier);
+                    struct string function_type_string = push_type_string(&context->scratch, &context->scratch, &function->type->base);
+                    struct string declaration_type_string = push_type_string(&context->scratch, &context->scratch, decl->type);
+                    struct string declaration_pointer_type_string = push_type_string(&context->scratch, &context->scratch, pointer_to_decl);
+                    
+                    report_error(context, post_decl_specifiers.cleanup_function, "cleanup-attribute for variable of type '%.*s' must match 'void %.*s(%.*s)', but is '%.*s'.", declaration_type_string.size, declaration_type_string.data, function_identifier.size, function_identifier.data, declaration_pointer_type_string.size, declaration_pointer_type_string.data, function_type_string.size, function_type_string.data);
+                }else{
+                    struct cleanup_call *cleanup_call = push_struct(context->arena, struct cleanup_call);
+                    cleanup_call->function = function;
+                    cleanup_call->declaration = decl;
+                    
+                    cleanup_call->next = context->current_scope->cleanup_calls;
+                    context->current_scope->cleanup_calls = cleanup_call;
+                    
+                    // Mark stuff as being hit:
+                    
+                    decl->_times_referenced++;
+                    
+                    struct declaration_reference_node *new_reference = push_uninitialized_struct(context->arena, struct declaration_reference_node);
+                    new_reference->declaration = &function->as_decl;
+                    new_reference->token = post_decl_specifiers.cleanup_function;
+                    sll_push_back(context->current_function->referenced_declarations, new_reference); // :DeclarationReferenceThreadingBug
+                    
+                }
+            }
+        }
+        
+        
         ret.had_declaration = decl;
         
         // Don't allow int a(){}, b(){} because that's stupid.
@@ -9727,6 +9784,33 @@ func struct declaration_list parse_declaration_list(struct context *context, str
 void maybe_report_warning_for_assignment_in_condition(struct context *context, struct token *token){
     if(TOKEN_equals <= token->type && token->type <= TOKEN_mod_equals){
         report_warning(context, WARNING_assignment_in_condition, token, "Assignment within condition, did you mean '=='?");
+    }
+}
+
+func void push_ir_for_cleanup_calls(struct context *context, struct ast_scope *end_scope){
+    for(struct ast_scope *scope = context->current_scope; scope != end_scope; scope = scope->parent){
+        for(struct cleanup_call *cleanup_call = scope->cleanup_calls; cleanup_call; cleanup_call = cleanup_call->next){
+            
+            struct ast_function    *function    = cleanup_call->function;
+            struct ast_declaration *declaration = cleanup_call->declaration;
+            
+            struct ir_identifier *funct = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
+            funct->base.kind = IR_identifier;
+            funct->decl = &function->as_decl;
+            
+            struct ir_identifier *ident = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
+            ident->base.kind = IR_identifier;
+            ident->decl = declaration;
+            
+            push_ir(context, IR_load_address);
+            
+            struct ir_function_call *call = push_uninitialized_struct(&context->ir_arena, struct ir_function_call);
+            call->base.kind = IR_function_call;
+            call->function_type = function->type;
+            call->call_arguments_count = 1;
+            
+            push_ir(context, IR_pop_expression);
+        }
     }
 }
 
@@ -10065,6 +10149,8 @@ func void parse_statement(struct context *context){
                 scope->flags |= SCOPE_FLAG_found_an_alive_break;
             }
             
+            push_ir_for_cleanup_calls(context, scope->parent);
+            
             struct ir_jump_node *loop_jump = push_jump(context, IR_jump);
             loop_jump->label_number = context->current_break_label;
             
@@ -10081,6 +10167,8 @@ func void parse_statement(struct context *context){
                 report_syntax_error(context, initial_token, "'continue' is not inside of a continue-able scope.");
                 return;
             }
+            
+            push_ir_for_cleanup_calls(context, scope->parent);
             
             struct ir_jump_node *loop_jump = push_jump(context, IR_jump);
             loop_jump->label_number = context->current_continue_label;
@@ -10244,6 +10332,8 @@ func void parse_statement(struct context *context){
             if(current_function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn){
                 report_warning(context, WARNING_return_in_noreturn_function, initial_token, "'return' in function declared as '_Noreturn'.");
             }
+            
+            push_ir_for_cleanup_calls(context, /*global-scope*/null);
             
             push_ir(context, IR_return);
         }break;
@@ -10584,6 +10674,8 @@ func void parse_imperative_scope(struct context *context){
         }
     }
     
+    // @cleanup: reachability.
+    push_ir_for_cleanup_calls(context, scope->parent);
 }
 
 func struct declarator_return parse_declarator(struct context* context, struct ast_type *_initial_type, enum ast_kind *_initial_defined_type, enum declarator_kind_flags declarator_kind_flags){

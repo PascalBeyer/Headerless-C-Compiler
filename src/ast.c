@@ -712,6 +712,12 @@ struct ast_scope{
     
     struct ir_asm_block *asm_block;
     
+    struct cleanup_call{
+        struct cleanup_call *next;
+        struct ast_function *function;
+        struct ast_declaration *declaration;
+    } *cleanup_calls;
+    
     enum scope_flags flags;
     
     // @note: A hash table for the declarations.
