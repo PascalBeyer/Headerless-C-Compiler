@@ -10250,30 +10250,70 @@ func void parse_statement(struct context *context){
             assert(const_expr.ir->kind == IR_integer_literal);
             assert(const_expr.resolved_type == context->current_switch_on.resolved_type);
             
-            u64 value = integer_literal_as_u64(&const_expr);
+            u64 low_value = integer_literal_as_u64(&const_expr);
+            u64 high_value = low_value;
             
-            for(struct ir_case *ir_case = context->current_switch->case_list.first; ir_case; ir_case = ir_case->next){
-                if(ir_case->value == value){
+            if(peek_token_eat(context, TOKEN_dotdotdot)){
+                // 
+                // GNU case ranges: 'case first ... last:'.
+                // 
+                struct expr end_expr = parse_constant_integer_expression(context, false, "Operand of 'case' has to be constant.");
+                maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, switch_on->resolved_type, switch_on->defined_type, &end_expr, end_expr.token);
+                assert(end_expr.ir->kind == IR_integer_literal);
+                assert(end_expr.resolved_type == context->current_switch_on.resolved_type);
+                
+                high_value = integer_literal_as_u64(&end_expr);
+                
+                if(type_is_signed(switch_on->resolved_type)){
+                    if(integer_literal_as_s64(&const_expr) > integer_literal_as_s64(&end_expr)){
+                        report_error(context, initial_token, "Case range start is greater than its end.");
+                        return;
+                    }
+                }else if(low_value > high_value){
+                    report_error(context, initial_token, "Case range start is greater than its end.");
+                    return;
+                }
+            }
+            
+            struct ir_case *previous_case = null;
+            for(struct ir_case *ir_case = context->current_switch->case_list.first; ir_case; previous_case = ir_case, ir_case = ir_case->next){
+                
+                if(low_value <= ir_case->high_value && ir_case->low_value <= high_value){
+                    
+                    // @cleanup: Error.
                     begin_error_report(context);
                     if(type_is_signed(switch_on->resolved_type)){
-                        report_error(context, initial_token, "Case '%lld' already handled.", (smm)value);
+                        report_error(context, initial_token, "Case '%lld' already handled.", (smm)low_value);
                     }else{
-                        report_error(context, initial_token, "Case '%llu' already handled.", value);
+                        report_error(context, initial_token, "Case '%llu' already handled.", low_value);
                     }
                     report_error(context, ir_case->token, "... Here is the previous case.");
                     end_error_report(context);
+                }
+                
+                if(low_value >= ir_case->low_value){
+                    break;
                 }
             }
             
             struct ir_case *ir_case = push_uninitialized_struct(&context->ir_arena, struct ir_case);
             ir_case->base.kind = IR_case;
-            ir_case->value = value;
+            ir_case->low_value = low_value;
+            ir_case->high_value = high_value;
             ir_case->token = initial_token;
+            ir_case->next = null;
+            
+            if(previous_case == 0){
+                sll_push_front(context->current_switch->case_list, ir_case);
+            }else if(previous_case->next == 0){
+                sll_push_back(context->current_switch->case_list, ir_case);
+            }else{
+                ir_case->next = previous_case->next;
+                previous_case->next = ir_case;
+            }
+            
             expect_token(context, TOKEN_colon, "Expected ':' after 'case'-label.");
             needs_semicolon = false;
-            
-            ir_case->next = null;
-            sll_push_back(context->current_switch->case_list, ir_case);
             
             if(!peek_token(context, TOKEN_closed_curly)) parse_statement(context);
         }break;

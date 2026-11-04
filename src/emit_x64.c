@@ -2432,6 +2432,40 @@ func struct emit_location *emit_compare_to_zero(struct context *context, struct 
     return emit_location_conditional(context, &globals.typedef_s32, COMP_not_zero);
 }
 
+func void emit_compare_against_immediate(struct context *context, struct emit_location *switch_on, struct emit_location *immediate){
+    
+    b32 is_signed = 0; // :ir_refactor is_signed type_is_signed(ast_switch->switch_on->resolved_type);
+    if(immediate->type->size == 8 || ((immediate->type->size == 4) && is_signed && immediate->value > s32_max)){
+        struct emit_location *loaded = emit_load_gpr(context, immediate);
+        emit_register_register(context, no_prefix(), one_byte_opcode(CMP_REG_REGM), switch_on, loaded);
+        free_emit_location(context, loaded);
+    }else{
+        
+        u8 inst = REG_EXTENDED_OPCODE_REGM_IMMIDIATE;
+        if(immediate->type->size == 1){
+            if(is_signed || immediate->value < s8_max){
+                inst = REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8;
+            }else{
+                immediate->type = switch_on->type;
+            }
+        }
+        
+        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(inst), REG_OPCODE_CMP, switch_on);
+        
+        if(immediate->type->size == 1){
+            emit(immediate->value);
+        }else{
+            switch(switch_on->type->size){
+                case 1: emit(immediate->value); break;
+                case 2: emit_u16(immediate->value); break;
+                case 4: emit_u32(immediate->value); break;
+                case 8: emit_u32(immediate->value); break;
+                invalid_default_case();
+            }
+        }
+    }
+}
+
 func struct emit_location *emit_shift_or_rotate__internal(struct context *context, struct prefixes prefixes, struct emit_location *lhs_loc,
         struct emit_location *rhs_loc, u8 reg_extension, b32 compound){
     
@@ -5105,6 +5139,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack_at -= 1;
                 struct emit_location *switch_on = emit_load_gpr(context, emit_location_stack[emit_location_stack_at]);
                 
+                int switch_on_signed = type_is_signed(switch_on->type);
                 
                 // *** switch ***
                 // if(a == 1) goto loc_1;
@@ -5115,46 +5150,47 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 for(struct ir_case *ast_case = ast_switch->case_list.first; ast_case; ast_case = ast_case->next){
                     
-                    // @speed could do this manually, we know its an immediate, also we know the size should be
-                    //        switch_on->size
-                    struct emit_location *imm = emit_location_immediate(context, switch_on->type, ast_case->value);
-                    assert(imm->state == EMIT_LOCATION_immediate);
+                    u64 low_value  = ast_case->low_value;
+                    u64 high_value = ast_case->high_value;
                     
-                    b32 is_signed = 0; // :ir_refactor is_signed type_is_signed(ast_switch->switch_on->resolved_type);
-                    if(imm->type->size == 8 || ((imm->type->size == 4) && is_signed && imm->value > s32_max)){
-                        struct emit_location *loaded = emit_load_gpr(context, imm);
+                    if(low_value == high_value){
                         
-                        emit_register_register(context, no_prefix(), one_byte_opcode(CMP_REG_REGM), switch_on, loaded);
-                        free_emit_location(context, loaded);
+                        struct emit_location *immediate = emit_location_immediate(context, switch_on->type, low_value);
+                        assert(immediate->state == EMIT_LOCATION_immediate);
+                        
+                        emit_compare_against_immediate(context, switch_on, immediate);
+                        
+                        struct jump_context *jump = push_struct(&context->scratch, struct jump_context);
+                        jump_context_emit(context, jump, JUMP_CONTEXT_jump_on_true, COMP_equals);
+                        ast_case->jump = jump;
                     }else{
                         
-                        u8 inst = REG_EXTENDED_OPCODE_REGM_IMMIDIATE;
-                        if(imm->type->size == 1){
-                            if(is_signed || imm->value < s8_max){
-                                inst = REG_EXTENDED_OPCODE_REGM_SIGN_EXTENDED_IMMIDIATE8;
-                            }else{
-                                imm->type = switch_on->type;
-                            }
-                        }
-                        emit_reg_extended_op(context, no_prefix(), one_byte_opcode(inst), REG_OPCODE_CMP, switch_on);
+                        // 
+                        //     cmp switch_on, <low>
+                        //     jl .no
+                        //     cmp switch_on <high>
+                        //     jle .success
+                        // .no:
+                        // 
                         
-                        if(imm->type->size == 1){
-                            emit(imm->value);
-                        }else{
-                            switch(switch_on->type->size){
-                                case 1: emit(imm->value); break;
-                                case 2: emit_u16(imm->value); break;
-                                case 4: emit_u32(imm->value); break;
-                                case 8: emit_u32(imm->value); break;
-                                invalid_default_case();
-                            }
-                        }
+                        struct jump_context no = zero_struct;
                         
+                        struct emit_location *low_immediate = emit_location_immediate(context, switch_on->type, low_value);
+                        assert(low_immediate->state == EMIT_LOCATION_immediate);
+                        
+                        emit_compare_against_immediate(context, switch_on, low_immediate);
+                        jump_context_emit(context, &no, JUMP_CONTEXT_jump_on_true, switch_on_signed ? COMP_smaller_signed : COMP_smaller);
+                        
+                        struct emit_location *high_immediate = emit_location_immediate(context, switch_on->type, high_value);
+                        assert(high_immediate->state == EMIT_LOCATION_immediate);
+                        
+                        emit_compare_against_immediate(context, switch_on, high_immediate);
+                        struct jump_context *jump = push_struct(&context->scratch, struct jump_context);
+                        jump_context_emit(context, jump, JUMP_CONTEXT_jump_on_true, switch_on_signed ? COMP_smaller_equals_signed : COMP_smaller_equals);
+                        ast_case->jump = jump;
+                        
+                        emit_end_jumps(context, no);
                     }
-                    
-                    struct jump_context *jump = push_struct(&context->scratch, struct jump_context);
-                    jump_context_emit(context, jump, JUMP_CONTEXT_jump_on_true, COMP_equals);
-                    ast_case->jump = jump;
                 }
                 
                 jump_context_emit(context, &context->jump_labels[ast_switch->default_jump_label->label_number].context, JUMP_CONTEXT_jump_always, COMP_none);

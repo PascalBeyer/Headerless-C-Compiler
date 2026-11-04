@@ -598,7 +598,9 @@ struct ir_case{
     struct ir base;
     struct ir_case *next;
     struct token *token;
-    u64 value;
+    
+    u64 low_value;
+    u64 high_value;
     
     struct jump_context *jump; // We use this as a label, only used in emit.
 };
