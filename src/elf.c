@@ -1963,7 +1963,10 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             index_node->file_name_offset = file_name_add_ret.offset;
             sll_push_back(file_index_list, index_node);
             
-            node->file_number = (u32)file_index_list.count;
+            // Some tools require the first file to be the primary source file,
+            // since this was a requirement in DWARF 4.
+            // Therefore, we duplicate the main source file into the first slot.
+            node->file_number = (u32)file_index_list.count + 1;
             file_index_list.count += 1;
         }
         
@@ -2034,18 +2037,19 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         *push_struct(arena, u8) = /*content_type = DW_LNCT_directory_index*/2;
         *push_struct(arena, u8) = /*attribute form = DW_FORM_udata*/0xf;
         
-        push_uleb(arena, file_index_list.count + (file_index_list.count == 1));
+        push_uleb(arena, file_index_list.count + 1);
+        
+        // File number 0 is not used by the line program, but tools expect the
+        // table to contain an entry for it. Mirror the first real file there.
+        if(file_index_list.first){
+            struct file_index_node *node = file_index_list.first;
+            *push_struct_unaligned(arena, u32) = (u32)(debug_line_string_offset + node->file_name_offset);
+            push_uleb(arena, node->directory_index);
+        }
         
         for(struct file_index_node *node = file_index_list.first; node; node = node->next){
             *push_struct_unaligned(arena, u32) = (u32)(debug_line_string_offset + node->file_name_offset);
-            *push_struct(arena, u8) = (u8)node->directory_index;
-        }
-        
-        if(file_index_list.count == 1){
-            // For whatever reason gdb adds this if there is only one.
-            struct file_index_node *node = file_index_list.first;
-            *push_struct_unaligned(arena, u32) = (u32)(debug_line_string_offset + node->file_name_offset);
-            *push_struct(arena, u8) = (u8)node->directory_index;
+            push_uleb(arena, node->directory_index);
         }
         
         // "The number of bytes following the header_length field to the beginning of 24 the first byte of the line number program itself."
@@ -2079,10 +2083,10 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 // Push the initial location.
                 // 
                 
-                s64 line_delta    = initial_location.line - line;
-                s64 address_delta = address - function->relative_virtual_address;
+                s64 line_delta    = (s64)initial_location.line - (s64)line;
+                s64 address_delta = (s64)function->relative_virtual_address - (s64)address;
                 
-                if(line_base <= line_delta && line_delta < line_range && 0 <= address_delta && address_delta <= 255/14){
+                if(line_base <= line_delta && line_delta - line_base < line_range && 0 <= address_delta && (line_delta - line_base) + line_range * address_delta + opcode_base <= 255){
                     *push_struct(arena, u8) = (u8)((line_delta - line_base) + line_range * address_delta + opcode_base);
                 }else{
                     *push_struct(arena, u8) = /*extended opcode*/0;
@@ -2119,7 +2123,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 *push_struct(arena, u8) = /*DW_LNS_set_column*/5;
                 push_uleb(arena, info.column);
                 
-                if(line_base <= line_delta && line_delta < line_range && 0 <= address_delta && address_delta <= 255/14){
+                if(line_base <= line_delta && line_delta - line_base < line_range && 0 <= address_delta && (line_delta - line_base) + line_range * address_delta + opcode_base <= 255){
                     *push_struct(arena, u8) = (u8)((line_delta - line_base) + line_range * address_delta + opcode_base);
                 }else{
                     *push_struct(arena, u8) = /*extended opcode*/0;
@@ -2138,7 +2142,17 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             file_number = file->file_number;
             line = last.line;
-            address = function->relative_virtual_address + last.offset;
+            
+            u64 function_end = (u64)function->relative_virtual_address + (u64)function->byte_size;
+            u64 last_address = (u64)function->relative_virtual_address + (u64)last.offset;
+            assert(function_end >= last_address);
+            
+            if(function_end > last_address){
+                *push_struct(arena, u8) = /*DW_LNS_advance_pc*/2;
+                push_uleb(arena, function_end - last_address);
+            }
+            
+            address = function_end;
         }
         
         *push_struct(arena, u8) = /*extended opcode*/0;
