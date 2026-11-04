@@ -4719,9 +4719,9 @@ case NUMBER_KIND_##type:{ \
         case TOKEN_integer_literal:{
             struct token *lit_token = next_token(context);
             
-            if(lit_token->size == 1 && lit_token->data[0] == '0'){
-                // @note: Fast path for 0.
-                operand = ast_push_s32_literal(context, 0, lit_token);
+            if(lit_token->size == 1){
+                // @note: Fast path for 0-9.
+                operand = ast_push_s32_literal(context, lit_token->data[0] - '0', lit_token);
                 context->in_lhs_expression = false;
                 break;
             }
