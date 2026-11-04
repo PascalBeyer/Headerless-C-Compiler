@@ -12,6 +12,9 @@ enum cli_option_kind{
 
     CLI_OPTION_help,
     CLI_OPTION_no_stdlib,
+    CLI_OPTION_version,
+    CLI_OPTION_dumpversion,
+    CLI_OPTION_dumpmachine,
     CLI_OPTION_no_predefines,
     CLI_OPTION_no_debug,
     CLI_OPTION_no_dynamic_base,
@@ -80,6 +83,9 @@ struct cli_option_hash_table_entry{
 } cli_option_hash_table[0x80] = {
     [110] = {{4, (u8 *)"help"}, CLI_ARGUMENT_TYPE_option, CLI_OPTION_help, 1},
     [100] = {{8, (u8 *)"nostdlib"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_stdlib, -1},
+    [75] = {{7, (u8 *)"version"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_version, -1},
+    [33] = {{11, (u8 *)"dumpversion"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dumpversion, -1},
+    [112] = {{11, (u8 *)"dumpmachine"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dumpmachine, -1},
     [7] = {{12, (u8 *)"nopredefines"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_predefines, -1},
     [41] = {{7, (u8 *)"nodebug"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_debug, -1},
     [98] = {{13, (u8 *)"nodynamicbase"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_no_dynamic_base, -1},
@@ -194,6 +200,9 @@ struct cli_options{
     
     struct string_list files; // Non-options. These are not checked, as they might contain wild-cards.
     int no_stdlib; // Don't link to 'ucrt.lib'.
+    int version; // Print version and machine.
+    int dumpversion; // Print only the version.
+    int dumpmachine; // Print information about the machine.
     int no_predefines; // Disable all standard predefines.
     int no_debug; // Disables generation of debugging information.
     int no_dynamic_base; // Generate a non-relocatable image.
@@ -623,6 +632,24 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             ">     printf(\"Hello, World!\\n\");\n"
                             "> }\n"
                             "", 399);
+                }break;
+                case CLI_OPTION_version:{
+                    print("-version | Print version and machine.\n\n");
+                    os_print_string(
+                            "Print something like gcc (..) 11.4.0\n"
+                            "", 37);
+                }break;
+                case CLI_OPTION_dumpversion:{
+                    print("-dumpversion | Print only the version.\n\n");
+                    os_print_string(
+                            "Print 11.\n"
+                            "", 10);
+                }break;
+                case CLI_OPTION_dumpmachine:{
+                    print("-dumpmachine | Print information about the machine.\n\n");
+                    os_print_string(
+                            "Print x86_64-linux-gnu or x86_64-w64-mingw32.\n"
+                            "", 46);
                 }break;
                 case CLI_OPTION_no_predefines:{
                     print("-no_predefines | Disable all standard predefines.\n\n");
@@ -1062,6 +1089,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                     os_print_string(
                             "  -help [option]              | Display this help message or a help message for another option.\n"
                             "  -no_stdlib                  | Don't link to 'ucrt.lib'.\n"
+                            "  -version                    | Print version and machine.\n"
+                            "  -dumpversion                | Print only the version.\n"
+                            "  -dumpmachine                | Print information about the machine.\n"
                             "  -no_predefines              | Disable all standard predefines.\n"
                             "  -no_debug                   | Disables generation of debugging information.\n"
                             "  -no_dynamic_base            | Generate a non-relocatable image.\n"
@@ -1101,7 +1131,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 3263);
+                    , 3447);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1119,6 +1149,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
 
             case CLI_OPTION_no_stdlib: cli_options->no_stdlib = 1; break;
+            case CLI_OPTION_version: cli_options->version = 1; break;
+            case CLI_OPTION_dumpversion: cli_options->dumpversion = 1; break;
+            case CLI_OPTION_dumpmachine: cli_options->dumpmachine = 1; break;
             case CLI_OPTION_no_predefines: cli_options->no_predefines = 1; break;
             case CLI_OPTION_no_debug: cli_options->no_debug = 1; break;
             case CLI_OPTION_no_dynamic_base: cli_options->no_dynamic_base = 1; break;

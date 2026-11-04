@@ -22,6 +22,18 @@ or when you want to link to a different standard library.
 >     printf("Hello, World!\n");
 > }
 
+/version - Print version and machine.
+
+Print something like gcc (..) 11.4.0
+
+/dumpversion - Print only the version.
+
+Print 11.
+
+/dumpmachine - Print information about the machine.
+
+Print x86_64-linux-gnu or x86_64-w64-mingw32.
+
 /no_predefines - Disable all standard predefines.
 
 TODO

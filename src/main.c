@@ -3992,6 +3992,25 @@ int main(int argc, char *argv[]){
     int cli_parse_options_success = cli_parse_options(&globals.cli_options, arena, argc-1, argv+1);
     if(!cli_parse_options_success) return 1;
     
+    
+    if(globals.cli_options.version){
+        print("Headerless-C-Compiler 11.4.0\n");
+#ifndef _WIN32
+        print("We have to say \"Free Software Foundation\" for Meson to think we are GCC.\n");
+#endif
+        return 0;
+    }
+    
+    if(globals.cli_options.dumpversion){
+        print("11\n");
+        return 0;
+    }
+    
+    if(globals.cli_options.dumpmachine){
+        print("x86_64-linux-gnu\n");
+        return 0;
+    }
+    
 #if PRINT_COMMAND_LINE
     if(!globals.cli_options.quiet){
         print("\n");
