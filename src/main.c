@@ -3968,11 +3968,6 @@ int main(int argc, char *argv[]){
     struct memory_arena _arena = create_memory_arena(giga_bytes(64), 2.0f, mega_bytes(1));
     struct memory_arena *arena = &_arena;
     
-#ifdef __HLC__
-    dump_elf(argv[1], arena);
-    return 1;
-#endif
-    
     context->arena = arena;
     
     struct string working_directory = os_get_working_directory(arena);
