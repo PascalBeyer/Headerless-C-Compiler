@@ -852,6 +852,7 @@ struct context{
     // This value will possibly be wrong if 'parse_expression' returns early, but in that case there was an error,
     // hence we don't care. But it means we have to reset this value in 'reset_context'.
     smm in_conditional_expression;
+    smm prevent_evaluation_for_sizeof_alignof_or_typeof;
     int current_statement_returns_a_value;
     
     struct ast_scope *statement_expression_scope;
@@ -2244,6 +2245,8 @@ func void register_compound_type(struct context *context, struct ast_type *type,
 
 func void parser_emit_memory_location(struct context *context, struct ast_declaration *decl){
     
+    if(context->prevent_evaluation_for_sizeof_alignof_or_typeof) return;
+    
     smm alignment = get_declaration_alignment(decl);
     smm size      = get_declaration_size(decl);
     
@@ -2776,6 +2779,7 @@ func void reset_context(struct context *context){
     context->label_list.first = context->label_list.last = 0;
     
     context->filter_function_index = 0;
+    context->prevent_evaluation_for_sizeof_alignof_or_typeof = 0;
     
     context->pragma_pack_stack.first = context->pragma_pack_stack.last = null;
 }

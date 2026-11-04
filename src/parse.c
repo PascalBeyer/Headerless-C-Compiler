@@ -4410,11 +4410,13 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
         case TOKEN_sizeof:{
             struct ast_stack_entry *entry = ast_stack_push(context, AST_sizeof, next_token(context), null); 
             entry->other = arena_current(&context->ir_arena); // For sizeof(expression), we have to delete the whole expression.
+            context->prevent_evaluation_for_sizeof_alignof_or_typeof += 1;
             goto restart;
         }
         case TOKEN_alignof:{
             struct ast_stack_entry *entry = ast_stack_push(context, AST_alignof, next_token(context), null); 
             entry->other = arena_current(&context->ir_arena); // For alignof(expression), we have to delete the whole expression.
+            context->prevent_evaluation_for_sizeof_alignof_or_typeof += 1;
             goto restart;
         }
         
@@ -4425,13 +4427,28 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                 
                 struct ast_scope *old_statement_expression_scope = context->statement_expression_scope;
                 
+                struct ast_scope *old_last = context->current_scope->subscopes.last;
+                
                 struct ast_scope *scope = parser_push_new_scope(context, open_paren, SCOPE_FLAG_none);
                 context->statement_expression_scope = scope;
                 
                 parse_imperative_scope(context);
                 
                 context->statement_expression_scope = old_statement_expression_scope;
+                
                 parser_scope_pop(context, scope);
+                
+                if(context->prevent_evaluation_for_sizeof_alignof_or_typeof){
+                    if(old_last){
+                        context->current_scope->subscopes.count -= 1;
+                        context->current_scope->subscopes.last = old_last;
+                        old_last->subscopes.next = 0;
+                    }else{
+                        context->current_scope->subscopes.count = 0;
+                        context->current_scope->subscopes.first = 0;
+                        context->current_scope->subscopes.last  = 0;
+                    }
+                }
                 
                 expect_token(context, TOKEN_closed_paren, "Expected ')' ending ({<statement>}) expression.");
                 
@@ -4562,6 +4579,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     operand = ast_push_u64_literal(context, value, size_or_alignof->token);
                     
                     context->in_lhs_expression = false;
+                    context->prevent_evaluation_for_sizeof_alignof_or_typeof -= 1;
                     
                     goto skip_primary_expression_because_we_got_a_sizeof_or_align_of_with_a_type;
                 }
@@ -6134,6 +6152,7 @@ case NUMBER_KIND_##type:{ \
                 // Sets in op->operand in the next iteration.
                 operand = ast_push_u64_literal(context, size, operand.token);
                 
+                context->prevent_evaluation_for_sizeof_alignof_or_typeof -= 1;
                 context->in_lhs_expression = false;
             }break;
             case AST_alignof:{
@@ -6156,6 +6175,7 @@ case NUMBER_KIND_##type:{ \
                 // Sets in op->operand in the next iteration.
                 operand = ast_push_u64_literal(context, alignment, operand.token);
                 
+                context->prevent_evaluation_for_sizeof_alignof_or_typeof -= 1;
                 context->in_lhs_expression = false;
             }break;
             
@@ -9042,9 +9062,13 @@ case TOKEN_##type_name:{                                                 \
             case TOKEN_typeof:{
                 expect_token(context, TOKEN_open_paren, "Expected '(' after typeof.");
                 
+                context->prevent_evaluation_for_sizeof_alignof_or_typeof += 1;
+                
                 u8 *ir_arena_start = arena_current(&context->ir_arena);
                 struct expr operand = parse_expression(context, /*should_skip_comma_expression*/false);
                 expect_token(context, TOKEN_closed_paren, "Expected ')' after typeof expression.");
+                
+                context->prevent_evaluation_for_sizeof_alignof_or_typeof -= 1;
                 
                 // The operand of typeof is not evaluated.
                 memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
