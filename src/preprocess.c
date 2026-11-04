@@ -92,6 +92,7 @@ enum builtin_define_type{
     BUILTIN_DEFINE___COUNTER__,
     BUILTIN_DEFINE__pragma,
     BUILTIN_DEFINE_has_include,
+    BUILTIN_DEFINE_has_attribute,
 };
 
 struct define_node{
@@ -348,8 +349,6 @@ func struct token *push_token_copy(struct memory_arena *arena, struct token toke
 
 //_____________________________________________________________________________________________________________________
 // 
-
-func void print_token(struct context *context, struct token *token, b32 print_whitespace_and_comments);
 
 func void register_define(struct context *context, struct define_node *new_node){
     
@@ -1439,6 +1438,7 @@ func struct token *expand_define(struct context *context, struct token *token_to
                 
                 return token_to_expand;
             }break;
+            case BUILTIN_DEFINE_has_attribute:
             case BUILTIN_DEFINE_has_include:{
                 // Don't treat these as anything special, we handle it in the static if case.
                 // We need `#if defined(__has_include)` to be true.
@@ -2596,6 +2596,28 @@ func s64 static_if_evaluate(struct context *context){
                 if(got_paren) expect_token(context, TOKEN_closed_paren, "Expected a ')' after '__has_include(<include-string>");
                 
                 if(context->should_exit_statement) return 0;
+            }else if(string_match(token_get_string(test), string("__has_attribute"))){
+                eat_whitespace_and_comments_define(context);
+                struct token *got_paren = peek_token_eat(context, TOKEN_open_paren);
+                
+                eat_whitespace_and_comments_define(context);
+                
+                struct token *token = expect_token(context, TOKEN_identifier, "Expected an identifier after '__has_attribute'.");
+                
+                if(got_paren) expect_token(context, TOKEN_closed_paren, "Expected a ')' after '__has_attribute(<identifier>'.");
+                
+                if(context->should_exit_statement) return 0;
+                
+                int have_attribute = 0;
+                for(struct atom *check = &globals.one_before_first_extended_attribute + 1; check < &globals.one_past_last_extended_attribute; check += 1){
+                    if(atoms_match(*check, token->atom)){
+                        have_attribute = 1;
+                        break;
+                    }
+                }
+                
+                value = have_attribute;
+                is_unsigned = 0;
             }else{
                 if(!context->static_if_evaluate_should_skip_undefined_identifier){
                     report_warning(context, WARNING_undefined_static_if_operand, test, "Undefined identifier in '#if' operand gets evaluated to zero.");
@@ -3368,6 +3390,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     
                                     define = node->define;
                                     define_token = node->parameter_token_start[-1];
+                                    
+                                    token = &define_token;
                                     
                                     // Copy the parameter tokens.
                                     struct token *parameter_token_start = node->parameter_token_start;

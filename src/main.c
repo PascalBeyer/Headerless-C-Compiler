@@ -546,6 +546,10 @@ static struct{
     struct file invalid_file;
     struct atom keyword_cdecl;
     struct atom keyword_stdcall;
+    
+    // extended attributes:
+    struct atom one_before_first_extended_attribute;
+    
     struct atom keyword_dllimport;
     struct atom keyword_dllexport;
     struct atom keyword_thread;
@@ -558,11 +562,16 @@ static struct{
     struct atom keyword_noinline;
     struct atom keyword_selectany;
     struct atom keyword_intrin_type;
+    struct atom keyword_constructor;
+    struct atom keyword___constructor__;
+    struct atom keyword_cleanup;
     
     // hlc declspecs
     struct atom keyword_inline_asm;
     struct atom keyword_packed;
     struct atom keyword_printlike;
+    
+    struct atom one_past_last_extended_attribute;
     
     struct atom pragma_once;
     struct atom pragma_pack;
@@ -2803,6 +2812,14 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
         has_include_builtin->defined_token = &globals.invalid_token;
         register_define(context, has_include_builtin);
         
+        struct define_node *has_attribute_builtin = push_struct(&context->scratch, struct define_node);
+        has_attribute_builtin->name = atom_for_string(string("__has_attribute"));
+        has_attribute_builtin->builtin_define_type = BUILTIN_DEFINE_has_attribute;
+        has_attribute_builtin->is_builtin = 1;
+        has_attribute_builtin->is_function_like = 1;
+        has_attribute_builtin->defined_token = &globals.invalid_token;
+        register_define(context, has_attribute_builtin);
+        
         struct define_node *defined___pragma = push_struct(&context->scratch, struct define_node);
         defined___pragma->name = atom_for_string(string("__pragma"));
         defined___pragma->builtin_define_type = BUILTIN_DEFINE__pragma;
@@ -4710,6 +4727,9 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.keyword_noinline    = atom_for_string(string("noinline"));
         globals.keyword_selectany   = atom_for_string(string("selectany"));
         globals.keyword_intrin_type = atom_for_string(string("intrin_type"));
+        globals.keyword_constructor = atom_for_string(string("constructor"));
+        globals.keyword___constructor__ = atom_for_string(string("__constructor__"));
+        globals.keyword_cleanup = atom_for_string(string("cleanup"));
         
         // hlc declspecs
         globals.keyword_inline_asm = atom_for_string(string("inline_asm"));

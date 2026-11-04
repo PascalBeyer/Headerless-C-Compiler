@@ -8129,7 +8129,7 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_printlike, directive, "__declspec(printlike)");
         }else if(atoms_match(directive_string, globals.keyword_thread)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_thread_local, directive, "__declspec(thread)");
-        }else if(atoms_match(directive_string, atom_for_string(string("constructor"))) || atoms_match(directive_string, atom_for_string(string("__constructor__")))){
+        }else if(atoms_match(directive_string, globals.keyword_constructor) || atoms_match(directive_string, globals.keyword___constructor__)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_constructor, directive, "constructor");
             
             struct token *constructor_argument = peek_token_eat(context, TOKEN_open_paren);
@@ -8141,9 +8141,9 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
         }else if(atoms_match(directive_string, globals.keyword_transparent_union) || atoms_match(directive->atom, globals.keyword___transparent_union__)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_transparent_union, directive, "__declspec(transparent_union)");
             specifiers->transparent_union_token = directive;
-        }else if(atoms_match(directive_string, atom_for_string(string("cleanup")))){
-            expect_token(context, TOKEN_open_paren, "Expected '('. cleanup attribute needs an argument.");
-            struct token *cleanup_function = expect_token(context, TOKEN_identifier, "Expected a function as argument of cleanup attribute.");
+        }else if(atoms_match(directive_string, globals.keyword_cleanup)){
+            expect_token(context, TOKEN_open_paren, "Expected '('. cleanup-attribute needs an argument.");
+            struct token *cleanup_function = expect_token(context, TOKEN_identifier, "Expected a function as argument of cleanup-attribute.");
             if(specifiers->cleanup_function){
                 begin_error_report(context);
                 report_error(context, cleanup_function, "Cannot register more than one cleanup-function per declaration.");
