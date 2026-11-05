@@ -6527,9 +6527,9 @@ case NUMBER_KIND_##type:{ \
                         struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)op_lhs->resolved_type;
                         struct ast_type *type = pointer_type->pointer_to;
                         
-                        if(type->kind == AST_function_type){
-                            report_error(context, stack_entry->token, "Cannot subtract function pointers.");
-                        }
+                        // Apparently, this and void * both legal on linux.
+                        // Should warn though.
+                        // if(type->kind == AST_function_type){ report_error(context, stack_entry->token, "Cannot subtract function pointers.");}
                         
                         if(type->kind == AST_unresolved_type){
                             if(context->current_scope){
