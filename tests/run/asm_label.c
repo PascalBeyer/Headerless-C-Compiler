@@ -1,4 +1,5 @@
 // run
+// os linux
 
 // glibc declares the POSIX strerror_r as:
 //
