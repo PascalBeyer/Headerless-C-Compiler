@@ -3123,6 +3123,13 @@ void write_elf_object(struct string output_file_path, struct memory_arena *arena
         struct context *thread_context = globals.thread_infos[thread_index].context;
         
         for_ast_list(thread_context->global_struct_and_array_literals){
+            struct ast_declaration *literal_declaration = (struct ast_declaration *)it->value;
+            
+            // These literals are emitted into .data, so their initializer
+            // relocations must also be emitted even though no named symbol
+            // directly references the anonymous declaration.
+            literal_declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
+            
             ast_list_append(&initialized_declarations, arena, it->value);
         }
     }
