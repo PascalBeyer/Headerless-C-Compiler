@@ -1831,6 +1831,35 @@ func struct emit_location *emit_location_register_relative_copy(struct context *
     return copy;
 }
 
+func struct emit_location *emit_location_copy(struct context *context, struct emit_location *source){
+    if(source->state == EMIT_LOCATION_register_relative){
+        return emit_location_register_relative_copy(context, source);
+    }
+    
+    if(source->state == EMIT_LOCATION_immediate || source->state == EMIT_LOCATION_conditional){
+        struct emit_location *copy = push_uninitialized_struct(&context->scratch, struct emit_location);
+        *copy = *source;
+        return copy;
+    }
+    
+    assert(source->state == EMIT_LOCATION_loaded);
+    
+    enum register_kind kind = get_register_kind_for_type(source->type);
+    enum register_encoding new_register = allocate_register(context, kind);
+    
+    
+    emit_location_prevent_freeing(context, source);
+    struct emit_location *copy;
+    if(kind == REGISTER_KIND_gpr){
+        copy = emit_load_into_specific_gpr(context, source, new_register);
+    }else{
+        copy = emit_load_float_into_specific_register(context, source, new_register);
+    }
+    emit_location_allow_freeing(context, source);
+    
+    return copy;
+}
+
 func u64 integer_literal_to_bytes(struct ir *ast){
     assert(ast->kind == IR_integer_literal);
     struct ir_integer_literal *lit = (struct ir_integer_literal *)ast;
@@ -6004,7 +6033,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 struct emit_location *top = emit_location_stack[emit_location_stack_at-1];
                 
-                struct emit_location *copy = emit_location_register_relative_copy(context, top);
+                struct emit_location *copy = emit_location_copy(context, top);
                 
                 emit_location_stack_at += 1;
                 emit_location_stack[emit_location_stack_at-1] = copy;
@@ -6016,7 +6045,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct emit_location *lhs = emit_location_stack[emit_location_stack_at-2];
                 struct emit_location *rhs = emit_location_stack[emit_location_stack_at-1];
                 
-                struct emit_location *copy = emit_location_register_relative_copy(context, lhs);
+                struct emit_location *copy = emit_location_copy(context, lhs);
                 
                 emit_location_stack_at += 1;
                 emit_location_stack[emit_location_stack_at-1] = rhs;
