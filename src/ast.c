@@ -768,6 +768,9 @@ struct ast_compound_type{
     struct token *identifier;
     struct compilation_unit *compilation_unit;
     
+    // For enums, the implementation-defined compatible integer type.
+    struct ast_type *enum_underlying_type;
+    
     // A dynamic array for the members.
     // Contains both the linear members (meaning unnamed members "expanded") 
     // as well as the nested members. :member_list_contains_both_linear_and_nested

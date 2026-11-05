@@ -8949,15 +8949,23 @@ case TOKEN_##type_name:{                                                 \
                     report_error(context, token, "Declaration specifies more than one data type.");
                 }
                 
+                struct declaration_specifiers enum_specifiers = {0};
+                
+                while(peek_token_eat(context, TOKEN_declspec)){
+                    parse_extended_attribute(context, &enum_specifiers);
+                }
+                
                 struct token *name = peek_token_eat(context, TOKEN_identifier);
+                
+                while(peek_token_eat(context, TOKEN_declspec)){
+                    parse_extended_attribute(context, &enum_specifiers);
+                }
+                
+                int is_packed = (enum_specifiers.specifier_flags & SPECIFIER_packed) != 0;
                 
                 if(peek_token_eat(context, TOKEN_open_curly)){
                     struct ast_compound_type *ast_enum = parser_compound_type_push(context, enum);
                     
-                    // "each enumerated type should be compatible with a signed or unsinged integer type. Implementation
-                    //  defined but should be able to hold all of the members" -> we are lazy: int
-                    ast_enum->base.size = 4;
-                    ast_enum->base.alignment = 4;
                     if(name){
                         ast_enum->identifier = name;
                     }else{
@@ -8966,18 +8974,51 @@ case TOKEN_##type_name:{                                                 \
                     
                     if(!context->sleeping_ident && name) context->sleeping_ident = name;
                     
+                    u64 largest_positive_value = 0;
+                    s64 largest_negative_value = 0;
+                    
+                    int is_signed = 0;
                     s64 current_value = 0;
                     do{
                         if(peek_token_eat(context, TOKEN_closed_curly)) goto enum_skip_curly;
                         
                         struct token *ident = expect_token(context, TOKEN_identifier, "Expected an identifier in enum declaration.");
                         
+                        struct declaration_specifiers token_value_attributes = zero_struct;
+                        
+                        while(peek_token_eat(context, TOKEN_declspec)){
+                            parse_extended_attribute(context, &token_value_attributes);
+                        }
+                        
                         if(peek_token_eat(context, TOKEN_equals)){
                             struct expr const_expr = parse_constant_integer_expression(context, true, "Enum expression needs to be a constant integer.");
                             
-                            current_value = integer_literal_as_s64(&const_expr);
+                            if(type_is_signed(const_expr.resolved_type)){
+                                current_value = integer_literal_as_s64(&const_expr);
+                                if(current_value < 0){
+                                    is_signed = 1;
+                                    if(current_value < largest_negative_value){
+                                        largest_negative_value = current_value;
+                                    }
+                                }else if(largest_positive_value < (u64)current_value){
+                                    largest_positive_value = (u64)current_value;
+                                }
+                            }else{
+                                current_value = integer_literal_as_u64(&const_expr);
+                                if(largest_positive_value < (u64)current_value){
+                                    largest_positive_value = (u64)current_value;
+                                }
+                            }
                         }
                         
+                        while(peek_token_eat(context, TOKEN_declspec)){
+                            parse_extended_attribute(context, &token_value_attributes);
+                        }
+                        
+                        struct ir_integer_literal *literal = push_uninitialized_struct(context->arena, struct ir_integer_literal);
+                        literal->base.kind = IR_integer_literal;
+                        
+#if _WIN32
                         // @note: allow to u32_max, as enums are often used as flag-constants and it just does not matter
                         //        whether its s32 or u32.
                         
@@ -8988,15 +9029,30 @@ case TOKEN_##type_name:{                                                 \
                             // @cleanup: report a warning?
                             current_value = (s32)current_value;
                         }else{
-                            report_error(context, token, "Enum members are ints, this member is outside of the range of the enum. Member is %lld range is [%d, %u].", current_value, s32_min, u32_max);
+                            report_error(context, token, "Enum members are 32-bit, this member is outside of the range of the enum. Member is %lld range is [%d, %u].", current_value, s32_min, u32_max);
                         }
                         
-                        
                         // "an identifier declared as an enumeration constant has type int".
-                        struct ir_integer_literal *literal = push_uninitialized_struct(context->arena, struct ir_integer_literal);
-                        literal->base.kind = IR_integer_literal;
+                        
                         literal->_s32 = (s32)current_value;
                         literal->type = &globals.typedef_s32;
+#else
+                        struct ast_type *type;
+                        if(s32_min <= current_value && current_value <= s32_max){
+                            type = &globals.typedef_s32;
+                        }else if(s32_max < current_value && current_value <= u32_max){
+                            type = &globals.typedef_u32;
+                        }else if(u32_max <= current_value && (u64)current_value <= s64_max){
+                            type = &globals.typedef_s64;
+                        }else if(is_signed){
+                            type = &globals.typedef_s64;
+                        }else{
+                            type = &globals.typedef_u64;
+                        }
+                        
+                        literal->_s64 = current_value;
+                        literal->type = type;
+#endif
                         
                         //
                         // the c-spec says: enum members are ints, and the enum is of a size that can hold all enum members
@@ -9013,6 +9069,16 @@ case TOKEN_##type_name:{                                                 \
                         
                         register_compound_member(context, ast_enum, ident, &ast_enum->base, current_value, /*next_member_increment*/0);
                         
+                        // Implicitly incremented enumerators also affect the
+                        // compatible integer type. For example, { A = 255, B }
+                        // needs an unsigned short, not an unsigned char.
+                        if(current_value < 0){
+                            is_signed = 1;
+                            if(current_value < largest_negative_value) largest_negative_value = current_value;
+                        }else if((u64)current_value > largest_positive_value){
+                            largest_positive_value = (u64)current_value;
+                        }
+                        
                         current_value++;
                     }while(peek_token_eat(context, TOKEN_comma));
                     
@@ -9025,8 +9091,78 @@ case TOKEN_##type_name:{                                                 \
                         register_compound_type(context, &ast_enum->base, ast_enum->identifier);
                     }
                     
+                    // "Each enumerated type should be compatible with a signed or unsigned integer type. 
+                    //  Implementation defined but should be able to hold all of the members"
+                    //  
+                    //  On Windows, all enumerations are essentially int.
+                    //  On Linux, it depends:
+                    //      if all values are unsigned, it is unsigned int
+                    //      if there are negative values, it is signed int
+                    //      if it is "packed", it is the smallest type that can hold all values.
+                    //      
+                    
+                    if(!is_packed){
+#if _WIN32
+                        specifiers.type_specifier = &globals.typedef_s32;
+#else
+                        if(largest_negative_value == 0){
+                            if(largest_positive_value <= max_u32){
+                                specifiers.type_specifier = &globals.typedef_u32;
+                            }else{
+                                specifiers.type_specifier = &globals.typedef_u64;
+                            }
+                        }else{
+                            if(largest_positive_value <= max_s32 && largest_negative_value >= min_s32){
+                                specifiers.type_specifier = &globals.typedef_s32;
+                            }else{
+                                specifiers.type_specifier = &globals.typedef_s64;
+                            }
+                        }
+#endif
+                    }else{
+                        if(largest_negative_value == 0){
+                            if(largest_positive_value <= max_u8){
+                                specifiers.type_specifier = &globals.typedef_u8;
+                            }else if(largest_positive_value <= max_u16){
+                                specifiers.type_specifier = &globals.typedef_u16;
+                            }else if(largest_positive_value <= max_u32){
+                                specifiers.type_specifier = &globals.typedef_u32;
+                            }else{
+                                specifiers.type_specifier = &globals.typedef_u64;
+                            }
+                        }else{
+                            struct ast_type *negative_needed;
+                            
+                            if(min_s8 <= largest_negative_value){
+                                negative_needed = &globals.typedef_s8;
+                            }else if(min_s16 <= largest_negative_value){
+                                negative_needed = &globals.typedef_s16;
+                            }else if(min_s32 <= largest_negative_value){
+                                negative_needed = &globals.typedef_s32;
+                            }else{
+                                negative_needed = &globals.typedef_s64;
+                            }
+                            
+                            struct ast_type *positive_needed;
+                            if(largest_positive_value <= max_s8){
+                                positive_needed = &globals.typedef_s8;
+                            }else if(largest_positive_value <= max_s16){
+                                positive_needed = &globals.typedef_s16;
+                            }else if(largest_positive_value <= max_s32){
+                                positive_needed = &globals.typedef_s32;
+                            }else{
+                                positive_needed = &globals.typedef_s64;
+                            }
+                            
+                            specifiers.type_specifier = negative_needed->size > positive_needed->size ? negative_needed : positive_needed;
+                        }
+                    }
+                    
                     specifiers.defined_type_specifier = &ast_enum->base.kind;
-                    specifiers.type_specifier = &globals.typedef_s32;
+                    
+                    ast_enum->enum_underlying_type = specifiers.type_specifier;
+                    ast_enum->base.size      = specifiers.type_specifier->size;
+                    ast_enum->base.alignment = specifiers.type_specifier->alignment;
                 }else{ // no open curly
                     if(!name){
                         report_syntax_error(context, get_current_token_for_error_report(context), "Expected an identifier or '{' after 'enum'.");
@@ -9046,7 +9182,13 @@ case TOKEN_##type_name:{                                                 \
                         }
                         
                         specifiers.defined_type_specifier = &lookup->kind;
-                        specifiers.type_specifier = &globals.typedef_s32;
+                        
+                        if(lookup->kind == AST_enum){
+                            struct ast_compound_type *enum_type = (struct ast_compound_type *)lookup;
+                            specifiers.type_specifier = enum_type->enum_underlying_type ? enum_type->enum_underlying_type : &globals.typedef_s32;
+                        }else{
+                            specifiers.type_specifier = &globals.typedef_s32; // @cleanup: This is probably incorrect on linux. We should sleep i think.
+                        }
                     }
                 }
             }break;
