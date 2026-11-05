@@ -565,6 +565,7 @@ static struct{
     struct atom keyword_constructor;
     struct atom keyword___constructor__;
     struct atom keyword_cleanup;
+    struct atom keyword_fallthrough;
     
     // hlc declspecs
     struct atom keyword_inline_asm;
@@ -3437,7 +3438,8 @@ func void worker_parse_global_scope_entry(struct context *context, struct work_q
         return;
     }
     
-    struct declaration_list declaration_list = parse_declaration_list(context, null, null);
+    struct declaration_specifiers specifiers = {0};
+    struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
     if(context->error) return;
     if(context->should_sleep){
         struct token *sleep_on = context->sleep_on;
@@ -4734,6 +4736,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.keyword_constructor = atom_for_string(string("constructor"));
         globals.keyword___constructor__ = atom_for_string(string("__constructor__"));
         globals.keyword_cleanup = atom_for_string(string("cleanup"));
+        globals.keyword_fallthrough = atom_for_string(string("fallthrough"));
         
         // hlc declspecs
         globals.keyword_inline_asm = atom_for_string(string("inline_asm"));

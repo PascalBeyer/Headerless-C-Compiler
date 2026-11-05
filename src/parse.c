@@ -1221,6 +1221,7 @@ enum declaration_specifier_flag{
     SPECIFIER_intrin_type = 0x8000,
     SPECIFIER_transparent_union = 0x10000,
     
+    SPECIFIER_fallthrough = 0x20000,
 };
 
 struct declaration_specifiers{
@@ -1241,18 +1242,12 @@ func struct expr invalid_ast(struct context *context){
 }
 
 // :forward_declarations :predeclarations
-func struct declaration_specifiers parse_declaration_specifiers(struct context *context, struct ast_type *optional_type_specifier, enum ast_kind *optional_defined_type_speicifer);
+func void parse_declaration_specifiers(struct context *context, struct declaration_specifiers *specifiers);
 func struct expr parse_expression(struct context *context, b32 should_skip_comma_expression);
 func void parse_imperative_scope(struct context *context);
-func struct declaration_list parse_declaration_list(struct context *context, struct ast_type *optional_type, enum ast_kind *optional_defined_type);
-func struct declarator_return parse_declarator(struct context *context, struct ast_type *initial_type, enum ast_kind *initial_defined_type, enum declarator_kind_flags declarator_kind_flags);
 
-func int parse_declaration_list_in_imperative_scope(struct context *context, struct ast_type *optional_type, enum ast_kind *optional_defined_type){
-    assert(context->current_scope);
-    
-    struct declaration_list declaration_list = parse_declaration_list(context, optional_type, optional_defined_type);
-    return declaration_list.is_function_definition != null;
-}
+func struct declaration_list parse_declaration_list(struct context *context, struct declaration_specifiers *optional_specifiers);
+func struct declarator_return parse_declarator(struct context *context, struct ast_type *initial_type, enum ast_kind *initial_defined_type, enum declarator_kind_flags declarator_kind_flags);
 
 func struct ast_type *push_unresolved_type(struct context *context, struct token *sleep_on, enum ast_kind kind){
     
@@ -1709,7 +1704,12 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
     }
     
     
-    struct declaration_specifiers specifiers = parse_declaration_specifiers(context, type_specifier, defined_type_specifier);
+    struct declaration_specifiers specifiers = {
+        .type_specifier = type_specifier,
+        .defined_type_specifier = defined_type_specifier,
+    };
+    
+    parse_declaration_specifiers(context, &specifiers);
     if(context->should_exit_statement) return ret;
     
     ret.type = specifiers.type_specifier;
@@ -7866,7 +7866,7 @@ case NUMBER_KIND_##type:{ \
                     expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
                     if(context->should_exit_statement) return operand;
                 }
-                    
+                
                 struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, &if_true);
                 
                 if(!is_true){
@@ -8174,6 +8174,8 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_printlike, directive, "__declspec(printlike)");
         }else if(atoms_match(directive_string, globals.keyword_thread)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_thread_local, directive, "__declspec(thread)");
+        }else if(atoms_match(directive_string, globals.keyword_fallthrough)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_fallthrough, directive, "__attribute__(fallthrough)");
         }else if(atoms_match(directive_string, globals.keyword_constructor) || atoms_match(directive_string, globals.keyword___constructor__)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_constructor, directive, "constructor");
             
@@ -8216,16 +8218,12 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
     }
 }
 
-func struct declaration_specifiers parse_declaration_specifiers(struct context *context, struct ast_type *optional_type_specifier, enum ast_kind *optional_defined_type_specifier){
-    
-    struct declaration_specifiers specifiers = zero_struct;
-    specifiers.type_specifier         = optional_type_specifier;
-    specifiers.defined_type_specifier = optional_defined_type_specifier;
+func void parse_declaration_specifiers(struct context *context, struct declaration_specifiers *specifiers){
     
     if(maybe_report_error_for_stack_exhaustion(context, "Type nests too deep.")){
-        specifiers.type_specifier = &globals.typedef_poison;
-        specifiers.defined_type_specifier = 0;
-        return specifiers;
+        specifiers->type_specifier = &globals.typedef_poison;
+        specifiers->defined_type_specifier = 0;
+        return;
     }
     
     enum{
@@ -8269,19 +8267,19 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             // Storage class specifiers (typedef, extern, static, _Thread_local, auto, register)
             //
             case TOKEN_typedef:{
-                check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_typedef, token, "typedef");
+                check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_typedef, token, "typedef");
             }break;
             case TOKEN_extern:{
-                check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_extern, token, "extern");
+                check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_extern, token, "extern");
             }break;
             case TOKEN_static:{
-                check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_static, token, "static");
+                check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_static, token, "static");
             }break;
             case TOKEN_register:{
-                check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_register, token, "register");
+                check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_register, token, "register");
             }break;
             case TOKEN_thread_local:{
-                check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_thread_local, token, "thread_local");
+                check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_thread_local, token, "thread_local");
             }break;
             
             case TOKEN_pragma_pack:{
@@ -8292,11 +8290,11 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             // Function specifiers (inline, _Noreturn) @cleanup: these should only be allowed for functions
             //
             case TOKEN_noreturn:{
-                check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_noreturn, token, "noreturn");
+                check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_noreturn, token, "noreturn");
             }break;
             case TOKEN_inline:
             case TOKEN_forceinline:{
-                check_and_set_declaration_specifier_flag(context, &specifiers, SPECIFIER_inline, token, "inline");
+                check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_inline, token, "inline");
             }break;
             
             //
@@ -8319,13 +8317,13 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                     
                     expect_token(context, TOKEN_closed_paren, "Expected a ')' after '_Atomic(<...>'");
                     
-                    if(specifiers.type_specifier || c_type != C_TYPE_none){
+                    if(specifiers->type_specifier || c_type != C_TYPE_none){
                         report_error(context, token, "Declaration specifies more than one data type.");
                     }
                     
                     // @note: The type will be adjust later on.
-                    specifiers.type_specifier = type_info.type;
-                    specifiers.defined_type_specifier = type_info.defined_type;
+                    specifiers->type_specifier = type_info.type;
+                    specifiers->defined_type_specifier = type_info.defined_type;
                 }
             }break;
             
@@ -8358,12 +8356,12 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
                         value = 1;
                     }
                     
-                    if(specifiers.alignment){
+                    if(specifiers->alignment){
                         // @cleanup: warn here!
                         // report_warning(context, WARNING_alignment_specified_more_then_once, "Alignment");
-                        specifiers.alignment = max_of(specifiers.alignment, value);
+                        specifiers->alignment = max_of(specifiers->alignment, value);
                     }else{
-                        specifiers.alignment = value;
+                        specifiers->alignment = value;
                     }
                 }
                 
@@ -8374,7 +8372,7 @@ func struct declaration_specifiers parse_declaration_specifiers(struct context *
             // __declspec (storage-class specifier).
             //
             case TOKEN_declspec:{
-                parse_extended_attribute(context, &specifiers);
+                parse_extended_attribute(context, specifiers);
             }break;
             
 #define case_c_type(type_name)                                \
@@ -8413,7 +8411,7 @@ case TOKEN_##type_name:{                                                 \
             case_c_type(void);
             
             case TOKEN_struct: case TOKEN_union:{
-                if(specifiers.type_specifier || c_type != C_TYPE_none){
+                if(specifiers->type_specifier || c_type != C_TYPE_none){
                     report_error(context, token, "Declaration specifies more than one data type.");
                 }
                 
@@ -8478,8 +8476,8 @@ case TOKEN_##type_name:{                                                 \
                             report_error(context, name, "Got '%s %.*s', but '%.*s' is %s.", union_or_struct, name->size, name->data, name->size, name->data, error);
                         }
                         
-                        specifiers.type_specifier         = lookup;
-                        specifiers.defined_type_specifier = null;
+                        specifiers->type_specifier         = lookup;
+                        specifiers->defined_type_specifier = null;
                     }
                 }else{
                     if(!context->sleeping_ident && name) context->sleeping_ident = name;
@@ -8538,7 +8536,9 @@ case TOKEN_##type_name:{                                                 \
                         //     type-qualifier specifier-qualifier-list_opt
                         // 
                         
-                        struct declaration_specifiers struct_specifiers = parse_declaration_specifiers(context, null, null);
+                        struct declaration_specifiers struct_specifiers = {0};
+                        parse_declaration_specifiers(context, &struct_specifiers);
+                        
                         struct ast_type *lhs_type    = struct_specifiers.type_specifier;
                         enum ast_kind *lhs_defined_type = struct_specifiers.defined_type_specifier;
                         
@@ -8942,12 +8942,12 @@ case TOKEN_##type_name:{                                                 \
                         compound->base.flags |= TYPE_FLAG_is_transparent_union;
                     }
                     
-                    specifiers.type_specifier = &compound->base;
+                    specifiers->type_specifier = &compound->base;
                 }
             }break;
             
             case TOKEN_enum:{
-                if(specifiers.type_specifier || c_type != C_TYPE_none){
+                if(specifiers->type_specifier || c_type != C_TYPE_none){
                     report_error(context, token, "Declaration specifies more than one data type.");
                 }
                 
@@ -9105,32 +9105,32 @@ case TOKEN_##type_name:{                                                 \
                     
                     if(!is_packed){
 #if _WIN32
-                        specifiers.type_specifier = &globals.typedef_s32;
+                        specifiers->type_specifier = &globals.typedef_s32;
 #else
                         if(largest_negative_value == 0){
                             if(largest_positive_value <= max_u32){
-                                specifiers.type_specifier = &globals.typedef_u32;
+                                specifiers->type_specifier = &globals.typedef_u32;
                             }else{
-                                specifiers.type_specifier = &globals.typedef_u64;
+                                specifiers->type_specifier = &globals.typedef_u64;
                             }
                         }else{
                             if(largest_positive_value <= max_s32 && largest_negative_value >= min_s32){
-                                specifiers.type_specifier = &globals.typedef_s32;
+                                specifiers->type_specifier = &globals.typedef_s32;
                             }else{
-                                specifiers.type_specifier = &globals.typedef_s64;
+                                specifiers->type_specifier = &globals.typedef_s64;
                             }
                         }
 #endif
                     }else{
                         if(largest_negative_value == 0){
                             if(largest_positive_value <= max_u8){
-                                specifiers.type_specifier = &globals.typedef_u8;
+                                specifiers->type_specifier = &globals.typedef_u8;
                             }else if(largest_positive_value <= max_u16){
-                                specifiers.type_specifier = &globals.typedef_u16;
+                                specifiers->type_specifier = &globals.typedef_u16;
                             }else if(largest_positive_value <= max_u32){
-                                specifiers.type_specifier = &globals.typedef_u32;
+                                specifiers->type_specifier = &globals.typedef_u32;
                             }else{
-                                specifiers.type_specifier = &globals.typedef_u64;
+                                specifiers->type_specifier = &globals.typedef_u64;
                             }
                         }else{
                             struct ast_type *negative_needed;
@@ -9156,15 +9156,15 @@ case TOKEN_##type_name:{                                                 \
                                 positive_needed = &globals.typedef_s64;
                             }
                             
-                            specifiers.type_specifier = negative_needed->size > positive_needed->size ? negative_needed : positive_needed;
+                            specifiers->type_specifier = negative_needed->size > positive_needed->size ? negative_needed : positive_needed;
                         }
                     }
                     
-                    specifiers.defined_type_specifier = &ast_enum->base.kind;
+                    specifiers->defined_type_specifier = &ast_enum->base.kind;
                     
-                    ast_enum->enum_underlying_type = specifiers.type_specifier;
-                    ast_enum->base.size      = specifiers.type_specifier->size;
-                    ast_enum->base.alignment = specifiers.type_specifier->alignment;
+                    ast_enum->enum_underlying_type = specifiers->type_specifier;
+                    ast_enum->base.size      = specifiers->type_specifier->size;
+                    ast_enum->base.alignment = specifiers->type_specifier->alignment;
                 }else{ // no open curly
                     if(!name){
                         report_syntax_error(context, get_current_token_for_error_report(context), "Expected an identifier or '{' after 'enum'.");
@@ -9183,13 +9183,13 @@ case TOKEN_##type_name:{                                                 \
                             report_error(context, name, "Got 'enum %.*s' but '%.*s' is %s.", name->size, name->data, name->size, name->data, error);
                         }
                         
-                        specifiers.defined_type_specifier = &lookup->kind;
+                        specifiers->defined_type_specifier = &lookup->kind;
                         
                         if(lookup->kind == AST_enum){
                             struct ast_compound_type *enum_type = (struct ast_compound_type *)lookup;
-                            specifiers.type_specifier = enum_type->enum_underlying_type ? enum_type->enum_underlying_type : &globals.typedef_s32;
+                            specifiers->type_specifier = enum_type->enum_underlying_type ? enum_type->enum_underlying_type : &globals.typedef_s32;
                         }else{
-                            specifiers.type_specifier = &globals.typedef_s32; // @cleanup: This is probably incorrect on linux. We should sleep i think.
+                            specifiers->type_specifier = &globals.typedef_s32; // @cleanup: This is probably incorrect on linux. We should sleep i think.
                         }
                     }
                 }
@@ -9199,7 +9199,7 @@ case TOKEN_##type_name:{                                                 \
                 // 
                 // Enable shadowing of typedefs.
                 // 
-                if(specifiers.type_specifier || c_type){
+                if(specifiers->type_specifier || c_type){
                     prev_token(context);
                     should_break = 1;
                     break;
@@ -9213,8 +9213,8 @@ case TOKEN_##type_name:{                                                 \
                     // If it is a typedef to an unresolved type, we just give back an unresolved type and its fine.
                     // This is treated the same way 'struct unresolved' would be.
                     
-                    specifiers.defined_type_specifier = &ast_typedef->kind;
-                    specifiers.type_specifier = ast_typedef->type;
+                    specifiers->defined_type_specifier = &ast_typedef->kind;
+                    specifiers->type_specifier = ast_typedef->type;
                 }else{
                     if(globals.compile_stage < COMPILE_STAGE_parse_function){
                         parser_sleep(context, token, SLEEP_on_decl);
@@ -9222,7 +9222,7 @@ case TOKEN_##type_name:{                                                 \
                         report_error(context, token, "Undeclared identifier.");
                     }
                     
-                    specifiers.type_specifier = &globals.typedef_poison;
+                    specifiers->type_specifier = &globals.typedef_poison;
                 }
             }break;
             
@@ -9241,7 +9241,7 @@ case TOKEN_##type_name:{                                                 \
                 memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
                 context->ir_arena.current = ir_arena_start;
                 
-                specifiers.type_specifier = operand.resolved_type;
+                specifiers->type_specifier = operand.resolved_type;
             }break;
             
             default:{
@@ -9251,152 +9251,152 @@ case TOKEN_##type_name:{                                                 \
         }
     }
     
-    if(specifiers.type_specifier && c_type != C_TYPE_none){
+    if(specifiers->type_specifier && c_type != C_TYPE_none){
         // @note: This can happen for 'size_t int' or something.
         report_error(context, get_current_token_for_error_report(context), "Declaration specifies more than one data type.");
     }
     
-    if(!specifiers.type_specifier && c_type == C_TYPE_none){
+    if(!specifiers->type_specifier && c_type == C_TYPE_none){
         report_error(context, get_current_token_for_error_report(context), "Expected a type.");
     }
     
     if(context->should_exit_statement){
-        specifiers.type_specifier = &globals.typedef_poison;
-        specifiers.defined_type_specifier = null;
-        return specifiers;
+        specifiers->type_specifier = &globals.typedef_poison;
+        specifiers->defined_type_specifier = null;
+        return;
     }
     
     if(c_type != C_TYPE_none){
         
         switch((int)c_type){
             
-            case C_TYPE_void: specifiers.type_specifier = &globals.typedef_void; break;
+            case C_TYPE_void: specifiers->type_specifier = &globals.typedef_void; break;
             
-            case C_TYPE_Bool: specifiers.type_specifier = &globals.typedef_Bool; break;
+            case C_TYPE_Bool: specifiers->type_specifier = &globals.typedef_Bool; break;
             
-            case C_TYPE_unsigned: specifiers.type_specifier = &globals.typedef_u32; break;
-            case C_TYPE_signed:   specifiers.type_specifier = &globals.typedef_s32; break;
-            case C_TYPE_char:     specifiers.type_specifier = &globals.typedef_s8; break;
-            case C_TYPE_short:    specifiers.type_specifier = &globals.typedef_s16; break;
-            case C_TYPE_int:      specifiers.type_specifier = &globals.typedef_s32; break;
+            case C_TYPE_unsigned: specifiers->type_specifier = &globals.typedef_u32; break;
+            case C_TYPE_signed:   specifiers->type_specifier = &globals.typedef_s32; break;
+            case C_TYPE_char:     specifiers->type_specifier = &globals.typedef_s8; break;
+            case C_TYPE_short:    specifiers->type_specifier = &globals.typedef_s16; break;
+            case C_TYPE_int:      specifiers->type_specifier = &globals.typedef_s32; break;
             
 #ifdef _WIN32
-            case C_TYPE_long:     specifiers.type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_unsigned | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u32; break;
-            case (C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s32; break;
+            case C_TYPE_long:     specifiers->type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_unsigned | C_TYPE_long):  specifiers->type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long):  specifiers->type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s32; break;
 #else
-            case C_TYPE_long:     specifiers.type_specifier = &globals.typedef_s64; break;
-            case (C_TYPE_unsigned | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_u64; break;
-            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u64; break;
-            case (C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
-            case (C_TYPE_signed | C_TYPE_long):  specifiers.type_specifier = &globals.typedef_s64; break;
-            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
+            case C_TYPE_long:     specifiers->type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_unsigned | C_TYPE_long):  specifiers->type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_long):  specifiers->type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s64; break;
 #endif
             
-            case (C_TYPE_short | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s16; break;
-            case (C_TYPE_long  | C_TYPE_long_long): specifiers.type_specifier = &globals.typedef_s64; break;
-            case (C_TYPE_long  | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_short | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s16; break;
+            case (C_TYPE_long  | C_TYPE_long_long): specifiers->type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_long  | C_TYPE_long_long | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s64; break;
             
-            case (C_TYPE_unsigned | C_TYPE_char):  specifiers.type_specifier = &globals.typedef_u8; break;
-            case (C_TYPE_unsigned | C_TYPE_short): specifiers.type_specifier = &globals.typedef_u16; break;
-            case (C_TYPE_unsigned | C_TYPE_int):   specifiers.type_specifier = &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long): specifiers.type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_char):  specifiers->type_specifier = &globals.typedef_u8; break;
+            case (C_TYPE_unsigned | C_TYPE_short): specifiers->type_specifier = &globals.typedef_u16; break;
+            case (C_TYPE_unsigned | C_TYPE_int):   specifiers->type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long): specifiers->type_specifier = &globals.typedef_u64; break;
             
-            case (C_TYPE_unsigned | C_TYPE_short | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u16; break;
+            case (C_TYPE_unsigned | C_TYPE_short | C_TYPE_int): specifiers->type_specifier = &globals.typedef_u16; break;
             
-            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers->type_specifier = &globals.typedef_u64; break;
             
-            case (C_TYPE_signed | C_TYPE_char):  specifiers.type_specifier = &globals.typedef_s8; break;
-            case (C_TYPE_signed | C_TYPE_short): specifiers.type_specifier = &globals.typedef_s16; break;
-            case (C_TYPE_signed | C_TYPE_int):   specifiers.type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long): specifiers.type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_char):  specifiers->type_specifier = &globals.typedef_s8; break;
+            case (C_TYPE_signed | C_TYPE_short): specifiers->type_specifier = &globals.typedef_s16; break;
+            case (C_TYPE_signed | C_TYPE_int):   specifiers->type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long): specifiers->type_specifier = &globals.typedef_s64; break;
             
-            case (C_TYPE_signed | C_TYPE_short | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s16; break;
+            case (C_TYPE_signed | C_TYPE_short | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s16; break;
             
-            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers.type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s64; break;
             
-            case C_TYPE_int8:  specifiers.type_specifier = &globals.typedef_s8; break;
-            case C_TYPE_int16: specifiers.type_specifier = &globals.typedef_s16; break;
-            case C_TYPE_int32: specifiers.type_specifier = &globals.typedef_s32; break;
-            case C_TYPE_int64: specifiers.type_specifier = &globals.typedef_s64; break;
+            case C_TYPE_int8:  specifiers->type_specifier = &globals.typedef_s8; break;
+            case C_TYPE_int16: specifiers->type_specifier = &globals.typedef_s16; break;
+            case C_TYPE_int32: specifiers->type_specifier = &globals.typedef_s32; break;
+            case C_TYPE_int64: specifiers->type_specifier = &globals.typedef_s64; break;
             
-            case (C_TYPE_signed | C_TYPE_int8):  specifiers.type_specifier = &globals.typedef_s8; break;
-            case (C_TYPE_signed | C_TYPE_int16): specifiers.type_specifier = &globals.typedef_s16; break;
-            case (C_TYPE_signed | C_TYPE_int32): specifiers.type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_int64): specifiers.type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_int8):  specifiers->type_specifier = &globals.typedef_s8; break;
+            case (C_TYPE_signed | C_TYPE_int16): specifiers->type_specifier = &globals.typedef_s16; break;
+            case (C_TYPE_signed | C_TYPE_int32): specifiers->type_specifier = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_int64): specifiers->type_specifier = &globals.typedef_s64; break;
             
-            case (C_TYPE_unsigned | C_TYPE_int8):  specifiers.type_specifier = &globals.typedef_u8; break;
-            case (C_TYPE_unsigned | C_TYPE_int16): specifiers.type_specifier = &globals.typedef_u16; break;
-            case (C_TYPE_unsigned | C_TYPE_int32): specifiers.type_specifier = &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_int64): specifiers.type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_int8):  specifiers->type_specifier = &globals.typedef_u8; break;
+            case (C_TYPE_unsigned | C_TYPE_int16): specifiers->type_specifier = &globals.typedef_u16; break;
+            case (C_TYPE_unsigned | C_TYPE_int32): specifiers->type_specifier = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_int64): specifiers->type_specifier = &globals.typedef_u64; break;
             
-            case C_TYPE_float:    specifiers.type_specifier = &globals.typedef_f32; break;
-            case C_TYPE_double:   specifiers.type_specifier = &globals.typedef_f64; break;
-            case C_TYPE_float128: specifiers.type_specifier = &globals.typedef_f128; break;
+            case C_TYPE_float:    specifiers->type_specifier = &globals.typedef_f32; break;
+            case C_TYPE_double:   specifiers->type_specifier = &globals.typedef_f64; break;
+            case C_TYPE_float128: specifiers->type_specifier = &globals.typedef_f128; break;
             
 #ifdef _WIN32
-            case (C_TYPE_long | C_TYPE_double): specifiers.type_specifier = &globals.typedef_f64; break;
+            case (C_TYPE_long | C_TYPE_double): specifiers->type_specifier = &globals.typedef_f64; break;
 #else
-            case (C_TYPE_long | C_TYPE_double): specifiers.type_specifier = &globals.typedef_f80; break;
+            case (C_TYPE_long | C_TYPE_double): specifiers->type_specifier = &globals.typedef_f80; break;
 #endif
             
             default:{
                 prev_token(context); // This token is valid, as we just now got a c type.
                 report_error(context, next_token(context), "Invalid combination of base types.");
-                specifiers.type_specifier = &globals.typedef_poison;
+                specifiers->type_specifier = &globals.typedef_poison;
             }break;
         }
     }
     
     if(type_qualifiers & QUALIFIER_atomic){
         
-        if(specifiers.type_specifier->kind != AST_integer_type && specifiers.type_specifier->kind != AST_pointer_type){
+        if(specifiers->type_specifier->kind != AST_integer_type && specifiers->type_specifier->kind != AST_pointer_type){
             report_error(context, get_current_token_for_error_report(context), "_Atomic is currently only implemented for integer and pointer types.");
-            specifiers.type_specifier = &globals.typedef_poison;
+            specifiers->type_specifier = &globals.typedef_poison;
         }else{
-            if(specifiers.type_specifier->kind == AST_integer_type){
+            if(specifiers->type_specifier->kind == AST_integer_type){
                 // :translate_atomic_to_non_atomic_and_back
-                specifiers.type_specifier = specifiers.type_specifier + (&globals.typedef_atomic_bool - &globals.typedef_Bool);
+                specifiers->type_specifier = specifiers->type_specifier + (&globals.typedef_atomic_bool - &globals.typedef_Bool);
             }else{
                 // Atomic pointer type
                 struct ast_pointer_type *copied_pointer = push_uninitialized_struct(context->arena, struct ast_pointer_type);
-                *copied_pointer = *(struct ast_pointer_type *)specifiers.type_specifier;
+                *copied_pointer = *(struct ast_pointer_type *)specifiers->type_specifier;
                 copied_pointer->base.flags |= TYPE_FLAG_is_atomic;
-                specifiers.type_specifier = &copied_pointer->base;
-                specifiers.defined_type_specifier = null;
+                specifiers->type_specifier = &copied_pointer->base;
+                specifiers->defined_type_specifier = null;
             }
         }
     }
     
-    if(specifiers.specifier_flags & SPECIFIER_inline){
-        if(specifiers.specifier_flags & SPECIFIER_extern){
+    if(specifiers->specifier_flags & SPECIFIER_inline){
+        if(specifiers->specifier_flags & SPECIFIER_extern){
             // 
             // extern inline acts as select any.
             // 
-            specifiers.specifier_flags |= SPECIFIER_selectany;
+            specifiers->specifier_flags |= SPECIFIER_selectany;
         }else{
             //
             // If not explicitly extern, inline implies static.
             //
-            specifiers.specifier_flags |= SPECIFIER_static;
+            specifiers->specifier_flags |= SPECIFIER_static;
         }   
     }
-    
-    return specifiers;
 }
 
-func struct declaration_list parse_declaration_list(struct context *context, struct ast_type *type_specifier, enum ast_kind *defined_type_specifier){
+func struct declaration_list parse_declaration_list(struct context *context, struct declaration_specifiers *in_specifiers){
     
     struct declaration_list ret = zero_struct;
     
     // @cleanup: explain this again
     b32 should_set_sleeping_ident = !context->sleeping_ident;
     
-    struct declaration_specifiers specifiers = parse_declaration_specifiers(context, type_specifier, defined_type_specifier);
+    parse_declaration_specifiers(context, in_specifiers);
     if(context->should_exit_statement) goto end;
+    
+    struct declaration_specifiers specifiers = *in_specifiers;
     
     if(specifiers.specifier_flags & SPECIFIER_packed){
         report_error(context, get_current_token_for_error_report(context), "A declaration cannot be '__declspec(packed)'. Please declare a __declspec(packed)-type instead. (I.e please use 'struct __declspec(packed) packed_type' instead of '__declspec(packed) struct packed_type'.");
@@ -10639,8 +10639,13 @@ func void parse_statement(struct context *context){
             
             struct ast_declaration *lookup = lookup_typedef(context, context->current_compilation_unit, initial_token, /*silent*/true);
             if(lookup){
-                int is_function_declaration = parse_declaration_list_in_imperative_scope(context, lookup->type, /*defined_type*/&lookup->kind);
-                if(is_function_declaration) needs_semicolon = false;
+                struct declaration_specifiers specifiers = {
+                    .type_specifier = lookup->type,
+                    .defined_type_specifier = &lookup->kind,
+                };
+                
+                struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
+                if(declaration_list.is_function_definition != null) needs_semicolon = false;
                 break;
             }
             
@@ -10661,10 +10666,22 @@ func void parse_statement(struct context *context){
             }
         }break;
         
+        case TOKEN_declspec:{
+            struct declaration_specifiers specifiers = {0};
+            parse_extended_attribute(context, &specifiers);
+            if(specifiers.specifier_flags == SPECIFIER_fallthrough){
+                // Only fallthrough.
+            }else{
+                struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
+                
+                // @note: A function declaration (which is not a definition) does need a semicolon.
+                if(declaration_list.is_function_definition != null) needs_semicolon = false;
+            }
+        }break;
+        
         // @cleanup: noreturn, inline, ?
         case TOKEN_typeof:
         case TOKEN_alignas: case TOKEN_atomic: 
-        case TOKEN_declspec:
         case TOKEN_unaligned: case TOKEN_restrict:
         case TOKEN_const:    case TOKEN_volatile: case TOKEN_static: case TOKEN_extern: case TOKEN_typedef:
         case TOKEN_register: case TOKEN_signed:   case TOKEN_unsigned:
@@ -10673,10 +10690,12 @@ func void parse_statement(struct context *context){
         case TOKEN_float:    case TOKEN_double:   case TOKEN_float128:
         case TOKEN_struct:   case TOKEN_union:    case TOKEN_enum:{
             prev_token(context);
-            int is_function_definition = parse_declaration_list_in_imperative_scope(context, null, null);
+            
+            struct declaration_specifiers specifiers = {0};
+            struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
             
             // @note: A function declaration (which is not a definition) does need a semicolon.
-            if(is_function_definition) needs_semicolon = false;
+            if(declaration_list.is_function_definition != null) needs_semicolon = false;
         }break;
         
         case TOKEN_asm:{
@@ -11211,7 +11230,8 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                     //     declaration-specifiers
                     // 
                     
-                    struct declaration_specifiers declaration_specifiers = parse_declaration_specifiers(context, null, null);
+                    struct declaration_specifiers declaration_specifiers = {0};
+                    parse_declaration_specifiers(context, &declaration_specifiers);
                     if(context->should_exit_statement) return ret;
                     
                     struct declarator_return declarator = parse_declarator(context, declaration_specifiers.type_specifier, declaration_specifiers.defined_type_specifier, DECLARATOR_type_name | DECLARATOR_identifier);
