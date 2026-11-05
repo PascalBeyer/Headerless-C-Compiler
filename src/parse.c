@@ -10550,14 +10550,19 @@ func void parse_statement(struct context *context){
                     return;
                 }
             }else{
+                
+                struct expr return_expression = parse_expression(context, false);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &return_expression);
+                maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_function_type->return_type, current_function_type->return_type_defined_type, &return_expression, initial_token);
+                
                 // @note: I used to check here that a void-function does not return a value.
                 //        gcc and clang allow returning a void expression from a void function.
                 //        This might be useful for future compatibility I guess...?
                 //        Let's support it for now!
                 
-                struct expr return_expression = parse_expression(context, false);
-                maybe_load_address_for_array_or_function(context, IR_load_address, &return_expression);
-                maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_function_type->return_type, current_function_type->return_type_defined_type, &return_expression, initial_token);
+                if(current_function_type->return_type == &globals.typedef_void){
+                    push_ir(context, IR_pop_expression);
+                }
             }
             
             context->current_statement_returns_a_value = 1;
