@@ -4453,6 +4453,8 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     operand = ast_push_s32_literal(context, 0, open_paren);
                 }
                 
+                operand.ir = push_ir(context, IR_nop); // Prevent constant-propagation.
+                
                 goto skip_primary_expression_because_we_got_a_struct_literal;
             }
             
