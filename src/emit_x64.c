@@ -3183,13 +3183,13 @@ struct emit_location *emit_float_cast(struct context *context, struct emit_locat
     return loaded;
 }
 
-struct emit_location *system_v_load_oddly_sized_type_into_register(struct context *context, struct emit_location *emit_location, enum register_encoding register_to_load_into, enum register_encoding scratch_register){
+struct emit_location *system_v_load_oddly_sized_type_into_register(struct context *context, struct emit_location *emit_location, smm size_left, enum register_encoding register_to_load_into, enum register_encoding scratch_register){
     
     assert(emit_location->state == EMIT_LOCATION_register_relative);
     
     emit_location->prevent_freeing += 1;
     
-    smm odd_size = emit_location->type->size;
+    smm odd_size = size_left;
     
     struct emit_location *ret = 0;
     
@@ -4575,7 +4575,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                         enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
                                         argument = emit_load_into_specific_gpr(context, argument, arg_reg);
                                     }else{
-                                        argument = system_v_load_oddly_sized_type_into_register(context, argument, register_to_load_into, REGISTER_A);
+                                        argument = system_v_load_oddly_sized_type_into_register(context, argument, argument_type->size, register_to_load_into, REGISTER_A);
                                     }
                                     
                                     if(integer_register_at >= 4 || integer_register_at == /*d*/2){
@@ -4628,13 +4628,13 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
                                         enum register_encoding register_to_load_into = integer_argument_registers[integer_register_at];
                                         u32 size = (u32)min_of(size_left, 8);
-                                        argument->type = &globals.typedef_u64;
                                         
                                         if(is_power_of_two(size)){
+                                            argument->type = &globals.typedef_u64;
                                             enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
                                             register_location = emit_load_into_specific_gpr(context, argument, arg_reg);
                                         }else{
-                                            register_location = system_v_load_oddly_sized_type_into_register(context, argument, register_to_load_into, REGISTER_A);
+                                            register_location = system_v_load_oddly_sized_type_into_register(context, argument, size, register_to_load_into, REGISTER_A);
                                         }
                                         
                                         size_left -= size;
@@ -4957,7 +4957,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                         enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
                                         return_location = emit_load_into_specific_gpr(context, return_location, arg_reg);
                                     }else{
-                                        return_location = system_v_load_oddly_sized_type_into_register(context, return_location, register_to_load_into, /*scratch*/REGISTER_C);
+                                        return_location = system_v_load_oddly_sized_type_into_register(context, return_location, return_type->size, register_to_load_into, /*scratch*/REGISTER_C);
                                     }
                                     integer_register_at += 1;
                                 }else if(return_type_classification.classification[0] == SYSTEM_V_TYPE_CLASSIFICATION_sse){
@@ -5001,13 +5001,13 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_integer){
                                         enum register_encoding register_to_load_into = integer_return_registers[integer_register_at];
                                         u32 size = (u32)min_of(size_left, 8);
-                                        return_location->type = &globals.typedef_u64;
                                         
                                         if(is_power_of_two(size)){
+                                            return_location->type = &globals.typedef_u64;
                                             enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_gpr, register_to_load_into);
                                             register_location = emit_load_into_specific_gpr(context, return_location, arg_reg);
                                         }else{
-                                            register_location = system_v_load_oddly_sized_type_into_register(context, return_location, register_to_load_into, REGISTER_A);
+                                            register_location = system_v_load_oddly_sized_type_into_register(context, return_location, size, register_to_load_into, /*scratch*/REGISTER_C);
                                         }
                                         integer_register_at += 1;
                                         
