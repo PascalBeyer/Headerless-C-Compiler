@@ -4624,6 +4624,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
                             
                             "#define _Complex\n"
                             
+                            "#define _Float32x float\n"
+                            "#define _Float64x double\n"
+                            "#define _Float32 float\n"
+                            "#define _Float64 double\n"
+                            
                             "#include <gcc_builtins.h>\n"
                             );
                     string_list_postfix_no_copy(&predefines, arena, linux_predefines);
