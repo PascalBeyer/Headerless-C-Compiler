@@ -94,8 +94,12 @@ int main(){
     assert(ENUM_max_int == 0x7fffffff);
     assert(ENUM_overflow == 0x80000000); // @cleanup:  this is correct I guess. (signed -> unsigned int)
     assert(ENUM_overflow == 2147483647 + 1); // right hand side is long long @cleanup: is it?
-    assert(ENUM_way_to_large == -1);
     
+#ifdef _WIN32
+    // @hmm: On linux, the underlying type of the enum is u32 and the enum variable is also u32 now.
+    assert(ENUM_way_to_large == -1);
+#endif
+
     static int local_return_10(){ return 10;}
     assert(local_return_10() == 10);
     

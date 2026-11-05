@@ -5182,19 +5182,39 @@ case NUMBER_KIND_##type:{ \
             
             if(lookup->flags & DECLARATION_FLAGS_is_enum_member){
                 assert(lookup->assign_expr->kind == IR_integer_literal);
-                // @sigh
                 struct ir_integer_literal *source = (struct ir_integer_literal *)lookup->assign_expr;
+                struct ast_compound_type *enum_type = (struct ast_compound_type *)lookup->type;
+                
                 struct ir_integer_literal *lit = push_uninitialized_struct(&context->ir_arena, struct ir_integer_literal);
                 lit->base.kind = IR_integer_literal;
                 
-                // @note: right now this only does enums
-                lit->_s32 = source->_s32;
+#ifdef _WIN32
+                // With MSVC, all enum members are simply ints, just as the spec says.
+                lit->_s64 = (s64)source->_s32;
                 lit->type = &globals.typedef_s32;
+#else
+                // With GCC, enum typing is weird.
+                // If the value does fit into an int, the type is int, as the spec says.
+                // If the value does not fit into an int, the type is the underlying type of the enum.
+                // 
+                // WARNING: The underlying type is not known yet for members of the enum currently being parsed.
+                // 
+                
+                struct ast_type *member_type = source->type;
+                
+                if(member_type != &globals.typedef_s32 && enum_type->enum_underlying_type){
+                    member_type = enum_type->enum_underlying_type;
+                }
+                
+                struct expr source_expr = {.ir = source, .resolved_type = source->type};
+                lit->_s64 = integer_literal_as_s64(&source_expr);
+                lit->type = member_type;
+#endif
                 
                 operand.ir = &lit->base;
                 operand.token = token;
-                operand.resolved_type = &globals.typedef_s32;
-                operand.defined_type = &lookup->type->kind;
+                operand.resolved_type = lit->type;
+                operand.defined_type = (lit->type == enum_type->enum_underlying_type) ? &enum_type->base.kind : null; // Only use the type if its the same, otherwise it messes with :retain_type_information_through_promotion
                 
                 context->in_lhs_expression = false;
             }else{
@@ -8988,8 +9008,21 @@ case TOKEN_##type_name:{                                                 \
                     u64 largest_positive_value = 0;
                     s64 largest_negative_value = 0;
                     
-                    int is_signed = 0;
-                    s64 current_value = 0;
+                    // We need to keep track of the 'current_increment_type' for cases like:
+                    // 
+                    //     enum {A = 0xffffffffull, B}; // This works.
+                    //     enum {A = 0xffffffffu, B}; // This does not.
+                    //     
+                    // Similarly, 
+                    //     enum {A = 0xffffffffll, B}; // This works.
+                    //     enum {A = 0xffffffff, B}; // This does not.
+                    // 
+                    // For any value that fits into an int, the `current_increment_type` is int.
+                    // 
+                    int current_is_signed = 0;
+                    struct ast_type *current_increment_type = &globals.typedef_s32;
+                    
+                    s64 current_value = -1;
                     do{
                         if(peek_token_eat(context, TOKEN_closed_curly)) goto enum_skip_curly;
                         
@@ -9001,13 +9034,29 @@ case TOKEN_##type_name:{                                                 \
                             parse_extended_attribute(context, &token_value_attributes);
                         }
                         
-                        if(peek_token_eat(context, TOKEN_equals)){
+                        b32 has_assignment = peek_token_eat(context, TOKEN_equals) != 0;
+                        if(has_assignment){
                             struct expr const_expr = parse_constant_integer_expression(context, true, "Enum expression needs to be a constant integer.");
                             
-                            if(type_is_signed(const_expr.resolved_type)){
-                                current_value = integer_literal_as_s64(&const_expr);
+                            current_is_signed = type_is_signed(const_expr.resolved_type);
+                            current_value = integer_literal_as_s64(&const_expr);
+                            
+                            if(current_is_signed){
+                                if(s32_min <= current_value && current_value <= s32_max){
+                                    current_increment_type = &globals.typedef_s32;
+                                }else{
+                                    current_increment_type = const_expr.resolved_type;
+                                }
+                            }else{
+                                if((u64)current_value <= s32_max){
+                                    current_increment_type = &globals.typedef_s32;
+                                }else{
+                                    current_increment_type = const_expr.resolved_type;
+                                }
+                            }
+                            
+                            if(current_is_signed){
                                 if(current_value < 0){
-                                    is_signed = 1;
                                     if(current_value < largest_negative_value){
                                         largest_negative_value = current_value;
                                     }
@@ -9015,10 +9064,41 @@ case TOKEN_##type_name:{                                                 \
                                     largest_positive_value = (u64)current_value;
                                 }
                             }else{
-                                current_value = integer_literal_as_u64(&const_expr);
                                 if(largest_positive_value < (u64)current_value){
                                     largest_positive_value = (u64)current_value;
                                 }
+                            }
+                        }else{
+                            // 
+                            // Increment the value, then use it.
+                            // 
+                            
+                            b32 value_is_max = 0;
+                            if(type_is_signed(current_increment_type)){
+                                switch(current_increment_type->size){
+                                    case 4: value_is_max = current_value == max_s32; break;
+                                    case 8: value_is_max = current_value == max_s64; break;
+                                    invalid_default_case();
+                                }
+                            }else{
+                                switch(current_increment_type->size){
+                                    case 4: value_is_max = (u64)current_value == max_u32; break;
+                                    case 8: value_is_max = (u64)current_value == max_u64; break;
+                                    invalid_default_case();
+                                }
+                            }
+                            
+                            if(value_is_max){
+                                report_error(context, ident, "Overflow in enumeration value.");
+                                current_value = 0;
+                            }
+                            
+                            current_value += 1;
+                            
+                            if(current_is_signed && current_value < 0){
+                                // Cannot go more negative.
+                            }else if((u64)current_value > largest_positive_value){
+                                largest_positive_value = (u64)current_value;
                             }
                         }
                         
@@ -9036,8 +9116,6 @@ case TOKEN_##type_name:{                                                 \
                         if(s32_min <= current_value && current_value <= s32_max){
                             // we are fine!
                         }else if(s32_max < current_value && current_value <= u32_max){
-                            
-                            // @cleanup: report a warning?
                             current_value = (s32)current_value;
                         }else{
                             report_error(context, token, "Enum members are 32-bit, this member is outside of the range of the enum. Member is %lld range is [%d, %u].", current_value, s32_min, u32_max);
@@ -9049,16 +9127,21 @@ case TOKEN_##type_name:{                                                 \
                         literal->type = &globals.typedef_s32;
 #else
                         struct ast_type *type;
-                        if(s32_min <= current_value && current_value <= s32_max){
-                            type = &globals.typedef_s32;
-                        }else if(s32_max < current_value && current_value <= u32_max){
-                            type = &globals.typedef_u32;
-                        }else if(u32_max <= current_value && (u64)current_value <= s64_max){
-                            type = &globals.typedef_s64;
-                        }else if(is_signed){
-                            type = &globals.typedef_s64;
+                        if(current_is_signed){
+                            if(s32_min <= current_value && current_value <= s32_max){
+                                type = &globals.typedef_s32;
+                            }else{
+                                type = &globals.typedef_s64;
+                            }
                         }else{
-                            type = &globals.typedef_u64;
+                            u64 unsigned_value = (u64)current_value;
+                            if(unsigned_value <= s32_max){
+                                type = &globals.typedef_s32;
+                            }else if(unsigned_value <= u32_max){
+                                type = &globals.typedef_u32;
+                            }else{
+                                type = &globals.typedef_u64;
+                            }
                         }
                         
                         literal->_s64 = current_value;
@@ -9078,19 +9161,7 @@ case TOKEN_##type_name:{                                                 \
                         
                         decl = register_declaration(context, decl);
                         
-                        register_compound_member(context, ast_enum, ident, &ast_enum->base, current_value, /*next_member_increment*/0);
-                        
-                        // Implicitly incremented enumerators also affect the
-                        // compatible integer type. For example, { A = 255, B }
-                        // needs an unsigned short, not an unsigned char.
-                        if(current_value < 0){
-                            is_signed = 1;
-                            if(current_value < largest_negative_value) largest_negative_value = current_value;
-                        }else if((u64)current_value > largest_positive_value){
-                            largest_positive_value = (u64)current_value;
-                        }
-                        
-                        current_value++;
+                        register_compound_member(context, ast_enum, ident, literal->type, current_value, /*next_member_increment*/0);
                     }while(peek_token_eat(context, TOKEN_comma));
                     
                     expect_token(context, TOKEN_closed_curly, "Expected '}' ending enum declaration or ',' to keep going.");
@@ -9166,6 +9237,15 @@ case TOKEN_##type_name:{                                                 \
                             }
                             
                             specifiers->type_specifier = negative_needed->size > positive_needed->size ? negative_needed : positive_needed;
+                        }
+                    }
+                    
+                    if(largest_negative_value != 0 && largest_positive_value > max_s64){
+                        for(u32 member_index = 0; member_index < ast_enum->amount_of_members; member_index++){
+                            struct compound_member *member = ast_enum->members + member_index;
+                            if(!type_is_signed(member->type) && (u64)member->offset_in_type > max_s64){
+                                report_warning(context, WARNING_compile_time_overflow, member->name, "Enum is signed because it contains a negative member, but this value exceeds the maximal possible signed value.");
+                            }
                         }
                     }
                     
