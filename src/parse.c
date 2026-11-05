@@ -4357,7 +4357,9 @@ func void punt_compound_assignment(struct context *context, struct expr *lhs, st
 }
 
 // @cleanup: Eventually, we should implement this ourselves.
+#ifdef _WIN32
 __declspec(dllimport) double strtod(const char *str, char **endptr);
+#endif
 
 func struct expr parse_expression(struct context *context, b32 should_skip_comma_expression){
     

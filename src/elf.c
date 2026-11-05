@@ -5931,7 +5931,6 @@ int dump_elf(char *cfile_name, struct memory_arena *arena){
             
             [0x73] = "DW_AT_addr_base", // addrptr
             
-            [0x73] = "DW_AT_addr_base", // addrptr
             [0x74] = "DW_AT_rnglists_base", // rnglistsptr
             // Reserved 0x75 Unused
             [0x76] = "DW_AT_dwo_name", // string
