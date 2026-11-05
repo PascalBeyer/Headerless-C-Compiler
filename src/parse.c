@@ -5243,13 +5243,15 @@ case NUMBER_KIND_##type:{ \
             u8 *ir_arena_start = arena_current(&context->ir_arena);
             u8 *ir_arena_reset = ir_arena_start;
             
+            context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+            
             struct expr choice_expression = parse_expression(context, /*skip_comma_expression*/1);
             maybe_load_address_for_array_or_function(context, IR_load_address, &choice_expression);
             maybe_insert_cast_from_special_int_to_int(context, &choice_expression, /*is_lhs*/0);
             
             struct ast_type *choice = choice_expression.resolved_type;
             
-            memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
+            context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
             context->ir_arena.current = ir_arena_start;
             
             struct expr default_expression = zero_struct;
@@ -5263,7 +5265,11 @@ case NUMBER_KIND_##type:{ \
                 if(peek_token_eat(context, TOKEN_default)){
                     expect_token(context, TOKEN_colon, "Expected ':' after 'default' while parsing a _Generic association list.");
                     
+                    if(choosen_expression.ir) context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                    
                     struct expr expression = parse_expression(context, /*skip_comma_expression*/1);
+                    
+                    if(choosen_expression.ir) context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
                     
                     if(default_expression.ir){
                         begin_error_report(context);
@@ -5273,7 +5279,6 @@ case NUMBER_KIND_##type:{ \
                     }
                     
                     if(choosen_expression.ir){
-                        memset(ir_arena_reset, 0, context->ir_arena.current - ir_arena_reset);
                         context->ir_arena.current = ir_arena_reset;
                     }else{
                         default_expression = expression;
@@ -5292,7 +5297,6 @@ case NUMBER_KIND_##type:{ \
                     if(types_are_equal(type_name.type, choice)){
                         
                         if(default_expression.ir){
-                            memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
                             context->ir_arena.current = ir_arena_start;
                             memset(&default_expression, 0, sizeof(default_expression));
                         }
@@ -5311,9 +5315,12 @@ case NUMBER_KIND_##type:{ \
                         choosen_expression = expression;
                         ir_arena_reset = arena_current(&context->ir_arena);
                     }else{
+                        context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                        
                         parse_expression(context, /*skip_comma_expression*/1);
                         
-                        memset(ir_arena_reset, 0, context->ir_arena.current - ir_arena_reset);
+                        context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                        
                         context->ir_arena.current = ir_arena_reset;
                     }
                 }
@@ -5662,10 +5669,13 @@ case NUMBER_KIND_##type:{ \
                         
                         u8 *ir_arena_at = arena_current(&context->ir_arena);
                         
+                        context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                        
                         struct expr expr = parse_expression(context, /*skip_comma_expresssion*/false);
                         int constant = (expr.ir->kind == IR_integer_literal || expr.ir->kind == IR_float_literal);
                         
-                        memset(ir_arena_at, 0, context->ir_arena.current - ir_arena_at);
+                        context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                        
                         context->ir_arena.current = ir_arena_at;
                         
                         pop_from_ir_arena(context, identifier);
@@ -5688,15 +5698,23 @@ case NUMBER_KIND_##type:{ \
                             expect_token(context, TOKEN_comma, "Expected ','."); // :Error
                             
                             u8 *ir_arena_at = arena_current(&context->ir_arena);
+                            
+                            context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                            
                             parse_expression(context, /*skip_comma_expresssion*/true);
-                            memset(ir_arena_at, 0, context->ir_arena.current - ir_arena_at);
+                            
+                            context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                            
                             context->ir_arena.current = ir_arena_at;
                         }else{
                             // Choose the second expression.
                             
                             u8 *ir_arena_at = arena_current(&context->ir_arena);
+                            context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                            
                             parse_expression(context, /*skip_comma_expresssion*/true);
-                            memset(ir_arena_at, 0, context->ir_arena.current - ir_arena_at);
+                            
+                            context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
                             context->ir_arena.current = ir_arena_at;
                             
                             expect_token(context, TOKEN_comma, "Expected ','."); // :Error
@@ -7013,8 +7031,7 @@ case NUMBER_KIND_##type:{ \
                     if(op_lhs->resolved_type != op_rhs->resolved_type){
                         report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, stack_entry->token);
                         return operand;
-                    }
-                    
+                    }        
                     
                     enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_or_u32 : IR_or_u64;
                     operand.ir = push_ir(context, ir_kind);
@@ -7376,6 +7393,7 @@ case NUMBER_KIND_##type:{ \
                     value = &stack_entry->operand;
                     other = &operand;
                     
+                    context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
                     context->ir_arena.current = stack_entry->other;
                 }
                 
@@ -7886,7 +7904,12 @@ case NUMBER_KIND_##type:{ \
                 }else{
                     pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
                     
+                    if(!is_true) context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                    
                     if_true = parse_expression(context, false);
+                    
+                    if(!is_true) context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                    
                     maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
                     maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
                     expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
@@ -7900,6 +7923,7 @@ case NUMBER_KIND_##type:{ \
                     // Hence, nuke the if_true condition.
                     context->ir_arena.current = (u8 *)operand.ir;
                 }else{
+                    if(is_true) context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
                     // We should take the _if_true_ expression.
                     // Hence, we have to remember where to nuke to.
                     entry->other = arena_current(&context->ir_arena);
@@ -9327,7 +9351,6 @@ case TOKEN_##type_name:{                                                 \
                 context->prevent_evaluation_for_sizeof_alignof_or_typeof -= 1;
                 
                 // The operand of typeof is not evaluated.
-                memset(ir_arena_start, 0, context->ir_arena.current - ir_arena_start);
                 context->ir_arena.current = ir_arena_start;
                 
                 specifiers->type_specifier = operand.resolved_type;
