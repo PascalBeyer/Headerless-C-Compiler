@@ -6527,9 +6527,13 @@ case NUMBER_KIND_##type:{ \
                         struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)op_lhs->resolved_type;
                         struct ast_type *type = pointer_type->pointer_to;
                         
-                        // Apparently, this and void * both legal on linux.
-                        // Should warn though.
-                        // if(type->kind == AST_function_type){ report_error(context, stack_entry->token, "Cannot subtract function pointers.");}
+                        if(type->kind == AST_function_type){
+                            report_warning(context, WARNING_extension_used, stack_entry->token, "Subtracting function-pointers is a GNU extension.");
+                        }
+                        
+                        if(type->kind == AST_void_type){
+                            report_warning(context, WARNING_extension_used, stack_entry->token, "Subtracting void-pointers is a GNU extension.");
+                        }
                         
                         if(type->kind == AST_unresolved_type){
                             if(context->current_scope){
@@ -8947,6 +8951,9 @@ case TOKEN_##type_name:{                                                 \
             }break;
             
             case TOKEN_enum:{
+                
+                // :parse_enum
+                
                 if(specifiers->type_specifier || c_type != C_TYPE_none){
                     report_error(context, token, "Declaration specifies more than one data type.");
                 }
