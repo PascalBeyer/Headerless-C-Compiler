@@ -1,5 +1,4 @@
-enum {
-}main(){
+int main(){
 }
 
 #define PTR1 * * * * * * * * * *

@@ -11328,7 +11328,6 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             struct ast_array_type *array_type = parser_type_push(context, array_type);
             
             if(peek_token_eat(context, TOKEN_closed_index)){ // u32 arr[];
-                array_size_zero_also_means_array_of_unknown_size:;
                 
                 array_type->amount_of_elements = 0;
                 array_type->is_of_unknown_size = true;
@@ -11341,15 +11340,13 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 
                 s64 value = integer_literal_as_s64(&index_expression);
                 
-                if(value == 0){
-                    goto array_size_zero_also_means_array_of_unknown_size;
-                }
-                
-                if(value <= 0){
+                if(value < 0){
                     report_error(context, index_expression.token, "Array size must be positive.");
                     return ret;
                 }
                 
+                // A zero-sized array is a GNU extension. Unlike '[]', it is a
+                // complete zero-sized type and may appear before other members.
                 array_type->amount_of_elements = value;
                 
                 if(context->should_exit_statement) return ret;
