@@ -1,7 +1,5 @@
-// check "(9,18): Error at '+': Cannot use pointer arithmetic on pointer to 'void'."
-// check "(10,18): Error at '+=': Cannot use pointer arithmetic on pointer to 'void'."
-// check "(16,23): Error at '+': Cannot use pointer arithmetic on function-pointer."
-// check "(17,23): Error at '+=': Cannot use pointer arithmetic on function-pointer."
+// check "(14,23): Error at '+': Cannot use pointer arithmetic on function-pointer."
+// check "(15,23): Error at '+=': Cannot use pointer arithmetic on function-pointer."
 // fail
 
 void *asd = 0;

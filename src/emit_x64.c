@@ -5423,7 +5423,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         
                         int is_inc = (ir_kind == IR_postinc_pointer) || (ir_kind == IR_preinc_pointer);
                         u8 reg_inst = is_inc ? REG_OPCODE_ADD : REG_OPCODE_SUB;
-                        smm size = pointer->pointer_to->size;
+                        // GNU C treats void-pointer arithmetic as byte-wise.
+                        smm size = (pointer->pointer_to == &globals.typedef_void) ? 1 : pointer->pointer_to->size;
                         b32 is_big = size > max_s8;
                         
                         // @cleanup: How is this guaranteed?

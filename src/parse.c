@@ -1768,8 +1768,6 @@ func void maybe_load_address_for_array_or_function(struct context *context, enum
 
 func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kind, struct token *token, struct expr *op_lhs, struct expr *op_rhs, struct expr *operand, int need_swap){
     
-    // @cleanup: where do we check for void?
-    
     // op should probably be either '+', '-', '+=' or '-=' but whatever
     
     struct expr *pointer = op_lhs;
@@ -1785,8 +1783,8 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
     struct ast_type *deref_type = pointer_type->pointer_to;
     
     if(deref_type == &globals.typedef_void){
-        report_error(context, token, "Cannot use pointer arithmetic on pointer to 'void'.");
-        return;
+        // GNU C treats void-pointer arithmetic as byte-wise arithmetic.
+        deref_type = &globals.typedef_u8;
     }
     
     if(deref_type->kind == AST_function_type){
@@ -3240,11 +3238,6 @@ func b32 check_types_for_increment_or_decrement(struct context *context, struct 
     if(type->kind == AST_pointer_type){
         struct ast_pointer_type *pointer = (struct ast_pointer_type *)type;
         if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer->pointer_to)) return true;
-        
-        if(pointer->pointer_to == &globals.typedef_void){
-            report_error(context, site, "Operand of '%s' cannot be a void-pointer.", token);
-            return true;
-        }
         
         if(pointer->pointer_to->kind == AST_function_type){
             report_error(context, site, "Operand of '%s' cannot be a function-pointer.", token);
@@ -6529,16 +6522,46 @@ case NUMBER_KIND_##type:{ \
                             return operand;
                         }
                         
-                        // @cleanup: Constant propagate!
+                        struct ast_pointer_type *pointer_type = (struct ast_pointer_type *)op_lhs->resolved_type;
+                        struct ast_type *type = pointer_type->pointer_to;
                         
-                        // Subtract the two pointers.
-                        operand.ir = push_ir(context, IR_subtract_u64);
+                        if(type->kind == AST_function_type){
+                            report_error(context, stack_entry->token, "Cannot subtract function pointers.");
+                        }
                         
-                        // Divide by the size.
-                        struct ast_pointer_type *pointer = cast(struct ast_pointer_type *)op_lhs->resolved_type;
-                        if(pointer->pointer_to->size != 1){ // @cleanup: 0?
-                            ast_push_s64_literal(context, pointer->pointer_to->size, null);
-                            operand.ir = push_ir(context, IR_divide_u64);
+                        if(type->kind == AST_unresolved_type){
+                            if(context->current_scope){
+                                report_error(context, stack_entry->token, "Cannot subtract pointers to incomplete types."); // :Error
+                            }else{
+                                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &type)) return operand;
+                            }
+                        }
+                        
+                        if(op_lhs->ir->kind == IR_pointer_literal && op_rhs->ir->kind == IR_pointer_literal){
+                            struct ir_pointer_literal *lhs = (struct ir_pointer_literal *)op_lhs->ir;
+                            struct ir_pointer_literal *rhs = (struct ir_pointer_literal *)op_rhs->ir;
+                            
+                            u64 size = 1;
+                            if(type->size != 0) size = type->size;
+                            
+                            s64 value = (s64)(lhs->pointer - rhs->pointer) / (s64)size;
+                            
+                            pop_from_ir_arena(context, rhs);
+                            lhs->base.kind = IR_integer_literal;
+                            lhs->type = &globals.typedef_s64;
+                            ((struct ir_integer_literal *)lhs)->_s64 = value;
+                            
+                            operand.ir = &lhs->base;
+                        }else{
+                            
+                            // Subtract the two pointers.
+                            operand.ir = push_ir(context, IR_subtract_u64);
+                            
+                            // Divide by the size.
+                            if(type->size > 1){
+                                ast_push_s64_literal(context, type->size, null);
+                                operand.ir = push_ir(context, IR_divide_s64);
+                            }
                         }
                         
                         operand.resolved_type = &globals.typedef_s64;
