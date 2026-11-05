@@ -11215,6 +11215,13 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                     struct declarator_return declarator = parse_declarator(context, declaration_specifiers.type_specifier, declaration_specifiers.defined_type_specifier, DECLARATOR_type_name | DECLARATOR_identifier);
                     if(context->should_exit_statement) return ret;
                     
+                    // Attributes may appear after a function-parameter declarator,
+                    // for example: 'uint8_t *buf __attribute__((unused))'.
+                    struct declaration_specifiers parameter_attributes = {0};
+                    while(peek_token_eat(context, TOKEN_declspec)){
+                        parse_extended_attribute(context, &parameter_attributes);
+                    }
+                    
                     if(declarator.type->kind == AST_array_type){
                         // 
                         // "A declaration of a parameter as 'array of type' shall be adjusted to
