@@ -8671,7 +8671,7 @@ case TOKEN_##type_name:{                                                 \
                         }
                         
                         if(!is_union && had_array_of_unknown_size){
-                            report_error(context, had_array_of_unknown_size, "Array of unknown size has to be the last member of struct.");
+                            report_warning(context, WARNING_extension_used, had_array_of_unknown_size, "Array of unknown size has to be the last member of struct. Allowing this is a GNU-extension.");
                         }
                         
                         // 
