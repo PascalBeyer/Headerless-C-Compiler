@@ -9337,20 +9337,33 @@ case TOKEN_##type_name:{                                                 \
             }break;
             
             case TOKEN_typeof:{
+                
+                if(specifiers->type_specifier || c_type != C_TYPE_none){
+                    report_error(context, token, "Declaration specifies more than one data type.");
+                }
+                
                 expect_token(context, TOKEN_open_paren, "Expected '(' after typeof.");
                 
-                context->prevent_evaluation_for_dead_code += 1;
+                struct type_info_return type_info_return = maybe_parse_type_for_cast_or_sizeof(context);
+                if(type_info_return.type){
+                    specifiers->type_specifier = type_info_return.type;
+                    specifiers->defined_type_specifier = type_info_return.defined_type;
+                }else{
+                    context->prevent_evaluation_for_dead_code += 1;
+                    
+                    u8 *ir_arena_start = arena_current(&context->ir_arena);
+                    struct expr operand = parse_expression(context, /*should_skip_comma_expression*/false);
+                    
+                    context->prevent_evaluation_for_dead_code -= 1;
+                    
+                    // The operand of typeof is not evaluated.
+                    context->ir_arena.current = ir_arena_start;
+                    
+                    specifiers->type_specifier = operand.resolved_type;
+                    specifiers->defined_type_specifier = operand.defined_type;
+                }
                 
-                u8 *ir_arena_start = arena_current(&context->ir_arena);
-                struct expr operand = parse_expression(context, /*should_skip_comma_expression*/false);
                 expect_token(context, TOKEN_closed_paren, "Expected ')' after typeof expression.");
-                
-                context->prevent_evaluation_for_dead_code -= 1;
-                
-                // The operand of typeof is not evaluated.
-                context->ir_arena.current = ir_arena_start;
-                
-                specifiers->type_specifier = operand.resolved_type;
             }break;
             
             default:{
