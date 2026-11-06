@@ -4545,8 +4545,8 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     struct ast_type *type = type_to_cast_to.type;
                     
                     if(type == &globals.typedef_void){
-                        report_error(context, size_or_alignof->token, "Type void has undefined %s.", is_alignof ? "alignment" : "size");
-                        return invalid_ast(context);
+                        u64 value = is_alignof ? type->alignment : type->size;
+                        report_warning(context, WARNING_extension_used, size_or_alignof->token, "Type void has undefined %s. Returned value is %d. This is a GNU-extension.", is_alignof ? "alignment" : "size", value);
                     }
                     
                     if(type->kind == AST_function_type){
@@ -6144,8 +6144,7 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 if(operand.resolved_type == &globals.typedef_void){
-                    report_error(context, stack_entry->token, "Expression of type void has undefined size.");
-                    return operand;
+                    report_warning(context, WARNING_extension_used, stack_entry->token, "Expression of type void has undefined size. Returned value is 0. This is a GNU-extension.");
                 }
                 
                 if(type_is_array_of_unknown_size(operand.resolved_type)){
@@ -6198,8 +6197,7 @@ case NUMBER_KIND_##type:{ \
                 }
                 
                 if(operand.resolved_type == &globals.typedef_void){
-                    report_error(context, stack_entry->token, "Expression of type void has undefined alignment.");
-                    return operand;
+                    report_warning(context, WARNING_extension_used, stack_entry->token, "Expression of type void has undefined alignment. Returned value is 1. This is a GNU-extension.");
                 }
                 
                 u64 alignment = operand.resolved_type->alignment;
@@ -6381,8 +6379,7 @@ case NUMBER_KIND_##type:{ \
                     if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer->pointer_to)) return operand;
                     
                     if(pointer->pointer_to == &globals.typedef_void){
-                        report_error(context, stack_entry->token, "Dereferencing a void-pointer.");
-                        return operand;
+                        report_warning(context, WARNING_extension_used, stack_entry->token, "Dereferencing a void-pointer is a GNU-extension.");
                     }
                     
                     struct ir_deref *deref = push_uninitialized_struct(&context->ir_arena, struct ir_deref);
