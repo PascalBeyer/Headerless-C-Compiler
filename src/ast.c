@@ -450,7 +450,9 @@ enum ast_kind{
     AST_binary_smaller,
     
     AST_logical_and,
+    AST_logical_and_delete,
     AST_logical_or,
+    AST_logical_or_delete,
     
     // Assignment AST_*, same order as TOKEN_*_equals
     AST_assignment,

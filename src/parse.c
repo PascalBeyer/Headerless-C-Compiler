@@ -4420,6 +4420,11 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
             
             if(peek_token_eat(context, TOKEN_open_curly)){
                 
+                // GNU extension: statement expressions :statement_expression
+                // 
+                //    Something like ({ ... })
+                //    
+                
                 struct ast_scope *old_statement_expression_scope = context->statement_expression_scope;
                 
                 struct ast_scope *old_last = context->current_scope->subscopes.last;
@@ -5161,20 +5166,22 @@ case NUMBER_KIND_##type:{ \
                     //    
                     // Either, this is an error, or the reference is inside a sizeof and we don't need to add a dependency reference.
                 }else{
-                    struct declaration_reference_node *new_reference = push_uninitialized_struct(context->arena, struct declaration_reference_node);
-                    new_reference->declaration = lookup;
-                    new_reference->token = token;
-                    
-                    // :DeclarationReferenceThreadingBug
-                    // 
-                    // @cleanup: This should probably be atomic, as we might be parsing an initializer of a declaration
-                    //           in two different threads at the same time.
-                    //           This happens if there are two initializers in the code (a bug), because we `register_declaration` and then
-                    //           reassign the declaration in `parse_declaration_list`.
-                    //           In the future, there should probably be a guard in `parse_declaration_list` against parsing an initializer
-                    //           twice at the same time.
-                    //                                                                                            - 19.10.2024
-                    sll_push_back(outer_declaration->referenced_declarations, new_reference);
+                    if(context->prevent_evaluation_for_dead_code == 0){
+                        struct declaration_reference_node *new_reference = push_uninitialized_struct(context->arena, struct declaration_reference_node);
+                        new_reference->declaration = lookup;
+                        new_reference->token = token;
+                        
+                        // :DeclarationReferenceThreadingBug
+                        // 
+                        // @cleanup: This should probably be atomic, as we might be parsing an initializer of a declaration
+                        //           in two different threads at the same time.
+                        //           This happens if there are two initializers in the code (a bug), because we `register_declaration` and then
+                        //           reassign the declaration in `parse_declaration_list`.
+                        //           In the future, there should probably be a guard in `parse_declaration_list` against parsing an initializer
+                        //           twice at the same time.
+                        //                                                                                            - 19.10.2024
+                        sll_push_back(outer_declaration->referenced_declarations, new_reference);
+                    }
                 }
             }else{
                 lookup->_times_referenced++;
@@ -5966,6 +5973,9 @@ case NUMBER_KIND_##type:{ \
             
             [AST_logical_and] = PRECEDENCE_logical_and,
             [AST_logical_or]  = PRECEDENCE_logical_or,
+            
+            [AST_logical_and_delete] = PRECEDENCE_logical_and,
+            [AST_logical_or_delete]  = PRECEDENCE_logical_or,
             
             [AST_conditional_expression] = PRECEDENCE_ternary, // right-to-left associative
             [AST_conditional_expression_true] = PRECEDENCE_ternary, // right-to-left associative
@@ -7139,6 +7149,23 @@ case NUMBER_KIND_##type:{ \
                 context->in_lhs_expression = false;
             }break;
             
+            case AST_logical_and_delete:{
+                maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
+                
+                if(!casts_implicitly_to_bool(operand.resolved_type)){
+                    // :Error pick a way to say this an stick to it
+                    report_error(context, operand.token, "Right of '&&' has to be convertible to _Bool.");
+                    return operand;
+                }
+                
+                context->ir_arena.current = stack_entry->other;
+                context->prevent_evaluation_for_dead_code--;
+                
+                operand = stack_entry->operand;
+                context->in_lhs_expression = false;
+            }break;
+            
             // :logical_or_expression parse_logical_or_expression
             // 
             // Precedence 12: Logical OR, Left-to-Right Associative
@@ -7238,12 +7265,26 @@ case NUMBER_KIND_##type:{ \
                     lhs->base.kind = IR_identifier;
                     lhs->decl = temp;
                     operand.ir = &lhs->base;
-                    
-                    operand.ir = &lhs->base;
                 }
                 
                 operand.resolved_type = &globals.typedef_s32;
                 operand.defined_type  = &globals.typedef_u8.kind;
+                context->in_lhs_expression = false;
+            }break;
+            
+            case AST_logical_or_delete:{
+                maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
+                maybe_load_address_for_array_or_function(context, IR_load_address, &operand);
+                
+                if(!casts_implicitly_to_bool(operand.resolved_type)){
+                    report_error(context, operand.token, "Right of '||' has to be convertible to _Bool.");
+                    return operand;
+                }
+                
+                context->ir_arena.current = stack_entry->other;
+                context->prevent_evaluation_for_dead_code--;
+                
+                operand = stack_entry->operand;
                 context->in_lhs_expression = false;
             }break;
             
@@ -7834,11 +7875,18 @@ case NUMBER_KIND_##type:{ \
                 return operand;
             }
             
-            struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_false);
-            conditional_jump->label_number = context->jump_label_index++;
-            
-            struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_and, binary_expression, &operand);
-            stack_entry->other = conditional_jump;
+            if(operand.ir->kind == IR_integer_literal && integer_literal_as_u64(&operand) == 0){
+                ((struct ir_integer_literal *)operand.ir)->type = &globals.typedef_s32;
+                struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_and_delete, binary_expression, &operand);
+                stack_entry->other = arena_current(&context->ir_arena);
+                context->prevent_evaluation_for_dead_code++;
+            }else{
+                struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_false);
+                conditional_jump->label_number = context->jump_label_index++;
+                
+                struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_and, binary_expression, &operand);
+                stack_entry->other = conditional_jump;
+            }
             goto restart;
         }break;
         
@@ -7852,11 +7900,21 @@ case NUMBER_KIND_##type:{ \
                 return operand;
             }
             
-            struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_true);
-            conditional_jump->label_number = context->jump_label_index++;
-            
-            struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_or, binary_expression, &operand);
-            stack_entry->other = conditional_jump;
+            if(operand.ir->kind == IR_integer_literal && integer_literal_as_u64(&operand) != 0){
+                struct ir_integer_literal *lit = (struct ir_integer_literal *)operand.ir;
+                lit->type = &globals.typedef_s32;
+                lit->_u64 = 1;
+                
+                struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_or_delete, binary_expression, &operand);
+                stack_entry->other = arena_current(&context->ir_arena);
+                context->prevent_evaluation_for_dead_code++;
+            }else{
+                struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_true);
+                conditional_jump->label_number = context->jump_label_index++;
+                
+                struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_or, binary_expression, &operand);
+                stack_entry->other = conditional_jump;
+            }
             goto restart;
         }break;
         
@@ -10179,12 +10237,23 @@ func void parse_statement(struct context *context){
             struct ir_jump_node *condition_jump = push_jump(context, IR_jump_if_false);
             condition_jump->label_number = if_false_label;
             
-            // if(context->if_true_label != -1){
-            //     struct ast_jump_label *if_true_label = push_expression(context, get_current_token_for_error_report(context), jump_label);
-            //     if_true_label->label_number = context->if_true_label;
-            // }
+            s64 condition_as_constant = -1;
             
-            parse_statement(context);
+            if(condition.ir->kind == IR_integer_literal){
+                condition_as_constant = integer_literal_as_u64(&condition) != 0;
+            }
+            
+            if(condition_as_constant == 0){
+                u8 *current = arena_current(&context->ir_arena);
+                
+                context->prevent_evaluation_for_dead_code += 1;
+                parse_statement(context);
+                context->prevent_evaluation_for_dead_code -= 1;
+                
+                context->ir_arena.current = current;
+            }else{
+                parse_statement(context);
+            }
             
             // Check if the "if" part returns a value and reset the to the old state.
             int if_statement_returns_a_value = context->current_statement_returns_a_value;
@@ -10195,17 +10264,27 @@ func void parse_statement(struct context *context){
                 
                 function_maybe_add_line_information(context, else_token, /*is_statement*/1);
                 
-                struct ir_jump_node *jump_over_else = push_jump(context, IR_jump);
-                jump_over_else->label_number = context->jump_label_index++;
-                
-                struct ir_jump_node *else_label = push_jump(context, IR_jump_label);
-                else_label->label_number = if_false_label;
-                
-                parse_statement(context);
-                
-                struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
-                end_label->label_number = jump_over_else->label_number;
-                
+                if(condition_as_constant == 1){
+                    u8 *current = arena_current(&context->ir_arena);
+                    
+                    context->prevent_evaluation_for_dead_code += 1;
+                    parse_statement(context);
+                    context->prevent_evaluation_for_dead_code -= 1;
+                    
+                    context->ir_arena.current = current;
+                }else{
+                    
+                    struct ir_jump_node *jump_over_else = push_jump(context, IR_jump);
+                    jump_over_else->label_number = context->jump_label_index++;
+                    
+                    struct ir_jump_node *else_label = push_jump(context, IR_jump_label);
+                    else_label->label_number = if_false_label;
+                    
+                    parse_statement(context);
+                    
+                    struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
+                    end_label->label_number = jump_over_else->label_number;
+                }
                 
                 // Check if the "else" part returns a value and we now return a value, if we returned a value before, or both sides returned a value.
                 int else_statement_returns_a_value = context->current_statement_returns_a_value;
@@ -10700,11 +10779,26 @@ func void parse_statement(struct context *context){
             push_ir(context, IR_return);
         }break;
         case TOKEN_open_curly:{
+            
+            struct ast_scope *old_last = context->current_scope->subscopes.last;
+            
             struct ast_scope *scope = parser_push_new_scope(context, initial_token, SCOPE_FLAG_none);
             
             parse_imperative_scope(context);
             
             parser_scope_pop(context, scope);
+            
+            if(context->prevent_evaluation_for_dead_code){
+                if(old_last){
+                    context->current_scope->subscopes.count -= 1;
+                    context->current_scope->subscopes.last = old_last;
+                    old_last->subscopes.next = 0;
+                }else{
+                    context->current_scope->subscopes.count = 0;
+                    context->current_scope->subscopes.first = 0;
+                    context->current_scope->subscopes.last  = 0;
+                }
+            }
             
             needs_semicolon = false;
         }break;
