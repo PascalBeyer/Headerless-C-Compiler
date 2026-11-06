@@ -8131,8 +8131,8 @@ case NUMBER_KIND_##type:{ \
                 return operand;
             }
             
-            if(operand.resolved_type == &globals.typedef_Bool && binary_expression->type != TOKEN_equals && binary_expression->type != TOKEN_xor_equals && binary_expression->type != TOKEN_or_equals && binary_expression->type != TOKEN_and_equals){
-                report_error(context, binary_expression, "Only the operators '=', '|=', '&=' and '^=' are supported, when the left is of type _Bool.");
+            if(operand.resolved_type == &globals.typedef_Bool && binary_expression->type != TOKEN_equals && binary_expression->type != TOKEN_xor_equals && binary_expression->type != TOKEN_or_equals && binary_expression->type != TOKEN_and_equals && binary_expression->type != TOKEN_plus_equals && binary_expression->type != TOKEN_minus_equals){
+                report_error(context, binary_expression, "Only the operators '=', '|=', '&=', '^=', '+=' and '-=' are supported, when the left is of type _Bool.");
                 return operand;
             }
             
