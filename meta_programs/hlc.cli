@@ -229,7 +229,11 @@ TODO
 Default is derived from the name of the first compilation unit.
 E.g.: For `hlc /E test.c` it would be `test.id`.
 
-/write_dependencies | /MD - Write a dependency file.
+/dependencies | /M  - Print dependencies to stdout.
+
+TODO
+
+/write_dependencies | /MD  - Write a dependency file.
 
 The default dependency file is determined by the output file, simply appending ".d".
 For example, for a simple file:
@@ -250,7 +254,19 @@ When compiled as `hlc hello.c -c -MD` will produce a file called `simple.d` look
 
 These are used by build-systems for incremental compilation.
 
-/MT <file:string> - Sets the target name in the dependency file.
+/MM - Print a dependency file but skip system headers.
+
+TODO
+
+/MMD - Write a dependency file but skip system headers.
+
+TODO
+
+/MT <file:string_list> - Sets the target name in the dependency file.
+
+TODO
+
+/MQ <file:string_list> - Sets the target name in the dependency file, but quote special characters.
 
 TODO
 

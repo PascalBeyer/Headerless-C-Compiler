@@ -288,7 +288,7 @@ b32 os_write_file(char *file_name, void *buffer, smm buffer_size){
     // 'pathname'     - file name ? only full path?
     // 'flags'        - 'O_WRONLY' open the file for writing, 'O_CREAT' creat if id does not exist
     // 'mode'         - specifies the permissions if the file is created, we set read write for user
-    int file_descriptor = open(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
+    int file_descriptor = open(file_name, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
     if(file_descriptor < 0){
         return false;
     }
@@ -300,6 +300,8 @@ b32 os_write_file(char *file_name, void *buffer, smm buffer_size){
     // 'buf'          - buffer to write
     // 'count'        - size of buffer to write
     ssize_t bytes_written = write(file_descriptor, buffer, buffer_size);
+    
+    close(file_descriptor);
     
     return (bytes_written == buffer_size);
 }

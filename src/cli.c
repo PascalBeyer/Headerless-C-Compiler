@@ -46,8 +46,12 @@ enum cli_option_kind{
     CLI_OPTION_P,
     CLI_OPTION_dM,
     CLI_OPTION_Fi,
+    CLI_OPTION_dependencies,
     CLI_OPTION_write_dependencies,
+    CLI_OPTION_MM,
+    CLI_OPTION_MMD,
     CLI_OPTION_MT,
+    CLI_OPTION_MQ,
     CLI_OPTION_MF,
     CLI_OPTION_std,
     CLI_OPTION_warning_limit,
@@ -107,6 +111,7 @@ struct cli_option_hash_table_entry{
     [119] = {{11, (u8 *)"incremental"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_incremental, 0},
     [13] = {{5, (u8 *)"quiet"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
     [51] = {{6, (u8 *)"nologo"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
+    [14] = {{12, (u8 *)"dependencies"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dependencies, -1},
     [88] = {{17, (u8 *)"writedependencies"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_write_dependencies, -1},
     [58] = {{12, (u8 *)"warninglimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_warning_limit, 0},
     [46] = {{10, (u8 *)"errorlimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_error_limit, 0},
@@ -235,8 +240,12 @@ struct cli_options{
     int P; // Print the preprocessed file to stdout.
     int dM; // Dump macros instead of preprocessed file.
     struct string Fi; // Sets the output file name for the preprocessed file.
+    int dependencies; // Print dependencies to stdout.
     int write_dependencies; // Write a dependency file.
-    struct string MT; // Sets the target name in the dependency file.
+    int MM; // Print a dependency file but skip system headers.
+    int MMD; // Write a dependency file but skip system headers.
+    struct string_list MT; // Sets the target name in the dependency file.
+    struct string_list MQ; // Sets the target name in the dependency file, but quote special characters.
     struct string MF; // Sets the file name of the dependency file.
     enum std std; // The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.
     int warning_limit_specified;
@@ -434,6 +443,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_warning;
                 option_kind          = CLI_OPTION_Wno;
                 argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "MMD")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_MMD;
+                argument_is_optional = -1;
             }else if(string_front_match_eat(&option, "std")){
                 option_argument_type = CLI_ARGUMENT_TYPE_enum;
                 option_kind          = CLI_OPTION_std;
@@ -478,9 +491,17 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_write_dependencies;
                 argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "MM")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_MM;
+                argument_is_optional = -1;
             }else if(string_front_match_eat(&option, "MT")){
-                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
                 option_kind          = CLI_OPTION_MT;
+                argument_is_optional = 0;
+            }else if(string_front_match_eat(&option, "MQ")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string_list;
+                option_kind          = CLI_OPTION_MQ;
                 argument_is_optional = 0;
             }else if(string_front_match_eat(&option, "MF")){
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
@@ -533,6 +554,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }else if(string_front_match_eat(&option, "P")){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_P;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "M")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_dependencies;
                 argument_is_optional = -1;
             }
             
@@ -916,6 +941,12 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "E.g.: For `hlc /E test.c` it would be `test.id`.\n"
                             "", 113);
                 }break;
+                case CLI_OPTION_dependencies:{
+                    print("-dependencies | Print dependencies to stdout.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
                 case CLI_OPTION_write_dependencies:{
                     print("-write_dependencies | Write a dependency file.\n\n");
                     os_print_string(
@@ -939,8 +970,26 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "These are used by build-systems for incremental compilation.\n"
                             "", 701);
                 }break;
+                case CLI_OPTION_MM:{
+                    print("-MM | Print a dependency file but skip system headers.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
+                case CLI_OPTION_MMD:{
+                    print("-MMD | Write a dependency file but skip system headers.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
                 case CLI_OPTION_MT:{
                     print("-MT <file> | Sets the target name in the dependency file.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
+                case CLI_OPTION_MQ:{
+                    print("-MQ <file> | Sets the target name in the dependency file, but quote special characters.\n\n");
                     os_print_string(
                             "TODO\n"
                             "", 5);
@@ -1123,15 +1172,19 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -P                          | Print the preprocessed file to stdout.\n"
                             "  -dM                         | Dump macros instead of preprocessed file.\n"
                             "  -Fi <file>                  | Sets the output file name for the preprocessed file.\n"
+                            "  -dependencies               | Print dependencies to stdout.\n"
                             "  -write_dependencies         | Write a dependency file.\n"
+                            "  -MM                         | Print a dependency file but skip system headers.\n"
+                            "  -MMD                        | Write a dependency file but skip system headers.\n"
                             "  -MT <file>                  | Sets the target name in the dependency file.\n"
+                            "  -MQ <file>                  | Sets the target name in the dependency file, but quote special characters.\n"
                             "  -MF <file>                  | Sets the file name of the dependency file.\n"
                             "  -std <standard>             | The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.\n"
                             "  -warning_limit <u64>        | A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.\n"
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 3447);
+                    , 3778);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1333,10 +1386,17 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_Fi:{
                 cli_options->Fi = argument_string;
             }break;
+            case CLI_OPTION_dependencies: cli_options->dependencies = 1; break;
             case CLI_OPTION_write_dependencies: cli_options->write_dependencies = 1; break;
+            case CLI_OPTION_MM: cli_options->MM = 1; break;
+            case CLI_OPTION_MMD: cli_options->MMD = 1; break;
             
             case CLI_OPTION_MT:{
-                cli_options->MT = argument_string;
+                string_list_postfix(&cli_options->MT, arena, argument_string);
+            }break;
+            
+            case CLI_OPTION_MQ:{
+                string_list_postfix(&cli_options->MQ, arena, argument_string);
             }break;
             
             case CLI_OPTION_MF:{

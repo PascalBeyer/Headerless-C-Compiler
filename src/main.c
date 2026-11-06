@@ -3965,7 +3965,37 @@ struct string find_windows_kits_root_and_sdk_version(struct memory_arena *arena,
 
 int system(const char *);
 
-// :main
+func struct string makefile_quote(struct memory_arena *arena, struct string target){
+    
+    u8 *quoted = push_data(arena, u8, 2 * target.size + 1);
+    u64 size = 0;
+    u64 slashes = 0;
+    
+    for(smm index = 0; index < target.size; index++){
+        u8 c = target.data[index];
+        
+        if(c == '\\'){
+            quoted[size++] = c;
+            slashes += 1;
+            continue;
+        }else if(c == ' ' || c == '\t'){
+            for(u64 slash_index = 0; slash_index < slashes; slash_index++){
+                quoted[size++] = '\\';
+            }
+            quoted[size++] = '\\';
+        }
+        
+        slashes = 0;
+        
+        if(c == '$')  quoted[size++] = '$';
+        if(c == '#')  quoted[size++] = '\\';
+        
+        quoted[size++] = c;
+    }
+    
+    return (struct string){.data = quoted, .size = size};
+}
+
 int main(int argc, char *argv[]){
     
     if(argc == 1){
@@ -5312,6 +5342,42 @@ globals.typedef_##postfix = (struct ast_type){                                  
     }
 #endif
     
+    struct string output_file_path = globals.cli_options.out;
+    {
+        // 
+        // Build the output file path.
+        // 
+        // There are a couple of cases for how the output path is determined.
+        // 
+        //    1) The user does not specify the output path. 
+        //       In this case the output path is:
+        //           C:/the/working/directory/first_source_file
+        //       The resulting files are:
+        //           C:/the/working/directory/first_source_file.exe
+        //           C:/the/working/directory/first_source_file.pdb
+        //           
+        //    2) The user specified a relative file path including a file name.
+        //       In this case we prepend the working directory.
+        //       The resulting files are:
+        //           C:/the/working/directory/user/specified.exe
+        //           C:/the/working/directory/user/specified.pdb
+        //       
+        //    3) The user specified a relative file path ending in a directory.
+        //       In this case we append the first source file again.
+        //       
+        //    4) Option 2) and 3) have an analogous version for full paths.
+        // 
+        
+        if(path_is_relative(output_file_path)){
+            output_file_path = concatenate_file_paths(arena, working_directory, output_file_path);
+        }
+        
+        if(path_is_directory((char *)output_file_path.data)){
+            struct string file_name = strip_file_extension(strip_file_path(((struct work_tokenize_file *)files_to_parse.first->data)->absolute_file_path));
+            output_file_path = concatenate_file_paths(arena, output_file_path, file_name);
+        }
+    }
+    
     smm thread_count = 1;
     if(globals.cli_options.thread_count_specified && globals.cli_options.MP){
         print("Error: Found both a /MP and a /thread_count %llu option.\n", globals.cli_options.thread_count);
@@ -5462,6 +5528,76 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         return 0;
     }
+    
+    if(globals.cli_options.write_dependencies || globals.cli_options.dependencies || globals.cli_options.MMD || globals.cli_options.MM){
+        b32 wants_print = globals.cli_options.dependencies || globals.cli_options.MM;
+        b32 wants_write = globals.cli_options.write_dependencies || globals.cli_options.MMD;
+        
+        struct string dependency_file = globals.cli_options.MF;
+        b32 print_dependencies = wants_print && !dependency_file.data;
+        
+        if(!dependency_file.data && wants_write){
+            struct string root = strip_file_extension(output_file_path);
+            dependency_file = push_format_string(arena, "%.*s.d", root.size, root.data);
+        }
+        
+        u8 *dependency_file_start = arena_current(&context->scratch);
+        
+        b32 has_target = false;
+        
+        for(struct string_list_node *node = globals.cli_options.MT.list.first; node; node = node->next){
+            if(has_target) push_string_copy(&context->scratch, string(" "));
+            push_string_copy(&context->scratch, node->string);
+            has_target = true;
+        }
+        
+        for(struct string_list_node *node = globals.cli_options.MQ.list.first; node; node = node->next){
+            if(has_target) push_string_copy(&context->scratch, string(" "));
+            struct string quoted_target = makefile_quote(arena, node->string);
+            push_string_copy(&context->scratch, quoted_target);
+            has_target = true;
+        }
+        
+        if(!has_target){
+            struct string default_target = strip_file_path(output_file_path);
+            if(globals.cli_options.out.data && !path_is_directory((char *)globals.cli_options.out.data)){
+                default_target = globals.cli_options.out;
+            }
+            struct string target = makefile_quote(arena, default_target);
+            push_string_copy(&context->scratch, target);
+        }
+        
+        push_string_copy(&context->scratch, string(":"));
+        
+        int skip_system_dependencies = globals.cli_options.MM || globals.cli_options.MMD;
+        
+        for(smm file_index = 0; file_index < array_count(globals.file_table.data); file_index++){
+            struct file *it = globals.file_table.data[file_index];
+            if(!it) continue;
+            if(skip_system_dependencies && it->is_system_include) continue;
+            
+            push_string_copy(&context->scratch, string(" \\\n    "));
+            struct string dependency = makefile_quote(arena, string_from_cstring(it->absolute_file_path));
+            push_string_copy(&context->scratch, dependency);
+        }
+        
+        push_string_copy(&context->scratch, string("\n"));
+        
+        u8 *dependency_file_end = arena_current(&context->scratch);
+        
+        if(print_dependencies || string_match(dependency_file, string("-"))){
+            os_print_string((char *)dependency_file_start, dependency_file_end - dependency_file_start);
+        }else{
+            assert(dependency_file.data);
+            int success = os_write_file((char *)dependency_file.data, dependency_file_start, dependency_file_end - dependency_file_start);
+            if(!success){
+                print("Warning: Failed to write dependency file '%.*s'.\n", dependency_file.size, dependency_file.data);
+            }
+        }
+        
+        if(wants_print) return 0;
+    }
+    
     
 #if 0
     for(smm compilation_unit_index = 0; compilation_unit_index < globals.compilation_units.amount; compilation_unit_index++){
@@ -6361,53 +6497,17 @@ globals.typedef_##postfix = (struct ast_type){                                  
         // to actually assemble the output files.
         // 
         
-        struct string output_file_path = globals.cli_options.out;
-        {
-            // 
-            // Build the output file path.
-            // 
-            // There are a couple of cases for how the output path is determined.
-            // 
-            //    1) The user does not specify the output path. 
-            //       In this case the output path is:
-            //           C:/the/working/directory/first_source_file
-            //       The resulting files are:
-            //           C:/the/working/directory/first_source_file.exe
-            //           C:/the/working/directory/first_source_file.pdb
-            //           
-            //    2) The user specified a relative file path including a file name.
-            //       In this case we prepend the working directory.
-            //       The resulting files are:
-            //           C:/the/working/directory/user/specified.exe
-            //           C:/the/working/directory/user/specified.pdb
-            //       
-            //    3) The user specified a relative file path ending in a directory.
-            //       In this case we append the first source file again.
-            //       
-            //    4) Option 2) and 3) have an analogous version for full paths.
-            // 
-            
-            if(path_is_relative(output_file_path)){
-                output_file_path = concatenate_file_paths(arena, working_directory, output_file_path);
+        if(!get_file_extension(output_file_path).size){
+            struct string file_extension = zero_struct;
+            switch(globals.output_file_type){
+                case OUTPUT_FILE_exe: file_extension = string(".exe"); break;
+                case OUTPUT_FILE_dll: file_extension = string(".dll"); break;
+                case OUTPUT_FILE_obj: file_extension = string(".obj"); break;
+                case OUTPUT_FILE_efi: file_extension = string(".efi"); break;
+                case OUTPUT_FILE_elf: file_extension = globals.cli_options.obj ? string(".o") : string(""); break;
+                invalid_default_case();
             }
-            
-            if(path_is_directory((char *)output_file_path.data)){
-                struct string file_name = strip_file_extension(strip_file_path(((struct work_tokenize_file *)files_to_parse.first->data)->absolute_file_path));
-                output_file_path = concatenate_file_paths(arena, output_file_path, file_name);
-            }
-            
-            if(!get_file_extension(output_file_path).size){
-                struct string file_extension = zero_struct;
-                switch(globals.output_file_type){
-                    case OUTPUT_FILE_exe: file_extension = string(".exe"); break;
-                    case OUTPUT_FILE_dll: file_extension = string(".dll"); break;
-                    case OUTPUT_FILE_obj: file_extension = string(".obj"); break;
-                    case OUTPUT_FILE_efi: file_extension = string(".efi"); break;
-                    case OUTPUT_FILE_elf: file_extension = globals.cli_options.obj ? string(".o") : string(""); break;
-                    invalid_default_case();
-                }
-                output_file_path = string_concatenate(arena, output_file_path, file_extension);
-            }
+            output_file_path = string_concatenate(arena, output_file_path, file_extension);
         }
         
         // The emit arena is fixed size 4 gigs, so we can print an error, if we exceed it.
