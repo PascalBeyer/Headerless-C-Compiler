@@ -3852,7 +3852,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                 }
                                 sll_push_back(replacement_list, replacement);
                             }
-                        }else if(peek_token_raw(context, TOKEN_hash)){
+                        }else if(is_function_like && peek_token_raw(context, TOKEN_hash)){
                             handled = true;
                             struct token hash = next_token_raw(context);
                             eat_whitespace_and_comments_raw(context);
