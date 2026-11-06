@@ -4405,13 +4405,13 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
         case TOKEN_sizeof:{
             struct ast_stack_entry *entry = ast_stack_push(context, AST_sizeof, next_token(context), null); 
             entry->other = arena_current(&context->ir_arena); // For sizeof(expression), we have to delete the whole expression.
-            context->prevent_evaluation_for_sizeof_alignof_or_typeof += 1;
+            context->prevent_evaluation_for_dead_code += 1;
             goto restart;
         }
         case TOKEN_alignof:{
             struct ast_stack_entry *entry = ast_stack_push(context, AST_alignof, next_token(context), null); 
             entry->other = arena_current(&context->ir_arena); // For alignof(expression), we have to delete the whole expression.
-            context->prevent_evaluation_for_sizeof_alignof_or_typeof += 1;
+            context->prevent_evaluation_for_dead_code += 1;
             goto restart;
         }
         
@@ -4433,7 +4433,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                 
                 parser_scope_pop(context, scope);
                 
-                if(context->prevent_evaluation_for_sizeof_alignof_or_typeof){
+                if(context->prevent_evaluation_for_dead_code){
                     if(old_last){
                         context->current_scope->subscopes.count -= 1;
                         context->current_scope->subscopes.last = old_last;
@@ -4576,7 +4576,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     operand = ast_push_u64_literal(context, value, size_or_alignof->token);
                     
                     context->in_lhs_expression = false;
-                    context->prevent_evaluation_for_sizeof_alignof_or_typeof -= 1;
+                    context->prevent_evaluation_for_dead_code -= 1;
                     
                     goto skip_primary_expression_because_we_got_a_sizeof_or_align_of_with_a_type;
                 }
@@ -5243,7 +5243,7 @@ case NUMBER_KIND_##type:{ \
             u8 *ir_arena_start = arena_current(&context->ir_arena);
             u8 *ir_arena_reset = ir_arena_start;
             
-            context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+            context->prevent_evaluation_for_dead_code++;
             
             struct expr choice_expression = parse_expression(context, /*skip_comma_expression*/1);
             maybe_load_address_for_array_or_function(context, IR_load_address, &choice_expression);
@@ -5251,7 +5251,7 @@ case NUMBER_KIND_##type:{ \
             
             struct ast_type *choice = choice_expression.resolved_type;
             
-            context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+            context->prevent_evaluation_for_dead_code--;
             context->ir_arena.current = ir_arena_start;
             
             struct expr default_expression = zero_struct;
@@ -5265,11 +5265,11 @@ case NUMBER_KIND_##type:{ \
                 if(peek_token_eat(context, TOKEN_default)){
                     expect_token(context, TOKEN_colon, "Expected ':' after 'default' while parsing a _Generic association list.");
                     
-                    if(choosen_expression.ir) context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                    if(choosen_expression.ir) context->prevent_evaluation_for_dead_code++;
                     
                     struct expr expression = parse_expression(context, /*skip_comma_expression*/1);
                     
-                    if(choosen_expression.ir) context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                    if(choosen_expression.ir) context->prevent_evaluation_for_dead_code--;
                     
                     if(default_expression.ir){
                         begin_error_report(context);
@@ -5315,11 +5315,11 @@ case NUMBER_KIND_##type:{ \
                         choosen_expression = expression;
                         ir_arena_reset = arena_current(&context->ir_arena);
                     }else{
-                        context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                        context->prevent_evaluation_for_dead_code++;
                         
                         parse_expression(context, /*skip_comma_expression*/1);
                         
-                        context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                        context->prevent_evaluation_for_dead_code--;
                         
                         context->ir_arena.current = ir_arena_reset;
                     }
@@ -5669,12 +5669,12 @@ case NUMBER_KIND_##type:{ \
                         
                         u8 *ir_arena_at = arena_current(&context->ir_arena);
                         
-                        context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                        context->prevent_evaluation_for_dead_code++;
                         
                         struct expr expr = parse_expression(context, /*skip_comma_expresssion*/false);
                         int constant = (expr.ir->kind == IR_integer_literal || expr.ir->kind == IR_float_literal);
                         
-                        context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                        context->prevent_evaluation_for_dead_code--;
                         
                         context->ir_arena.current = ir_arena_at;
                         
@@ -5699,22 +5699,22 @@ case NUMBER_KIND_##type:{ \
                             
                             u8 *ir_arena_at = arena_current(&context->ir_arena);
                             
-                            context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                            context->prevent_evaluation_for_dead_code++;
                             
                             parse_expression(context, /*skip_comma_expresssion*/true);
                             
-                            context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                            context->prevent_evaluation_for_dead_code--;
                             
                             context->ir_arena.current = ir_arena_at;
                         }else{
                             // Choose the second expression.
                             
                             u8 *ir_arena_at = arena_current(&context->ir_arena);
-                            context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                            context->prevent_evaluation_for_dead_code++;
                             
                             parse_expression(context, /*skip_comma_expresssion*/true);
                             
-                            context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                            context->prevent_evaluation_for_dead_code--;
                             context->ir_arena.current = ir_arena_at;
                             
                             expect_token(context, TOKEN_comma, "Expected ','."); // :Error
@@ -6186,7 +6186,7 @@ case NUMBER_KIND_##type:{ \
                 // Sets in op->operand in the next iteration.
                 operand = ast_push_u64_literal(context, size, operand.token);
                 
-                context->prevent_evaluation_for_sizeof_alignof_or_typeof -= 1;
+                context->prevent_evaluation_for_dead_code -= 1;
                 context->in_lhs_expression = false;
             }break;
             case AST_alignof:{
@@ -6208,7 +6208,7 @@ case NUMBER_KIND_##type:{ \
                 // Sets in op->operand in the next iteration.
                 operand = ast_push_u64_literal(context, alignment, operand.token);
                 
-                context->prevent_evaluation_for_sizeof_alignof_or_typeof -= 1;
+                context->prevent_evaluation_for_dead_code -= 1;
                 context->in_lhs_expression = false;
             }break;
             
@@ -7390,7 +7390,7 @@ case NUMBER_KIND_##type:{ \
                     value = &stack_entry->operand;
                     other = &operand;
                     
-                    context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                    context->prevent_evaluation_for_dead_code--;
                     context->ir_arena.current = stack_entry->other;
                 }
                 
@@ -7901,11 +7901,11 @@ case NUMBER_KIND_##type:{ \
                 }else{
                     pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
                     
-                    if(!is_true) context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                    if(!is_true) context->prevent_evaluation_for_dead_code++;
                     
                     if_true = parse_expression(context, false);
                     
-                    if(!is_true) context->prevent_evaluation_for_sizeof_alignof_or_typeof--;
+                    if(!is_true) context->prevent_evaluation_for_dead_code--;
                     
                     maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
                     maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
@@ -7920,7 +7920,7 @@ case NUMBER_KIND_##type:{ \
                     // Hence, nuke the if_true condition.
                     context->ir_arena.current = (u8 *)operand.ir;
                 }else{
-                    if(is_true) context->prevent_evaluation_for_sizeof_alignof_or_typeof++;
+                    if(is_true) context->prevent_evaluation_for_dead_code++;
                     // We should take the _if_true_ expression.
                     // Hence, we have to remember where to nuke to.
                     entry->other = arena_current(&context->ir_arena);
@@ -9339,13 +9339,13 @@ case TOKEN_##type_name:{                                                 \
             case TOKEN_typeof:{
                 expect_token(context, TOKEN_open_paren, "Expected '(' after typeof.");
                 
-                context->prevent_evaluation_for_sizeof_alignof_or_typeof += 1;
+                context->prevent_evaluation_for_dead_code += 1;
                 
                 u8 *ir_arena_start = arena_current(&context->ir_arena);
                 struct expr operand = parse_expression(context, /*should_skip_comma_expression*/false);
                 expect_token(context, TOKEN_closed_paren, "Expected ')' after typeof expression.");
                 
-                context->prevent_evaluation_for_sizeof_alignof_or_typeof -= 1;
+                context->prevent_evaluation_for_dead_code -= 1;
                 
                 // The operand of typeof is not evaluated.
                 context->ir_arena.current = ir_arena_start;
