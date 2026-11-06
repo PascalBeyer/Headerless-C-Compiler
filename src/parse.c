@@ -6441,12 +6441,59 @@ case NUMBER_KIND_##type:{ \
                 
                 if(kind_to_cast_to == AST_union || kind_to_cast_to == AST_struct){
                     if(!types_are_equal(type_to_cast_to, operand.resolved_type)){
-                        struct string operand_type_string = push_type_string(context->arena, &context->scratch, operand.resolved_type);
-                        struct string cast_to_type_string = push_type_string(context->arena, &context->scratch, type_to_cast_to);
                         
-                        report_error(context, operand.token, "Cast of '%.*s' to '%.*s' is illegal.", operand_type_string.length, operand_type_string.data, cast_to_type_string.length, cast_to_type_string.data);
+                        int okay = 0;
+                        
+                        if(kind_to_cast_to == AST_union){
+                            // 
+                            // GNU-extension to cast stuff to unions.
+                            // 
+                            
+                            struct ast_compound_type *compound_type = (struct ast_compound_type *)type_to_cast_to;
+                            
+                            struct compound_member *found = 0;
+                            
+                            for(u32 index = 0; index < compound_type->amount_of_members; index++){
+                                struct compound_member *member = compound_type->members + index;
+                                if(types_are_equal(member->type, operand.resolved_type)){
+                                    found = member;
+                                    break;
+                                }
+                            }
+                            
+                            if(found){
+                                okay = 1;
+                                
+                                struct ast_declaration *compound_literal_declaration = push_unnamed_declaration(context, type_to_cast_to, defined_type_to_cast_to, operand.token);
+                                
+                                struct ir_compound_literal *compound_literal = push_uninitialized_struct(&context->ir_arena, struct ir_compound_literal);
+                                compound_literal->base.kind = IR_compound_literal;
+                                compound_literal->decl = compound_literal_declaration;
+                                compound_literal->decl->assign_expr = &compound_literal->base;
+                                
+                                push_ir(context, IR_swap_lhs_rhs);
+                                
+                                struct ir_initializer *ir_initializer = push_uninitialized_struct(&context->ir_arena, struct ir_initializer);
+                                ir_initializer->base.kind = IR_initializer;
+                                ir_initializer->offset = 0;
+                                ir_initializer->lhs_type = operand.resolved_type;
+                                
+                                operand.ir = &compound_literal->base;
+                                operand.resolved_type = type_to_cast_to;
+                                operand.defined_type  = defined_type_to_cast_to;
+                            }
+                        }
+                        
+                        if(!okay){
+                            struct string operand_type_string = push_type_string(context->arena, &context->scratch, operand.resolved_type);
+                            struct string cast_to_type_string = push_type_string(context->arena, &context->scratch, type_to_cast_to);
+                            
+                            report_error(context, operand.token, "Cast of '%.*s' to '%.*s' is illegal.", operand_type_string.length, operand_type_string.data, cast_to_type_string.length, cast_to_type_string.data);
+                        }
                     }
+                    
                     // @note: Do not set `operand = prefix`.
+                    context->in_lhs_expression = false;
                     break;
                 }
                 
