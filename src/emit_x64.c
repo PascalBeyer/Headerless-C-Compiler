@@ -3062,6 +3062,7 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
             
             if(emit_locations[argument_index]->state == EMIT_LOCATION_immediate){
                 inline_asm_argument->integer_location = emit_locations[argument_index];
+                emit_location_prevent_freeing(context, emit_locations[argument_index]);
             }
             if(get_register_kind_for_type(decl->type) == REGISTER_KIND_xmm){
                 emit_locations[argument_index] = emit_load_float(context, emit_locations[argument_index]);
