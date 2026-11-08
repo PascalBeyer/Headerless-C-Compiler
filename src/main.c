@@ -503,6 +503,7 @@ static struct{
     struct directive_table_entry *directive_table;
     
     HANDLE preprocessed_file_handle;
+    int    skip_line_directives;
     
     struct memonic_info{
         struct string string;
@@ -3026,7 +3027,8 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                     // @cleanup: lines are still not correct...
                 }
                 
-                if(location.file_index != last_location.file_index){
+                
+                if(!globals.skip_line_directives && location.file_index != last_location.file_index){
                     char *filename = globals.file_table.data[location.file_index]->absolute_file_path;
                     struct string line_directive = push_format_string(&context->scratch, "#line %u \"%s\"\n", location.line, filename);
                     
@@ -5463,15 +5465,17 @@ globals.typedef_##postfix = (struct ast_type){                                  
         thread_count = (files_to_parse.amount < number_of_processors) ? files_to_parse.amount : number_of_processors;
     }
     
-    if(globals.cli_options.EP || globals.cli_options.P){
+#if _WIN32
+    if(globals.cli_options.EP || globals.cli_options.P || globals.cli_options.E){
         
+        globals.skip_line_directives = globals.cli_options.EP;
         
         if(globals.cli_options.P){
             struct string output_file_name = globals.cli_options.Fi;
             
             if(!output_file_name.data){
-                print("Error: @incomplete Currently you have to specify the file path using /Fi if you use /E.\n");
-                return 1;
+                struct string root = strip_file_extension(output_file_path);
+                output_file_name = push_format_string(arena, "%.*s.i", root.size, root.data);
             }
             
             globals.preprocessed_file_handle = os_open_file((char *)output_file_name.data, OS_OPEN_write);
@@ -5480,6 +5484,19 @@ globals.typedef_##postfix = (struct ast_type){                                  
         }
         thread_count = 1;
     }
+#else
+    if(globals.cli_options.EP || globals.cli_options.E){
+        globals.skip_line_directives = globals.cli_options.EP || globals.cli_options.P;
+        
+        if(globals.cli_options.out.data){
+            struct string output_file_name = globals.cli_options.out;
+            globals.preprocessed_file_handle = os_open_file((char *)output_file_name.data, OS_OPEN_write);
+        }else{
+            globals.preprocessed_file_handle = stdout;
+        }
+        thread_count = 1;
+    }
+#endif
     
     if(globals.cli_options.fPIC && !(globals.output_file_type == OUTPUT_FILE_elf && globals.compile_to_object) && !globals.preprocessed_file_handle){
         print("Error: The '-fPIC' option is only supported when compiling ELF object files.\n");

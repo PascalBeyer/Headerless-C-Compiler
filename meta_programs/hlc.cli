@@ -220,11 +220,15 @@ Equivalent to
 
 For everyone that enjoys their silence.
 
-/EP | /E - Print the preprocessed file to stdout.
+/EP - Print the preprocessed file to stdout. Skip #line directives.
 
 This is very incomplete and mostly here to make build-systems happy.
 
-/P - Print the preprocessed file to stdout.
+/E - Print the preprocessed file to stdout.
+
+This is very incomplete and mostly here to make build-systems happy.
+
+/P - Do not add #line directives to preprocessed file.
 
 This is very incomplete and mostly here to make build-systems happy.
 

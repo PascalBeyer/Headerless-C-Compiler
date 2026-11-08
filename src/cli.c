@@ -45,6 +45,7 @@ enum cli_option_kind{
     CLI_OPTION_l,
     CLI_OPTION_quiet,
     CLI_OPTION_EP,
+    CLI_OPTION_E,
     CLI_OPTION_P,
     CLI_OPTION_dM,
     CLI_OPTION_Fi,
@@ -242,8 +243,9 @@ struct cli_options{
     enum incremental incremental; // Does nothing, here for MSVC cli-compatibility.
     struct string_list l; // Link to the specified library.
     int quiet; // Print as little as necessary.
-    int EP; // Print the preprocessed file to stdout.
-    int P; // Print the preprocessed file to stdout.
+    int EP; // Print the preprocessed file to stdout. Skip #line directives.
+    int E; // Print the preprocessed file to stdout.
+    int P; // Do not add #line directives to preprocessed file.
     int dM; // Dump macros instead of preprocessed file.
     struct string Fi; // Sets the output file name for the preprocessed file.
     int dependencies; // Print dependencies to stdout.
@@ -555,7 +557,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 argument_is_optional = 0;
             }else if(string_front_match_eat(&option, "E")){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
-                option_kind          = CLI_OPTION_EP;
+                option_kind          = CLI_OPTION_E;
                 argument_is_optional = -1;
             }else if(string_front_match_eat(&option, "P")){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
@@ -935,13 +937,19 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "", 40);
                 }break;
                 case CLI_OPTION_EP:{
-                    print("-EP | Print the preprocessed file to stdout.\n\n");
+                    print("-EP | Print the preprocessed file to stdout. Skip #line directives.\n\n");
+                    os_print_string(
+                            "This is very incomplete and mostly here to make build-systems happy.\n"
+                            "", 69);
+                }break;
+                case CLI_OPTION_E:{
+                    print("-E | Print the preprocessed file to stdout.\n\n");
                     os_print_string(
                             "This is very incomplete and mostly here to make build-systems happy.\n"
                             "", 69);
                 }break;
                 case CLI_OPTION_P:{
-                    print("-P | Print the preprocessed file to stdout.\n\n");
+                    print("-P | Do not add #line directives to preprocessed file.\n\n");
                     os_print_string(
                             "This is very incomplete and mostly here to make build-systems happy.\n"
                             "", 69);
@@ -1188,8 +1196,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -incremental <enum>         | Does nothing, here for MSVC cli-compatibility.\n"
                             "  -l <library>                | Link to the specified library.\n"
                             "  -quiet                      | Print as little as necessary.\n"
-                            "  -EP                         | Print the preprocessed file to stdout.\n"
-                            "  -P                          | Print the preprocessed file to stdout.\n"
+                            "  -EP                         | Print the preprocessed file to stdout. Skip #line directives.\n"
+                            "  -E                          | Print the preprocessed file to stdout.\n"
+                            "  -P                          | Do not add #line directives to preprocessed file.\n"
                             "  -dM                         | Dump macros instead of preprocessed file.\n"
                             "  -Fi <file>                  | Sets the output file name for the preprocessed file.\n"
                             "  -dependencies               | Print dependencies to stdout.\n"
@@ -1204,7 +1213,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 3969);
+                    , 4074);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1402,6 +1411,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             case CLI_OPTION_quiet: cli_options->quiet = 1; break;
             case CLI_OPTION_EP: cli_options->EP = 1; break;
+            case CLI_OPTION_E: cli_options->E = 1; break;
             case CLI_OPTION_P: cli_options->P = 1; break;
             case CLI_OPTION_dM: cli_options->dM = 1; break;
             
