@@ -164,7 +164,7 @@ The number of threads must be between 1 and 10 times the amount of cores your sy
 
 This is the "whatever" throw some cores at it option.
 
-/I <dir_list> | /isystem <dir_list> | /idirafter <dir_list> - Specify an additional include directory.
+/I <dir_list> | /isystem <dir_list> | /idirafter <dir_list> | /iquote <dir_list> - Specify an additional include directory.
 
 This makes it possible to use your own headers in <>-includes.
 
@@ -233,6 +233,14 @@ This is very incomplete and mostly here to make build-systems happy.
 This is very incomplete and mostly here to make build-systems happy.
 
 /dM - Dump macros instead of preprocessed file.
+
+TODO
+
+/v - Dumps some information about the build.
+
+Mostly here to make some build-systems happy.
+
+/relocatable | /r - Produce a relocatable object?
 
 TODO
 

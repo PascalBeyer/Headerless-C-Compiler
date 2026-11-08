@@ -1896,7 +1896,7 @@ string_lexically_smaller( \
             u8 *buffer = exe_base_address;
             smm buffer_size = size;
             
-            HANDLE file_handle = os_open_file(exe_name, OS_OPEN_write);
+            HANDLE file_handle = os_open_file(exe_name, OS_OPEN_write_executable);
             
             success = os_file_write(file_handle, buffer, buffer_size);
             

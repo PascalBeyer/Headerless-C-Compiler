@@ -358,23 +358,29 @@ b32 os_write_file(char *file_name, void *buffer, smm buffer_size){
 enum os_open_kind{
     OS_OPEN_read  = 1,
     OS_OPEN_write = 2,
-    // OS_OPEN_append = 3,
+    OS_OPEN_write_executable = 3,
 };
 
 HANDLE os_open_file(char *file_name, enum os_open_kind kind){
     
     int flags;
+    int mode = 0;
     switch(kind){
         case OS_OPEN_read:{
             flags = O_RDONLY;
         }break;
         case OS_OPEN_write:{
             flags = O_WRONLY | O_CREAT | O_TRUNC;
+            mode = 0644;
+        }break;
+        case OS_OPEN_write_executable:{
+            flags = O_WRONLY | O_CREAT | O_TRUNC;
+            mode = 0755;
         }break;
         default: return -1;
     }
     
-    return open(file_name, flags, 0644);
+    return open(file_name, flags, mode);
 }
 
 int os_file_write(HANDLE file_handle, void *buffer, smm buffer_size){

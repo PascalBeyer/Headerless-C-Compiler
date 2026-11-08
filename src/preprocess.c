@@ -2196,6 +2196,11 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
     struct os_file os_file;
     if(absolute_file_path[0] == '-' && absolute_file_path[1] == 0){
         os_file = os_read_stdin();
+        if(os_file.file_does_not_exist){
+            report_error(context, 0, "Error: Could not read from stdin.");
+            goto end;
+        }
+        
         file_size = os_file.size;
         padded_file_size = file_size + pad_size;
         file_buffer = os_file.data;

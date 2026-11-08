@@ -2942,7 +2942,7 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     if(!globals.cli_options.dont_print_the_files){
         char *elf_name = push_cstring_from_string(arena, output_file_path);
         
-        HANDLE file_handle = os_open_file(elf_name, OS_OPEN_write);
+        HANDLE file_handle = os_open_file(elf_name, OS_OPEN_write_executable);
         
         int success = os_file_write(file_handle, elf_base, elf_size);
         

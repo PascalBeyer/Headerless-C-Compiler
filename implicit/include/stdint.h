@@ -1,4 +1,8 @@
 
+#ifdef __linux__
+#include_next <stdint.h>
+#else
+
 typedef unsigned __int8  uint8_t;
 typedef unsigned __int16 uint16_t;
 typedef unsigned __int32 uint32_t;
@@ -111,3 +115,5 @@ typedef signed   __int64  intmax_t;
 
 #define INTMAX_C(a) a##ll
 #define UINTMAX_C(a) a##llu
+
+#endif

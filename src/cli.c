@@ -48,6 +48,8 @@ enum cli_option_kind{
     CLI_OPTION_E,
     CLI_OPTION_P,
     CLI_OPTION_dM,
+    CLI_OPTION_v,
+    CLI_OPTION_relocatable,
     CLI_OPTION_Fi,
     CLI_OPTION_dependencies,
     CLI_OPTION_write_dependencies,
@@ -111,12 +113,14 @@ struct cli_option_hash_table_entry{
     [71] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
     [83] = {{7, (u8 *)"isystem"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [63] = {{9, (u8 *)"idirafter"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
+    [29] = {{6, (u8 *)"iquote"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [42] = {{7, (u8 *)"libpath"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_LIBPATH, 0},
     [21] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
     [12] = {{5, (u8 *)"wnone"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wnone, -1},
     [119] = {{11, (u8 *)"incremental"}, CLI_ARGUMENT_TYPE_enum, CLI_OPTION_incremental, 0},
     [13] = {{5, (u8 *)"quiet"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
     [51] = {{6, (u8 *)"nologo"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_quiet, -1},
+    [99] = {{11, (u8 *)"relocatable"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_relocatable, -1},
     [14] = {{12, (u8 *)"dependencies"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dependencies, -1},
     [88] = {{17, (u8 *)"writedependencies"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_write_dependencies, -1},
     [58] = {{12, (u8 *)"warninglimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_warning_limit, 0},
@@ -249,6 +253,8 @@ struct cli_options{
     int E; // Print the preprocessed file to stdout.
     int P; // Do not add #line directives to preprocessed file.
     int dM; // Dump macros instead of preprocessed file.
+    int v; // Dumps some information about the build.
+    int relocatable; // Produce a relocatable object?
     struct string Fi; // Sets the output file name for the preprocessed file.
     int dependencies; // Print dependencies to stdout.
     int write_dependencies; // Write a dependency file.
@@ -356,6 +362,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             if(*option_cstring == '-') option_cstring++;
             if(*option_cstring == 0){
                 cli_options->add_stdin = 1;
+                continue;
             }
         }else if(*option_cstring == '@'){
             //
@@ -568,6 +575,14 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }else if(string_front_match_eat(&option, "P")){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_P;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "v")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_v;
+                argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "r")){
+                option_argument_type = CLI_ARGUMENT_TYPE_none;
+                option_kind          = CLI_OPTION_relocatable;
                 argument_is_optional = -1;
             }else if(string_front_match_eat(&option, "M")){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
@@ -966,6 +981,18 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "TODO\n"
                             "", 5);
                 }break;
+                case CLI_OPTION_v:{
+                    print("-v | Dumps some information about the build.\n\n");
+                    os_print_string(
+                            "Mostly here to make some build-systems happy.\n"
+                            "", 46);
+                }break;
+                case CLI_OPTION_relocatable:{
+                    print("-relocatable | Produce a relocatable object?\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
                 case CLI_OPTION_Fi:{
                     print("-Fi <file> | Sets the output file name for the preprocessed file.\n\n");
                     os_print_string(
@@ -1212,6 +1239,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -E                          | Print the preprocessed file to stdout.\n"
                             "  -P                          | Do not add #line directives to preprocessed file.\n"
                             "  -dM                         | Dump macros instead of preprocessed file.\n"
+                            "  -v                          | Dumps some information about the build.\n"
+                            "  -relocatable                | Produce a relocatable object?\n"
                             "  -Fi <file>                  | Sets the output file name for the preprocessed file.\n"
                             "  -dependencies               | Print dependencies to stdout.\n"
                             "  -write_dependencies         | Write a dependency file.\n"
@@ -1225,7 +1254,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 4074);
+                    , 4208);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1426,6 +1455,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_E: cli_options->E = 1; break;
             case CLI_OPTION_P: cli_options->P = 1; break;
             case CLI_OPTION_dM: cli_options->dM = 1; break;
+            case CLI_OPTION_v: cli_options->v = 1; break;
+            case CLI_OPTION_relocatable: cli_options->relocatable = 1; break;
             
             case CLI_OPTION_Fi:{
                 cli_options->Fi = argument_string;

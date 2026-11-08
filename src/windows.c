@@ -848,7 +848,7 @@ func b32 path_is_directory(char *path){
 enum os_open_kind{
     OS_OPEN_read  = 1,
     OS_OPEN_write = 2,
-    // OS_OPEN_append = 3,
+    OS_OPEN_write_executable = 3,
 };
 
 static HANDLE os_open_file(char *file_name, enum os_open_kind kind){
@@ -861,7 +861,8 @@ static HANDLE os_open_file(char *file_name, enum os_open_kind kind){
             DesiredAccess = GENERIC_READ;
             CreateDisposition = OPEN_EXISTING;
         }break;
-        case OS_OPEN_write:{
+        case OS_OPEN_write:
+        case OS_OPEN_write_executable:{
             DesiredAccess = GENERIC_WRITE;
             CreateDisposition = CREATE_ALWAYS;
         }break;
