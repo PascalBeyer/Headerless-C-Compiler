@@ -2189,27 +2189,35 @@ func struct file *load_or_get_source_file_by_absolute_path(struct context *conte
     // 
     // @WARNING: We have to add 128 padding bytes as we are using 'hash_md5_inplace' in coff_writer.c
     // 
-    
-#ifndef _WIN32
-    // On linux file_size might not be set yet, because the file iterator does not set it...
-    if(!file_size) file_size = os_load_file(absolute_file_path, 0, 0).size;
-#endif
-    
     smm pad_size = 128;
-    smm padded_file_size = file_size + pad_size;
+    smm padded_file_size;
+    u8 *file_buffer;
     
-    u8 *file_buffer = push_uninitialized_data(context->arena, u8, padded_file_size);
-    
-#ifdef FUZZING
-    struct os_file os_file = os_load_file_fuzzing(absolute_file_path, file_buffer, padded_file_size);
-    
-    print("-----------------------------------------------\n");
-    print("%.*s\n", os_file.size, os_file.data);
-    print("-----------------------------------------------\n");
-#else
-    struct os_file os_file = os_load_file(absolute_file_path, file_buffer, padded_file_size);
+    struct os_file os_file;
+    if(absolute_file_path[0] == '-' && absolute_file_path[1] == 0){
+        os_file = os_read_stdin();
+        file_size = os_file.size;
+        padded_file_size = file_size + pad_size;
+        file_buffer = os_file.data;
+    }else{
+#ifndef _WIN32
+        // On linux file_size might not be set yet, because the file iterator does not set it...
+        if(!file_size) file_size = os_load_file(absolute_file_path, 0, 0).size;
 #endif
-    
+        
+        padded_file_size = file_size + pad_size;
+        file_buffer = push_uninitialized_data(context->arena, u8, padded_file_size);
+        
+#ifdef FUZZING
+        struct os_file os_file = os_load_file_fuzzing(absolute_file_path, file_buffer, padded_file_size);
+        
+        print("-----------------------------------------------\n");
+        print("%.*s\n", os_file.size, os_file.data);
+        print("-----------------------------------------------\n");
+#else
+        os_file = os_load_file(absolute_file_path, file_buffer, padded_file_size);
+#endif
+    }
     // 
     // Clear the added padding, this will *really* zero-terminate the file.
     // 

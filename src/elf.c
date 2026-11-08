@@ -1953,7 +1953,11 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             struct string absolute_file_path = string_from_cstring(node->absolute_file_path);
             struct string name = strip_file_path(absolute_file_path);
-            struct string path = {.data = absolute_file_path.data, .size = absolute_file_path.size - name.size - 1};
+            struct string path = string(".");
+            if(name.size < absolute_file_path.size){
+                path.data = absolute_file_path.data;
+                path.size = absolute_file_path.size - name.size - 1;
+            }
             
             struct string_list_pool_add_return directory_add_ret = string_list_pool_add(&directories, scratch, path);
             struct string_list_pool_add_return file_name_add_ret = string_list_pool_add(&file_names, scratch, name);

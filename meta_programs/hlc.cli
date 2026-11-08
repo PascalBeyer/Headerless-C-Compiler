@@ -322,6 +322,10 @@ Mostly implemented for MSVC-compatibility.
 
 # Hidden
 
+/add_stdin - Use stdin as a target.
+
+TODO
+
 /dont_print_the_files - Don't print the files because we are in a test suite.
 
 This option is used by the test-runner for tests that only have to compile, 

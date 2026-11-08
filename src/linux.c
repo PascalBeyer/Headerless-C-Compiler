@@ -281,6 +281,55 @@ struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size){
     return ret;
 }
 
+struct os_file os_read_stdin(void){
+    
+    struct os_file ret = zero_struct;
+    
+    smm reserve_size = giga_bytes(1);
+    smm chunk_size   = kilo_bytes(4);
+    
+    struct os_virtual_buffer buffer = os_reserve_memory(0, reserve_size);
+    if(!buffer.memory) goto failed;
+    
+    smm committed = 0;
+    smm size = 0;
+    
+    while(true){
+        if(size == committed){
+            if(committed == reserve_size) goto failed;
+            
+            struct os_virtual_buffer commit = os_commit_memory(buffer.memory + committed, chunk_size);
+            if(!commit.base) goto failed;
+            
+            committed += chunk_size;
+        }
+        
+        // ssize_t read(int fd, void *buf, size_t count);
+        ssize_t bytes_read = read(STDIN_FILENO, buffer.memory + size, committed - size);
+        if(bytes_read < 0){
+            if(errno == EINTR) continue;
+            goto failed;
+        }
+        
+        if(bytes_read == 0) break; // end of input
+        size += bytes_read;
+    }
+    
+    if(size + 128 > committed){
+        struct os_virtual_buffer commit = os_commit_memory(buffer.memory + committed, chunk_size);
+        if(!commit.base) goto failed;
+    }
+    
+    ret.memory = buffer.memory;
+    ret.size   = size;
+    return ret;
+    
+    failed:;
+    ret.file_does_not_exist = true;
+    if(buffer.memory) os_free_memory_all(buffer.memory, reserve_size);
+    return ret;
+}
+
 b32 os_write_file(char *file_name, void *buffer, smm buffer_size){
     
     // int open(const char *pathname, int flags, mode_t mode);

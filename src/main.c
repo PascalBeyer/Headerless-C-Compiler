@@ -4289,6 +4289,19 @@ int main(int argc, char *argv[]){
         }
     }
     
+    if(globals.cli_options.add_stdin){
+        
+        struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
+        work->absolute_file_path = string("-");
+        work->file_size = 0;
+        
+        struct work_queue_entry *work_entry = push_struct(arena, struct work_queue_entry);
+        work_entry->data = work;
+        
+        sll_push_back(files_to_parse, work_entry);
+        files_to_parse.amount += 1;
+    }
+    
     if(sll_is_empty(files_to_parse)){
         
         if(!sll_is_empty(object_files.list)){
@@ -5439,6 +5452,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
         
         if(path_is_directory((char *)output_file_path.data)){
             struct string file_name = strip_file_extension(strip_file_path(((struct work_tokenize_file *)files_to_parse.first->data)->absolute_file_path));
+            if(string_match(file_name, string("-"))) file_name = string("a");
+            
             output_file_path = concatenate_file_paths(arena, output_file_path, file_name);
         }
     }

@@ -175,6 +175,7 @@ static void *                   os_allocate_memory(smm size){
 
 static void           os_free_memory_all(void *memory_to_free, u64 size);
 static struct os_file os_load_file(char *file_name, void *buffer, smm buffer_size); // @sigh cstrings
+static struct os_file os_read_stdin(void);
 static b32            os_write_file(char *file_name, void *buffer, smm buffer_size); // zero terminated
 static NO_RETURN void os_panic(u32 exit_code);
 static u32            os_print_string(char *string, smm length);

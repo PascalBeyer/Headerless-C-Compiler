@@ -781,6 +781,63 @@ static struct os_file os_load_file(char *file_name, void *buffer, smm buffer_siz
     return result;
 }
 
+static struct os_file os_read_stdin(void){
+    
+    struct os_file ret = zero_struct;
+    
+    smm reserve_size = giga_bytes(1);
+    smm chunk_size   = kilo_bytes(4);
+    
+    struct os_virtual_buffer buffer = os_reserve_memory(0, reserve_size);
+    if(!buffer.memory) goto failed;
+    
+    smm committed = 0;
+    smm size = 0;
+    
+    HANDLE stdin_handle = stdin;
+    if(!stdin_handle || stdin_handle == INVALID_HANDLE_VALUE){
+        stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+    }
+    
+    while(true){
+        if(size == committed){
+            if(committed == reserve_size) goto failed;
+            
+            struct os_virtual_buffer commit = os_commit_memory(buffer.memory + committed, chunk_size);
+            if(!commit.base) goto failed;
+            
+            committed += chunk_size;
+        }
+        
+        DWORD bytes_read = 0;
+        DWORD to_read = (DWORD)(committed - size);
+        
+        if(!ReadFile(stdin_handle, buffer.memory + size, to_read, &bytes_read, 0)){
+            // ERROR_HANDLE_EOF (38) and ERROR_BROKEN_PIPE (109) mean the input is done.
+            DWORD error = GetLastError();
+            if(error == 38 || error == 109) break;
+            goto failed;
+        }
+        
+        if(bytes_read == 0) break; // end of input
+        size += bytes_read;
+    }
+    
+    if(size + 128 > committed){
+        struct os_virtual_buffer commit = os_commit_memory(buffer.memory + committed, chunk_size);
+        if(!commit.base) goto failed;
+    }
+    
+    ret.memory = buffer.memory;
+    ret.size   = size;
+    return ret;
+    
+    failed:;
+    ret.file_does_not_exist = true;
+    if(buffer.memory) os_free_memory_all(buffer.memory, reserve_size);
+    return ret;
+}
+
 func b32 path_is_directory(char *path){
     u32 INVALID_FILE_ATTRIBUTES = u32_max;
     u32 FILE_ATTRIBUTE_DIRECTORY = 0x10;

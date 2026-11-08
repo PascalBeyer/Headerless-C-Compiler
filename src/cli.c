@@ -61,6 +61,7 @@ enum cli_option_kind{
     CLI_OPTION_error_limit,
     CLI_OPTION_syntax_check,
     CLI_OPTION_report_warnings_in_system_includes,
+    CLI_OPTION_add_stdin,
     CLI_OPTION_dont_print_the_files,
     CLI_OPTION_seed,
     CLI_OPTION_ignore,
@@ -122,6 +123,7 @@ struct cli_option_hash_table_entry{
     [46] = {{10, (u8 *)"errorlimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_error_limit, 0},
     [74] = {{11, (u8 *)"syntaxcheck"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
     [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
+    [80] = {{8, (u8 *)"addstdin"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_add_stdin, -1},
     [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [43] = {{6, (u8 *)"ignore"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_ignore, 0},
@@ -262,6 +264,7 @@ struct cli_options{
     u64 error_limit; // A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.
     int syntax_check; // Only check syntax. No compilation after type-checking.
     int report_warnings_in_system_includes; // Self explanatory.
+    int add_stdin; // Use stdin as a target.
     int dont_print_the_files; // Don't print the files because we are in a test suite.
     int seed_specified;
     u64 seed; // Specifies a seed used to shuffle around declarations.
@@ -351,6 +354,9 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             is_option = 1;
             option_cstring++;
             if(*option_cstring == '-') option_cstring++;
+            if(*option_cstring == 0){
+                cli_options->add_stdin = 1;
+            }
         }else if(*option_cstring == '@'){
             //
             // @CommandFile, load the file and recursively call `cli_parse_options`.
@@ -1060,6 +1066,12 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 case CLI_OPTION_report_warnings_in_system_includes:{
                     print("-report_warnings_in_system_includes | Self explanatory.\n\n");
                 }break;
+                case CLI_OPTION_add_stdin:{
+                    print("-add_stdin | Use stdin as a target.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
                 case CLI_OPTION_dont_print_the_files:{
                     print("-dont_print_the_files | Don't print the files because we are in a test suite.\n\n");
                     os_print_string(
@@ -1475,6 +1487,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             case CLI_OPTION_syntax_check: cli_options->syntax_check = 1; break;
             case CLI_OPTION_report_warnings_in_system_includes: cli_options->report_warnings_in_system_includes = 1; break;
+            case CLI_OPTION_add_stdin: cli_options->add_stdin = 1; break;
             case CLI_OPTION_dont_print_the_files: cli_options->dont_print_the_files = 1; break;
             
             case CLI_OPTION_seed:{
