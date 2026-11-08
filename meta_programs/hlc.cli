@@ -138,6 +138,14 @@ startup object, which is only valid for executables.
 Only valid together with '-c'. Global data is accessed through the GOT so the
 resulting object can be linked into a shared library.
 
+/fPIE - Generate code for a position-independent executable. This is default.
+
+TODO
+
+/fno_PIE - Generate code for a NON position-independent executable.
+
+TODO
+
 /obj | /c - Produce an object file instead of an executable.
 
 Using the /obj option allows you to compile in "more classic" c-compiler fashion.
