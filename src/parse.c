@@ -892,17 +892,20 @@ func struct ast_scope *parser_push_new_scope(struct context *context, struct tok
     struct ast_scope *scope = push_uninitialized_struct(context->arena, struct ast_scope);
     scope->flags = flags;
     scope->token = token;
-    scope->start_offset = (u32)(arena_current(&context->ir_arena) - context->current_function->start_in_ir_arena); // kinda dumb, this is not true for function scopes. Maybe this function should not be called for function scopes.
     scope->parent = parent;
     
-    if(parent->subscopes.last){ // @note: sll_push_back does not work because of the `subscopes` member.
-        parent->subscopes.last->subscopes.next = scope;
-        parent->subscopes.last = scope;
-    }else{
-        parent->subscopes.first = scope;
-        parent->subscopes.last  = scope;
+    scope->start_offset = (u32)(arena_current(&context->ir_arena) - context->current_function->start_in_ir_arena);
+    
+    if(context->prevent_evaluation_for_dead_code == 0){
+        if(parent->subscopes.last){ // @note: sll_push_back does not work because of the `subscopes` member.
+            parent->subscopes.last->subscopes.next = scope;
+            parent->subscopes.last = scope;
+        }else{
+            parent->subscopes.first = scope;
+            parent->subscopes.last  = scope;
+        }
+        parent->subscopes.count += 1;
     }
-    parent->subscopes.count += 1;
     
     context->current_scope = scope;
     
@@ -1455,6 +1458,8 @@ func enum ast_kind ast_stack_current(struct context *context){
 
 // :function_line_information
 void function_maybe_add_line_information(struct context *context, struct token *token, u32 flags){
+    
+    if(context->prevent_evaluation_for_dead_code != 0) return;
     
     struct token_location_information location = get_location_for_token(context->arena, context->current_compilation_unit, token);
     
@@ -4361,6 +4366,16 @@ func void punt_compound_assignment(struct context *context, struct expr *lhs, st
 __declspec(dllimport) double strtod(const char *str, char **endptr);
 #endif
 
+func u8 *enter_dead_code(struct context *context){
+    context->prevent_evaluation_for_dead_code += 1;
+    return context->ir_arena.current;
+}
+
+func void exit_dead_code(struct context *context, u8 *dead_code_marker){
+    context->ir_arena.current = dead_code_marker;
+    context->prevent_evaluation_for_dead_code -= 1;
+}
+
 func struct expr parse_expression(struct context *context, b32 should_skip_comma_expression){
     
     if(maybe_report_error_for_stack_exhaustion(context, "Expression nests to deep.")){
@@ -4404,14 +4419,12 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
         // :sizeof/alignof threading bug
         case TOKEN_sizeof:{
             struct ast_stack_entry *entry = ast_stack_push(context, AST_sizeof, next_token(context), null); 
-            entry->other = arena_current(&context->ir_arena); // For sizeof(expression), we have to delete the whole expression.
-            context->prevent_evaluation_for_dead_code += 1;
+            entry->other = enter_dead_code(context); // For sizeof(expression), we have to delete the whole expression.
             goto restart;
         }
         case TOKEN_alignof:{
             struct ast_stack_entry *entry = ast_stack_push(context, AST_alignof, next_token(context), null); 
-            entry->other = arena_current(&context->ir_arena); // For alignof(expression), we have to delete the whole expression.
-            context->prevent_evaluation_for_dead_code += 1;
+            entry->other = enter_dead_code(context); // For alignof(expression), we have to delete the whole expression.
             goto restart;
         }
         
@@ -4420,39 +4433,36 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
             
             if(peek_token_eat(context, TOKEN_open_curly)){
                 
+                if(!context->current_function){
+                    report_error(context, open_paren, "Cannot use ({<statement>}) expressions at global scope.");
+                    operand = ast_push_s32_literal(context, 0, open_paren);
+                    break;
+                }
+                
                 // GNU extension: statement expressions :statement_expression
                 // 
                 //    Something like ({ ... })
                 //    
                 
                 struct ast_scope *old_statement_expression_scope = context->statement_expression_scope;
-                
-                struct ast_scope *old_last = context->current_scope->subscopes.last;
+                int old_returns_a_value = context->current_statement_returns_a_value;
+                int old_statement_expression_index = context->statement_expression_index;
+                context->statement_expression_index = ++context->statement_expression_index_allocator;
                 
                 struct ast_scope *scope = parser_push_new_scope(context, open_paren, SCOPE_FLAG_none);
                 context->statement_expression_scope = scope;
                 
                 parse_imperative_scope(context);
                 
-                context->statement_expression_scope = old_statement_expression_scope;
-                
                 parser_scope_pop(context, scope);
                 
-                if(context->prevent_evaluation_for_dead_code){
-                    if(old_last){
-                        context->current_scope->subscopes.count -= 1;
-                        context->current_scope->subscopes.last = old_last;
-                        old_last->subscopes.next = 0;
-                    }else{
-                        context->current_scope->subscopes.count = 0;
-                        context->current_scope->subscopes.first = 0;
-                        context->current_scope->subscopes.last  = 0;
-                    }
-                }
+                context->statement_expression_scope = old_statement_expression_scope;
+                context->statement_expression_index = old_statement_expression_index;
                 
                 expect_token(context, TOKEN_closed_paren, "Expected ')' ending ({<statement>}) expression.");
                 
                 operand = context->statement_expression_return;
+                context->current_statement_returns_a_value = old_returns_a_value;
                 
                 memset(&context->statement_expression_return, 0, sizeof(context->statement_expression_return));
                 
@@ -4577,11 +4587,12 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     
                     u64 value = is_alignof ? type->alignment : type->size;
                     
+                    exit_dead_code(context, size_or_alignof->other);
+                    
                     // "The [..] type (an unsigned integer type) is 'size_t', defined in <stddef.h>."
                     operand = ast_push_u64_literal(context, value, size_or_alignof->token);
                     
                     context->in_lhs_expression = false;
-                    context->prevent_evaluation_for_dead_code -= 1;
                     
                     goto skip_primary_expression_because_we_got_a_sizeof_or_align_of_with_a_type;
                 }
@@ -5247,10 +5258,9 @@ case NUMBER_KIND_##type:{ \
             
             expect_token(context, TOKEN_open_paren, "Expected a '(' after '_Generic'.");
             
-            u8 *ir_arena_start = arena_current(&context->ir_arena);
+            u8 *ir_arena_start = enter_dead_code(context);
             u8 *ir_arena_reset = ir_arena_start;
             
-            context->prevent_evaluation_for_dead_code++;
             
             struct expr choice_expression = parse_expression(context, /*skip_comma_expression*/1);
             maybe_load_address_for_array_or_function(context, IR_load_address, &choice_expression);
@@ -5258,8 +5268,7 @@ case NUMBER_KIND_##type:{ \
             
             struct ast_type *choice = choice_expression.resolved_type;
             
-            context->prevent_evaluation_for_dead_code--;
-            context->ir_arena.current = ir_arena_start;
+            exit_dead_code(context, ir_arena_start);
             
             struct expr default_expression = zero_struct;
             struct expr choosen_expression = zero_struct;
@@ -5272,11 +5281,10 @@ case NUMBER_KIND_##type:{ \
                 if(peek_token_eat(context, TOKEN_default)){
                     expect_token(context, TOKEN_colon, "Expected ':' after 'default' while parsing a _Generic association list.");
                     
-                    if(choosen_expression.ir) context->prevent_evaluation_for_dead_code++;
+                    u8 *dead_code_marker = null;
+                    if(choosen_expression.ir) dead_code_marker = enter_dead_code(context);;
                     
                     struct expr expression = parse_expression(context, /*skip_comma_expression*/1);
-                    
-                    if(choosen_expression.ir) context->prevent_evaluation_for_dead_code--;
                     
                     if(default_expression.ir){
                         begin_error_report(context);
@@ -5286,7 +5294,7 @@ case NUMBER_KIND_##type:{ \
                     }
                     
                     if(choosen_expression.ir){
-                        context->ir_arena.current = ir_arena_reset;
+                        exit_dead_code(context, dead_code_marker);
                     }else{
                         default_expression = expression;
                         ir_arena_reset = arena_current(&context->ir_arena);
@@ -5322,13 +5330,11 @@ case NUMBER_KIND_##type:{ \
                         choosen_expression = expression;
                         ir_arena_reset = arena_current(&context->ir_arena);
                     }else{
-                        context->prevent_evaluation_for_dead_code++;
+                        u8 *dead_code_marker = enter_dead_code(context);
                         
                         parse_expression(context, /*skip_comma_expression*/1);
                         
-                        context->prevent_evaluation_for_dead_code--;
-                        
-                        context->ir_arena.current = ir_arena_reset;
+                        exit_dead_code(context, dead_code_marker);
                     }
                 }
             }
@@ -5674,16 +5680,12 @@ case NUMBER_KIND_##type:{ \
                         operand = ast_push_s32_literal(context, compatible, call_token);
                     }else if(atoms_match(call_token->atom, atom_for_string(string("__builtin_constant_p")))){
                         
-                        u8 *ir_arena_at = arena_current(&context->ir_arena);
-                        
-                        context->prevent_evaluation_for_dead_code++;
+                        u8 *ir_arena_at = enter_dead_code(context);
                         
                         struct expr expr = parse_expression(context, /*skip_comma_expresssion*/false);
                         int constant = (expr.ir->kind == IR_integer_literal || expr.ir->kind == IR_float_literal);
                         
-                        context->prevent_evaluation_for_dead_code--;
-                        
-                        context->ir_arena.current = ir_arena_at;
+                        exit_dead_code(context, ir_arena_at);
                         
                         pop_from_ir_arena(context, identifier);
                         
@@ -5704,25 +5706,19 @@ case NUMBER_KIND_##type:{ \
                             result = parse_expression(context, /*skip_comma_expresssion*/true);
                             expect_token(context, TOKEN_comma, "Expected ','."); // :Error
                             
-                            u8 *ir_arena_at = arena_current(&context->ir_arena);
-                            
-                            context->prevent_evaluation_for_dead_code++;
+                            u8 *dead_code_marker = enter_dead_code(context);
                             
                             parse_expression(context, /*skip_comma_expresssion*/true);
                             
-                            context->prevent_evaluation_for_dead_code--;
-                            
-                            context->ir_arena.current = ir_arena_at;
+                            exit_dead_code(context, dead_code_marker);
                         }else{
                             // Choose the second expression.
                             
-                            u8 *ir_arena_at = arena_current(&context->ir_arena);
-                            context->prevent_evaluation_for_dead_code++;
+                            u8 *dead_code_marker = enter_dead_code(context);
                             
                             parse_expression(context, /*skip_comma_expresssion*/true);
                             
-                            context->prevent_evaluation_for_dead_code--;
-                            context->ir_arena.current = ir_arena_at;
+                            exit_dead_code(context, dead_code_marker);
                             
                             expect_token(context, TOKEN_comma, "Expected ','."); // :Error
                             
@@ -5837,10 +5833,6 @@ case NUMBER_KIND_##type:{ \
                         }
                         end_error_report(context);
                         return operand;
-                    }
-                    
-                    if((function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn) && !context->in_conditional_expression){
-                        context->current_statement_returns_a_value = 1;
                     }
                     
                     if(function_type->flags & FUNCTION_TYPE_FLAGS_is_seh_intrinsic){
@@ -6191,12 +6183,12 @@ case NUMBER_KIND_##type:{ \
                 u64 size = operand.resolved_type->size;
                 
                 // @note: Delete the whole <expression> off of the `ir_arena`.
-                context->ir_arena.current = stack_entry->other;
+                exit_dead_code(context, stack_entry->other);
                 
                 // Sets in op->operand in the next iteration.
                 operand = ast_push_u64_literal(context, size, operand.token);
                 
-                context->prevent_evaluation_for_dead_code -= 1;
+                
                 context->in_lhs_expression = false;
             }break;
             case AST_alignof:{
@@ -6213,12 +6205,11 @@ case NUMBER_KIND_##type:{ \
                 u64 alignment = operand.resolved_type->alignment;
                 
                 // @note: Delete the whole <expression> off of the `ir_arena`.
-                context->ir_arena.current = stack_entry->other;
+                exit_dead_code(context, stack_entry->other);
                 
                 // Sets in op->operand in the next iteration.
                 operand = ast_push_u64_literal(context, alignment, operand.token);
                 
-                context->prevent_evaluation_for_dead_code -= 1;
                 context->in_lhs_expression = false;
             }break;
             
@@ -7206,8 +7197,7 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
-                context->ir_arena.current = stack_entry->other;
-                context->prevent_evaluation_for_dead_code--;
+                exit_dead_code(context, stack_entry->other);
                 
                 operand = stack_entry->operand;
                 context->in_lhs_expression = false;
@@ -7328,8 +7318,7 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
-                context->ir_arena.current = stack_entry->other;
-                context->prevent_evaluation_for_dead_code--;
+                exit_dead_code(context, stack_entry->other);
                 
                 operand = stack_entry->operand;
                 context->in_lhs_expression = false;
@@ -7457,7 +7446,6 @@ case NUMBER_KIND_##type:{ \
                 operand.defined_type  = defined_type;
                 
                 context->in_lhs_expression = false;
-                context->in_conditional_expression -= 1;
             }break;
             
             case AST_conditional_expression_true:
@@ -7478,8 +7466,7 @@ case NUMBER_KIND_##type:{ \
                     value = &stack_entry->operand;
                     other = &operand;
                     
-                    context->prevent_evaluation_for_dead_code--;
-                    context->ir_arena.current = stack_entry->other;
+                    exit_dead_code(context, stack_entry->other);
                 }
                 
                 other->ir = null; // just to be _save_.
@@ -7547,7 +7534,6 @@ case NUMBER_KIND_##type:{ \
                 operand = *value;
                 
                 context->in_lhs_expression = false;
-                context->in_conditional_expression -= 1;
             }break;
             
             
@@ -7925,8 +7911,7 @@ case NUMBER_KIND_##type:{ \
             if(operand.ir->kind == IR_integer_literal && integer_literal_as_u64(&operand) == 0){
                 ((struct ir_integer_literal *)operand.ir)->type = &globals.typedef_s32;
                 struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_and_delete, binary_expression, &operand);
-                stack_entry->other = arena_current(&context->ir_arena);
-                context->prevent_evaluation_for_dead_code++;
+                stack_entry->other = enter_dead_code(context);
             }else{
                 struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_false);
                 conditional_jump->label_number = context->jump_label_index++;
@@ -7953,8 +7938,7 @@ case NUMBER_KIND_##type:{ \
                 lit->_u64 = 1;
                 
                 struct ast_stack_entry *stack_entry = ast_stack_push(context, AST_logical_or_delete, binary_expression, &operand);
-                stack_entry->other = arena_current(&context->ir_arena);
-                context->prevent_evaluation_for_dead_code++;
+                stack_entry->other = enter_dead_code(context);
             }else{
                 struct ir_jump_node *conditional_jump = push_jump(context, IR_jump_if_true);
                 conditional_jump->label_number = context->jump_label_index++;
@@ -7978,8 +7962,6 @@ case NUMBER_KIND_##type:{ \
                 return operand;
             }
             
-            context->in_conditional_expression += 1; // :tracking_conditional_expression_depth_for_noreturn_functions
-            
             enum ast_kind conditional_expression_kind = AST_conditional_expression;
             
             if(operand.ir->kind == IR_integer_literal || operand.ir->kind == IR_pointer_literal || operand.ir->kind == IR_float_literal){
@@ -7999,36 +7981,35 @@ case NUMBER_KIND_##type:{ \
                 
                 conditional_expression_kind = is_true ? AST_conditional_expression_true : AST_conditional_expression_false;
                 
+                u8 *dead_code_marker = null;
+                
                 struct expr if_true;
                 if(peek_token_eat(context, TOKEN_colon)){
                     // Simply don't pop the operand.
                     if_true = operand;
+                    
+                    if(!is_true) pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
                 }else{
                     pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
                     
-                    if(!is_true) context->prevent_evaluation_for_dead_code++;
+                    if(!is_true) dead_code_marker = enter_dead_code(context);
                     
                     if_true = parse_expression(context, false);
-                    
-                    if(!is_true) context->prevent_evaluation_for_dead_code--;
                     
                     maybe_load_address_for_array_or_function(context, IR_load_address, &if_true);
                     maybe_insert_cast_from_special_int_to_int(context, &if_true, /*is_lhs*/0);
                     expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
                     if(context->should_exit_statement) return operand;
+                    
+                    if(!is_true) exit_dead_code(context, dead_code_marker);
                 }
                 
                 struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, &if_true);
                 
-                if(!is_true){
-                    // We should take the _is_false_ expression.
-                    // Hence, nuke the if_true condition.
-                    context->ir_arena.current = (u8 *)operand.ir;
-                }else{
-                    if(is_true) context->prevent_evaluation_for_dead_code++;
+                if(is_true){
                     // We should take the _if_true_ expression.
                     // Hence, we have to remember where to nuke to.
-                    entry->other = arena_current(&context->ir_arena);
+                    entry->other = enter_dead_code(context);
                 }
                 
                 goto restart;
@@ -9454,15 +9435,13 @@ case TOKEN_##type_name:{                                                 \
                     specifiers->type_specifier = type_info_return.type;
                     specifiers->defined_type_specifier = type_info_return.defined_type;
                 }else{
-                    context->prevent_evaluation_for_dead_code += 1;
                     
-                    u8 *ir_arena_start = arena_current(&context->ir_arena);
+                    u8 *dead_code_marker = enter_dead_code(context);
+                    
                     struct expr operand = parse_expression(context, /*should_skip_comma_expression*/false);
                     
-                    context->prevent_evaluation_for_dead_code -= 1;
-                    
                     // The operand of typeof is not evaluated.
-                    context->ir_arena.current = ir_arena_start;
+                    exit_dead_code(context, dead_code_marker);
                     
                     specifiers->type_specifier = operand.resolved_type;
                     specifiers->defined_type_specifier = operand.defined_type;
@@ -10050,7 +10029,9 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(specifiers.specifier_flags & SPECIFIER_static){ // @note: flag before registering
                 if(context->current_scope){
-                    ast_list_append(&context->current_function->static_variables, context->arena, &decl->kind);
+                    if(!context->prevent_evaluation_for_dead_code){
+                        ast_list_append(&context->current_function->static_variables, context->arena, &decl->kind);
+                    }
                     decl->flags |= DECLARATION_FLAGS_is_local_persist;
                 }else{
                     decl->flags |= DECLARATION_FLAGS_is_static;
@@ -10250,6 +10231,12 @@ func void parse_statement(struct context *context){
     }
     
     switch(initial_token->type){
+        
+        case TOKEN_invalid:{
+            assert(context->error);
+            return;
+        }break;
+        
         case TOKEN_semicolon:{
             needs_semicolon = false;
         }break;
@@ -10264,6 +10251,8 @@ func void parse_statement(struct context *context){
             
             // Allocate an _if-false_ label that parse_expression can use.
             smm if_false_label = /*context->if_false_label = */context->jump_label_index++;
+            
+            u8 *dead_code_marker = context->current_statement_returns_a_value ? enter_dead_code(context) : null;
             
             struct expr condition = parse_expression(context, false);
             
@@ -10291,16 +10280,16 @@ func void parse_statement(struct context *context){
             }
             
             if(condition_as_constant == 0){
-                u8 *current = arena_current(&context->ir_arena);
-                
-                context->prevent_evaluation_for_dead_code += 1;
-                parse_statement(context);
-                context->prevent_evaluation_for_dead_code -= 1;
-                
-                context->ir_arena.current = current;
-            }else{
-                parse_statement(context);
+                context->current_statement_returns_a_value = 1;
             }
+            
+            if(dead_code_marker) exit_dead_code(context, dead_code_marker);
+            
+            struct ast_scope *if_true_scope = peek_token(context, TOKEN_open_curly) ? null : parser_push_new_scope(context, initial_token, SCOPE_FLAG_none);
+            
+            parse_statement(context);
+            
+            if(if_true_scope) parser_scope_pop(context, if_true_scope);
             
             // Check if the "if" part returns a value and reset the to the old state.
             int if_statement_returns_a_value = context->current_statement_returns_a_value;
@@ -10311,36 +10300,39 @@ func void parse_statement(struct context *context){
                 
                 function_maybe_add_line_information(context, else_token, /*is_statement*/1);
                 
+                struct ir_jump_node *jump_over_else = push_jump(context, IR_jump);
+                jump_over_else->label_number = context->jump_label_index++;
+                
+                struct ir_jump_node *else_label = push_jump(context, IR_jump_label);
+                else_label->label_number = if_false_label;
+                
                 if(condition_as_constant == 1){
-                    u8 *current = arena_current(&context->ir_arena);
-                    
-                    context->prevent_evaluation_for_dead_code += 1;
-                    parse_statement(context);
-                    context->prevent_evaluation_for_dead_code -= 1;
-                    
-                    context->ir_arena.current = current;
-                }else{
-                    
-                    struct ir_jump_node *jump_over_else = push_jump(context, IR_jump);
-                    jump_over_else->label_number = context->jump_label_index++;
-                    
-                    struct ir_jump_node *else_label = push_jump(context, IR_jump_label);
-                    else_label->label_number = if_false_label;
-                    
-                    parse_statement(context);
-                    
-                    struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
-                    end_label->label_number = jump_over_else->label_number;
+                    context->current_statement_returns_a_value = 1;
                 }
                 
-                // Check if the "else" part returns a value and we now return a value, if we returned a value before, or both sides returned a value.
+                struct ast_scope *else_scope = peek_token(context, TOKEN_open_curly) ? null : parser_push_new_scope(context, initial_token, SCOPE_FLAG_none);
+                
+                parse_statement(context);
+                
+                if(else_scope) parser_scope_pop(context, else_scope);
+                
+                struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
+                end_label->label_number = jump_over_else->label_number;
+            
                 int else_statement_returns_a_value = context->current_statement_returns_a_value;
-                context->current_statement_returns_a_value = statement_returns_a_value | (else_statement_returns_a_value & if_statement_returns_a_value);
+                
+                // An else returns a value if both branches return a value.
+                context->current_statement_returns_a_value = else_statement_returns_a_value & if_statement_returns_a_value;
             }else{
                 struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                 end_label->label_number = if_false_label;
+                
+                // An if without an else returns a value if the original returned a value and the if statement returned a value (there was no jump into it)
+                // or the branch is always taken (condition_as_constant == 1) and the if true branch returns a value.
+                context->current_statement_returns_a_value = if_statement_returns_a_value && (statement_returns_a_value || (condition_as_constant == 1));
             }
             
+            context->statement_expression_return.ir = 0;
             needs_semicolon = false;
         }break;
         case TOKEN_for:{
@@ -10383,6 +10375,10 @@ func void parse_statement(struct context *context){
                 smm old_break_label_index    = context->current_break_label;
                 context->current_continue_label = continue_label_index;
                 context->current_break_label    = break_label_index;
+                
+                // We could be jumping into the body and then the it loops back.
+                // This would make any earlier statement reachable.
+                context->current_statement_returns_a_value = 0;
                 
                 struct ir_jump_node *for_label = push_jump(context, IR_jump_label);
                 for_label->label_number = for_label_index;
@@ -10450,9 +10446,15 @@ func void parse_statement(struct context *context){
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
             int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ir->kind == IR_integer_literal && integer_literal_as_u64(&condition) != 0;
             
-            // @note: For a loop line `for(int i = 0; i < n; i++){ return i; }` The "returns a value" would be true, 
-            // but we don't know if 'i < n', so we disregard the loops "returns a value".
-            context->current_statement_returns_a_value = statement_returns_a_value | is_infinite_loop;
+            // For a loop line `for(int i = 0; i < n; i++){ return i; }` 
+            // The "returns a value" would be true,  but we don't know if 'i < n'.
+            // On the other hand if a for something like 
+            //     return 0;
+            //     for(int i = 0; i < n; i++){
+            //         label:
+            //     }
+            // We have (statement_returns_a_value == 1) but we should not return context->current_statement_returns_a_value.
+            context->current_statement_returns_a_value = is_infinite_loop | (context->current_statement_returns_a_value & statement_returns_a_value);
             
             needs_semicolon = false;
         }break;
@@ -10468,6 +10470,10 @@ func void parse_statement(struct context *context){
             
             // @note: We desugar 'while' to 'for(;condition;)'.
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
+            
+            // We could be jumping into the body and then the it loops back.
+            // This would make any earlier statement reachable.
+            context->current_statement_returns_a_value = 0;
             
             struct ir_jump_node *continue_label = push_jump(context, IR_jump_label);
             continue_label->label_number = continue_label_index;
@@ -10504,7 +10510,7 @@ func void parse_statement(struct context *context){
             
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
             int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ir->kind == IR_integer_literal && integer_literal_as_u64(&condition) != 0;
-            context->current_statement_returns_a_value = statement_returns_a_value | is_infinite_loop; // See 'for' case for comment.
+            context->current_statement_returns_a_value = is_infinite_loop | (statement_returns_a_value & context->current_statement_returns_a_value);
             
             needs_semicolon = false;
             
@@ -10540,6 +10546,9 @@ func void parse_statement(struct context *context){
             struct token *while_open_paren = expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
             function_maybe_add_line_information(context, while_open_paren, /*is_statement*/0);
             
+            // We could be jumping into the body and then the it loops back.
+            // This would make any earlier statement reachable.
+            context->current_statement_returns_a_value = 0;
             
             struct ir_jump_node *continue_label = push_jump(context, IR_jump_label);
             continue_label->label_number = continue_label_index;
@@ -10597,6 +10606,7 @@ func void parse_statement(struct context *context){
             struct ir_jump_node *loop_jump = push_jump(context, IR_jump);
             loop_jump->label_number = context->current_break_label;
             
+            context->current_statement_returns_a_value = 1;
         }break;
         case TOKEN_continue:{
             
@@ -10616,12 +10626,12 @@ func void parse_statement(struct context *context){
             struct ir_jump_node *loop_jump = push_jump(context, IR_jump);
             loop_jump->label_number = context->current_continue_label;
             
-            // We cannot escape infinte loops through a 'continue'.
             context->current_statement_returns_a_value = 1;
-            
         }break;
         case TOKEN_switch:{
             expect_token(context, TOKEN_open_paren, "Expected '(' following 'switch'.");
+            
+            u8 *dead_code_marker = context->current_statement_returns_a_value ? enter_dead_code(context) : null;
             
             struct expr switch_on = parse_expression(context, false);
             maybe_insert_cast_from_special_int_to_int(context, &switch_on, /*is_lhs*/0);
@@ -10636,9 +10646,20 @@ func void parse_statement(struct context *context){
             
             expect_token(context, TOKEN_closed_paren, "Expected ')' ending 'switch'-condition.");
             
+            if(dead_code_marker){
+                exit_dead_code(context, dead_code_marker);
+                struct ir_integer_literal *literal = push_struct(&context->ir_arena, struct ir_integer_literal);
+                literal->base.kind = IR_integer_literal;
+                literal->type = switch_on.resolved_type;
+                switch_on.ir = &literal->base;
+            }
+            
             smm break_label_index        = context->jump_label_index++;
             smm old_break_label_index    = context->current_break_label;
             context->current_break_label = break_label_index;
+            
+            // Get the initial "returns a value state".
+            int statement_returns_a_value = context->current_statement_returns_a_value;
             
             struct ir_switch *ir_switch = push_struct(&context->ir_arena, struct ir_switch);
             ir_switch->base.kind = IR_switch;
@@ -10646,25 +10667,28 @@ func void parse_statement(struct context *context){
             struct ir_switch *previous_switch = context->current_switch;
             struct expr       previous_switch_on = context->current_switch_on;
             struct token     *previous_switch_default_label_token = context->current_switch_default_label_token;
+            int previous_switch_was_alive = context->current_switch_was_alive;
+            
             context->current_switch = ir_switch;
             context->current_switch_on = switch_on;
             context->current_switch_default_label_token = 0;
-            
-            // Get the initial "returns a value state".
-            int statement_returns_a_value = context->current_statement_returns_a_value;
+            context->current_switch_was_alive = !statement_returns_a_value;
             
             struct ast_scope *scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_can_break);
             
+            // @note: Switches start off with dead code, you cannot reach the code until the first case/label.
+            context->current_statement_returns_a_value = 1;
             parse_statement(context);
             parser_scope_pop(context, scope);
             
             context->current_switch    = previous_switch;
             context->current_switch_on = previous_switch_on;
             context->current_switch_default_label_token = previous_switch_default_label_token;
+            context->current_switch_was_alive = previous_switch_was_alive;
             
             // The switch returns a value, if its statement does, there is a default case (or in the future if its exhaustive ) and there was no alive break.
-            int switch_returns_a_value = context->current_statement_returns_a_value && ir_switch->default_jump_label && !(scope->flags & SCOPE_FLAG_found_an_alive_break);
-            context->current_statement_returns_a_value = statement_returns_a_value | switch_returns_a_value;
+            int switch_returns_a_value = context->current_statement_returns_a_value && !(scope->flags & SCOPE_FLAG_found_an_alive_break);
+            context->current_statement_returns_a_value = switch_returns_a_value && (ir_switch->default_jump_label || statement_returns_a_value);
             
             struct ir_jump_node *break_label = push_jump(context, IR_jump_label);
             break_label->label_number = break_label_index;
@@ -10682,8 +10706,10 @@ func void parse_statement(struct context *context){
                 return;
             }
             
-            // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
-            context->current_statement_returns_a_value = 0;
+            if(context->current_switch_was_alive){
+                // If the switch was alive, we can get here!
+                context->current_statement_returns_a_value = 0;
+            }
             
             struct expr const_expr = parse_constant_integer_expression(context, false, "Operand of 'case' has to be constant.");
             
@@ -10746,13 +10772,15 @@ func void parse_statement(struct context *context){
             ir_case->token = initial_token;
             ir_case->next = null;
             
-            if(previous_case == 0){
-                sll_push_front(context->current_switch->case_list, ir_case);
-            }else if(previous_case->next == 0){
-                sll_push_back(context->current_switch->case_list, ir_case);
-            }else{
-                ir_case->next = previous_case->next;
-                previous_case->next = ir_case;
+            if(context->prevent_evaluation_for_dead_code == 0){
+                if(previous_case == 0){
+                    sll_push_front(context->current_switch->case_list, ir_case);
+                }else if(previous_case->next == 0){
+                    sll_push_back(context->current_switch->case_list, ir_case);
+                }else{
+                    ir_case->next = previous_case->next;
+                    previous_case->next = ir_case;
+                }
             }
             
             expect_token(context, TOKEN_colon, "Expected ':' after 'case'-label.");
@@ -10766,8 +10794,10 @@ func void parse_statement(struct context *context){
                 return;
             }
             
-            // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
-            context->current_statement_returns_a_value = 0;
+            if(context->current_switch_was_alive){
+                // If the switch was alive, we can get here!
+                context->current_statement_returns_a_value = 0;
+            }
             
             if(context->current_switch->default_jump_label){
                 begin_error_report(context);
@@ -10781,7 +10811,7 @@ func void parse_statement(struct context *context){
             
             struct ir_jump_node *default_label = push_jump(context, IR_jump_label);
             default_label->label_number = context->jump_label_index++;
-            context->current_switch->default_jump_label = default_label;
+            if(context->prevent_evaluation_for_dead_code == 0) context->current_switch->default_jump_label = default_label;
             
             if(!peek_token(context, TOKEN_closed_curly)) parse_statement(context);
             
@@ -10792,6 +10822,8 @@ func void parse_statement(struct context *context){
         }break;
         case TOKEN_return:{
             struct ast_function_type *current_function_type = context->current_function->type;
+            
+            u8 *dead_code_marker = context->current_statement_returns_a_value ? enter_dead_code(context) : null;
             
             if(peek_token(context, TOKEN_semicolon)){
                 if(current_function_type->return_type != &globals.typedef_void){
@@ -10815,8 +10847,6 @@ func void parse_statement(struct context *context){
                 }
             }
             
-            context->current_statement_returns_a_value = 1;
-            
             if(current_function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn){
                 report_warning(context, WARNING_return_in_noreturn_function, initial_token, "'return' in function declared as '_Noreturn'.");
             }
@@ -10824,28 +10854,18 @@ func void parse_statement(struct context *context){
             push_ir_for_cleanup_calls(context, /*global-scope*/null);
             
             push_ir(context, IR_return);
+            
+            if(dead_code_marker) exit_dead_code(context, dead_code_marker);
+            
+            context->current_statement_returns_a_value = 1;
         }break;
         case TOKEN_open_curly:{
-            
-            struct ast_scope *old_last = context->current_scope->subscopes.last;
             
             struct ast_scope *scope = parser_push_new_scope(context, initial_token, SCOPE_FLAG_none);
             
             parse_imperative_scope(context);
             
             parser_scope_pop(context, scope);
-            
-            if(context->prevent_evaluation_for_dead_code){
-                if(old_last){
-                    context->current_scope->subscopes.count -= 1;
-                    context->current_scope->subscopes.last = old_last;
-                    old_last->subscopes.next = 0;
-                }else{
-                    context->current_scope->subscopes.count = 0;
-                    context->current_scope->subscopes.first = 0;
-                    context->current_scope->subscopes.last  = 0;
-                }
-            }
             
             needs_semicolon = false;
         }break;
@@ -10856,77 +10876,20 @@ func void parse_statement(struct context *context){
         // }break;
         
         case TOKEN_goto:{
+            
             struct ast_goto *ast_goto = push_struct(&context->scratch, struct ast_goto);
             struct token *ident = expect_token(context, TOKEN_identifier, "Missing identifier after 'goto'.");
             ast_goto->ident = ident->atom;
             ast_goto->token = ident;
-            sll_push_back(context->goto_list, ast_goto);
+            ast_goto->statement_expression_index = context->statement_expression_index;
             
-            context->current_statement_returns_a_value = 1;
+            sll_push_back(context->goto_list, ast_goto);
             
             // :ir_refactor - new way.
             struct ir_jump_node *goto_jump = push_jump(context, IR_jump);
-            ast_goto->jump = goto_jump;
-        }break;
-        case TOKEN_identifier:{
-            if(peek_token_eat(context, TOKEN_colon)){
-                
-                struct atom ident = initial_token->atom;
-                needs_semicolon = false;
-                
-                for(struct ast_label *label = context->label_list.first; label; label = label->next){
-                    if(atoms_match(label->ident, ident)){
-                        begin_error_report(context);
-                        report_error(context, initial_token, "Redefinition of label '%.*s'.", ident.size, ident.data);
-                        report_error(context, label->token, "... Here is the previous definition.");
-                        end_error_report(context);
-                        return;
-                    }
-                }
-                
-                struct ast_label *label = push_struct(&context->scratch, struct ast_label);
-                label->ident = ident;
-                sll_push_back(context->label_list, label);
-                
-                // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
-                context->current_statement_returns_a_value = 0;
-                
-                struct ir_jump_node *jump_label = push_jump(context, IR_jump_label);
-                jump_label->label_number = context->jump_label_index++;
-                label->jump_label = jump_label;
-                
-                if(!peek_token(context, TOKEN_closed_curly)) parse_statement(context);
-                
-                break;
-            }
+            if(context->prevent_evaluation_for_dead_code == 0) ast_goto->jump = goto_jump;
             
-            struct ast_declaration *lookup = lookup_typedef(context, context->current_compilation_unit, initial_token, /*silent*/true);
-            if(lookup){
-                struct declaration_specifiers specifiers = {
-                    .type_specifier = lookup->type,
-                    .defined_type_specifier = &lookup->kind,
-                };
-                
-                struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
-                if(declaration_list.is_function_definition != null) needs_semicolon = false;
-                break;
-            }
-            
-            prev_token(context);
-            
-            struct expr expr = parse_expression(context, false);
-            
-            if(peek_token_eat(context, TOKEN_semicolon)){
-                needs_semicolon = false;
-                
-                if(context->current_scope == context->statement_expression_scope && peek_token(context, TOKEN_closed_curly)){
-                    context->statement_expression_return = expr;
-                }else{
-                    push_ir(context, IR_pop_expression);
-                }
-            }else{
-                push_ir(context, IR_pop_expression);
-            }
+            context->current_statement_returns_a_value = 1;
         }break;
         
         case TOKEN_declspec:{
@@ -10935,7 +10898,12 @@ func void parse_statement(struct context *context){
             if(specifiers.specifier_flags == SPECIFIER_fallthrough){
                 // Only fallthrough.
             }else{
+                
+                u8 *dead_code_marker = context->current_statement_returns_a_value ? enter_dead_code(context) : null;
+                
                 struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
+                
+                if(dead_code_marker) exit_dead_code(context, dead_code_marker);
                 
                 // @note: A function declaration (which is not a definition) does need a semicolon.
                 if(declaration_list.is_function_definition != null) needs_semicolon = false;
@@ -10954,8 +10922,12 @@ func void parse_statement(struct context *context){
         case TOKEN_struct:   case TOKEN_union:    case TOKEN_enum:{
             prev_token(context);
             
+            u8 *dead_code_marker = context->current_statement_returns_a_value ? enter_dead_code(context) : null;
+            
             struct declaration_specifiers specifiers = {0};
             struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
+            
+            if(dead_code_marker) exit_dead_code(context, dead_code_marker);
             
             // @note: A function declaration (which is not a definition) does need a semicolon.
             if(declaration_list.is_function_definition != null) needs_semicolon = false;
@@ -10983,7 +10955,7 @@ func void parse_statement(struct context *context){
                 // 
                 
                 struct token *open = next_token(context);
-                report_error(context, initial_token, "GNU-style '__asm__' currently unsupported.");
+                // report_error(context, initial_token, "GNU-style '__asm__' currently unsupported.");
                 
                 skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__asm__'.");
             }else{
@@ -11112,14 +11084,63 @@ func void parse_statement(struct context *context){
             needs_semicolon = false;
         }break;
         
-        default:{
+        case TOKEN_identifier:{
+            if(peek_token_eat(context, TOKEN_colon)){
+                
+                struct atom ident = initial_token->atom;
+                needs_semicolon = false;
+                
+                for(struct ast_label *label = context->label_list.first; label; label = label->next){
+                    if(atoms_match(label->ident, ident)){
+                        begin_error_report(context);
+                        report_error(context, initial_token, "Redefinition of label '%.*s'.", ident.size, ident.data);
+                        report_error(context, label->token, "... Here is the previous definition.");
+                        end_error_report(context);
+                        return;
+                    }
+                }
+                
+                // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
+                context->current_statement_returns_a_value = 0;
+                
+                struct ast_label *label = push_struct(&context->scratch, struct ast_label);
+                label->ident = ident;
+                label->token = initial_token;
+                label->statement_expression_index = context->statement_expression_index;
+                sll_push_back(context->label_list, label);
+                
+                struct ir_jump_node *jump_label = push_jump(context, IR_jump_label);
+                jump_label->label_number = context->jump_label_index++;
+                if(context->prevent_evaluation_for_dead_code == 0) label->jump_label = jump_label;
+                
+                if(!peek_token(context, TOKEN_closed_curly)) parse_statement(context);
+                
+                break;
+            }
+            
+            struct ast_declaration *lookup = lookup_typedef(context, context->current_compilation_unit, initial_token, /*silent*/true);
+            if(lookup){
+                struct declaration_specifiers specifiers = {
+                    .type_specifier = lookup->type,
+                    .defined_type_specifier = &lookup->kind,
+                };
+                
+                struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
+                if(declaration_list.is_function_definition != null) needs_semicolon = false;
+                break;
+            }
+            
+            // Fallthrough
+        } default: {
             // This should not be assert(false): take for example +value; that is a valid statement.
             prev_token(context);
+            
+            u8 *dead_code_marker = context->current_statement_returns_a_value ? enter_dead_code(context) : null;
             
             // If it is nothing else; it's gotta be an assignment or expression.
             struct expr expr = parse_expression(context, false);
             
-            if(peek_token_eat(context, TOKEN_semicolon)){
+            if(!dead_code_marker && peek_token_eat(context, TOKEN_semicolon)){
                 needs_semicolon = false;
                 
                 if(context->current_scope == context->statement_expression_scope && peek_token(context, TOKEN_closed_curly)){
@@ -11128,11 +11149,16 @@ func void parse_statement(struct context *context){
                     push_ir(context, IR_pop_expression);
                 }
             }
-        }break;
-        
-        case TOKEN_invalid:{
-            assert(context->error);
-            return;
+            
+            if(expr.ir->kind == IR_function_call){
+                struct ir_function_call *function_call = (struct ir_function_call *)expr.ir;
+                if(function_call->function_type->flags & FUNCTION_TYPE_FLAGS_is_noreturn){
+                    context->current_statement_returns_a_value = 1;
+                }
+            }
+            
+            if(dead_code_marker) exit_dead_code(context, dead_code_marker);
+            
         }break;
     }
     

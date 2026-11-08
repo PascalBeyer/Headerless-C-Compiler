@@ -889,10 +889,10 @@ struct ast_label{
     struct ast_label *next;
     
     struct token *token;
-    
     struct atom ident;
     
-    // :ir_refactor - new way.
+    int statement_expression_index;
+    
     struct ir_jump_node *jump_label;
 };
 
@@ -902,7 +902,8 @@ struct ast_goto{
     struct token *token;
     struct atom ident;
     
-    // :ir_refactor - new way.
+    int statement_expression_index;
+    
     struct ir_jump_node *jump;
 };
 

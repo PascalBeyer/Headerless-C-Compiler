@@ -846,18 +846,58 @@ struct context{
     } pragma_pack_stack;
     smm pragma_alignment;
     
-    // :tracking_conditional_expression_depth_for_noreturn_functions
+    // Dead code elimination:
     // 
-    // We keep track of how deep we are in conditional expressions, to only set 'SCOPE_FLAG_returns_a_value' 
-    // on _Noreturn functions if we are not in a conditional expression.
-    // This value will possibly be wrong if 'parse_expression' returns early, but in that case there was an error,
-    // hence we don't care. But it means we have to reset this value in 'reset_context'.
-    smm in_conditional_expression;
+    // We want to eliminate dead code.
+    // This is necessary both for thing like sizeof, alignof and typeof 
+    // and also such that disabled blocks do not require the functions to be referenced.
+    // 
+    // What we are currently doing:
+    //     1. Track if we are returning a value.
+    //     2. Track if we are currently in a dead expression.
+    // 
+    // The difficulties are:
+    //     1. no-return functions
+    //     2. statement expressions
+    //     3. labels
+    //     
+    // In accordance with gcc, we do not allow jumps into statement expressions using goto:
+    // 
+    //    statement_expression_and_labels.c:9:39: error: jump into statement expression
+    //        9 |     if(strcmp(argv[1], "moose") == 0) goto alive;
+    //          |                                       ^~~~
+    //    statement_expression_and_labels.c:11:19: note: label 'alive' defined here
+    //       11 |     return 0 && ({alive: 1; goto alive; });
+    //          |                   ^~~~~
+    //          
+    // Hence, if an expression is dead, it cannot be resurrected.
+    // Therefore, code is dead, if
+    // 
+    //     1. We are not in a dead expression (prevent_evaluation_for_dead_code).
+    //     2. A previous statement did not already return a value.
+    //     
+    // For expressions, we always know where they start and end, hence we can simply use
+    // ranges that we build on the stack.
+    // 
+    // For statements, it isn't as easy, as any sub-statement could contain a scope
+    // that contains a label, reviving (parts of) the statement.
+    // 
+    // The value `current_statement_returns_a_value` is only set iff we are confident
+    // that the code is not reachable. Like, immediately after a return etc.
+    // 
+    // In these cases, we can skip emitting code for expression statements.
+    // 
     smm prevent_evaluation_for_dead_code;
     int current_statement_returns_a_value;
     
+    
     struct ast_scope *statement_expression_scope;
     struct expr statement_expression_return;
+    
+    // Keep track of a unique statement_expression_index such that we can 
+    // easily error on goto between statement expressions.
+    int statement_expression_index;
+    int statement_expression_index_allocator;
     
     smm in_exception_filter;
     smm in_finally_block;
@@ -880,6 +920,7 @@ struct context{
     struct ir_switch *current_switch;
     struct expr current_switch_on;
     struct token *current_switch_default_label_token;
+    int current_switch_was_alive;
     
     struct token *in_inline_asm_function;
     b32 current_asm_flags;
@@ -2246,7 +2287,7 @@ func void register_compound_type(struct context *context, struct ast_type *type,
 
 func void parser_emit_memory_location(struct context *context, struct ast_declaration *decl){
     
-    if(context->prevent_evaluation_for_dead_code) return;
+    if((decl->flags & DECLARATION_FLAGS_is_unnamed) && context->prevent_evaluation_for_dead_code) return;
     
     smm alignment = get_declaration_alignment(decl);
     smm size      = get_declaration_size(decl);
@@ -2768,13 +2809,15 @@ func void reset_context(struct context *context){
     context->error                      = false;
     context->current_compilation_unit   = null;
     context->maybe_in_cast              = null;
-    context->in_conditional_expression  = 0;
     context->in_static_if_condition     = 0;
     context->current_statement_returns_a_value = 0;
     
     context->jump_label_index = 0;
     context->current_break_label = -1;
     context->current_continue_label = -1;
+    
+    context->statement_expression_index_allocator = 0;
+    context->statement_expression_index = 0;
     
     context->goto_list.first = context->goto_list.last = 0;
     context->label_list.first = context->label_list.last = 0;
@@ -3621,8 +3664,28 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
         for(struct ast_label *label = context->label_list.first; label; label = label->next){
             
             if(atoms_match(label->ident, ast_goto->ident)){
-                ast_goto->jump->label_number = label->jump_label->label_number;
                 found = true;
+                
+                if(ast_goto->statement_expression_index != label->statement_expression_index){
+                    begin_error_report(context);
+                    if(ast_goto->statement_expression_index == 0){
+                        report_error(context, ast_goto->token, "goto into ({<statement>})-expression.");
+                    }else if(label->statement_expression_index == 0){
+                        report_error(context, ast_goto->token, "goto out of ({<statement>})-expression.");
+                    }else{
+                        report_error(context, ast_goto->token, "goto between ({<statement>})-expressions.");
+                    }
+                    report_error(context, label->token, "... Here is the label.");
+                    end_error_report(context);
+                    break;
+                }
+                
+                if(ast_goto->jump){
+                    // ast_goto->jump is null if the goto was in a dead expression.
+                    // We should only get here, if the goto and label were in the same statement_expression.
+                    assert(label->jump_label);
+                    ast_goto->jump->label_number = label->jump_label->label_number;
+                }
                 break;
             }
         }
