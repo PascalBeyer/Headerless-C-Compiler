@@ -448,15 +448,15 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_out;
                 argument_is_optional = 0;
-            }else if(string_front_match_eat(&option, "dll")){
+            }else if(string_match(option, string("dll"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_dll;
                 argument_is_optional = -1;
-            }else if(string_front_match_eat(&option, "LDd")){
+            }else if(string_match(option, string("LDd"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_dll;
                 argument_is_optional = -1;
-            }else if(string_front_match_eat(&option, "obj")){
+            }else if(string_match(option, string("obj"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_obj;
                 argument_is_optional = -1;
@@ -464,7 +464,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_warning;
                 option_kind          = CLI_OPTION_Wno;
                 argument_is_optional = 0;
-            }else if(string_front_match_eat(&option, "MMD")){
+            }else if(string_match(option, string("MMD"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_MMD;
                 argument_is_optional = -1;
@@ -480,11 +480,11 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_out;
                 argument_is_optional = 0;
-            }else if(string_front_match_eat(&option, "LD")){
+            }else if(string_match(option, string("LD"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_dll;
                 argument_is_optional = -1;
-            }else if(string_front_match_eat(&option, "MP")){
+            }else if(string_match(option, string("MP"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_MP;
                 argument_is_optional = -1;
@@ -496,11 +496,11 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_warning;
                 option_kind          = CLI_OPTION_Wno;
                 argument_is_optional = 0;
-            }else if(string_front_match_eat(&option, "EP")){
+            }else if(string_match(option, string("EP"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_EP;
                 argument_is_optional = -1;
-            }else if(string_front_match_eat(&option, "dM")){
+            }else if(string_match(option, string("dM"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_dM;
                 argument_is_optional = -1;
@@ -508,11 +508,11 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_Fi;
                 argument_is_optional = 0;
-            }else if(string_front_match_eat(&option, "MD")){
+            }else if(string_match(option, string("MD"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_write_dependencies;
                 argument_is_optional = -1;
-            }else if(string_front_match_eat(&option, "MM")){
+            }else if(string_match(option, string("MM"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_MM;
                 argument_is_optional = -1;
@@ -528,7 +528,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_MF;
                 argument_is_optional = 0;
-            }else if(string_front_match_eat(&option, "Zs")){
+            }else if(string_match(option, string("Zs"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_syntax_check;
                 argument_is_optional = -1;
@@ -544,7 +544,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_string;
                 option_kind          = CLI_OPTION_out;
                 argument_is_optional = 0;
-            }else if(string_front_match_eat(&option, "c")){
+            }else if(string_match(option, string("c"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_obj;
                 argument_is_optional = -1;
@@ -568,23 +568,23 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_string_list;
                 option_kind          = CLI_OPTION_l;
                 argument_is_optional = 0;
-            }else if(string_front_match_eat(&option, "E")){
+            }else if(string_match(option, string("E"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_E;
                 argument_is_optional = -1;
-            }else if(string_front_match_eat(&option, "P")){
+            }else if(string_match(option, string("P"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_P;
                 argument_is_optional = -1;
-            }else if(string_front_match_eat(&option, "v")){
+            }else if(string_match(option, string("v"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_v;
                 argument_is_optional = -1;
-            }else if(string_front_match_eat(&option, "r")){
+            }else if(string_match(option, string("r"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_relocatable;
                 argument_is_optional = -1;
-            }else if(string_front_match_eat(&option, "M")){
+            }else if(string_match(option, string("M"))){
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_dependencies;
                 argument_is_optional = -1;

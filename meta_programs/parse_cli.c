@@ -497,6 +497,7 @@ int main(int argc, char *argv[]){
                 int is_optional = (open_bracket == '[');
                 char close_bracket = is_optional ? ']' : '>';
                 
+                
                 string_eat_front(&option, 1); // eat the bracket.
                 
                 
@@ -1025,7 +1026,12 @@ int main(int argc, char *argv[]){
                         else_string = "";
                     }
                     
-                    print("            %sif(string_front_match_eat(&option, \"%.*s\")){\n", else_string, alias->string.size, alias->string.data);
+                    int has_argument = (option->option_argument_type != CLI_ARGUMENT_TYPE_none);
+                    if(has_argument){
+                        print("            %sif(string_front_match_eat(&option, \"%.*s\")){\n", else_string, alias->string.size, alias->string.data);
+                    }else{
+                        print("            %sif(string_match(option, string(\"%.*s\"))){\n", else_string, alias->string.size, alias->string.data);
+                    }
                     print("                option_argument_type = %s;\n", option_argument_type_strings[option->option_argument_type]);
                     print("                option_kind          = CLI_OPTION_%.*s;\n", option->option_name.size, option->option_name.data);
                     print("                argument_is_optional = %d;\n", option->is_optional_argument);
