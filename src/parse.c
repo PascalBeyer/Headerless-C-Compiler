@@ -10118,7 +10118,16 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 // :DeclarationReferenceThreadingBug
                 context->current_declaration = decl;
                 
+                u8 *dead_code_marker = null;
+                if(context->current_statement_returns_a_value && !(decl->flags & DECLARATION_FLAGS_is_local_persist)){
+                    assert(context->current_scope);
+                    dead_code_marker = enter_dead_code(context);
+                }
+                
                 parse_initializer(context, decl, equals);
+                
+                if(dead_code_marker) exit_dead_code(context, dead_code_marker);
+                
                 if(context->should_exit_statement) goto end;
             }
             
@@ -10899,11 +10908,7 @@ func void parse_statement(struct context *context){
                 // Only fallthrough.
             }else{
                 
-                u8 *dead_code_marker = context->current_statement_returns_a_value ? enter_dead_code(context) : null;
-                
                 struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
-                
-                if(dead_code_marker) exit_dead_code(context, dead_code_marker);
                 
                 // @note: A function declaration (which is not a definition) does need a semicolon.
                 if(declaration_list.is_function_definition != null) needs_semicolon = false;
@@ -10922,12 +10927,8 @@ func void parse_statement(struct context *context){
         case TOKEN_struct:   case TOKEN_union:    case TOKEN_enum:{
             prev_token(context);
             
-            u8 *dead_code_marker = context->current_statement_returns_a_value ? enter_dead_code(context) : null;
-            
             struct declaration_specifiers specifiers = {0};
             struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
-            
-            if(dead_code_marker) exit_dead_code(context, dead_code_marker);
             
             // @note: A function declaration (which is not a definition) does need a semicolon.
             if(declaration_list.is_function_definition != null) needs_semicolon = false;
