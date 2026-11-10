@@ -4142,18 +4142,6 @@ int main(int argc, char *argv[]){
         return 0;
     }
     
-#if PRINT_COMMAND_LINE
-    if(!globals.cli_options.quiet){
-        print("\n");
-        print("command line is: \n    ");
-        for(int i = 0; i < argc; i++){
-            print("%s ", argv[i]);
-        }
-        print("\n");
-        print("\n");
-    }
-#endif
-    
     // 
     // Check some random arguments.
     // 
@@ -4322,49 +4310,14 @@ int main(int argc, char *argv[]){
     
     if(sll_is_empty(files_to_parse)){
         
-        if(!sll_is_empty(object_files.list)){
+        if(!sll_is_empty(object_files.list) || globals.cli_options.Wl.list.first){
             struct string_list command = {0};
+            
             
 #ifdef _WIN32
             string_list_postfix_no_copy(&command, arena, string("link.exe"));
 #else
             string_list_postfix_no_copy(&command, arena, string("ld"));
-            string_list_postfix_no_copy(&command, arena, string(" --eh-frame-hdr"));
-            
-            if(globals.cli_options.shared){
-                string_list_postfix_no_copy(&command, arena, string(" -shared"));
-            }else{
-                string_list_postfix_no_copy(&command, arena, string(
-                        " /usr/lib/x86_64-linux-gnu/Scrt1.o"
-                        " -dynamic-linker /lib64/ld-linux-x86-64.so.2"
-                        ));
-            }
-            
-            // This awefulness needs to exist here for now, because for shared objects, 
-            // it defines a __dso_handle that is used by the runtime to call exit handlers.
-            // This is necessary even for C, as atexit stuff needs to happen.
-            // In the future, we should maybe provide our own definitions of the __dso_handle,
-            // as well as a .fini_array entry that calls __cxa_finalize(__dso_handle).
-            string_list_postfix_no_copy(&command, arena, string(" /usr/lib/gcc/x86_64-linux-gnu/11/crtbeginS.o"));
-#endif
-            
-            for(struct string_list_node *object_file = object_files.list.first; object_file; object_file = object_file->next){
-                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", object_file->string.size, object_file->string.data));
-            }
-            
-#ifndef _WIN32
-            
-            for(struct specified_library *library = globals.specified_libraries.first; library; library = library->next){
-                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", library->library_path.size, library->library_path.data));
-            }
-            
-            for(struct string_list_node *library_path = globals.cli_options.LIBPATH.list.first; library_path; library_path = library_path->next){
-                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -L\"%.*s\"", library_path->string.size, library_path->string.data));
-            }
-            
-            for(struct string_list_node *library = globals.cli_options.l.list.first; library; library = library->next){
-                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -l%.*s", library->string.size, library->string.data));
-            }
             
             // 
             // '-Wl,' arguments are a comma separated list of linker options.
@@ -4384,13 +4337,75 @@ int main(int argc, char *argv[]){
                 }
             }
             
+            if(sll_is_empty(object_files.list)){
+                // 
+                // system() returns a wait status on POSIX, not the exit code but some wait status.
+                // 
+                int status = system((char*)string_list_flatten(command, arena).data);
+                if(status == -1) return 1;
+                if(WIFEXITED(status)) return WEXITSTATUS(status);
+                return 1;
+            }
+            
+            if(globals.cli_options.relocatable){
+                // A relocatable link (-r) keeps only the objects and archives.
+                // crt files, the dynamic linker, and libc do not belong in it.
+                string_list_postfix_no_copy(&command, arena, string(" -r"));
+            }else{
+                string_list_postfix_no_copy(&command, arena, string(" --eh-frame-hdr"));
+                
+                if(globals.cli_options.shared){
+                    string_list_postfix_no_copy(&command, arena, string(" -shared"));
+                }else if(!globals.cli_options.no_stdlib){
+                    string_list_postfix_no_copy(&command, arena, string(
+                            " /usr/lib/x86_64-linux-gnu/Scrt1.o"
+                            " -dynamic-linker /lib64/ld-linux-x86-64.so.2"
+                            ));
+                }
+                
+                if(!globals.cli_options.no_stdlib){
+                    // This awefulness needs to exist here for now, because for shared objects, 
+                    // it defines a __dso_handle that is used by the runtime to call exit handlers.
+                    // This is necessary even for C, as atexit stuff needs to happen.
+                    // In the future, we should maybe provide our own definitions of the __dso_handle,
+                    // as well as a .fini_array entry that calls __cxa_finalize(__dso_handle).
+                    string_list_postfix_no_copy(&command, arena, string(" /usr/lib/gcc/x86_64-linux-gnu/11/crtbeginS.o"));
+                }
+            }
+#endif
+            
+            for(struct string_list_node *object_file = object_files.list.first; object_file; object_file = object_file->next){
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", object_file->string.size, object_file->string.data));
+            }
+            
+#ifndef _WIN32
+            
+            for(struct specified_library *library = globals.specified_libraries.first; library; library = library->next){
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " \"%.*s\"", library->library_path.size, library->library_path.data));
+            }
+            
+            for(struct string_list_node *library_path = globals.cli_options.LIBPATH.list.first; library_path; library_path = library_path->next){
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -L\"%.*s\"", library_path->string.size, library_path->string.data));
+            }
+            
+            // The GCC runtime libraries (libgcc.a) live in the GCC installation
+            // directory, which is not on ld's default search path. The crt paths
+            // above already assume this directory.
+            string_list_postfix_no_copy(&command, arena, string(" -L/usr/lib/gcc/x86_64-linux-gnu/11"));
+            
+            for(struct string_list_node *library = globals.cli_options.l.list.first; library; library = library->next){
+                string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -l%.*s", library->string.size, library->string.data));
+            }
+            
             if(globals.cli_options.out.data){
                 // @cleanup: windows?
                 string_list_postfix_no_copy(&command, arena, push_format_string(arena, " -o \"%.*s\"", globals.cli_options.out.size, globals.cli_options.out.data));
             }
             
-            string_list_postfix_no_copy(&command, arena, string(" -lc"));
-            string_list_postfix_no_copy(&command, arena, string(" /usr/lib/gcc/x86_64-linux-gnu/11/crtendS.o"));
+            if(!globals.cli_options.relocatable && !globals.cli_options.no_stdlib){
+                string_list_postfix_no_copy(&command, arena, string(" -lc"));
+                string_list_postfix_no_copy(&command, arena, string(" /usr/lib/gcc/x86_64-linux-gnu/11/crtendS.o"));
+            }
 #endif
             // 
             // @hack: To allow hlc.exe to be used as a linker, we check if only object files are specified
@@ -4413,6 +4428,18 @@ int main(int argc, char *argv[]){
         print("Error: No input files specified.\n");
         return 0;
     }
+    
+#if PRINT_COMMAND_LINE
+    if(!globals.cli_options.quiet){
+        print("\n");
+        print("command line is: \n    ");
+        for(int i = 0; i < argc; i++){
+            print("%s ", argv[i]);
+        }
+        print("\n");
+        print("\n");
+    }
+#endif
     
 #ifndef _WIN32
     // 
@@ -4449,7 +4476,7 @@ int main(int argc, char *argv[]){
         // Check the output string.
         if(globals.output_file_type == OUTPUT_FILE_unset && globals.cli_options.out.data){
             struct string output_extension = get_file_extension(globals.cli_options.out);
-            if(string_match(output_extension, string(".exe"))) globals.output_file_type = OUTPUT_FILE_exe;
+            // if(string_match(output_extension, string(".exe"))) globals.output_file_type = OUTPUT_FILE_exe; treat this as default, on linux it should produce elf. Meson needs this. In the future this should be target tripple stuff anyway.
             if(string_match(output_extension, string(".dll"))) globals.output_file_type = OUTPUT_FILE_dll;
             if(string_match(output_extension, string(".obj"))) globals.output_file_type = OUTPUT_FILE_obj;
             if(string_match(output_extension, string(".efi"))) globals.output_file_type = OUTPUT_FILE_efi;
@@ -4598,16 +4625,6 @@ int main(int argc, char *argv[]){
     add_system_include_directory(arena, string("/usr/include"), string(""), false);
     
 #endif // linux
-    
-    
-#ifdef PRINT_SYSTEM_INCLUDE_PATHS
-    if(!globals.cli_options.quiet){
-        print("\nSystem include directories:\n");
-        for(struct string_list_node *include = globals.system_include_directories.list.first; include; include = include->next){
-            print("    %.*s\n", include->string.size, include->string.data);
-        }
-    }
-#endif
     
     {  // :init_globals :globals init globals
         
@@ -5297,15 +5314,14 @@ globals.typedef_##postfix = (struct ast_type){                                  
         if(!globals.cli_options.error_limit_specified)   globals.cli_options.error_limit = 100;
     }
     
-#if PRINT_ADDITIONAL_INCLUDE_DIRECTORIES
-    if(!globals.cli_options.quiet){
-        print("\nSystem include directories:\n");
+    if(globals.cli_options.v){
+        
+        print("\n#include <...> search starts here:\n");
         for(struct string_list_node *node = globals.system_include_directories.list.first; node; node = node->next){
             print("    %.*s\n", node->string.amount, node->string.data);
         }
         print("\n");
     }
-#endif
     
 #if _WIN32
     {
@@ -5533,6 +5549,15 @@ globals.typedef_##postfix = (struct ast_type){                                  
     if(globals.cli_options.fPIC && !(globals.output_file_type == OUTPUT_FILE_elf && globals.compile_to_object) && !globals.preprocessed_file_handle){
         print("Error: The '-fPIC' option is only supported when compiling ELF object files.\n");
         return 1;
+    }
+    
+    if(globals.output_file_type == OUTPUT_FILE_elf && globals.compile_to_object){
+        if(!globals.cli_options.fno_PIE){
+            globals.cli_options.fPIE = 1;
+        }
+    }else{
+        globals.cli_options.fPIE = 0; // @cleanup: I think pie is what we are currently doing.
+        globals.cli_options.fPIC = 0; // @cleanup: I think pie is what we are currently doing.
     }
     
     
@@ -6063,12 +6088,12 @@ globals.typedef_##postfix = (struct ast_type){                                  
 #endif
                         
                         for(u32 file_extension_index = 0; file_extension_index < array_count(library_file_extensions); file_extension_index++){
-                            file_path = string_concatenate(context->arena, file_path, library_file_extensions[file_extension_index]);
+                            struct string test_file_path = string_concatenate(context->arena, file_path, library_file_extensions[file_extension_index]);
                             
-                            struct os_file file = os_load_file((char *)file_path.data, 0, 0);
+                            struct os_file file = os_load_file((char *)test_file_path.data, 0, 0);
                             
                             if(!file.file_does_not_exist){
-                                full_library_path = file_path;
+                                full_library_path = test_file_path;
                                 break;
                             }
                         }
