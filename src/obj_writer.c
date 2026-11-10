@@ -491,6 +491,19 @@ void register_type(u32 *inout_type_index, struct memory_arena *arena, struct mem
                 end_type_record();
             }break;
             
+            case AST_vector_type:{
+                struct ast_vector_type *vector_type = (struct ast_vector_type *)current_type;
+                struct ast_type *element_type = vector_type->base_type;
+                
+                type_index = begin_type_record(/*LF_ARRAY*/0x1503);
+                *push_struct(arena, u32) = element_type->pdb_type_index;
+                *push_struct(arena, u32) = CV_s64;
+                push_unsigned_number_leaf(arena, vector_type->base.size);
+                *push_struct(arena, u8) = 0; // Empty "name", not sure why this is here.
+                
+                end_type_record();
+            }break;
+            
             case AST_function_type:{
                 struct ast_function_type *function_type = (struct ast_function_type *)current_type;
                 

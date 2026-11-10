@@ -3478,7 +3478,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 struct ast_type *type = decl->type;
                 
                 struct emit_location *decl_location = emit_location_stack_relative(context, decl->type, decl->offset_on_stack);
-                if(type->kind == AST_struct || type->kind == AST_union || type->kind == AST_array_type){
+                if(type->kind == AST_struct || type->kind == AST_union || type->kind == AST_array_type || type->kind == AST_vector_type){
                     emit_memset(context, decl_location, 0);
                 }
                 
@@ -6069,6 +6069,162 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 ir_arena_at += sizeof(*marker);
                 
                 marker->handler->end_offset_in_function = (u32)get_bytes_emitted(context);
+            }break;
+            
+            case IR_vector_extract:{
+                // @cleanup: Maybe implement fast path for integer_literals.
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at-2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at-1];
+                emit_location_stack_at -= 1;
+                
+                struct ast_vector_type *vector_type = (struct ast_vector_type *)lhs->type;
+                
+                rhs = emit_load(context, rhs);
+                emit_location_prevent_spilling(context, rhs);
+                
+                if(lhs->state == EMIT_LOCATION_loaded){
+                    struct emit_location *stack_return_location = emit_allocate_temporary_stack_location(context, lhs->type);
+                    emit_store(context, stack_return_location, lhs);
+                    
+                    lhs = stack_return_location;
+                }else if(lhs->index || lhs->ir){
+                    struct emit_location *address = emit_load_address(context, lhs, allocate_register(context, REGISTER_KIND_gpr));
+                    free_emit_location(context, lhs);
+                    lhs = emit_location_register_relative(context, vector_type->base_type, address, rhs, 0);
+                }
+                
+                assert(lhs->state == EMIT_LOCATION_register_relative);
+                
+                lhs->index = rhs;
+                lhs->log_index_scale = count_trailing_zeros64(vector_type->base_type->size);
+                lhs->type = vector_type->base_type;
+                
+                emit_location_allow_spilling(context, rhs);
+                
+                emit_location_stack[emit_location_stack_at - 1] = lhs;
+            }break;
+            
+            case IR_vector_add:
+            case IR_vector_sub:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at-2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at-1];
+                emit_location_stack_at -= 1;
+                
+                struct ast_vector_type *vector_type = (struct ast_vector_type *)lhs->type;
+                struct ast_type *base_type = vector_type->base_type;
+                
+                enum ir_type ir_type = ir_type_from_type(base_type);
+                
+                static u8 instruction_from_vector[][IR_TYPE_f80] = {
+                    [IR_vector_add - IR_vector_add][IR_TYPE_s8]  = 0xfc,
+                    [IR_vector_add - IR_vector_add][IR_TYPE_u8]  = 0xfc,
+                    [IR_vector_add - IR_vector_add][IR_TYPE_s16] = 0xfd,
+                    [IR_vector_add - IR_vector_add][IR_TYPE_u16] = 0xfd,
+                    [IR_vector_add - IR_vector_add][IR_TYPE_s32] = 0xfe,
+                    [IR_vector_add - IR_vector_add][IR_TYPE_u32] = 0xfe,
+                    [IR_vector_add - IR_vector_add][IR_TYPE_s64] = 0xd4,
+                    [IR_vector_add - IR_vector_add][IR_TYPE_u64] = 0xd4,
+                    [IR_vector_add - IR_vector_add][IR_TYPE_f32] = 0x58,
+                    [IR_vector_add - IR_vector_add][IR_TYPE_f64] = 0x58,
+                    
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_s8]  = 0xf8,
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_u8]  = 0xf8,
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_s16] = 0xf9,
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_u16] = 0xf9,
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_s32] = 0xfa,
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_u32] = 0xfa,
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_s64] = 0xfb,
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_u64] = 0xfb,
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_f32] = 0x5C,
+                    [IR_vector_sub - IR_vector_add][IR_TYPE_f64] = 0x5C,
+                };
+                
+                u8 inst = instruction_from_vector[ir_kind - IR_vector_add][ir_type];
+                
+                lhs = emit_load(context, lhs);
+                emit_location_prevent_spilling(context, lhs);
+                
+                struct prefixes prefixes = create_prefixes(0);
+                struct opcode opcode = two_byte_opcode(inst);
+                if(vector_type->base.size == 32){
+                    prefixes.legacy_prefixes |= ASM_PREFIX_VEX;
+                    prefixes.vex_register = lhs->loaded_register;
+                }
+                if(base_type == &globals.typedef_f32){
+                    prefixes.legacy_prefixes |= ASM_PREFIX_SSE_packed_float;
+                }else if(base_type == &globals.typedef_f64){ 
+                    prefixes.legacy_prefixes |= ASM_PREFIX_SSE_packed_double;
+                }else{
+                    prefixes.legacy_prefixes |= ASM_PREFIX_P_BIG;
+                }
+                
+                if(rhs->state == EMIT_LOCATION_loaded){
+                    emit_register_op__internal(context, prefixes, opcode, lhs->loaded_register, rhs->loaded_register, vector_type->base.size);
+                }else{
+                    assert(rhs->state == EMIT_LOCATION_register_relative);
+                    emit_register_relative_register(context, prefixes, opcode, lhs->loaded_register, rhs);
+                }
+                
+                emit_location_allow_spilling(context, lhs);
+                
+                emit_location_stack[emit_location_stack_at-1] = lhs;
+            }break;
+            
+            case IR_vector_or: case IR_vector_xor: case IR_vector_and:{
+                ir_arena_at += sizeof(struct ir);
+                
+                struct emit_location *lhs = emit_location_stack[emit_location_stack_at-2];
+                struct emit_location *rhs = emit_location_stack[emit_location_stack_at-1];
+                emit_location_stack_at -= 1;
+                
+                struct ast_vector_type *vector_type = (struct ast_vector_type *)lhs->type;
+                struct ast_type *base_type = vector_type->base_type;
+                
+                lhs = emit_load(context, lhs);
+                emit_location_prevent_spilling(context, lhs);
+                
+                u8 inst = 0;
+                
+                struct prefixes prefixes = create_prefixes(0);
+                
+                if(vector_type->base.size == 32){
+                    prefixes.legacy_prefixes |= ASM_PREFIX_VEX;
+                    prefixes.vex_register = lhs->loaded_register;
+                }
+                
+                if(base_type->kind == AST_integer_type){
+                    if(ir_kind == IR_vector_and) inst = 0xdb; // pand
+                    if(ir_kind == IR_vector_or)  inst = 0xeb; // por
+                    if(ir_kind == IR_vector_xor) inst = 0xef; // pxor
+                    prefixes.legacy_prefixes |= ASM_PREFIX_P_BIG;
+                }else{
+                    if(ir_kind == IR_vector_and) inst = 0x54; // andp*
+                    if(ir_kind == IR_vector_or)  inst = 0x56; // orp*
+                    if(ir_kind == IR_vector_xor) inst = 0x57; // xorp*
+                    
+                    if(base_type == &globals.typedef_f32){
+                        prefixes.legacy_prefixes |= ASM_PREFIX_SSE_packed_float;
+                    }else if(base_type == &globals.typedef_f64){ 
+                        prefixes.legacy_prefixes |= ASM_PREFIX_SSE_packed_double;
+                    }
+                }
+                
+                struct opcode opcode = two_byte_opcode(inst);
+                
+                if(rhs->state == EMIT_LOCATION_loaded){
+                    emit_register_op__internal(context, prefixes, opcode, lhs->loaded_register, rhs->loaded_register, vector_type->base.size);
+                }else{
+                    assert(rhs->state == EMIT_LOCATION_register_relative);
+                    emit_register_relative_register(context, prefixes, opcode, lhs->loaded_register, rhs);
+                }
+                
+                emit_location_allow_spilling(context, lhs);
+                
+                emit_location_stack[emit_location_stack_at-1] = lhs;
             }break;
             
             default:{

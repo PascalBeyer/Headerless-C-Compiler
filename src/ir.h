@@ -373,6 +373,13 @@ enum ir_kind{
     IR_cast_to_bool,
     IR_cast_to_bool_lhs,
     
+    IR_vector_extract,
+    IR_vector_add,
+    IR_vector_sub,
+    IR_vector_xor,
+    IR_vector_and,
+    IR_vector_or,
+    
     // Casts are at the end here, so that we can use math to encode the operands.
     IR_cast_f32_to_f64,
     IR_cast_base = IR_cast_f32_to_f64,

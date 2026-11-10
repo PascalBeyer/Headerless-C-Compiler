@@ -551,22 +551,26 @@ static struct{
     // extended attributes:
     struct atom one_before_first_extended_attribute;
     
-    struct atom keyword_dllimport;
-    struct atom keyword_dllexport;
+    // Common attributes
     struct atom keyword_thread;
     struct atom keyword_align;
     struct atom keyword_aligned;
-    struct atom keyword_transparent_union;
-    struct atom keyword___transparent_union__;
     struct atom keyword_noreturn;
     struct atom keyword_Noreturn;
     struct atom keyword_noinline;
-    struct atom keyword_selectany;
+    
+    // MSVC declspecs
+    struct atom keyword_dllimport;
+    struct atom keyword_dllexport;
     struct atom keyword_intrin_type;
+    struct atom keyword_selectany;
+    
+    // GNU declspecs
+    struct atom keyword_transparent_union;
     struct atom keyword_constructor;
-    struct atom keyword___constructor__;
     struct atom keyword_cleanup;
     struct atom keyword_fallthrough;
+    struct atom keyword_vector_size;
     
     // hlc declspecs
     struct atom keyword_inline_asm;
@@ -724,6 +728,10 @@ func enum register_kind get_register_kind_for_type(struct ast_type *type){
     
     if(type->flags & TYPE_FLAG_is_intrin_type){
         // All the 'intrin_types' should be loaded into xmm registers.
+        kind = REGISTER_KIND_xmm;
+    }
+    
+    if(type->kind == AST_vector_type){
         kind = REGISTER_KIND_xmm;
     }
     
@@ -1086,6 +1094,7 @@ struct patch_node{
 };
 
 func void emit_patch(struct context *context, enum patch_kind kind, struct ir *source_decl, smm source_offset, struct ast_declaration *dest_declaration, smm dest_offset, smm rip_at){
+    
     struct patch_node *patch_node = push_uninitialized_struct(context->arena, struct patch_node); // @note: `arena` is pre-zeroed.
     patch_node->source = source_decl;
     patch_node->dest_declaration = dest_declaration;
@@ -1285,7 +1294,12 @@ func void push_type_string__inner(struct string_list *list, struct memory_arena 
             push_type_string__inner(list, arena, scratch, bitfield->base_type);
             struct string width = push_format_string(scratch, ": %u", bitfield->width);
             string_list_postfix(list, scratch, width);
-            
+        }break;
+        case AST_vector_type:{
+            struct ast_vector_type *vector_type = (struct ast_vector_type *)type;
+            push_type_string__inner(list, arena, scratch, vector_type->base_type);
+            struct string width = push_format_string(scratch, " __vector_size(%lld)__", vector_type->base.size);
+            string_list_postfix(list, scratch, width);
         }break;
         invalid_default_case();
     }
@@ -1313,7 +1327,7 @@ func struct string push_type_string(struct memory_arena *arena, struct memory_ar
 // Work Queue
 
 func void work_queue_append_list(struct work_queue *queue, struct work_queue_entry *list_begin, struct work_queue_entry *list_end, smm amount){
-    // first update the 'work_entries_in_flight', so this is not temporary 0.(or in gerneral less, than it should)
+    // first update the 'work_entries_in_flight', so this is not temporary 0.(or in general less, than it should)
     atomic_add(&queue->work_entries_in_flight, amount);
     
     struct work_queue_entry *end;
@@ -2719,6 +2733,10 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                     memcpy(data + offset + element_size * index, element_data, element_size);
                 }
             }break;
+            
+            case IR_nop:{};
+            
+            // @cleanup: There should probably be handling for IR_skip?
             
             case IR_pop_expression:{
                 return;
@@ -4840,16 +4858,15 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.keyword_align       = atom_for_string(string("align"));
         globals.keyword_aligned     = atom_for_string(string("aligned"));
         globals.keyword_transparent_union = atom_for_string(string("transparent_union"));
-        globals.keyword___transparent_union__ = atom_for_string(string("__transparent_union__"));
         globals.keyword_noreturn    = atom_for_string(string("noreturn"));
         globals.keyword_Noreturn    = atom_for_string(string("_Noreturn"));
         globals.keyword_noinline    = atom_for_string(string("noinline"));
         globals.keyword_selectany   = atom_for_string(string("selectany"));
         globals.keyword_intrin_type = atom_for_string(string("intrin_type"));
         globals.keyword_constructor = atom_for_string(string("constructor"));
-        globals.keyword___constructor__ = atom_for_string(string("__constructor__"));
-        globals.keyword_cleanup = atom_for_string(string("cleanup"));
+        globals.keyword_cleanup     = atom_for_string(string("cleanup"));
         globals.keyword_fallthrough = atom_for_string(string("fallthrough"));
+        globals.keyword_vector_size = atom_for_string(string("vector_size"));
         
         // hlc declspecs
         globals.keyword_inline_asm = atom_for_string(string("inline_asm"));

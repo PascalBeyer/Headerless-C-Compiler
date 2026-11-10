@@ -1102,6 +1102,17 @@ func struct ast_type *types_are_equal(struct ast_type *wanted, struct ast_type *
         return ret;
     }
     
+    if(wanted->kind == AST_vector_type){
+        struct ast_vector_type *vector_wanted = (struct ast_vector_type *)wanted; 
+        struct ast_vector_type *vector_given  = (struct ast_vector_type *)given; 
+        
+        if(!types_are_equal(vector_wanted->base_type, vector_given->base_type)) return null;
+        
+        if(vector_wanted->base.size != vector_given->base.size) return null;
+        
+        return ret;
+    }
+    
     if(wanted->kind == AST_enum){
         struct ast_compound_type *wanted_enum = cast(struct ast_compound_type *)wanted;
         struct ast_compound_type *given_enum  = cast(struct ast_compound_type *)given;
@@ -1225,6 +1236,8 @@ enum declaration_specifier_flag{
     SPECIFIER_transparent_union = 0x10000,
     
     SPECIFIER_fallthrough = 0x20000,
+    SPECIFIER_vector_size = 0x40000,
+    SPECIFIER_aligned = 0x80000,
 };
 
 struct declaration_specifiers{
@@ -1234,6 +1247,7 @@ struct declaration_specifiers{
     
     u64 specifier_flags;
     u64 alignment;
+    u64 vector_size;
     
     struct token *transparent_union_token;
     struct token *cleanup_function;
@@ -1283,7 +1297,7 @@ enum CHECK_flag{
     CHECK_integer = 0x1,
     CHECK_float   = 0x2,
     CHECK_pointer = 0x4,
-    //CHECK_array   = 0x8,
+    CHECK_vector  = 0x8,
     
     // @cleanup: CHECK_scalar, CHECK_arithmetic and so on
     
@@ -1299,8 +1313,10 @@ func b32 check_for_basic_types__internal(struct context *context, struct ast_typ
     if((flags & CHECK_pointer) && (type->kind == AST_pointer_type))        okay = true;
     if((flags & CHECK_pointer) && (type->kind == AST_array_type))          okay = true;
     if((flags & CHECK_float)   && (type->kind == AST_float_type))          okay = true;
+    if((flags & CHECK_vector)  && (type->kind == AST_vector_type))         okay = true;
     
     if(!okay){
+        flags &= ~CHECK_vector; // :Error
         char *msg;
         if(flags == CHECK_basic){
             msg = "basic";
@@ -1897,9 +1913,6 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
         invalid_code_path;
     }
     
-    maybe_insert_cast_from_special_int_to_int(context, index, /*is_lhs*/0);
-    push_cast(context, AST_cast, &globals.typedef_s64, null, index);
-    
     struct ir_subscript *subscript = push_uninitialized_struct(&context->ir_arena, struct ir_subscript);
     subscript->base.kind = subscript_kind;
     subscript->type = dereferenced_resolved_type;
@@ -2096,6 +2109,9 @@ func struct ast_type *get_current_object_type_for_designator_node(struct designa
     if(current_object_type->kind == AST_array_type){
         struct ast_array_type *array = (struct ast_array_type *)current_object_type;
         current_object_type = array->element_type;
+    }else if(current_object_type->kind == AST_vector_type){
+        struct ast_vector_type *vector = (struct ast_vector_type *)current_object_type;
+        current_object_type = vector->base_type;
     }else{
         struct ast_compound_type *compound = (struct ast_compound_type *)current_object_type;
         current_object_type = compound->members[designator_node->member_at].type;
@@ -2108,7 +2124,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
     struct token *initial_open_curly = next_token(context);
     assert(initial_open_curly->type == TOKEN_open_curly);
     
-    if(type_to_initialize->kind != AST_array_type && type_to_initialize->kind != AST_struct && type_to_initialize->kind != AST_union){
+    if(type_to_initialize->kind != AST_array_type && type_to_initialize->kind != AST_struct && type_to_initialize->kind != AST_union && type_to_initialize->kind != AST_vector_type){
         // 
         // For an initializer like:
         //     int a = {1};
@@ -2433,9 +2449,11 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     }
                     report_error(context, compound->identifier, "... Here was the %s defined.", structure_or_union);
                     end_error_report(context);
+                }else if(type->kind == AST_vector_type){
+                    report_error(context, site, "Too many initializers for vector type."); // :Error print the type
                 }else{
                     assert(type->kind == AST_array_type);
-                    report_error(context, site, "Too many initializers for array.");
+                    report_error(context, site, "Too many initializers for array."); // :Error print the type
                 }
                 goto error;
             }
@@ -2624,6 +2642,10 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     new_node = push_struct(&context->scratch, struct designator_node);
                     new_node->offset_at = designator_stack.first->offset_at;
                     new_node->lhs_type = current_object_type;
+                }else if(type->kind == AST_vector_type){
+                    new_node = push_struct(&context->scratch, struct designator_node);
+                    new_node->offset_at = designator_stack.first->offset_at;
+                    new_node->lhs_type = current_object_type;
                 }else{
                     maybe_load_address_for_array_or_function(context, IR_load_address, &expression);
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, current_object_type, /*@cleanup*/null, &expression, site);
@@ -2678,6 +2700,11 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
             }else if(type->kind == AST_union){
                 // pop the union! Only ever initialize one member of the union.
                 // The current object should be the next thing after the union.
+            }else if(type->kind == AST_vector_type){
+                struct ast_vector_type *vector_type = (struct ast_vector_type *)type;
+                node->array_at++;
+                node->offset_at += vector_type->base_type->size;
+                if(!at_end && (node->array_at * vector_type->base_type->size < vector_type->base.size)) break;
             }else{
                 struct ast_array_type *array = (struct ast_array_type *)type;
                 
@@ -4559,8 +4586,12 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     b32 is_alignof = (size_or_alignof->ast_kind == AST_alignof);
                     struct ast_type *type = type_to_cast_to.type;
                     
+                    u64 value = type->size;
+                    if(is_alignof){
+                        value = type_to_cast_to.defined_type && *type_to_cast_to.defined_type == AST_typedef ? get_declaration_alignment((struct ast_declaration *)type_to_cast_to.defined_type) : type->alignment;
+                    }
+                    
                     if(type == &globals.typedef_void){
-                        u64 value = is_alignof ? type->alignment : type->size;
                         report_warning(context, WARNING_extension_used, size_or_alignof->token, "Type void has undefined %s. Returned value is %d. This is a GNU-extension.", is_alignof ? "alignment" : "size", value);
                     }
                     
@@ -4584,8 +4615,6 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     // prefix expression at '(type)'. now thread two finishes parsing 'type' and registers it.
                     // thread one now parses '(type)' as a cast.
                     
-                    
-                    u64 value = is_alignof ? type->alignment : type->size;
                     
                     exit_dead_code(context, size_or_alignof->other);
                     
@@ -5494,6 +5523,8 @@ case NUMBER_KIND_##type:{ \
             }break;
             case TOKEN_open_index:{
                 
+                int initial_in_lhs_expression = context->in_lhs_expression;
+                
                 struct expr index = parse_expression(context, false);
                 expect_token(context, TOKEN_closed_index, "Expected ']' at the end of array subscript.");
                 if(context->should_exit_statement) return index;
@@ -5507,11 +5538,24 @@ case NUMBER_KIND_##type:{ \
                     // 
                     struct expr temp = operand;
                     operand = index;
-                    index = temp;
+                    index = temp; // @cleanup: test again.
                 }
                 
                 if(!check_unary_for_basic_types(context, index.resolved_type, CHECK_integer, test)) return index;
                 
+                maybe_insert_cast_from_special_int_to_int(context, &index, /*is_lhs*/0);
+                push_cast(context, AST_cast, &globals.typedef_s64, null, &index);
+                
+                if(operand.resolved_type->kind == AST_vector_type){
+                    struct ast_vector_type *vector_type = (struct ast_vector_type *)operand.resolved_type;
+                    operand.ir = push_ir(context, IR_vector_extract);
+                    operand.resolved_type = vector_type->base_type;
+                    operand.defined_type  = null;
+                    
+                    context->in_lhs_expression = initial_in_lhs_expression;
+                    break;
+                }
+                    
                 if(operand.resolved_type->kind != AST_pointer_type && operand.resolved_type->kind != AST_array_type){
                     begin_error_report(context);
                     
@@ -6202,7 +6246,7 @@ case NUMBER_KIND_##type:{ \
                     report_warning(context, WARNING_extension_used, stack_entry->token, "Expression of type void has undefined alignment. Returned value is 1. This is a GNU-extension.");
                 }
                 
-                u64 alignment = operand.resolved_type->alignment;
+                u64 alignment = operand.defined_type && *operand.defined_type == AST_typedef ? get_declaration_alignment((struct ast_declaration *)operand.defined_type) : operand.resolved_type->alignment;
                 
                 // @note: Delete the whole <expression> off of the `ir_arena`.
                 exit_dead_code(context, stack_entry->other);
@@ -6292,7 +6336,7 @@ case NUMBER_KIND_##type:{ \
                 
                 maybe_insert_integer_promotion_cast(context, AST_cast, &operand);
                 
-                if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_integer | CHECK_float, stack_entry->token)) return operand;
+                if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_integer | CHECK_float | CHECK_vector, stack_entry->token)) return operand;
                 
                 context->in_lhs_expression = false;
             }break;
@@ -6668,20 +6712,25 @@ case NUMBER_KIND_##type:{ \
                         perform_float_operation(context, ast_kind, op_lhs, op_rhs);
                     }else{
                         
-                        if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_basic)) return operand;
+                        if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_basic | CHECK_vector)) return operand;
                         
                         if(op_lhs->resolved_type != op_rhs->resolved_type){
                             report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, stack_entry->token);
                             return operand;
                         }
                         
-                        enum ir_type ir_type = ir_type_from_type(op_lhs->resolved_type);
-                        // 0 - u32, 1 - u64, 2 - f32, 3 - f64
-                        u32 type_index = ((ir_type - IR_TYPE_s32) >> 1) + (ir_type == IR_TYPE_f64);
-                        enum ir_kind ir_base = (ast_kind == AST_binary_plus) ? IR_add_u32 : IR_subtract_u32;
-                        enum ir_kind ir_kind = ir_base + type_index;
+                        if(op_lhs->resolved_type->kind == AST_vector_type){
+                            operand.ir = push_ir(context, (ast_kind == AST_binary_plus) ? IR_vector_add : IR_vector_sub);
+                        }else{
+                            enum ir_type ir_type = ir_type_from_type(op_lhs->resolved_type);
+                            // 0 - u32, 1 - u64, 2 - f32, 3 - f64
+                            u32 type_index = ((ir_type - IR_TYPE_s32) >> 1) + (ir_type == IR_TYPE_f64);
+                            enum ir_kind ir_base = (ast_kind == AST_binary_plus) ? IR_add_u32 : IR_subtract_u32;
+                            enum ir_kind ir_kind = ir_base + type_index;
+                            
+                            operand.ir = push_ir(context, ir_kind);
+                        }
                         
-                        operand.ir = push_ir(context, ir_kind);
                         operand.resolved_type = op_lhs->resolved_type;
                         operand.defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
                     }
@@ -6971,15 +7020,19 @@ case NUMBER_KIND_##type:{ \
                     
                     maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
                     
-                    if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer)) return operand;
+                    if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer | CHECK_vector)) return operand;
                     
                     if(op_lhs->resolved_type != op_rhs->resolved_type){
                         report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, stack_entry->token);
                         return operand;
                     }
                     
-                    enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_and_u32 : IR_and_u64;
-                    operand.ir = push_ir(context, ir_kind);
+                    if(op_lhs->resolved_type->kind == AST_vector_type){
+                        operand.ir = push_ir(context, IR_vector_and);
+                    }else{
+                        enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_and_u32 : IR_and_u64;
+                        operand.ir = push_ir(context, ir_kind);
+                    }
                     
                     // @note: The right hand side defined type "bounds" the lhs type as this is an and.
                     //        Hence, we simply reuse the defined type of the rhs. @cleanup: This seems weird, feel like it should be the _smaller_ defined type.
@@ -7021,7 +7074,7 @@ case NUMBER_KIND_##type:{ \
                     operand.resolved_type = promoted_type;
                     operand.defined_type = null;
                 }else{
-                    if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer)) return operand;
+                    if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer | CHECK_vector)) return operand;
                     
                     maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
                     
@@ -7030,8 +7083,12 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_xor_u32 : IR_xor_u64;
-                    operand.ir = push_ir(context, ir_kind);
+                    if(op_lhs->resolved_type->kind == AST_vector_type){
+                        operand.ir = push_ir(context, IR_vector_xor);
+                    }else{
+                        enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_xor_u32 : IR_xor_u64;
+                        operand.ir = push_ir(context, ir_kind);
+                    }
                     
                     operand.resolved_type = op_lhs->resolved_type;
                     operand.defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
@@ -7069,7 +7126,7 @@ case NUMBER_KIND_##type:{ \
                     operand.resolved_type = promoted_type;
                     operand.defined_type  = null;
                 }else{
-                    if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer)) return operand;
+                    if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer | CHECK_vector)) return operand;
                     
                     maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
                     
@@ -7078,12 +7135,15 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }        
                     
-                    enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_or_u32 : IR_or_u64;
-                    operand.ir = push_ir(context, ir_kind);
+                    if(op_lhs->resolved_type->kind == AST_vector_type){
+                        operand.ir = push_ir(context, IR_vector_or);
+                    }else{
+                        enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_or_u32 : IR_or_u64;
+                        operand.ir = push_ir(context, ir_kind);
+                    }
                     
                     operand.resolved_type = op_lhs->resolved_type;
                     operand.defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
-                    
                     context->in_lhs_expression = false;
                 }
             }break;
@@ -7625,7 +7685,7 @@ case NUMBER_KIND_##type:{ \
                     return operand;
                 }
                 
-                if(!check_binary_for_basic_types(context, lhs->resolved_type, rhs->resolved_type, stack_entry->token, CHECK_basic)) return operand;
+                if(!check_binary_for_basic_types(context, lhs->resolved_type, rhs->resolved_type, stack_entry->token, CHECK_basic | CHECK_vector)) return operand;
                 
                 b32 punt = false;
                 
@@ -7649,17 +7709,23 @@ case NUMBER_KIND_##type:{ \
                 }else{
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
-                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
-                    // 0 - u8, 1 - u16, 2 - u32, 3 - u64, 4 - f32, 5 - f64
-                    // 6 - atomic bool, 7 - atomic u8, 8 - atomic u16, 9 atomic u32, 10 - atomic u64
-                    u32 type_index = ((ir_type - IR_TYPE_s8) >> 1) + (ir_type == IR_TYPE_f64);
-                    
-                    enum ir_kind ir_base = (ast_kind == AST_plus_assignment) ? IR_add_assignment_u8 : IR_subtract_assignment_u8;
-                    enum ir_kind ir_kind = ir_base + type_index;
-                    
-                    operand.ir = push_ir(context, ir_kind);
-                    operand.resolved_type = lhs->resolved_type;
-                    operand.defined_type = lhs->defined_type;
+                    if(lhs->resolved_type->kind == AST_vector_type){
+                        push_ir(context, IR_duplicate_lhs);
+                        push_ir(context, (ast_kind == AST_plus_assignment) ? IR_vector_add : IR_vector_sub);
+                        push_ir(context, IR_store);
+                    }else{
+                        enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
+                        // 0 - u8, 1 - u16, 2 - u32, 3 - u64, 4 - f32, 5 - f64
+                        // 6 - atomic bool, 7 - atomic u8, 8 - atomic u16, 9 atomic u32, 10 - atomic u64
+                        u32 type_index = ((ir_type - IR_TYPE_s8) >> 1) + (ir_type == IR_TYPE_f64);
+                        
+                        enum ir_kind ir_base = (ast_kind == AST_plus_assignment) ? IR_add_assignment_u8 : IR_subtract_assignment_u8;
+                        enum ir_kind ir_kind = ir_base + type_index;
+                        
+                        operand.ir = push_ir(context, ir_kind);
+                        operand.resolved_type = lhs->resolved_type;
+                        operand.defined_type = lhs->defined_type;
+                    }
                 }
                 
                 context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
@@ -7716,7 +7782,7 @@ case NUMBER_KIND_##type:{ \
             case AST_or_assignment:
             case AST_xor_assignment:{
                 
-                if(!check_binary_for_basic_types(context, stack_entry->operand.resolved_type, operand.resolved_type, stack_entry->token, CHECK_integer)) return operand;
+                if(!check_binary_for_basic_types(context, stack_entry->operand.resolved_type, operand.resolved_type, stack_entry->token, CHECK_integer | CHECK_vector)) return operand;
                 
                 struct expr *lhs = &stack_entry->operand;
                 struct expr *rhs = &operand;
@@ -7731,17 +7797,29 @@ case NUMBER_KIND_##type:{ \
                     struct ast_type *lhs_type = lhs->resolved_type;
                     if(lhs_type == &globals.typedef_atomic_bool) lhs_type = &globals.typedef_atomic_u8;
                     
-                    enum ir_kind ir_base = 0;
-                    if(ast_kind == AST_and_assignment) ir_base = IR_and_assignment_u8;
-                    if(ast_kind == AST_or_assignment)  ir_base = IR_or_assignment_u8;
-                    if(ast_kind == AST_xor_assignment) ir_base = IR_xor_assignment_u8;
+                    if(lhs_type->kind == AST_vector_type){
+                        enum ir_kind ir = 0;
+                        if(ast_kind == AST_and_assignment) ir = IR_vector_and;
+                        if(ast_kind == AST_or_assignment)  ir = IR_vector_or;
+                        if(ast_kind == AST_xor_assignment) ir = IR_vector_xor;
+                        
+                        push_ir(context, IR_duplicate_lhs);
+                        push_ir(context, ir);
+                        push_ir(context, IR_store);
+                    }else{
+                        enum ir_kind ir_base = 0;
+                        if(ast_kind == AST_and_assignment) ir_base = IR_and_assignment_u8;
+                        if(ast_kind == AST_or_assignment)  ir_base = IR_or_assignment_u8;
+                        if(ast_kind == AST_xor_assignment) ir_base = IR_xor_assignment_u8;
+                        
+                        enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
+                        u32 type_index = (ir_type - IR_TYPE_s8) >> 1;
+                        if(ir_type >= IR_TYPE_atomic_bool) type_index -= 3;
+                        
+                        enum ir_kind ir_kind = ir_base + type_index;
+                        operand.ir = push_ir(context, ir_kind);
+                    }
                     
-                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
-                    u32 type_index = (ir_type - IR_TYPE_s8) >> 1;
-                    if(ir_type >= IR_TYPE_atomic_bool) type_index -= 3;
-                    
-                    enum ir_kind ir_kind = ir_base + type_index;
-                    operand.ir = push_ir(context, ir_kind);
                     operand.resolved_type = lhs->resolved_type;
                     operand.defined_type = lhs->defined_type;
                 }
@@ -8254,6 +8332,12 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
         
         struct atom directive_string = directive->atom;
         
+        if(directive_string.size > 4 && directive_string.data[0] == '_' && directive_string.data[1] == '_' && directive_string.data[directive_string.size-1] == '_' && directive_string.data[directive_string.size-2] == '_'){
+            directive_string.size -= 4;
+            directive_string.data += 2;
+            directive_string = atom_for_string(atom_get_string(directive_string));
+        }
+        
         if(atoms_match(directive_string, globals.keyword_dllimport)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_dllimport, directive, "__declspec(dllimport)");
         }else if(atoms_match(directive_string, globals.keyword_dllexport)){
@@ -8297,6 +8381,21 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
             }else{
                 specifiers->alignment = value;
             }
+        }else if(atoms_match(directive_string, globals.keyword_vector_size)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_vector_size, directive, "__declspec(vector_size)");
+            expect_token(context, TOKEN_open_paren, "Expected an argument to vector_size attribute.");
+            
+            struct expr const_expr = parse_constant_integer_expression(context, /*should_skip_comma_expression*/false, "Expected a constant expression in '__declspec(align(_))'.");
+            
+            u64 value = integer_literal_as_u64(&const_expr);
+            
+            if(!is_power_of_two(value)){
+                report_error(context, directive, "vector_size must be a power of two.");
+                value = 1;
+            }
+            
+            specifiers->vector_size = value;
+            expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of vector_size attribute.");
         }else if(atoms_match(directive_string, globals.keyword_selectany)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_selectany, directive, "__declspec(selectany)");
         }else if(atoms_match(directive_string, globals.keyword_inline_asm)){
@@ -8309,7 +8408,7 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_thread_local, directive, "__declspec(thread)");
         }else if(atoms_match(directive_string, globals.keyword_fallthrough)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_fallthrough, directive, "__attribute__(fallthrough)");
-        }else if(atoms_match(directive_string, globals.keyword_constructor) || atoms_match(directive_string, globals.keyword___constructor__)){
+        }else if(atoms_match(directive_string, globals.keyword_constructor)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_constructor, directive, "constructor");
             
             struct token *constructor_argument = peek_token_eat(context, TOKEN_open_paren);
@@ -8318,7 +8417,7 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
             }
         }else if(atoms_match(directive_string, globals.keyword_intrin_type)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_intrin_type, directive, "__declspec(intrin_type)");
-        }else if(atoms_match(directive_string, globals.keyword_transparent_union) || atoms_match(directive->atom, globals.keyword___transparent_union__)){
+        }else if(atoms_match(directive_string, globals.keyword_transparent_union)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_transparent_union, directive, "__declspec(transparent_union)");
             specifiers->transparent_union_token = directive;
         }else if(atoms_match(directive_string, globals.keyword_cleanup)){
@@ -8560,10 +8659,10 @@ case TOKEN_##type_name:{                                                 \
                 
                 while(peek_token_eat(context, TOKEN_declspec)){
                     parse_extended_attribute(context, &extended_type_attributes);
-                    
-                    if(extended_type_attributes.specifier_flags & SPECIFIER_transparent_union){
-                        transparent_union_token = extended_type_attributes.transparent_union_token;
-                    }
+                }
+                
+                if(extended_type_attributes.specifier_flags & SPECIFIER_transparent_union){
+                    transparent_union_token = extended_type_attributes.transparent_union_token;
                 }
                 
                 u64 declspec_alignment = extended_type_attributes.alignment ? extended_type_attributes.alignment : 1;
@@ -9602,11 +9701,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
     parse_declaration_specifiers(context, in_specifiers);
     if(context->should_exit_statement) goto end;
     
-    struct declaration_specifiers specifiers = *in_specifiers;
-    
-    if(specifiers.specifier_flags & SPECIFIER_packed){
-        report_error(context, get_current_token_for_error_report(context), "A declaration cannot be '__declspec(packed)'. Please declare a __declspec(packed)-type instead. (I.e please use 'struct __declspec(packed) packed_type' instead of '__declspec(packed) struct packed_type'.");
-    }
     
     // :unresolved_types
     //
@@ -9618,8 +9712,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
     // If the unresolved type turn out to be the type of a declaration in the end, we have to error.
     //                                                                                   07.02.2023
     
-    ret.defined_type_specifier = specifiers.defined_type_specifier;
-    ret.type_specifier         = specifiers.type_specifier;
+    ret.defined_type_specifier = in_specifiers->defined_type_specifier;
+    ret.type_specifier         = in_specifiers->type_specifier;
     if(peek_token(context, TOKEN_semicolon)){
         // :unresolved_types
         // 
@@ -9656,14 +9750,18 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
         }
         
-        struct declaration_specifiers post_decl_specifiers = {
-            .cleanup_function = specifiers.cleanup_function,
-        };
+        struct declaration_specifiers specifiers = *in_specifiers;
+        
         while(peek_token_eat(context, TOKEN_declspec)){
-            parse_extended_attribute(context, &post_decl_specifiers);
+            parse_extended_attribute(context, &specifiers);
         }
         
-        if((post_decl_specifiers.specifier_flags & SPECIFIER_transparent_union) && !(declarator.type->flags & TYPE_FLAG_is_transparent_union)){
+        if(specifiers.specifier_flags & SPECIFIER_packed){
+            // @cleanup: is this not just implemented if we move the post-structure code?
+            report_error(context, get_current_token_for_error_report(context), "A declaration cannot be '__declspec(packed)'. Please declare a __declspec(packed)-type instead. (I.e please use 'struct __declspec(packed) packed_type' instead of '__declspec(packed) struct packed_type'.");
+        }
+        
+        if((specifiers.specifier_flags & SPECIFIER_transparent_union) && !(declarator.type->flags & TYPE_FLAG_is_transparent_union)){
             if(declarator.type->kind == AST_union){
                 
                 struct ast_compound_type *original = (struct ast_compound_type *)declarator.type;
@@ -9674,7 +9772,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 
                 if(original->amount_of_members == 0){
                     begin_error_report(context);
-                    report_error(context, post_decl_specifiers.transparent_union_token, "'transparent_union' union must have at least one pointer member.");
+                    report_error(context, specifiers.transparent_union_token, "'transparent_union' union must have at least one pointer member.");
                     report_error(context, original->identifier, "... Here is the union type.");
                     end_error_report(context);
                 }
@@ -9682,7 +9780,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 for(u32 member_index = 0; member_index < original->amount_of_members; member_index++){
                     if(original->members[member_index].type->kind != AST_pointer_type){
                         begin_error_report(context);
-                        report_error(context, post_decl_specifiers.transparent_union_token, "'transparent_union' is currently only supported for unions whose members are all pointer types.");
+                        report_error(context, specifiers.transparent_union_token, "'transparent_union' is currently only supported for unions whose members are all pointer types.");
                         report_error(context, original->members[member_index].name, "... This member is not a pointer.");
                         end_error_report(context);
                     }
@@ -9690,8 +9788,33 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 
                 declarator.type = &new_compound->base;
             }else{
-                report_error(context, post_decl_specifiers.transparent_union_token, "'transparent_union' can only be applied to a union.");
+                report_error(context, specifiers.transparent_union_token, "'transparent_union' can only be applied to a union.");
             }
+        }
+        
+        if(specifiers.specifier_flags & SPECIFIER_vector_size){
+            struct ast_type *type = declarator.type;
+            if(type->kind != AST_integer_type && type->kind != AST_float_type){
+                report_error(context, declarator.ident, "Declaration with vector_size attribute must be of integer or floating point type.");
+                type = &globals.typedef_s32;
+            }
+            
+            u64 vector_size = specifiers.vector_size;
+            if(vector_size != 16 && vector_size != 32){
+                // @cleanup: Gcc checks the following:
+                //    1. integral multiple of the component size.
+                //    2. power of two.
+                report_error(context, declarator.ident, "vector_size attribute must be 16 or 32.");
+                vector_size = 16;
+            }
+            
+            struct ast_vector_type *new_type = parser_type_push(context, vector_type);
+            new_type->base_type = type;
+            new_type->base.size = specifiers.vector_size;
+            new_type->base.alignment = specifiers.vector_size;
+            
+            declarator.type = &new_type->base;
+            declarator.defined_type = null;
         }
         
         if(context->should_exit_statement) goto end;
@@ -10136,28 +10259,28 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
         }
         
-        if(post_decl_specifiers.cleanup_function){
+        if(specifiers.cleanup_function){
             if(!context->current_scope){
-                report_error(context, post_decl_specifiers.cleanup_function, "Cannot use the extended attribute `cleanup` at global scope.");
+                report_error(context, specifiers.cleanup_function, "Cannot use the extended attribute `cleanup` at global scope.");
             }else{
-                struct ast_function *function = (struct ast_function *)lookup_declaration(context->current_scope, context->current_compilation_unit, post_decl_specifiers.cleanup_function->atom);
+                struct ast_function *function = (struct ast_function *)lookup_declaration(context->current_scope, context->current_compilation_unit, specifiers.cleanup_function->atom);
                 struct ast_type *function_argument_type = function->type->argument_list.first ? ((struct ast_declaration *)function->type->argument_list.first->value)->type : null;
                 
                 struct ast_type *pointer_to_decl = parser_push_pointer_type(context, decl->type, decl->defined_type);
                 
                 if(!function){
-                    report_error(context, post_decl_specifiers.cleanup_function, "Undeclared function name in argument to cleanup-attribute.");
+                    report_error(context, specifiers.cleanup_function, "Undeclared function name in argument to cleanup-attribute.");
                 }else if(function->kind != AST_function){
-                    report_error(context, post_decl_specifiers.cleanup_function, "Argument of cleanup-attribute is not a function.");
+                    report_error(context, specifiers.cleanup_function, "Argument of cleanup-attribute is not a function.");
                 }else if(decl->kind != AST_declaration){
-                    report_error(context, post_decl_specifiers.cleanup_function, "cleanup-attribute only applies to declarations (not functions or typedefs).");
+                    report_error(context, specifiers.cleanup_function, "cleanup-attribute only applies to declarations (not functions or typedefs).");
                 }else if(function->type->return_type != &globals.typedef_void || function->type->argument_list.count != 1 || !(function_argument_type == &globals.typedef_void_pointer.base || types_are_equal(function_argument_type, pointer_to_decl))){
                     struct string function_identifier = token_get_string(function->identifier);
                     struct string function_type_string = push_type_string(&context->scratch, &context->scratch, &function->type->base);
                     struct string declaration_type_string = push_type_string(&context->scratch, &context->scratch, decl->type);
                     struct string declaration_pointer_type_string = push_type_string(&context->scratch, &context->scratch, pointer_to_decl);
                     
-                    report_error(context, post_decl_specifiers.cleanup_function, "cleanup-attribute for variable of type '%.*s' must match 'void %.*s(%.*s)', but is '%.*s'.", declaration_type_string.size, declaration_type_string.data, function_identifier.size, function_identifier.data, declaration_pointer_type_string.size, declaration_pointer_type_string.data, function_type_string.size, function_type_string.data);
+                    report_error(context, specifiers.cleanup_function, "cleanup-attribute for variable of type '%.*s' must match 'void %.*s(%.*s)', but is '%.*s'.", declaration_type_string.size, declaration_type_string.data, function_identifier.size, function_identifier.data, declaration_pointer_type_string.size, declaration_pointer_type_string.data, function_type_string.size, function_type_string.data);
                 }else{
                     struct cleanup_call *cleanup_call = push_struct(context->arena, struct cleanup_call);
                     cleanup_call->function = function;
@@ -10172,7 +10295,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     
                     struct declaration_reference_node *new_reference = push_uninitialized_struct(context->arena, struct declaration_reference_node);
                     new_reference->declaration = &function->as_decl;
-                    new_reference->token = post_decl_specifiers.cleanup_function;
+                    new_reference->token = specifiers.cleanup_function;
                     sll_push_back(context->current_function->referenced_declarations, new_reference); // :DeclarationReferenceThreadingBug
                     
                 }
@@ -11531,6 +11654,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                     // for example: 'uint8_t *buf __attribute__((unused))'.
                     struct declaration_specifiers parameter_attributes = {0};
                     while(peek_token_eat(context, TOKEN_declspec)){
+                        report_warning(context, WARNING_unsupported_declspec, get_current_token_for_error_report(context), "Extended attributes are ignored on function parameters for now.");
                         parse_extended_attribute(context, &parameter_attributes);
                     }
                     

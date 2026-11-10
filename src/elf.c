@@ -278,6 +278,7 @@ enum abbrev_indices{
     ABBREV_pointer_type,
     ABBREV_void_pointer_type,
     ABBREV_array_type,
+    ABBREV_vector_type,
     ABBREV_subrange_type, // for arrays, kinda weird.
     ABBREV_subrange_unknown_size_type, // for arrays, kinda weird.
     
@@ -488,6 +489,23 @@ if((recurse_type)->flags & TYPE_FLAG_pdb_permanent){                            
                         *push_struct_unaligned(arena, u64) = /*upper_bound*/array_type->amount_of_elements-1;
                     }
                 }
+                
+                *push_struct(arena, u8) = /*end*/0;
+            }break;
+            
+            case AST_vector_type:{
+                struct ast_vector_type *vector_type = (struct ast_vector_type *)subtype;
+                struct ast_type *element_type = vector_type->base_type;
+                
+                *push_struct(arena, u8) = /*index*/ABBREV_vector_type;
+                *push_struct_unaligned(arena, u64) = /*byte_size*/vector_type->base.size;
+                
+                u32 *form_ref = push_struct_unaligned(arena, u32);
+                recurse(element_type);
+                
+                *push_struct(arena, u8) = /*index*/ABBREV_subrange_type;
+                *push_struct_unaligned(arena, u32) = /*type*/globals.typedef_u64.dwarf_form_offset;
+                *push_struct_unaligned(arena, u64) = /*upper_bound*/vector_type->base.size/element_type->size - 1;
                 
                 *push_struct(arena, u8) = /*end*/0;
             }break;
@@ -2425,6 +2443,32 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
             
             *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
         }
+        
+        // 
+        //     DW_TAG_array_type (vector)
+        //         DW_AT_byte_size          DW_FORM_data8
+        //         DW_AT_type               DW_FORM_ref4
+        //         DW_AT_GNU_vector         DW_FORM_flag_present
+        //         
+        *push_struct(arena, u8) = /*index*/ABBREV_vector_type;
+        *push_struct(arena, u8) = /*DW_TAG_array_type*/0x1;
+        *push_struct(arena, u8) = /*have_children*/1;
+        {
+            
+            *push_struct(arena, u8) = /*DW_AT_byte_size*/0xb;
+            *push_struct(arena, u8) = /*DW_FORM_data8*/0x7;
+            
+            *push_struct(arena, u8) = /*DW_AT_type*/0x49;
+            *push_struct(arena, u8) = /*DW_FORM_ref4*/0x13;
+            
+            // DW_AT_GNU_vector = 0x2107, which is the ULEB128 bytes 0x87 0x42.
+            *push_struct(arena, u8) = 0x87;
+            *push_struct(arena, u8) = 0x42;
+            *push_struct(arena, u8) = /*DW_FORM_flag_present*/0x19;
+            
+            *push_struct(arena, u8) = 0; *push_struct(arena, u8) = 0; // zero-terminator
+        }
+        
         
         *push_struct(arena, u8) = /*index*/ABBREV_subrange_type;
         *push_struct(arena, u8) = /*DW_TAG_subrange_type*/0x21;

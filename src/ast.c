@@ -391,6 +391,7 @@ enum ast_kind{
     AST_integer_type,
     AST_atomic_integer_type,
     AST_float_type,
+    AST_vector_type,
     AST_bitfield_type,
     AST_pointer_type,
     AST_function_type,
@@ -671,6 +672,11 @@ struct ast_bitfield_type{
     struct ast_type *base_type;
     u32 bit_index;
     u32 width;
+};
+
+struct ast_vector_type{
+    struct ast_type base;
+    struct ast_type *base_type;
 };
 
 static smm get_declaration_alignment(struct ast_declaration *decl){
