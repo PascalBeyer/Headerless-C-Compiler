@@ -369,6 +369,8 @@ enum ir_kind{
     IR_range_initializer,
     IR_asm_block,
     
+    IR_cast_vector, 
+    
     IR_cast_to_void,
     IR_cast_to_bool,
     IR_cast_to_bool_lhs,
@@ -556,6 +558,11 @@ struct ir_bitfield_increment{
 };
 
 struct ir_deref{
+    struct ir base;
+    struct ast_type *type;
+};
+
+struct ir_cast_vector{
     struct ir base;
     struct ast_type *type;
 };

@@ -562,13 +562,8 @@ func struct asm_operand asm_maybe_parse_expression_operand(struct context *conte
     }
     
     struct ast_type *type = expr.resolved_type;
-    if(type->kind != AST_integer_type && type->kind != AST_float_type && type->kind != AST_pointer_type && !(type->flags & TYPE_FLAG_is_intrin_type)){
-        char *remark = "";
-        if(type->kind == AST_union || type->kind == AST_struct){
-            remark = " (If you defined your own *mm types, please mark them __declspec(intrin_type)).";
-        }
-        
-        report_error(context, expr.token, "Invalid type for asm operand.%s", remark);
+    if(type->kind != AST_integer_type && type->kind != AST_float_type && type->kind != AST_pointer_type && type->kind != AST_vector_type){
+        report_error(context, expr.token, "Invalid type for asm operand.");
     }
     
     operand.register_kind_when_loaded = get_register_kind_for_type(type);
@@ -1034,7 +1029,7 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
                 }else if(type->kind == AST_pointer_type){
                     
                     if(type->size == 8 && !(ASM_OP_KIND_regm64 & desired_operand_flags)) should_error = true;
-                }else if(type->flags & TYPE_FLAG_is_intrin_type){
+                }else if(type->kind == AST_vector_type){
                     
                     if(operand.size == 16 && !(ASM_OP_KIND_xmmm128 & desired_operand_flags)) should_error = true;
                     if(operand.size == 32 && !(ASM_OP_KIND_ymmm256 & desired_operand_flags)) should_error = true;

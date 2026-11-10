@@ -451,8 +451,8 @@ func struct ast_type *get_system_v_sse_type_for_size(smm size){
     switch(size){
         case 4:  return &globals.typedef_f32;
         case 8:  return &globals.typedef_f64;
-        case 16: return &globals.typedef_m128;
-        case 32: return &globals.typedef_m256;
+        case 16: return &globals.typedef_m128.base;
+        case 32: return &globals.typedef_m256.base;
         invalid_default_case();
     }
     return &globals.typedef_f64;
@@ -855,7 +855,7 @@ func void spill_register(struct context *context, enum register_kind allocator, 
         // 
         // @cleanup: Same should be true for asm block as well I think. 
         //           Also there should maybe be a better solution.
-        type = &globals.typedef_m128;
+        type = &globals.typedef_m128.base;
     }
     
     *location_to_spill = *emit_allocate_temporary_stack_location(context, type);
@@ -944,7 +944,7 @@ static enum register_encoding windows_x64_volatile_xmm_registers[] = {
 
 func b32 windows_x64_type_is_returned_by_address(struct ast_type *type){
     smm size = type->size;
-    if(type->flags & TYPE_FLAG_is_intrin_type) return false;
+    if(type->kind == AST_vector_type) return false;
     if(size_is_big_or_oddly_sized(size)) return true;
     return false;
 }
@@ -1012,7 +1012,7 @@ struct system_v_type_classification{
 } system_v_classify_type(struct context *context, struct ast_type *root_type){
     
     struct system_v_type_classification ret = {0};
-    if(root_type->flags & TYPE_FLAG_is_intrin_type){
+    if(root_type->kind == AST_vector_type){
         // * "Arguments of types _float128, _Decimal128, and _m128 are split into two halves.
         //    The least significant ones belong to the class SSE, the most significant one to class SSEUP."
         // * "Arguments of type __m256 are split into four eightbyte chunks.
@@ -1068,7 +1068,7 @@ struct system_v_type_classification{
                         ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_integer);
                     }else if(type->kind == AST_float_type){
                         ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
-                    }else if(type->flags & TYPE_FLAG_is_intrin_type){
+                    }else if(type->kind == AST_vector_type){
                         ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
                         for(u32 index = 1; index < type->size/8; index++){
                             ret.classification[classification_index + index] = system_v_combine_type_classification(ret.classification[classification_index + index], SYSTEM_V_TYPE_CLASSIFICATION_sse_upper);
@@ -1102,7 +1102,7 @@ struct system_v_type_classification{
                         ret.classification[classification_index] = system_v_combine_type_classification(ret.classification[classification_index], SYSTEM_V_TYPE_CLASSIFICATION_sse);
                     }
                     
-                }else if(element_type->flags & TYPE_FLAG_is_intrin_type){
+                }else if(element_type->kind == AST_vector_type){
                     for(u32 element_index = 0; element_index < array->amount_of_elements; element_index++){
                         u64 offset = root_offset + element_type_size * element_index;
                         u64 classification_index = offset / 8;
@@ -4443,13 +4443,13 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     
                     // :returning_structs
                     if(stack_return_location){
-                        assert(!(return_type->flags & TYPE_FLAG_is_intrin_type));
+                        assert(!(return_type->kind == AST_vector_type));
                         assert(returns_big_struct);
                         emit_location_stack[emit_location_stack_at++] = stack_return_location;
                         break;
                     }
                     
-                    if(return_type->kind == AST_float_type || (return_type->flags & TYPE_FLAG_is_intrin_type)){
+                    if(return_type->kind == AST_float_type || (return_type->kind == AST_vector_type)){
                         emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, return_type, REGISTER_XMM0);
                         break;
                     }
@@ -4809,13 +4809,13 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     
                     // :returning_structs
                     if(stack_return_location){
-                        assert(!(return_type->flags & TYPE_FLAG_is_intrin_type));
+                        assert(!(return_type->kind == AST_vector_type));
                         assert(returns_on_stack);
                         emit_location_stack[emit_location_stack_at++] = stack_return_location;
                         break;
                     }
                     
-                    if(return_type->kind == AST_float_type || (return_type->flags & TYPE_FLAG_is_intrin_type)){
+                    if(return_type->kind == AST_float_type || (return_type->kind == AST_vector_type)){
                         emit_location_stack[emit_location_stack_at++] = emit_location_loaded(context, return_type, REGISTER_XMM0);
                         break;
                     }
@@ -4865,15 +4865,10 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     size += 8;
                                 }
                                 
-                                struct ast_type hack_type = {
-                                    .size = size,
-                                    .alignment = size,
-                                    .flags = TYPE_FLAG_is_intrin_type,
-                                };
-                                ret->type = &hack_type;
+                                ret->type = get_system_v_sse_type_for_size(size);
                                 
                                 enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
-                                struct emit_location *source = emit_location_loaded(context, &hack_type, argument_reg);
+                                struct emit_location *source = emit_location_loaded(context, ret->type, argument_reg);
                                 emit_store(context, ret, source);
                                 ret->offset += size;
                                 
@@ -4927,7 +4922,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         if(return_type->kind == AST_float_type){
                             struct emit_location *loaded = emit_load_float_into_specific_register(context, return_location, REGISTER_XMM0);
                             free_emit_location(context, loaded);
-                        }else if(return_type->flags & TYPE_FLAG_is_intrin_type){
+                        }else if(return_type->kind == AST_vector_type){
                             struct emit_location *loaded = emit_load_float_into_specific_register(context, return_location, REGISTER_XMM0);
                             free_emit_location(context, loaded);
                         }else if(windows_x64_type_is_returned_by_address(return_type)){
@@ -6106,6 +6101,13 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_stack[emit_location_stack_at - 1] = lhs;
             }break;
             
+            case IR_cast_vector:{
+                struct ir_cast_vector *ir_cast_vector = (struct ir_cast_vector *)ir;
+                ir_arena_at += sizeof(*ir_cast_vector);
+                struct emit_location *loc = emit_location_stack[emit_location_stack_at-1];
+                loc->type = ir_cast_vector->type;
+            }break;
+            
             case IR_vector_add:
             case IR_vector_sub:{
                 ir_arena_at += sizeof(struct ir);
@@ -6399,7 +6401,7 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                 
                 enum register_kind register_kind = get_register_kind_for_type(argument_type);
                 
-                if(argument_type->flags & TYPE_FLAG_is_intrin_type){
+                if(argument_type->kind == AST_vector_type){
                     // Intrinsic types are passed by reference.
                     register_kind = REGISTER_KIND_gpr;
                 }
@@ -6573,15 +6575,11 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                         //        and thus was passed in one register. Hence, the size should be 8, 16 or 32. (Maybe 64 in the future?)
                         assert(size == 8 || size == 16 || size == 32);
                         
-                        struct ast_type hack_type = {
-                            .size = size,
-                            .alignment = size,
-                            .flags = TYPE_FLAG_is_intrin_type,
-                        };
+                        struct ast_type *hack_type = get_system_v_sse_type_for_size(size);
                         
                         enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
-                        struct emit_location *dest = emit_location_stack_relative(context, &hack_type, function->stack_space_needed + (aligned_size - root_index * 8));
-                        struct emit_location *source = emit_location_loaded(context, &hack_type, argument_reg);
+                        struct emit_location *dest = emit_location_stack_relative(context, hack_type, function->stack_space_needed + (aligned_size - root_index * 8));
+                        struct emit_location *source = emit_location_loaded(context, hack_type, argument_reg);
                         emit_store(context, dest, source);
                         float_register_at += 1;
                     }else invalid_code_path;
@@ -6612,8 +6610,8 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
             for(float_register_at = REGISTER_XMM7; float_register_at < 0xffffffff; float_register_at--){
                 function->stack_space_needed += 0x10;
                 enum register_encoding argument_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
-                struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_m128, function->stack_space_needed);
-                struct emit_location *source = emit_location_loaded(context, &globals.typedef_m128, argument_reg);
+                struct emit_location *dest = emit_location_stack_relative(context, &globals.typedef_m128.base, function->stack_space_needed);
+                struct emit_location *source = emit_location_loaded(context, &globals.typedef_m128.base, argument_reg);
                 emit_store(context, dest, source);
             }
             

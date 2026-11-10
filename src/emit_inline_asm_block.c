@@ -55,13 +55,7 @@ func struct emit_location *asm_block_load_registers_which_was_used_by_user(struc
             invalid_default_case();
         }
     }else{
-        switch(size){
-            case 4: type = &globals.typedef_f32; break;
-            case 8: type = &globals.typedef_f64; break;
-            case 16: type = &globals.typedef_m128; break;
-            case 32: type = &globals.typedef_m256; break;
-            invalid_default_case();
-        }
+        type = get_system_v_sse_type_for_size(size);
     }
     
     if(loc && loc->inline_asm__was_used_by_user){
@@ -101,18 +95,12 @@ struct ast_type *asm_block_get_type_for_operand(struct asm_operand *operand){
             case 8: type = &globals.typedef_u64; break;
             
             // Fuck all of this!
-            case 16: type = &globals.typedef_m128; break;
-            case 32: type = &globals.typedef_m256; break; 
+            case 16: type = &globals.typedef_m128.base; break;
+            case 32: type = &globals.typedef_m256.base; break; 
             invalid_default_case();
         }
     }else{
-        switch(operand->size){
-            case 4: type = &globals.typedef_f32; break;
-            case 8: type = &globals.typedef_f64; break;
-            case 16: type = &globals.typedef_m128; break;
-            case 32: type = &globals.typedef_m256; break;
-            invalid_default_case();
-        }
+        type = get_system_v_sse_type_for_size(operand->size);
     }
     return type;
 }

@@ -562,7 +562,6 @@ static struct{
     // MSVC declspecs
     struct atom keyword_dllimport;
     struct atom keyword_dllexport;
-    struct atom keyword_intrin_type;
     struct atom keyword_selectany;
     
     // GNU declspecs
@@ -662,8 +661,8 @@ static struct{
     struct ast_pointer_type typedef_f80_pointer;
     struct ast_pointer_type typedef_f128_pointer;
     
-    struct ast_type typedef_m128;
-    struct ast_type typedef_m256;
+    struct ast_vector_type typedef_m128;
+    struct ast_vector_type typedef_m256;
     
     struct ast_function_type *seh_filter_funtion_type;
     
@@ -723,11 +722,6 @@ func enum register_kind get_register_kind_for_type(struct ast_type *type){
     enum register_kind kind = REGISTER_KIND_gpr;
     
     if(type == &globals.typedef_f32 || type == &globals.typedef_f64){
-        kind = REGISTER_KIND_xmm;
-    }
-    
-    if(type->flags & TYPE_FLAG_is_intrin_type){
-        // All the 'intrin_types' should be loaded into xmm registers.
         kind = REGISTER_KIND_xmm;
     }
     
@@ -1077,6 +1071,7 @@ enum patch_kind{
     PATCH_none,
     PATCH_absolute,
     PATCH_rip_relative,
+    PATCH_gotpc_rel,      // RIP-relative load of a GOT entry.
     PATCH_section_offset, // Used for thread local storage.
     PATCH_tls_gottpoff,   // Used for thread local storage if -fPIC is used.
     PATCH_count,
@@ -4679,10 +4674,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
         make_const_typedef(poison, TOKEN_void,   AST_void_type,    "poison",             8, 8);
         
         // @note: only used during asm.
-        make_const_typedef(m128, TOKEN_struct, AST_void_type, "m128", 16, 16);
-        make_const_typedef(m256, TOKEN_struct, AST_void_type, "m128", 32, 32);
-        globals.typedef_m128.flags |= TYPE_FLAG_is_intrin_type;
-        globals.typedef_m256.flags |= TYPE_FLAG_is_intrin_type;
+        globals.typedef_m128 = (struct ast_vector_type){.base = { .kind = AST_vector_type, .size = 16, .alignment = 16}, .base_type = &globals.typedef_s64};
+        globals.typedef_m256 = (struct ast_vector_type){.base = { .kind = AST_vector_type, .size = 32, .alignment = 32}, .base_type = &globals.typedef_s64};
         
         globals.invalid_file.absolute_file_path = "*predefined token*";
         globals.invalid_file.file_index = -1;
@@ -4879,7 +4872,6 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.keyword_Noreturn    = atom_for_string(string("_Noreturn"));
         globals.keyword_noinline    = atom_for_string(string("noinline"));
         globals.keyword_selectany   = atom_for_string(string("selectany"));
-        globals.keyword_intrin_type = atom_for_string(string("intrin_type"));
         globals.keyword_constructor = atom_for_string(string("constructor"));
         globals.keyword_cleanup     = atom_for_string(string("cleanup"));
         globals.keyword_fallthrough = atom_for_string(string("fallthrough"));

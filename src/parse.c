@@ -1232,7 +1232,6 @@ enum declaration_specifier_flag{
     // 
     // Type specifiers.
     // 
-    SPECIFIER_intrin_type = 0x8000,
     SPECIFIER_transparent_union = 0x10000,
     
     SPECIFIER_fallthrough = 0x20000,
@@ -1434,6 +1433,38 @@ func void handle_dot_or_arrow(struct context *context, struct ast_compound_type 
     
     push_dot_or_arrow(context, found, operand, ir_kind);
 }
+
+//_____________________________________________________________________________________________________________________
+// Members of vector types.
+
+func struct ast_type *base_type_for_member_string(struct ast_vector_type *vector_type, struct string member_string){
+    
+    int m128_  = string_front_match_eat(&member_string, "m128_");
+    int m128d_ = string_front_match_eat(&member_string, "m128d_");
+    int m128i_ = string_front_match_eat(&member_string, "m128i_");
+    int m256_  = string_front_match_eat(&member_string, "m256_");
+    int m256d_ = string_front_match_eat(&member_string, "m256d_");                    
+    int m256i_ = string_front_match_eat(&member_string, "m256i_");
+    
+    int large = m256_ + m256d_ + m256i_;
+    
+    struct ast_type *new_base_type = 0;
+    
+    if(m128_ + m128d_ + m128i_ + m256_ + m256d_ + m256i_ == 1 && large == (vector_type->base.size == 32)){
+        if(string_match(member_string, string("f32"))) new_base_type = &globals.typedef_f32;
+        if(string_match(member_string, string("f64"))) new_base_type = &globals.typedef_f64;
+        if(string_match(member_string, string("i8")))  new_base_type = &globals.typedef_s8;
+        if(string_match(member_string, string("u8")))  new_base_type = &globals.typedef_u8;
+        if(string_match(member_string, string("i16"))) new_base_type = &globals.typedef_s16;
+        if(string_match(member_string, string("u16"))) new_base_type = &globals.typedef_u16;
+        if(string_match(member_string, string("i32"))) new_base_type = &globals.typedef_s32;
+        if(string_match(member_string, string("u32"))) new_base_type = &globals.typedef_u32;
+        if(string_match(member_string, string("i64"))) new_base_type = &globals.typedef_s64;
+        if(string_match(member_string, string("u64"))) new_base_type = &globals.typedef_u64;
+    }
+    return new_base_type;
+}
+
 
 //_____________________________________________________________________________________________________________________
 // Ast stack
@@ -5611,13 +5642,39 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                if(operand.resolved_type->kind != AST_struct && operand.resolved_type->kind != AST_union){
-                    report_error(context, test, "Left of '.' needs to be of struct or union type.");
-                    return operand;
+                if(operand.resolved_type->kind == AST_vector_type){
+                    struct ast_vector_type *vector = (struct ast_vector_type *)operand.resolved_type;
+                    
+                    struct token *member = expect_token(context, TOKEN_identifier, "Expected an identifier following '.'.");
+                    struct string member_string = token_get_string(member);
+                    
+                    struct ast_type *new_base_type = base_type_for_member_string(vector, member_string);
+                    
+                    if(new_base_type){
+                        struct ast_vector_type *new_vector_type = push_struct(context->arena, struct ast_vector_type);
+                        new_vector_type->base = vector->base;
+                        new_vector_type->base_type = new_base_type;
+                        
+                        struct ir_cast_vector *cast_vector = push_struct(&context->ir_arena, struct ir_cast_vector);
+                        cast_vector->base.kind = IR_cast_vector;
+                        cast_vector->type = &new_vector_type->base;
+                        
+                        operand.ir = &cast_vector->base;
+                        operand.resolved_type = &new_vector_type->base;
+                        operand.defined_type = null;
+                    }else{
+                        report_error(context, test, "Member string is invalid for vector. Valid members look something like 'm128_i16', 'm256d_f64' or 'm128i_u32'. (m{size}{type}_{new-type}).");
+                    }
+                }else{
+                    
+                    if(operand.resolved_type->kind != AST_struct && operand.resolved_type->kind != AST_union){
+                        report_error(context, test, "Left of '.' needs to be of struct or union type.");
+                        return operand;
+                    }
+                    
+                    struct ast_compound_type *compound = cast(struct ast_compound_type *)operand.resolved_type;
+                    handle_dot_or_arrow(context, compound, &operand, IR_member);
                 }
-                
-                struct ast_compound_type *compound = cast(struct ast_compound_type *)operand.resolved_type;
-                handle_dot_or_arrow(context, compound, &operand, IR_member);
                 
                 // 
                 // @note: Dot does not alter the 'is_lhs_expression' flag.
@@ -5654,13 +5711,39 @@ case NUMBER_KIND_##type:{ \
                 // We have to resolve it, or sleep on it/error on it.
                 if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer->pointer_to)) return operand;
                 
-                if(pointer->pointer_to->kind != AST_struct && pointer->pointer_to->kind != AST_union){
-                    report_error(context, test, "Left of '->' needs to be of pointer to struct or union type.");
-                    return operand;
+                if(pointer->pointer_to->kind == AST_vector_type){
+                    struct ast_vector_type *vector = (struct ast_vector_type *)pointer->pointer_to;
+                    
+                    struct token *member = expect_token(context, TOKEN_identifier, "Expected an identifier following '->'.");
+                    struct string member_string = token_get_string(member);
+                    
+                    struct ast_type *new_base_type = base_type_for_member_string(vector, member_string);
+                    
+                    if(new_base_type){
+                        struct ast_vector_type *new_vector_type = push_struct(context->arena, struct ast_vector_type);
+                        new_vector_type->base = vector->base;
+                        new_vector_type->base_type = new_base_type;
+                        
+                        struct ir_deref *deref = push_uninitialized_struct(&context->ir_arena, struct ir_deref);
+                        deref->base.kind = IR_deref;
+                        deref->type = &new_vector_type->base;
+                        
+                        operand.ir = &deref->base;
+                        operand.resolved_type = &new_vector_type->base;
+                        operand.defined_type = null;
+                    }else{
+                        report_error(context, test, "Member string is invalid for vector. Valid members look something like 'm128_i16', 'm256d_f64' or 'm128i_u32'. (m{size}{type}_{new-type}).");
+                    }
+                }else{
+                    
+                    if(pointer->pointer_to->kind != AST_struct && pointer->pointer_to->kind != AST_union){
+                        report_error(context, test, "Left of '->' needs to be of pointer to struct or union type.");
+                        return operand;
+                    }
+                    
+                    struct ast_compound_type *compound = cast(struct ast_compound_type *)pointer->pointer_to;
+                    handle_dot_or_arrow(context, compound, &operand, IR_member_deref);
                 }
-                
-                struct ast_compound_type *compound = cast(struct ast_compound_type *)pointer->pointer_to;
-                handle_dot_or_arrow(context, compound, &operand, IR_member_deref);
                 
                 context->in_lhs_expression = true;
             }break;
@@ -8415,8 +8498,6 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
             if(constructor_argument){
                 skip_until_tokens_are_balanced(context, constructor_argument, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in constructor priority.");
             }
-        }else if(atoms_match(directive_string, globals.keyword_intrin_type)){
-            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_intrin_type, directive, "__declspec(intrin_type)");
         }else if(atoms_match(directive_string, globals.keyword_transparent_union)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_transparent_union, directive, "__declspec(transparent_union)");
             specifiers->transparent_union_token = directive;
@@ -8667,7 +8748,6 @@ case TOKEN_##type_name:{                                                 \
                 
                 u64 declspec_alignment = extended_type_attributes.alignment ? extended_type_attributes.alignment : 1;
                 b32 has_declspec_alignment = extended_type_attributes.alignment != 0;
-                b32 is_intrin_type = (extended_type_attributes.specifier_flags & SPECIFIER_intrin_type) != 0;
                 b32 is_packed = (extended_type_attributes.specifier_flags & SPECIFIER_packed) != 0;
                 
                 if(context->should_exit_statement) break;
@@ -8721,7 +8801,6 @@ case TOKEN_##type_name:{                                                 \
                         compound = parser_compound_type_push(context, struct);
                     }
                     
-                    if(is_intrin_type) compound->base.flags |= TYPE_FLAG_is_intrin_type;
                     if(has_declspec_alignment) compound->base.flags |= TYPE_FLAG_is_user_aligned;
                     if(name){
                         compound->identifier = name;
@@ -9050,10 +9129,6 @@ case TOKEN_##type_name:{                                                 \
                         if(name){
                             register_compound_type(context, &compound->base, compound->identifier);
                         }
-                    }
-                    
-                    if(is_intrin_type){
-                        // @incomplete: Check the type to be a known intrin type.
                     }
                     
                     struct declaration_specifiers trailing_attributes = {0};

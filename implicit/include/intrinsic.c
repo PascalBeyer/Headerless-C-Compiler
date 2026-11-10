@@ -658,7 +658,6 @@ __declspec(inline_asm) void __cpuidex(int cpuInfo[4], int function_id, int subfu
 #endif
 
 
-
 __declspec(inline_asm) void __incgsbyte(unsigned __int32 offset){
     mov eax, offset
     inc byte ptr gs:[rax]
@@ -1217,7 +1216,7 @@ __declspec(inline_asm) unsigned int _MM_GET_FLUSH_ZERO_MODE(void){
 }
 
 
-typedef union __declspec(intrin_type) __declspec(align(8)) __m64 {
+typedef union __declspec(align(8)) __m64 {
     unsigned __int64    m64_u64;
     float               m64_f32[2];
     __int8              m64_i8[8];
@@ -1230,32 +1229,13 @@ typedef union __declspec(intrin_type) __declspec(align(8)) __m64 {
 } __m64;
 
 
-typedef union __declspec(intrin_type) __declspec(align(16)) __m128 {
-    float               m128_f32[4];
-    unsigned __int64    m128_u64[2];
-    __int8              m128_i8[16];
-    __int16             m128_i16[8];
-    __int32             m128_i32[4];
-    __int64             m128_i64[2];
-    unsigned __int8     m128_u8[16];
-    unsigned __int16    m128_u16[8];
-    unsigned __int32    m128_u32[4];
-} __m128;
+typedef float   __m128  __attribute__ (vector_size(16));
+typedef __int64 __m128i __attribute__ (vector_size(16));
+typedef double  __m128d __attribute__ (vector_size(16));
 
-typedef union __declspec(intrin_type) __declspec(align(16)) __m128i {
-    __int8              m128i_i8[16];
-    __int16             m128i_i16[8];
-    __int32             m128i_i32[4];
-    __int64             m128i_i64[2];
-    unsigned __int8     m128i_u8[16];
-    unsigned __int16    m128i_u16[8];
-    unsigned __int32    m128i_u32[4];
-    unsigned __int64    m128i_u64[2];
-} __m128i;
-
-typedef struct __declspec(intrin_type) __declspec(align(16)) __m128d {
-    double              m128d_f64[2];
-} __m128d;
+typedef float   __m128_u  __attribute__ (vector_size(16), aligned(1));
+typedef __int64 __m128i_u __attribute__ (vector_size(16), aligned(1));
+typedef double  __m128d_u __attribute__ (vector_size(16), aligned(1));
 
 
 __declspec(inline_asm) __m128 _mm_add_ps(__m128 a, __m128 b){
@@ -3290,24 +3270,13 @@ __declspec(inline_asm) int _mm_cmpestrc(__m128i a, int la, __m128i b, int lb, co
 // __m256 intrinsics
 //
 
-typedef union __declspec(intrin_type) __declspec(align(32)) __m256 {
-    float m256_f32[8];
-} __m256;
+typedef float   __m256  __attribute__ (vector_size(32));
+typedef __int64 __m256i __attribute__ (vector_size(32));
+typedef double  __m256d __attribute__ (vector_size(32));
 
-typedef struct __declspec(intrin_type) __declspec(align(32)) __m256d {
-    double m256d_f64[4];
-} __m256d;
-
-typedef union  __declspec(intrin_type) __declspec(align(32)) __m256i {
-    __int8              m256i_i8[32];
-    __int16             m256i_i16[16];
-    __int32             m256i_i32[8];
-    __int64             m256i_i64[4];
-    unsigned __int8     m256i_u8[32];
-    unsigned __int16    m256i_u16[16];
-    unsigned __int32    m256i_u32[8];
-    unsigned __int64    m256i_u64[4];
-} __m256i;
+typedef float   __m256_u  __attribute__ (vector_size(32), aligned(1));
+typedef __int64 __m256i_u __attribute__ (vector_size(32), aligned(1));
+typedef double  __m256d_u __attribute__ (vector_size(32), aligned(1));
 
 
 __declspec(inline_asm) __m256 _mm256_add_ps(__m256 a, __m256 b){
