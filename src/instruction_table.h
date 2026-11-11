@@ -5,6 +5,8 @@ enum memonic{
     MEMONIC_lock_prefix,
     MEMONIC_repe_prefix,
     
+    MEMONIC_nop,
+    
     MEMONIC_mov,
     MEMONIC_movzx, MEMONIC_movsx, MEMONIC_movsxd,
     MEMONIC_xchg,
@@ -63,6 +65,8 @@ enum memonic{
     MEMONIC_div,
     
     MEMONIC_bt, MEMONIC_bts, MEMONIC_btr, MEMONIC_btc,
+    
+    MEMONIC_shld, MEMONIC_shrd,
     
     MEMONIC_bsf, MEMONIC_bsr,
     
@@ -389,6 +393,7 @@ static struct{
     
     [MEMONIC_lock_prefix] = {.memonic = const_string("lock") },
     [MEMONIC_repe_prefix] = {.memonic = const_string("repe") },
+    [MEMONIC_nop] = {.memonic = const_string("nop") },
     
     [MEMONIC_xgetbv] = {.memonic = const_string("xgetbv"), .amount_of_operands = 0 },
     [MEMONIC_cpuid]  = {.memonic = const_string("cpuid"),  .amount_of_operands = 0 },
@@ -511,6 +516,11 @@ static struct{
     [MEMONIC_btr] = {.memonic = const_string("btr"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8 | ASM_OP_KIND_imm8},
     [MEMONIC_bts] = {.memonic = const_string("bts"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8 | ASM_OP_KIND_imm8},
     [MEMONIC_btc] = {.memonic = const_string("btc"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8 | ASM_OP_KIND_imm8},
+    
+    // 'shld dest, src, count' / 'shrd dest, src, count' where count is 'cl' or an 8-bit immediate.
+    // The GNU parser reverses AT&T operand order, so the template 'shld count, src, dest' ends up here.
+    [MEMONIC_shld] = {.memonic = const_string("shld"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8, .operand_kind_flags[2] = ASM_OP_KIND_any_reg | ASM_OP_KIND_imm8},
+    [MEMONIC_shrd] = {.memonic = const_string("shrd"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_non_regm8, .operand_kind_flags[1] = ASM_OP_KIND_non_reg8, .operand_kind_flags[2] = ASM_OP_KIND_any_reg | ASM_OP_KIND_imm8},
     
     [MEMONIC_bsf]    = {.memonic = const_string("bsf"),   .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_reg8, .operand_kind_flags[1] = ASM_OP_KIND_non_regm8 },
     [MEMONIC_bsr]    = {.memonic = const_string("bsr"),   .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_non_reg8, .operand_kind_flags[1] = ASM_OP_KIND_non_regm8 },
@@ -894,7 +904,6 @@ static struct{
     
     [MEMONIC_vmovd] = {.memonic = const_string("vmovd"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_regm32, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_regm32 },
     [MEMONIC_vmovq] = {.memonic = const_string("vmovq"), .amount_of_operands = 2, .operand_kind_flags[0] = ASM_OP_KIND_xmm | ASM_OP_KIND_regm64, .operand_kind_flags[1] = ASM_OP_KIND_xmm | ASM_OP_KIND_regm64 },
-    
     
     
     [MEMONIC_vpsllw] = {.memonic = const_string("vpsllw"), .amount_of_operands = 3, .operand_kind_flags[0] = ASM_OP_KIND_xmm, .operand_kind_flags[1] = ASM_OP_KIND_xmm, .operand_kind_flags[2] = ASM_OP_KIND_xmmm128 | ASM_OP_KIND_imm8 },

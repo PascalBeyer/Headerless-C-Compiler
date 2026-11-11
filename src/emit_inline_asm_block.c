@@ -645,8 +645,10 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                     emit_register_relative_register(context, no_prefix(), opcode, loaded->loaded_register, rhs);
                 }
                 
+                // @note: I don't know what is going on man.
                 rhs->type = type;
                 lhs->type = type;
+                loaded->type = type;
                 
                 if(loaded != lhs) emit_store(context, lhs, loaded);
             }break;
@@ -699,6 +701,52 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 b32 compound = lhs->state == EMIT_LOCATION_register_relative;
                 rhs->type = &globals.typedef_u8;
                 emit_shift_or_rotate__internal(context, user_prefixes, lhs, rhs, REG_OPCODE, compound);
+            }break;
+            
+            case MEMONIC_shld: case MEMONIC_shrd:{
+                // Intel order: operands[0] = dest (r/m), operands[1] = src (reg), operands[2] = count (cl or imm8).
+                u8 opcode_immediate = (inst->memonic == MEMONIC_shld) ? 0xa4 : 0xac; // 0F A4 /r ib, 0F AC /r ib
+                u8 opcode_cl        = (inst->memonic == MEMONIC_shld) ? 0xa5 : 0xad; // 0F A5 /r,    0F AD /r
+                
+                struct emit_location *count = operands[2];
+                count->type = &globals.typedef_u8;
+                
+                b32 count_is_immediate = count->state == EMIT_LOCATION_immediate;
+                
+                // Get the count into 'cl' before allocating the other operands, so that
+                // loading it cannot evict a register we still need.
+                struct emit_location *count_register = null;
+                if(!count_is_immediate){
+                    if(count->state == EMIT_LOCATION_loaded && count->loaded_register == REGISTER_C){
+                        count_register = count;
+                    }else{
+                        enum register_encoding cl = inline_asm_reserve_specific_register(context, REGISTER_KIND_gpr, REGISTER_C);
+                        count_register = emit_load_into_specific_gpr(context, count, cl);
+                    }
+                    emit_location_prevent_spilling(context, count_register);
+                }
+                
+                struct emit_location *src = emit_load_gpr(context, rhs);
+                emit_location_prevent_spilling(context, src);
+                
+                struct emit_location *dest = emit_load_without_freeing_gpr(context, lhs);
+                
+                struct opcode opcode = two_byte_opcode(count_is_immediate ? opcode_immediate : opcode_cl);
+                emit_register_op__internal(context, no_prefix(), opcode, src->loaded_register, dest->loaded_register, dest->type->size);
+                
+                if(count_is_immediate){
+                    emit((u8)count->value);
+                }
+                
+                emit_location_allow_spilling(context, src);
+                if(src != rhs) free_emit_location(context, src);
+                
+                if(dest != lhs) emit_store(context, lhs, dest);
+                
+                if(!count_is_immediate){
+                    emit_location_allow_spilling(context, count_register);
+                    free_emit_location(context, count_register);
+                }
             }break;
             
             //
@@ -792,6 +840,10 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
             case MEMONIC_syscall:{
                 emit(0x0f);
                 emit(0x05);
+            }break;
+            
+            case MEMONIC_nop:{
+                emit(0x90);
             }break;
             
             case MEMONIC_cmpxchg16b:{
@@ -1295,7 +1347,7 @@ func void emit_inline_asm_block(struct context *context, struct ir_asm_block *as
                 }
             }break;
             // @cleanup: maybe unify these two ^ v
-            case MEMONIC_vmovdqu:
+            case MEMONIC_vmovdqu: case MEMONIC_vmovdqa:
             case MEMONIC_movdqa: case MEMONIC_movdqu:{
                 // 66 0F 6F /r MOVDQA xmm1, xmm2/m128
                 // 66 0F 7F /r MOVDQA xmm2/m128, xmm1

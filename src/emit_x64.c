@@ -2720,6 +2720,12 @@ struct emit_location *get_emit_location_for_declaration(struct context *context,
     return ret;
 }
 
+// `emit_inline_asm_block.c` defines a macro named 'allocate_specific_register' to
+// prevent accidental use there.  This wrapper lets it reserve a fixed register.
+func enum register_encoding inline_asm_reserve_specific_register(struct context *context, enum register_kind kind, enum register_encoding reg){
+    return allocate_specific_register(context, kind, reg);
+}
+
 #include "emit_inline_asm_block.c"
 
 struct alloca_patch_node{
