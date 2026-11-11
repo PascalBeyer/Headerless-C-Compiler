@@ -1743,7 +1743,7 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
         
         case TOKEN_void: case TOKEN_Bool:
         case TOKEN_char: case TOKEN_short: case TOKEN_int:   case TOKEN_long:
-        case TOKEN_int8: case TOKEN_int16: case TOKEN_int32: case TOKEN_int64:
+        case TOKEN_int8: case TOKEN_int16: case TOKEN_int32: case TOKEN_int64: case TOKEN_int128: case TOKEN_uint128:
         
         case TOKEN_float: case TOKEN_double: case TOKEN_float128:
         
@@ -3332,7 +3332,7 @@ func b32 check_types_for_increment_or_decrement(struct context *context, struct 
 func struct ast_declaration *push_unnamed_declaration(struct context *context, struct ast_type *type, enum ast_kind *defined_type, struct token *site){
     struct declarator_return declarator = {
         .ident = site,
-        .type  =  type,
+        .type  = type,
         .defined_type = defined_type,
     };
     struct ast_declaration *decl = push_declaration_for_declarator(context, declarator);
@@ -8577,10 +8577,12 @@ func void parse_declaration_specifiers(struct context *context, struct declarati
         C_TYPE_int16     = 0x200,
         C_TYPE_int32     = 0x400,
         C_TYPE_int64     = 0x800,
-        C_TYPE_float     = 0x1000,
-        C_TYPE_double    = 0x2000,
-        C_TYPE_float128  = 0x4000,
-        C_TYPE_void      = 0x8000,
+        C_TYPE_int128    = 0x1000,
+        C_TYPE_uint128   = 0x2000,
+        C_TYPE_float     = 0x4000,
+        C_TYPE_double    = 0x8000,
+        C_TYPE_float128  = 0x10000,
+        C_TYPE_void      = 0x20000,
     } c_type = 0;
     
     enum type_qualifiers type_qualifiers = 0;
@@ -8741,6 +8743,8 @@ case TOKEN_##type_name:{                                                 \
             case_c_type(int16);
             case_c_type(int32);
             case_c_type(int64);
+            case_c_type(int128);
+            case_c_type(uint128);
             case_c_type(float);
             case_c_type(double);
             case_c_type(float128);
@@ -9726,16 +9730,21 @@ case TOKEN_##type_name:{                                                 \
             case C_TYPE_int16: specifiers->type_specifier = &globals.typedef_s16; break;
             case C_TYPE_int32: specifiers->type_specifier = &globals.typedef_s32; break;
             case C_TYPE_int64: specifiers->type_specifier = &globals.typedef_s64; break;
+            case C_TYPE_int128: specifiers->type_specifier = &globals.typedef_s128; break;
+            case C_TYPE_uint128: specifiers->type_specifier = &globals.typedef_u128; break;
             
             case (C_TYPE_signed | C_TYPE_int8):  specifiers->type_specifier = &globals.typedef_s8; break;
             case (C_TYPE_signed | C_TYPE_int16): specifiers->type_specifier = &globals.typedef_s16; break;
             case (C_TYPE_signed | C_TYPE_int32): specifiers->type_specifier = &globals.typedef_s32; break;
             case (C_TYPE_signed | C_TYPE_int64): specifiers->type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_int128): specifiers->type_specifier = &globals.typedef_s128; break;
             
             case (C_TYPE_unsigned | C_TYPE_int8):  specifiers->type_specifier = &globals.typedef_u8; break;
             case (C_TYPE_unsigned | C_TYPE_int16): specifiers->type_specifier = &globals.typedef_u16; break;
             case (C_TYPE_unsigned | C_TYPE_int32): specifiers->type_specifier = &globals.typedef_u32; break;
             case (C_TYPE_unsigned | C_TYPE_int64): specifiers->type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_int128): specifiers->type_specifier = &globals.typedef_u128; break;
+            case (C_TYPE_unsigned | C_TYPE_uint128): specifiers->type_specifier = &globals.typedef_u128; break;
             
             case C_TYPE_float:    specifiers->type_specifier = &globals.typedef_f32; break;
             case C_TYPE_double:   specifiers->type_specifier = &globals.typedef_f64; break;
@@ -11144,7 +11153,7 @@ func void parse_statement(struct context *context){
         case TOKEN_const:    case TOKEN_volatile: case TOKEN_static: case TOKEN_extern: case TOKEN_typedef:
         case TOKEN_register: case TOKEN_signed:   case TOKEN_unsigned:
         case TOKEN_void:     case TOKEN_Bool:     case TOKEN_char:   case TOKEN_short:  case TOKEN_int: case TOKEN_long:
-        case TOKEN_int8:     case TOKEN_int16:    case TOKEN_int32:  case TOKEN_int64:
+        case TOKEN_int8:     case TOKEN_int16:    case TOKEN_int32:  case TOKEN_int64: case TOKEN_int128: case TOKEN_uint128:
         case TOKEN_float:    case TOKEN_double:   case TOKEN_float128:
         case TOKEN_struct:   case TOKEN_union:    case TOKEN_enum:{
             prev_token(context);

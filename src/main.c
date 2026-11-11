@@ -644,6 +644,9 @@ static struct{
     struct ast_type typedef_atomic_s64;
     struct ast_type typedef_atomic_u64;
     
+    struct ast_type typedef_atomic_s128;
+    struct ast_type typedef_atomic_u128;
+    
     struct ast_type typedef_poison;
     
     struct ast_pointer_type typedef_void_pointer;
@@ -656,10 +659,16 @@ static struct{
     struct ast_pointer_type typedef_u32_pointer;
     struct ast_pointer_type typedef_s64_pointer;
     struct ast_pointer_type typedef_u64_pointer;
+    struct ast_pointer_type typedef_s128_pointer;
+    struct ast_pointer_type typedef_u128_pointer;
     struct ast_pointer_type typedef_f32_pointer;
     struct ast_pointer_type typedef_f64_pointer;
     struct ast_pointer_type typedef_f80_pointer;
     struct ast_pointer_type typedef_f128_pointer;
+    
+    
+    struct ast_type typedef_s128;
+    struct ast_type typedef_u128;
     
     struct ast_vector_type typedef_m128;
     struct ast_vector_type typedef_m256;

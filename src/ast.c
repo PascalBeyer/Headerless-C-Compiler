@@ -121,6 +121,8 @@ enum token_type{
     TOKEN_int16,
     TOKEN_int32,
     TOKEN_int64,
+    TOKEN_int128,
+    TOKEN_uint128,
     TOKEN_float,
     TOKEN_double,
     TOKEN_float128,
@@ -246,10 +248,13 @@ static struct{
     {const_string("__int16"),  TOKEN_int16},
     {const_string("__int32"),  TOKEN_int32},
     {const_string("__int64"),  TOKEN_int64},
+    {const_string("__int128_t"),   TOKEN_int128},
+    {const_string("__uint128_t"),   TOKEN_uint128},
     {const_string("float"),    TOKEN_float},
     {const_string("double"),   TOKEN_double},
     {const_string("__float128"),   TOKEN_float128},
     {const_string("_Float128"),   TOKEN_float128},
+    
     
     {const_string("__func__"),     TOKEN___func__}, // c99
     {const_string("__FUNCTION__"), TOKEN___func__}, // msvc/gcc extension
