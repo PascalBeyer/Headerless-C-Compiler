@@ -6556,6 +6556,15 @@ case NUMBER_KIND_##type:{ \
                 maybe_insert_cast_from_special_int_to_int(context, &operand, /*is_lhs*/0);
                 
                 enum ast_kind kind_to_cast_to = type_to_cast_to->kind;
+                context->in_lhs_expression = false;
+                
+                if(kind_to_cast_to == AST_void_type){
+                    // @note: This is necessary to insert, as (void)0 should not be an integer literal anymore.
+                    operand.ir = push_ir(context, IR_cast_to_void);
+                    operand.resolved_type = &globals.typedef_void;
+                    operand.defined_type = defined_type_to_cast_to;
+                    break;
+                }
                 
                 if(kind_to_cast_to == AST_union || kind_to_cast_to == AST_struct){
                     if(!types_are_equal(type_to_cast_to, operand.resolved_type)){
@@ -6610,16 +6619,31 @@ case NUMBER_KIND_##type:{ \
                         }
                     }
                     
-                    // @note: Do not set `operand = prefix`.
-                    context->in_lhs_expression = false;
+                    break;
+                }
+                
+                if(operand.resolved_type->kind == AST_vector_type || kind_to_cast_to == AST_vector_type){
+                    if(operand.resolved_type->kind != AST_vector_type || kind_to_cast_to != AST_vector_type){
+                        if(operand.resolved_type->kind == AST_vector_type){
+                            report_error(context, operand.token, "Cannot cast from vector to non-vector type.");
+                        }else{
+                            report_error(context, operand.token, "Cannot cast from non-vector to vector type.");
+                        }
+                        return operand;
+                    }
+                    
+                    struct ir_cast_vector *cast_vector = push_struct(&context->ir_arena, struct ir_cast_vector);
+                    cast_vector->base.kind = IR_cast_vector;
+                    cast_vector->type = type_to_cast_to;
+                    
+                    operand.ir = &cast_vector->base;
+                    operand.resolved_type = type_to_cast_to;
+                    operand.defined_type  = defined_type_to_cast_to;
                     break;
                 }
                 
                 if(operand.resolved_type == &globals.typedef_void){
-                    if(kind_to_cast_to != AST_void_type){
-                        report_error(context, operand.token, "cast of 'void' to 'non-void'.");
-                        return operand;
-                    }
+                    report_error(context, operand.token, "cast of 'void' to 'non-void'.");
                 }else if(operand.resolved_type->kind == AST_integer_type){
                     // @note: these are fine, can cast to everything
                 }else if(operand.resolved_type->kind == AST_float_type){
