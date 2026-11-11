@@ -6177,6 +6177,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     emit_register_relative_register(context, prefixes, opcode, lhs->loaded_register, rhs);
                 }
                 
+                free_emit_location(context, rhs);
                 emit_location_allow_spilling(context, lhs);
                 
                 emit_location_stack[emit_location_stack_at-1] = lhs;
@@ -6230,6 +6231,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                     emit_register_relative_register(context, prefixes, opcode, lhs->loaded_register, rhs);
                 }
                 
+                free_emit_location(context, rhs);
                 emit_location_allow_spilling(context, lhs);
                 
                 emit_location_stack[emit_location_stack_at-1] = lhs;
