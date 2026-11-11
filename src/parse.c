@@ -513,140 +513,21 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
     }
     
     if(!should_skip_cast){
-        // no constant propagation
         struct token *token = get_current_token_for_error_report(context);
         if(cast_what) token = cast_what->token;
         
-        enum ir_type ir_cast_what = ir_type_from_type(cast_what->resolved_type);
-        if(ir_cast_what == IR_TYPE_pointer) ir_cast_what = IR_TYPE_u64;
-        if(ir_cast_what == IR_TYPE_bool) ir_cast_what = IR_TYPE_u8;
-        enum ir_type ir_cast_to   = ir_type_from_type(cast_to);
-        if(ir_cast_to == IR_TYPE_pointer) ir_cast_to = IR_TYPE_u64;
-        
-        if(ir_cast_to == IR_TYPE_bool){
-            enum ir_kind ir_cast = IR_cast_to_bool;
+        enum ir_type ir_cast_to = ir_type_from_type(cast_to);
+        if(ir_cast_to == IR_TYPE_pointer){
+            assert(lhs_or_rhs == AST_cast);
             
+            struct ir_typed_cast *typed_cast = push_struct(&context->ir_arena, struct ir_typed_cast);
+            typed_cast->base.kind = IR_cast_to_pointer;
+            typed_cast->type = cast_to;
+            cast_what->ir = &typed_cast->base;
+        }else{
+            enum ir_kind ir_cast = IR_cast_base + 2 * (ir_cast_to - IR_TYPE_bool);
             if(lhs_or_rhs == AST_cast_lhs) ir_cast += 1;
             cast_what->ir = push_ir(context, ir_cast);
-        }else{
-            static enum ir_kind ir_kind_for_cast[IR_TYPE_padding][IR_TYPE_padding] = {
-                // 
-                // Sign extending integers
-                // 
-                [IR_TYPE_s8] [IR_TYPE_s16] = IR_sign_extend_s8_to_s16,
-                [IR_TYPE_s8] [IR_TYPE_s32] = IR_sign_extend_s8_to_s32,
-                [IR_TYPE_s16][IR_TYPE_s32] = IR_sign_extend_s16_to_s32,
-                [IR_TYPE_s8] [IR_TYPE_s64] = IR_sign_extend_s8_to_s64,
-                [IR_TYPE_s16][IR_TYPE_s64] = IR_sign_extend_s16_to_s64,
-                [IR_TYPE_s32][IR_TYPE_s64] = IR_sign_extend_s32_to_s64,
-                [IR_TYPE_s8] [IR_TYPE_u16] = IR_sign_extend_s8_to_s16,
-                [IR_TYPE_s8] [IR_TYPE_u32] = IR_sign_extend_s8_to_s32,
-                [IR_TYPE_s16][IR_TYPE_u32] = IR_sign_extend_s16_to_s32,
-                [IR_TYPE_s8] [IR_TYPE_u64] = IR_sign_extend_s8_to_s64,
-                [IR_TYPE_s16][IR_TYPE_u64] = IR_sign_extend_s16_to_s64,
-                [IR_TYPE_s32][IR_TYPE_u64] = IR_sign_extend_s32_to_s64,
-                
-                // 
-                // Zero-extending integers
-                // 
-                [IR_TYPE_u8] [IR_TYPE_s16] = IR_zero_extend_u8_to_u16,
-                [IR_TYPE_u8] [IR_TYPE_s32] = IR_zero_extend_u8_to_u32,
-                [IR_TYPE_u16][IR_TYPE_s32] = IR_zero_extend_u16_to_u32,
-                [IR_TYPE_u8] [IR_TYPE_s64] = IR_zero_extend_u8_to_u64,
-                [IR_TYPE_u16][IR_TYPE_s64] = IR_zero_extend_u16_to_u64,
-                [IR_TYPE_u32][IR_TYPE_s64] = IR_zero_extend_u32_to_u64,
-                [IR_TYPE_u8] [IR_TYPE_u16] = IR_zero_extend_u8_to_u16,
-                [IR_TYPE_u8] [IR_TYPE_u32] = IR_zero_extend_u8_to_u32,
-                [IR_TYPE_u16][IR_TYPE_u32] = IR_zero_extend_u16_to_u32,
-                [IR_TYPE_u8] [IR_TYPE_u64] = IR_zero_extend_u8_to_u64,
-                [IR_TYPE_u16][IR_TYPE_u64] = IR_zero_extend_u16_to_u64,
-                [IR_TYPE_u32][IR_TYPE_u64] = IR_zero_extend_u32_to_u64,
-                
-                // 
-                // Converting doubles to float and back.
-                // 
-                [IR_TYPE_f32][IR_TYPE_f64] = IR_cast_f32_to_f64,
-                [IR_TYPE_f64][IR_TYPE_f32] = IR_cast_f64_to_f32,
-                
-                // 
-                // Converting floats to integers.
-                // 
-                [IR_TYPE_f32][IR_TYPE_u8] = IR_cast_f32_to_u8,
-                [IR_TYPE_f32][IR_TYPE_u16] = IR_cast_f32_to_u16,
-                [IR_TYPE_f32][IR_TYPE_u32] = IR_cast_f32_to_u32,
-                [IR_TYPE_f32][IR_TYPE_u64] = IR_cast_f32_to_u64,
-                [IR_TYPE_f32][IR_TYPE_s8] = IR_cast_f32_to_s8,
-                [IR_TYPE_f32][IR_TYPE_s16] = IR_cast_f32_to_s16,
-                [IR_TYPE_f32][IR_TYPE_s32] = IR_cast_f32_to_s32,
-                [IR_TYPE_f32][IR_TYPE_s64] = IR_cast_f32_to_s64,
-                
-                [IR_TYPE_f64][IR_TYPE_u8] = IR_cast_f64_to_u8,
-                [IR_TYPE_f64][IR_TYPE_u16] = IR_cast_f64_to_u16,
-                [IR_TYPE_f64][IR_TYPE_u32] = IR_cast_f64_to_u32,
-                [IR_TYPE_f64][IR_TYPE_u64] = IR_cast_f64_to_u64,
-                [IR_TYPE_f64][IR_TYPE_s8] = IR_cast_f64_to_s8,
-                [IR_TYPE_f64][IR_TYPE_s16] = IR_cast_f64_to_s16,
-                [IR_TYPE_f64][IR_TYPE_s32] = IR_cast_f64_to_s32,
-                [IR_TYPE_f64][IR_TYPE_s64] = IR_cast_f64_to_s64,
-                
-                [IR_TYPE_u8][IR_TYPE_f32] = IR_cast_u8_to_f32,
-                [IR_TYPE_u16][IR_TYPE_f32] = IR_cast_u16_to_f32,
-                [IR_TYPE_u32][IR_TYPE_f32] = IR_cast_u32_to_f32,
-                [IR_TYPE_u64][IR_TYPE_f32] = IR_cast_u64_to_f32,
-                [IR_TYPE_s8][IR_TYPE_f32] = IR_cast_s8_to_f32,
-                [IR_TYPE_s16][IR_TYPE_f32] = IR_cast_s16_to_f32,
-                [IR_TYPE_s32][IR_TYPE_f32] = IR_cast_s32_to_f32,
-                [IR_TYPE_s64][IR_TYPE_f32] = IR_cast_s64_to_f32,
-                
-                [IR_TYPE_u8][IR_TYPE_f64] = IR_cast_u8_to_f64,
-                [IR_TYPE_u16][IR_TYPE_f64] = IR_cast_u16_to_f64,
-                [IR_TYPE_u32][IR_TYPE_f64] = IR_cast_u32_to_f64,
-                [IR_TYPE_u64][IR_TYPE_f64] = IR_cast_u64_to_f64,
-                [IR_TYPE_s8][IR_TYPE_f64] = IR_cast_s8_to_f64,
-                [IR_TYPE_s16][IR_TYPE_f64] = IR_cast_s16_to_f64,
-                [IR_TYPE_s32][IR_TYPE_f64] = IR_cast_s32_to_f64,
-                [IR_TYPE_s64][IR_TYPE_f64] = IR_cast_s64_to_f64,
-                
-                // 
-                // @note: In the future these maybe do not have to exist.
-                // 
-                [IR_TYPE_u16][IR_TYPE_u8] = IR_truncate_to_u8,
-                [IR_TYPE_u16][IR_TYPE_s8] = IR_truncate_to_u8,
-                [IR_TYPE_s16][IR_TYPE_u8] = IR_truncate_to_u8,
-                [IR_TYPE_s16][IR_TYPE_s8] = IR_truncate_to_u8,
-                
-                [IR_TYPE_u32][IR_TYPE_u8] = IR_truncate_to_u8,
-                [IR_TYPE_u32][IR_TYPE_s8] = IR_truncate_to_u8,
-                [IR_TYPE_s32][IR_TYPE_u8] = IR_truncate_to_u8,
-                [IR_TYPE_s32][IR_TYPE_s8] = IR_truncate_to_u8,
-                
-                [IR_TYPE_u64][IR_TYPE_u8] = IR_truncate_to_u8,
-                [IR_TYPE_u64][IR_TYPE_s8] = IR_truncate_to_u8,
-                [IR_TYPE_s64][IR_TYPE_u8] = IR_truncate_to_u8,
-                [IR_TYPE_s64][IR_TYPE_s8] = IR_truncate_to_u8,
-                
-                [IR_TYPE_u32][IR_TYPE_u16] = IR_truncate_to_u16,
-                [IR_TYPE_u32][IR_TYPE_s16] = IR_truncate_to_u16,
-                [IR_TYPE_s32][IR_TYPE_u16] = IR_truncate_to_u16,
-                [IR_TYPE_s32][IR_TYPE_s16] = IR_truncate_to_u16,
-                
-                [IR_TYPE_u64][IR_TYPE_u16] = IR_truncate_to_u16,
-                [IR_TYPE_u64][IR_TYPE_s16] = IR_truncate_to_u16,
-                [IR_TYPE_s64][IR_TYPE_u16] = IR_truncate_to_u16,
-                [IR_TYPE_s64][IR_TYPE_s16] = IR_truncate_to_u16,
-                
-                [IR_TYPE_u64][IR_TYPE_u32] = IR_truncate_to_u32,
-                [IR_TYPE_u64][IR_TYPE_s32] = IR_truncate_to_u32,
-                [IR_TYPE_s64][IR_TYPE_u32] = IR_truncate_to_u32,
-                [IR_TYPE_s64][IR_TYPE_s32] = IR_truncate_to_u32,
-            };
-            
-            assert(ir_cast_what < IR_TYPE_padding && ir_cast_to < IR_TYPE_padding);
-            enum ir_kind ir_cast = ir_kind_for_cast[ir_cast_what][ir_cast_to];
-            if(ir_cast){
-                if(lhs_or_rhs == AST_cast_lhs) ir_cast += 1;
-                cast_what->ir = push_ir(context, ir_cast);
-            }
         }
     }
     
@@ -1850,7 +1731,7 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
         struct ir_integer_literal *lit = (struct ir_integer_literal *)integer->ir;
         
         struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)pointer->ir;
-        if(ir_kind == IR_add_u64){
+        if(ir_kind == IR_add){
             pointer_lit->pointer += integer_literal_as_s64(integer);
         }else{
             pointer_lit->pointer -= integer_literal_as_s64(integer);
@@ -1890,7 +1771,7 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
         if(deref_type->size != 1){
             ast_push_s64_literal(context, deref_type->size, token);
             
-            push_ir(context, IR_multiply_u64);
+            push_ir(context, IR_multiply);
         }
         
         operand->ir = push_ir(context, ir_kind);
@@ -3358,7 +3239,7 @@ void maybe_insert_implicit_nodes_for_varargs_argument(struct context *context, s
     
     if(expr->resolved_type == &globals.typedef_f32){
         // "Arguments that have type float are promoted to double."
-        push_ir(context, IR_cast_f32_to_f64); // @hmm: no constant propagation.
+        push_ir(context, IR_cast_to_f64); // @hmm: no constant propagation.
         
         // :retain_type_information_through_promotion
         expr->resolved_type = &globals.typedef_f64;
@@ -4358,41 +4239,37 @@ func void punt_compound_assignment(struct context *context, struct expr *lhs, st
     
     maybe_insert_arithmetic_conversion_casts(context, &dup_expr, rhs);
     
-    enum ir_type ir_type = ir_type_from_type(dup_expr.resolved_type);
     enum ir_kind op_ir_kind;
-    
     switch(ast_kind){
         case AST_plus_assignment:{
-            u32 type_index = ((ir_type - IR_TYPE_s32) >> 1) + (ir_type == IR_TYPE_f64);
-            op_ir_kind = IR_add_u32 + type_index;
+            op_ir_kind = IR_add;
         }break;
         case AST_minus_assignment:{
-            u32 type_index = ((ir_type - IR_TYPE_s32) >> 1) + (ir_type == IR_TYPE_f64);
-            op_ir_kind = IR_subtract_u32 + type_index;
+            op_ir_kind = IR_subtract;
         }break;
         case AST_and_assignment:{
-            op_ir_kind = IR_and_u32 + ((ir_type - IR_TYPE_s32) >> 1);
+            op_ir_kind = IR_and;
         }break;
         case AST_or_assignment:{
-            op_ir_kind = IR_or_u32 + ((ir_type - IR_TYPE_s32) >> 1);
+            op_ir_kind = IR_or;
         }break;
         case AST_xor_assignment:{
-            op_ir_kind = IR_xor_u32 + ((ir_type - IR_TYPE_s32) >> 1);
+            op_ir_kind = IR_xor;
         }break;
         case AST_modulo_assignment:{
-            op_ir_kind = IR_mod_s32 + (ir_type - IR_TYPE_s32);
+            op_ir_kind = IR_mod;
         }break;
         case AST_divide_assignment:{
-            op_ir_kind = IR_divide_s32 + (ir_type - IR_TYPE_s32);
+            op_ir_kind = IR_divide;
         }break;
         case AST_times_assignment:{
-            op_ir_kind = IR_multiply_s32 + (ir_type - IR_TYPE_s32);
+            op_ir_kind = IR_multiply;
         }break;
         case AST_left_shift_assignment:{
-            op_ir_kind = IR_left_shift_s32 + (ir_type - IR_TYPE_s32);
+            op_ir_kind = IR_left_shift;
         }break;
         case AST_right_shift_assignment:{
-            op_ir_kind = IR_right_shift_s32 + (ir_type - IR_TYPE_s32);
+            op_ir_kind = IR_right_shift;
         }break;
         invalid_default_case(op_ir_kind = IR_invalid);
     }
@@ -5436,120 +5313,14 @@ case NUMBER_KIND_##type:{ \
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, test)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand.resolved_type, test, "++")) return operand;
                 
-                // 
-                // @cleanup: Atomic integer types.
-                // 
-                
-                if(operand.resolved_type->kind == AST_pointer_type){
-                    struct ir_pointer_increment *increment = push_uninitialized_struct(&context->ir_arena, struct ir_pointer_increment);
-                    increment->base.kind = IR_postinc_pointer;
-                    increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
-                    
-                    operand.ir = &increment->base;
-                }else if(operand.resolved_type->kind == AST_bitfield_type){
-                    struct ir_bitfield_increment *increment = push_uninitialized_struct(&context->ir_arena, struct ir_bitfield_increment);
-                    increment->base.kind = IR_postinc_bitfield;
-                    increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
-                    
-                    operand.ir = &increment->base;
-                }else{
-                    enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
-                    
-                    static u8 ir_type_to_inc_kind[] = {
-                        [IR_TYPE_bool] = IR_postinc_bool,
-                        
-                        [IR_TYPE_s8] = IR_postinc_u8,
-                        [IR_TYPE_u8] = IR_postinc_u8,
-                        
-                        [IR_TYPE_s16] = IR_postinc_u16,
-                        [IR_TYPE_u16] = IR_postinc_u16,
-                        
-                        [IR_TYPE_s32] = IR_postinc_u32,
-                        [IR_TYPE_u32] = IR_postinc_u32,
-                        
-                        [IR_TYPE_s64] = IR_postinc_u64,
-                        [IR_TYPE_u64] = IR_postinc_u64,
-                        
-                        [IR_TYPE_f32] = IR_postinc_f32,
-                        [IR_TYPE_f64] = IR_postinc_f64,
-                        
-                        // @incomplete: There should probably be atomic versions of these.
-                        [IR_TYPE_atomic_bool] = IR_postinc_bool,
-                        
-                        [IR_TYPE_atomic_s8] = IR_postinc_u8,
-                        [IR_TYPE_atomic_u8] = IR_postinc_u8,
-                        
-                        [IR_TYPE_atomic_s16] = IR_postinc_u16,
-                        [IR_TYPE_atomic_u16] = IR_postinc_u16,
-                        
-                        [IR_TYPE_atomic_s32] = IR_postinc_u32,
-                        [IR_TYPE_atomic_u32] = IR_postinc_u32,
-                        
-                        [IR_TYPE_atomic_s64] = IR_postinc_u64,
-                        [IR_TYPE_atomic_u64] = IR_postinc_u64,
-                    };
-                    
-                    operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
-                }
-                
+                operand.ir = push_ir(context, IR_postinc);
                 context->in_lhs_expression = false;
             }break;
             case TOKEN_decrement:{
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, test)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand.resolved_type, test, "--")) return operand;
                 
-                if(operand.resolved_type->kind == AST_pointer_type){
-                    struct ir_pointer_increment *increment = push_uninitialized_struct(&context->ir_arena, struct ir_pointer_increment);
-                    increment->base.kind = IR_postdec_pointer;
-                    increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
-                    
-                    operand.ir = &increment->base;
-                }else if(operand.resolved_type->kind == AST_bitfield_type){
-                    struct ir_bitfield_increment *increment = push_uninitialized_struct(&context->ir_arena, struct ir_bitfield_increment);
-                    increment->base.kind = IR_postdec_bitfield;
-                    increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
-                    
-                    operand.ir = &increment->base;
-                }else{
-                    enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
-                    
-                    static u8 ir_type_to_inc_kind[] = {
-                        [IR_TYPE_bool] = IR_postdec_bool,
-                        
-                        [IR_TYPE_s8] = IR_postdec_u8,
-                        [IR_TYPE_u8] = IR_postdec_u8,
-                        
-                        [IR_TYPE_s16] = IR_postdec_u16,
-                        [IR_TYPE_u16] = IR_postdec_u16,
-                        
-                        [IR_TYPE_s32] = IR_postdec_u32,
-                        [IR_TYPE_u32] = IR_postdec_u32,
-                        
-                        [IR_TYPE_s64] = IR_postdec_u64,
-                        [IR_TYPE_u64] = IR_postdec_u64,
-                        
-                        [IR_TYPE_f32] = IR_postdec_f32,
-                        [IR_TYPE_f64] = IR_postdec_f64,
-                        
-                        // @incomplete: There should probably be atomic versions of these.
-                        [IR_TYPE_atomic_bool] = IR_postdec_bool,
-                        
-                        [IR_TYPE_atomic_s8] = IR_postdec_u8,
-                        [IR_TYPE_atomic_u8] = IR_postdec_u8,
-                        
-                        [IR_TYPE_atomic_s16] = IR_postdec_u16,
-                        [IR_TYPE_atomic_u16] = IR_postdec_u16,
-                        
-                        [IR_TYPE_atomic_s32] = IR_postdec_u32,
-                        [IR_TYPE_atomic_u32] = IR_postdec_u32,
-                        
-                        [IR_TYPE_atomic_s64] = IR_postdec_u64,
-                        [IR_TYPE_atomic_u64] = IR_postdec_u64,
-                    };
-                    
-                    operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
-                }
-                
+                operand.ir = push_ir(context, IR_postdec);
                 context->in_lhs_expression = false;
             }break;
             case TOKEN_open_index:{
@@ -5655,7 +5426,7 @@ case NUMBER_KIND_##type:{ \
                         new_vector_type->base = vector->base;
                         new_vector_type->base_type = new_base_type;
                         
-                        struct ir_cast_vector *cast_vector = push_struct(&context->ir_arena, struct ir_cast_vector);
+                        struct ir_typed_cast *cast_vector = push_struct(&context->ir_arena, struct ir_typed_cast);
                         cast_vector->base.kind = IR_cast_vector;
                         cast_vector->type = &new_vector_type->base;
                         
@@ -6152,58 +5923,7 @@ case NUMBER_KIND_##type:{ \
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, stack_entry->token)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand.resolved_type, stack_entry->token, "++")) return operand;
                 
-                if(operand.resolved_type->kind == AST_pointer_type){
-                    struct ir_pointer_increment *increment = push_uninitialized_struct(&context->ir_arena, struct ir_pointer_increment);
-                    increment->base.kind = IR_preinc_pointer;
-                    increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
-                    
-                    operand.ir = &increment->base;
-                }else if(operand.resolved_type->kind == AST_bitfield_type){
-                    struct ir_bitfield_increment *increment = push_uninitialized_struct(&context->ir_arena, struct ir_bitfield_increment);
-                    increment->base.kind = IR_preinc_bitfield;
-                    increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
-                    
-                    operand.ir = &increment->base;
-                }else{
-                    enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
-                    
-                    static u8 ir_type_to_inc_kind[] = {
-                        [IR_TYPE_bool] = IR_preinc_bool,
-                        
-                        [IR_TYPE_s8] = IR_preinc_u8,
-                        [IR_TYPE_u8] = IR_preinc_u8,
-                        
-                        [IR_TYPE_s16] = IR_preinc_u16,
-                        [IR_TYPE_u16] = IR_preinc_u16,
-                        
-                        [IR_TYPE_s32] = IR_preinc_u32,
-                        [IR_TYPE_u32] = IR_preinc_u32,
-                        
-                        [IR_TYPE_s64] = IR_preinc_u64,
-                        [IR_TYPE_u64] = IR_preinc_u64,
-                        
-                        [IR_TYPE_f32] = IR_preinc_f32,
-                        [IR_TYPE_f64] = IR_preinc_f64,
-                        
-                        // @incomplete: There should probably be atomic versions of these.
-                        [IR_TYPE_atomic_bool] = IR_preinc_bool,
-                        
-                        [IR_TYPE_atomic_s8] = IR_preinc_u8,
-                        [IR_TYPE_atomic_u8] = IR_preinc_u8,
-                        
-                        [IR_TYPE_atomic_s16] = IR_preinc_u16,
-                        [IR_TYPE_atomic_u16] = IR_preinc_u16,
-                        
-                        [IR_TYPE_atomic_s32] = IR_preinc_u32,
-                        [IR_TYPE_atomic_u32] = IR_preinc_u32,
-                        
-                        [IR_TYPE_atomic_s64] = IR_preinc_u64,
-                        [IR_TYPE_atomic_u64] = IR_preinc_u64,
-                    };
-                    
-                    operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
-                }
-                
+                operand.ir = push_ir(context, IR_preinc);
                 context->in_lhs_expression = false;
             }break;
             
@@ -6211,58 +5931,7 @@ case NUMBER_KIND_##type:{ \
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, stack_entry->token)) return operand;
                 if(check_types_for_increment_or_decrement(context, operand.resolved_type, stack_entry->token, "--")) return operand;
                 
-                if(operand.resolved_type->kind == AST_pointer_type){
-                    struct ir_pointer_increment *increment = push_uninitialized_struct(&context->ir_arena, struct ir_pointer_increment);
-                    increment->base.kind = IR_predec_pointer;
-                    increment->pointer_type = (struct ast_pointer_type *)operand.resolved_type;
-                    
-                    operand.ir = &increment->base;
-                }else if(operand.resolved_type->kind == AST_bitfield_type){
-                    struct ir_bitfield_increment *increment = push_uninitialized_struct(&context->ir_arena, struct ir_bitfield_increment);
-                    increment->base.kind = IR_predec_bitfield;
-                    increment->bitfield_type = (struct ast_bitfield_type *)operand.resolved_type;
-                    
-                    operand.ir = &increment->base;
-                }else{
-                    enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
-                    
-                    static u8 ir_type_to_inc_kind[] = {
-                        [IR_TYPE_bool] = IR_predec_bool,
-                        
-                        [IR_TYPE_s8] = IR_predec_u8,
-                        [IR_TYPE_u8] = IR_predec_u8,
-                        
-                        [IR_TYPE_s16] = IR_predec_u16,
-                        [IR_TYPE_u16] = IR_predec_u16,
-                        
-                        [IR_TYPE_s32] = IR_predec_u32,
-                        [IR_TYPE_u32] = IR_predec_u32,
-                        
-                        [IR_TYPE_s64] = IR_predec_u64,
-                        [IR_TYPE_u64] = IR_predec_u64,
-                        
-                        [IR_TYPE_f32] = IR_predec_f32,
-                        [IR_TYPE_f64] = IR_predec_f64,
-                        
-                        // @incomplete: There should probably be atomic versions of these.
-                        [IR_TYPE_atomic_bool] = IR_predec_bool,
-                        
-                        [IR_TYPE_atomic_s8] = IR_predec_u8,
-                        [IR_TYPE_atomic_u8] = IR_predec_u8,
-                        
-                        [IR_TYPE_atomic_s16] = IR_predec_u16,
-                        [IR_TYPE_atomic_u16] = IR_predec_u16,
-                        
-                        [IR_TYPE_atomic_s32] = IR_predec_u32,
-                        [IR_TYPE_atomic_u32] = IR_predec_u32,
-                        
-                        [IR_TYPE_atomic_s64] = IR_predec_u64,
-                        [IR_TYPE_atomic_u64] = IR_predec_u64,
-                    };
-                    
-                    operand.ir = push_ir(context, ir_type_to_inc_kind[ir_type]);
-                }
-                
+                operand.ir = push_ir(context, IR_predec);
                 context->in_lhs_expression = false;
             }break;
             
@@ -6358,8 +6027,7 @@ case NUMBER_KIND_##type:{ \
                 
                 assert(operand.resolved_type == &globals.typedef_s32 || operand.resolved_type == &globals.typedef_u32 || operand.resolved_type == &globals.typedef_s64 || operand.resolved_type == &globals.typedef_u64);
                 
-                enum ir_kind ir_kind = (operand.resolved_type->size == 4) ? IR_bitwise_not_u32 : IR_bitwise_not_u64;
-                operand.ir = push_ir(context, ir_kind); // Sets in op->operand in the next iteration. Type does not change.
+                operand.ir = push_ir(context, IR_bitwise_not);
                 
                 context->in_lhs_expression = false;
             }break;
@@ -6384,20 +6052,7 @@ case NUMBER_KIND_##type:{ \
                 
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_basic, stack_entry->token)) return operand;
                 
-                enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
-                static enum ir_kind ir_kind_for_type[] = {
-                    [IR_TYPE_s32] = IR_logical_not_u32,
-                    [IR_TYPE_u32] = IR_logical_not_u32,
-                    
-                    [IR_TYPE_s64] = IR_logical_not_u64,
-                    [IR_TYPE_u64] = IR_logical_not_u64,
-                    
-                    [IR_TYPE_f32] = IR_logical_not_f32,
-                    [IR_TYPE_f64] = IR_logical_not_f64,
-                    [IR_TYPE_pointer] = IR_logical_not_u64,
-                };
-                
-                operand.ir = push_ir(context, ir_kind_for_type[ir_type]); // Sets in op->operand in the next iteration.
+                operand.ir = push_ir(context, IR_logical_not); // Sets in op->operand in the next iteration.
                 operand.resolved_type = &globals.typedef_s32;
                 operand.defined_type = &globals.typedef_u8.kind;
                 
@@ -6469,19 +6124,7 @@ case NUMBER_KIND_##type:{ \
                     report_warning(context, WARNING_unsigned_negation, operand.token, "Negation of an unsigned number is still unsigned.");
                 }
                 
-                enum ir_type ir_type = ir_type_from_type(operand.resolved_type);
-                static enum ir_kind ir_kind_for_type[] = {
-                    [IR_TYPE_s32] = IR_negate_u32,
-                    [IR_TYPE_u32] = IR_negate_u32,
-                    
-                    [IR_TYPE_s64] = IR_negate_u64,
-                    [IR_TYPE_u64] = IR_negate_u64,
-                    
-                    [IR_TYPE_f32] = IR_negate_f32,
-                    [IR_TYPE_f64] = IR_negate_f64,
-                };
-                
-                operand.ir = push_ir(context, ir_kind_for_type[ir_type]); // Sets in op->operand in the next iteration. Type does not change.
+                operand.ir = push_ir(context, IR_negate);
                 
                 context->in_lhs_expression = false;
             }break;
@@ -6632,7 +6275,7 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    struct ir_cast_vector *cast_vector = push_struct(&context->ir_arena, struct ir_cast_vector);
+                    struct ir_typed_cast *cast_vector = push_struct(&context->ir_arena, struct ir_typed_cast);
                     cast_vector->base.kind = IR_cast_vector;
                     cast_vector->type = type_to_cast_to;
                     
@@ -6708,13 +6351,10 @@ case NUMBER_KIND_##type:{ \
                             return operand;
                         }
                         
-                        enum ir_kind base = 0;
-                        if(ast_kind == AST_binary_times)  base = IR_multiply_s32;
-                        if(ast_kind == AST_binary_divide) base = IR_divide_s32;
-                        if(ast_kind == AST_binary_mod)    base = IR_mod_s32;
-                        
-                        enum ir_type ir_type = ir_type_from_type(op_lhs->resolved_type);
-                        enum ir_kind ir_kind = base + (ir_type - IR_TYPE_s32);
+                        enum ir_kind ir_kind = 0;
+                        if(ast_kind == AST_binary_times)  ir_kind = IR_multiply;
+                        if(ast_kind == AST_binary_divide) ir_kind = IR_divide;
+                        if(ast_kind == AST_binary_mod)    ir_kind = IR_mod;
                         
                         // @note: For '%', the right hand side defined type "bounds" the lhs type as this is an and.
                         //        Hence, we simply reuse the defined type of the rhs.
@@ -6750,7 +6390,7 @@ case NUMBER_KIND_##type:{ \
                     // @note: interger + pointer is legal, integer - pointer is not.
                     if(op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_integer_type){
                         // 'pointer + integer', 'pointer - integer'
-                        enum ir_kind ir_kind = ast_kind == AST_binary_plus ? IR_add_u64 : IR_subtract_u64;
+                        enum ir_kind ir_kind = ast_kind == AST_binary_plus ? IR_add : IR_subtract;
                         handle_pointer_arithmetic(context, ir_kind, stack_entry->token, op_lhs, op_rhs, &operand, /*need_swap*/false);
                     }else if(ast_kind == AST_binary_minus && op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_pointer_type){
                         // 'pointer - pointer'
@@ -6797,12 +6437,12 @@ case NUMBER_KIND_##type:{ \
                         }else{
                             
                             // Subtract the two pointers.
-                            operand.ir = push_ir(context, IR_subtract_u64);
+                            operand.ir = push_ir(context, IR_pointer_subtract);
                             
                             // Divide by the size.
                             if(type->size > 1){
                                 ast_push_s64_literal(context, type->size, null);
-                                operand.ir = push_ir(context, IR_divide_s64);
+                                operand.ir = push_ir(context, IR_divide);
                             }
                         }
                         
@@ -6814,7 +6454,7 @@ case NUMBER_KIND_##type:{ \
                             report_error(context, stack_entry->token, "Cannot subtract pointer from integer.");
                         }
                         
-                        handle_pointer_arithmetic(context, IR_add_u64, stack_entry->token, op_rhs, op_lhs, &operand, /*need_swap*/true);
+                        handle_pointer_arithmetic(context, IR_add, stack_entry->token, op_rhs, op_lhs, &operand, /*need_swap*/true);
                     }else if(op_lhs->ir->kind == IR_float_literal && op_rhs->ir->kind == IR_float_literal){
                         perform_float_operation(context, ast_kind, op_lhs, op_rhs);
                     }else{
@@ -6829,12 +6469,7 @@ case NUMBER_KIND_##type:{ \
                         if(op_lhs->resolved_type->kind == AST_vector_type){
                             operand.ir = push_ir(context, (ast_kind == AST_binary_plus) ? IR_vector_add : IR_vector_sub);
                         }else{
-                            enum ir_type ir_type = ir_type_from_type(op_lhs->resolved_type);
-                            // 0 - u32, 1 - u64, 2 - f32, 3 - f64
-                            u32 type_index = ((ir_type - IR_TYPE_s32) >> 1) + (ir_type == IR_TYPE_f64);
-                            enum ir_kind ir_base = (ast_kind == AST_binary_plus) ? IR_add_u32 : IR_subtract_u32;
-                            enum ir_kind ir_kind = ir_base + type_index;
-                            
+                            enum ir_kind ir_kind = (ast_kind == AST_binary_plus) ? IR_add : IR_subtract;
                             operand.ir = push_ir(context, ir_kind);
                         }
                         
@@ -6932,9 +6567,7 @@ case NUMBER_KIND_##type:{ \
                 // @hmm: we require op->rhs->size == 1...
                 push_cast(context, AST_cast, &globals.typedef_u8, null, op_rhs);
                 
-                enum ir_kind ir_base = (ast_kind == AST_binary_right_shift) ? IR_right_shift_s32 : IR_left_shift_s32;
-                enum ir_type ir_type = ir_type_from_type(op_lhs->resolved_type);
-                enum ir_kind ir_kind = ir_base + (ir_type - IR_TYPE_s32);
+                enum ir_kind ir_kind = (ast_kind == AST_binary_right_shift) ? IR_right_shift : IR_left_shift;
                 operand.ir = push_ir(context, ir_kind);
                 
                 // "the type of the result is that of the promoted left operand"
@@ -6998,23 +6631,7 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                // :smaller_bigger_ir_encoding
-                // 
-                // 20 = 5 bit:
-                //         1 bit - bigger / smaller
-                //         1 bit - equals / proper
-                //         3 bit - type (s32, u32, s64, u64, f32, f64)
-                //         
-                
-                enum ir_type match_type = match ? ir_type_from_type(match) : IR_TYPE_u64;
-                if(match_type == IR_TYPE_pointer) match_type = IR_TYPE_u64;
-                
-                // 0 - bigger equals, 1 - smaller equals, 2 - bigger, 3 - smaller
-                u32 condition_information = ast_kind - AST_binary_bigger_equals; 
-                
-                u32 information = ((match_type - IR_TYPE_s32) << 2) | condition_information;
-                
-                enum ir_kind ir_kind = IR_bigger_equals_s32 + information;
+                enum ir_kind ir_kind = IR_bigger_equals + (ast_kind - AST_binary_bigger_equals);
                 
                 operand.ir = push_ir(context, ir_kind);
                 operand.resolved_type = &globals.typedef_s32;
@@ -7076,19 +6693,7 @@ case NUMBER_KIND_##type:{ \
                     }
                 }
                 
-                // 1 bit equals vs unequals
-                // 1 bit float vs integer
-                // 1 bit 32 vs 64
-                // 
-                // IR_equals_u32, IR_unequals_u32, IR_equals_u64, IR_unequals_u64,
-                // IR_equals_f32, IR_unequals_f32, IR_equals_f64, IR_unequals_f64,
-                
-                u32 equals_or_unequals = ast_kind - AST_binary_logical_equals;
-                u32 size_bit = (match == null) || (match->size == 8);
-                u32 float_vs_integer = match && match->kind == AST_float_type;
-                u32 information = (float_vs_integer << 2) | (size_bit << 1) | equals_or_unequals;
-                
-                enum ir_kind ir_kind = IR_equals_u32 + information;
+                enum ir_kind ir_kind = (ast_kind == AST_binary_logical_equals) ? IR_equals : IR_unequals;
                 operand.ir = push_ir(context, ir_kind);
                 operand.resolved_type = &globals.typedef_s32;
                 operand.defined_type  = &globals.typedef_u8.kind;
@@ -7137,8 +6742,7 @@ case NUMBER_KIND_##type:{ \
                     if(op_lhs->resolved_type->kind == AST_vector_type){
                         operand.ir = push_ir(context, IR_vector_and);
                     }else{
-                        enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_and_u32 : IR_and_u64;
-                        operand.ir = push_ir(context, ir_kind);
+                        operand.ir = push_ir(context, IR_and);
                     }
                     
                     // @note: The right hand side defined type "bounds" the lhs type as this is an and.
@@ -7193,8 +6797,7 @@ case NUMBER_KIND_##type:{ \
                     if(op_lhs->resolved_type->kind == AST_vector_type){
                         operand.ir = push_ir(context, IR_vector_xor);
                     }else{
-                        enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_xor_u32 : IR_xor_u64;
-                        operand.ir = push_ir(context, ir_kind);
+                        operand.ir = push_ir(context, IR_xor);
                     }
                     
                     operand.resolved_type = op_lhs->resolved_type;
@@ -7245,8 +6848,7 @@ case NUMBER_KIND_##type:{ \
                     if(op_lhs->resolved_type->kind == AST_vector_type){
                         operand.ir = push_ir(context, IR_vector_or);
                     }else{
-                        enum ir_kind ir_kind = (op_lhs->resolved_type->size == 4) ? IR_or_u32 : IR_or_u64;
-                        operand.ir = push_ir(context, ir_kind);
+                        operand.ir = push_ir(context, IR_or);
                     }
                     
                     operand.resolved_type = op_lhs->resolved_type;
@@ -7778,7 +7380,7 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    enum ir_kind ir_kind = ast_kind == AST_plus_assignment ? IR_add_assignment_u64 : IR_subtract_assignment_u64;
+                    enum ir_kind ir_kind = ast_kind == AST_plus_assignment ? IR_add_assignment : IR_subtract_assignment;
                     handle_pointer_arithmetic(context, ir_kind, stack_entry->token, lhs, rhs, &operand, /*need_swap*/false);
                     context->in_lhs_expression = false; // Does not really matter they get scoped the other way.
                     break;
@@ -7821,15 +7423,7 @@ case NUMBER_KIND_##type:{ \
                         push_ir(context, (ast_kind == AST_plus_assignment) ? IR_vector_add : IR_vector_sub);
                         push_ir(context, IR_store);
                     }else{
-                        enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
-                        // 0 - u8, 1 - u16, 2 - u32, 3 - u64, 4 - f32, 5 - f64
-                        // 6 - atomic bool, 7 - atomic u8, 8 - atomic u16, 9 atomic u32, 10 - atomic u64
-                        u32 type_index = ((ir_type - IR_TYPE_s8) >> 1) + (ir_type == IR_TYPE_f64);
-                        
-                        enum ir_kind ir_base = (ast_kind == AST_plus_assignment) ? IR_add_assignment_u8 : IR_subtract_assignment_u8;
-                        enum ir_kind ir_kind = ir_base + type_index;
-                        
-                        operand.ir = push_ir(context, ir_kind);
+                        operand.ir = push_ir(context, (ast_kind == AST_plus_assignment) ? IR_add_assignment : IR_subtract_assignment);
                         operand.resolved_type = lhs->resolved_type;
                         operand.defined_type = lhs->defined_type;
                     }
@@ -7874,10 +7468,7 @@ case NUMBER_KIND_##type:{ \
                 }else{
                     maybe_insert_implicit_assignment_cast_and_check_that_types_match(context, lhs->resolved_type, lhs->defined_type, rhs, stack_entry->token);
                     
-                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
-                    enum ir_kind ir_kind = IR_modulo_assignment_s8 + (ir_type - IR_TYPE_s8);
-                    
-                    operand.ir = push_ir(context, ir_kind);
+                    operand.ir = push_ir(context, IR_modulo_assignment);
                     operand.resolved_type = lhs->resolved_type;
                     operand.defined_type = lhs->defined_type;
                 }
@@ -7914,16 +7505,10 @@ case NUMBER_KIND_##type:{ \
                         push_ir(context, ir);
                         push_ir(context, IR_store);
                     }else{
-                        enum ir_kind ir_base = 0;
-                        if(ast_kind == AST_and_assignment) ir_base = IR_and_assignment_u8;
-                        if(ast_kind == AST_or_assignment)  ir_base = IR_or_assignment_u8;
-                        if(ast_kind == AST_xor_assignment) ir_base = IR_xor_assignment_u8;
-                        
-                        enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
-                        u32 type_index = (ir_type - IR_TYPE_s8) >> 1;
-                        if(ir_type >= IR_TYPE_atomic_bool) type_index -= 3;
-                        
-                        enum ir_kind ir_kind = ir_base + type_index;
+                        enum ir_kind ir_kind = 0;
+                        if(ast_kind == AST_and_assignment) ir_kind = IR_and_assignment;
+                        if(ast_kind == AST_or_assignment)  ir_kind = IR_or_assignment;
+                        if(ast_kind == AST_xor_assignment) ir_kind = IR_xor_assignment;
                         operand.ir = push_ir(context, ir_kind);
                     }
                     
@@ -7992,9 +7577,7 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    enum ir_kind ir_base = (ast_kind == AST_divide_assignment) ? IR_divide_assignment_s8 : IR_multiply_assignment_s8;
-                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
-                    operand.ir = push_ir(context, ir_base + ir_type - IR_TYPE_s8);
+                    operand.ir = push_ir(context, (ast_kind == AST_divide_assignment) ? IR_divide_assignment : IR_multiply_assignment);
                     operand.resolved_type = lhs->resolved_type;
                     operand.defined_type = lhs->defined_type;
                 }
@@ -8022,9 +7605,8 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
-                    enum ir_kind ir_base = (ast_kind == AST_left_shift_assignment) ? IR_left_shift_assignment_s8 : IR_right_shift_assignment_s8;
-                    enum ir_type ir_type = ir_type_from_type(lhs->resolved_type);
-                    operand.ir = push_ir(context, ir_base + ir_type - IR_TYPE_s8);
+                    enum ir_kind ir_kind = (ast_kind == AST_left_shift_assignment) ? IR_left_shift_assignment : IR_right_shift_assignment;
+                    operand.ir = push_ir(context, ir_kind);
                     operand.resolved_type = lhs->resolved_type;
                     operand.defined_type = lhs->defined_type;
                 }

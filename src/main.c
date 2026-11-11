@@ -703,7 +703,7 @@ func b32 type_is_signed(struct ast_type *type){
     if(&globals.typedef_s8  == type) return true;
     if(&globals.typedef_s16 == type) return true;
     if(&globals.typedef_s32 == type) return true;
-    if(&globals.typedef_s64 == type) return true;
+    if(&globals.typedef_s64 == type) return true; // @cleanup: atomics?
     return false;
 }
 
@@ -1167,6 +1167,7 @@ static enum ir_type ir_type_from_type(struct ast_type *type){
     }
     
     if(type->kind == AST_pointer_type) return IR_TYPE_pointer;
+    if(type->kind == AST_bitfield_type) return IR_TYPE_bitfield;
     
     if(type == &globals.typedef_poison) return IR_TYPE_void;
     
@@ -2539,7 +2540,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 }
             }break;
             
-            case IR_add_u64: case IR_subtract_u64:{
+            case IR_add: case IR_subtract: case IR_pointer_subtract:{ // @cleanup: Is there a problem with sizing here?
                 ir_offset += sizeof(struct ir);
                 
                 struct ir *binary_rhs = ir_stack[ir_stack_at-1].ir;
@@ -2579,7 +2580,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 
                 ir_stack_at -= 1;
                 
-                smm offset_in_ir = ir_node->kind == IR_add_u64 ? offset_lhs + offset_rhs : offset_lhs - offset_rhs;
+                smm offset_in_ir = ir_node->kind == IR_add ? offset_lhs + offset_rhs : offset_lhs - offset_rhs;
                 
                 if(patch_lhs == patch_rhs){
                     // @note: This includes the case where 'patch_lhs == patch_rhs == null'.
@@ -2738,7 +2739,12 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 }
             }break;
             
-            case IR_nop:{};
+            case IR_nop:{
+                ir_offset += sizeof(struct ir);
+            }break;
+            case IR_cast_to_pointer:{
+                ir_offset += sizeof(struct ir_typed_cast);
+            }break; // Don't think this does anything.
             
             // @cleanup: There should probably be handling for IR_skip?
             

@@ -36,6 +36,7 @@ enum ir_type{
     IR_TYPE_atomic_u64,
     
     IR_TYPE_pointer,
+    IR_TYPE_bitfield,
 };
 
 enum ir_kind{
@@ -86,53 +87,11 @@ enum ir_kind{
     
     IR_memcpy,
     
-    IR_postinc_u8,
-    IR_postinc_u16,
-    IR_postinc_u32,
-    IR_postinc_u64,
+    IR_postinc,
+    IR_postdec,
     
-    IR_postinc_bool,
-    IR_postinc_f32,
-    IR_postinc_f64,
-    
-    IR_postinc_pointer,
-    IR_postinc_bitfield,
-    
-    IR_postdec_u8,
-    IR_postdec_u16,
-    IR_postdec_u32,
-    IR_postdec_u64,
-    
-    IR_postdec_bool,
-    IR_postdec_f32,
-    IR_postdec_f64,
-    
-    IR_postdec_pointer,
-    IR_postdec_bitfield,
-    
-    IR_preinc_u8,
-    IR_preinc_u16,
-    IR_preinc_u32,
-    IR_preinc_u64,
-    
-    IR_preinc_bool,
-    IR_preinc_f32,
-    IR_preinc_f64,
-    
-    IR_preinc_pointer,
-    IR_preinc_bitfield,
-    
-    IR_predec_u8,
-    IR_predec_u16,
-    IR_predec_u32,
-    IR_predec_u64,
-    
-    IR_predec_bool,
-    IR_predec_f32,
-    IR_predec_f64,
-    
-    IR_predec_pointer,
-    IR_predec_bitfield,
+    IR_preinc,
+    IR_predec,
     
     IR_deref,
     IR_member,
@@ -144,224 +103,54 @@ enum ir_kind{
     IR_function_call,
     IR_return,
     
-    IR_bitwise_not_u32,
-    IR_bitwise_not_u64,
+    IR_bitwise_not,
     
-    IR_negate_u32,
-    IR_negate_u64,
-    IR_negate_f32,
-    IR_negate_f64,
+    IR_negate,
     
-    IR_logical_not_u32,
-    IR_logical_not_u64,
-    IR_logical_not_f32,
-    IR_logical_not_f64,
+    IR_logical_not,
     
-    IR_or_u32,
-    IR_or_u64,
+    IR_or,
+    IR_xor,
+    IR_and,
     
-    IR_xor_u32,
-    IR_xor_u64,
+    IR_left_shift,
+    IR_right_shift,
     
-    IR_and_u32,
-    IR_and_u64,
-    
-    IR_left_shift_s32,
-    IR_left_shift_u32,
-    IR_left_shift_s64,
-    IR_left_shift_u64,
-    
-    IR_right_shift_s32,
-    IR_right_shift_u32,
-    IR_right_shift_s64,
-    IR_right_shift_u64,
-    
-    IR_add_u32,
-    IR_add_u64,
-    IR_add_f32,
-    IR_add_f64,
-    
-    IR_subtract_u32,
-    IR_subtract_u64,
-    IR_subtract_f32,
-    IR_subtract_f64,
+    IR_add,
+    IR_subtract,
+    IR_pointer_subtract,
     
     // @note: Order matches ir_type.
-    IR_multiply_s32,
-    IR_multiply_u32,
-    IR_multiply_s64,
-    IR_multiply_u64,
-    IR_multiply_f32,
-    IR_multiply_f64,
-    
-    IR_divide_s32,
-    IR_divide_u32,
-    IR_divide_s64,
-    IR_divide_u64,
-    IR_divide_f32,
-    IR_divide_f64,
-    
-    IR_mod_s32,
-    IR_mod_u32,
-    IR_mod_s64,
-    IR_mod_u64,
+    IR_multiply,
+    IR_divide,
+    IR_mod,
     
     
-    // :smaller_bigger_ir_encoding
-    // Sorting is important here, as we _calculate_ which ir node to use.
-    IR_bigger_equals_s32,
-    IR_smaller_equals_s32,
-    IR_bigger_s32,
-    IR_smaller_s32,
-    
-    IR_bigger_equals_u32,
-    IR_smaller_equals_u32,
-    IR_bigger_u32,
-    IR_smaller_u32,
-    
-    IR_bigger_equals_s64,
-    IR_smaller_equals_s64,
-    IR_bigger_s64,
-    IR_smaller_s64,
-    
-    IR_bigger_equals_u64,
-    IR_smaller_equals_u64,
-    IR_bigger_u64,
-    IR_smaller_u64,
-    
-    IR_bigger_equals_f32,
-    IR_smaller_equals_f32,
-    IR_bigger_f32,
-    IR_smaller_f32,
-    
-    IR_bigger_equals_f64,
-    IR_smaller_equals_f64,
-    IR_bigger_f64,
-    IR_smaller_f64,
+    // We use the order here.
+    IR_bigger_equals,
+    IR_smaller_equals,
+    IR_bigger,
+    IR_smaller,
     
     // 
     // We use the order of these as well.
     // 
-    IR_equals_u32,
-    IR_unequals_u32,
+    IR_equals,
+    IR_unequals,
     
-    IR_equals_u64,
-    IR_unequals_u64,
+    IR_add_assignment,
+    IR_subtract_assignment,
     
-    IR_equals_f32,
-    IR_unequals_f32,
+    IR_and_assignment,
+    IR_or_assignment,
+    IR_xor_assignment,
     
-    IR_equals_f64,
-    IR_unequals_f64,
+    IR_multiply_assignment,
+    IR_divide_assignment,
+    IR_modulo_assignment,
     
-    IR_add_assignment_u8,
-    IR_add_assignment_u16,
-    IR_add_assignment_u32,
-    IR_add_assignment_u64,
-    
-    IR_add_assignment_f32,
-    IR_add_assignment_f64,
-    
-    IR_add_atomic_assignment_bool,
-    IR_add_atomic_assignment_u8,
-    IR_add_atomic_assignment_u16,
-    IR_add_atomic_assignment_u32,
-    IR_add_atomic_assignment_u64,
-    
-    IR_subtract_assignment_u8,
-    IR_subtract_assignment_u16,
-    IR_subtract_assignment_u32,
-    IR_subtract_assignment_u64,
-    
-    IR_subtract_assignment_f32,
-    IR_subtract_assignment_f64,
-    
-    IR_subtract_atomic_assignment_bool,
-    IR_subtract_atomic_assignment_u8,
-    IR_subtract_atomic_assignment_u16,
-    IR_subtract_atomic_assignment_u32,
-    IR_subtract_atomic_assignment_u64,
-    
-    IR_and_assignment_u8,
-    IR_and_assignment_u16,
-    IR_and_assignment_u32,
-    IR_and_assignment_u64,
-    
-    IR_and_atomic_assignment_u8,
-    IR_and_atomic_assignment_u16,
-    IR_and_atomic_assignment_u32,
-    IR_and_atomic_assignment_u64,
-    
-    IR_or_assignment_u8,
-    IR_or_assignment_u16,
-    IR_or_assignment_u32,
-    IR_or_assignment_u64,
-    
-    IR_or_atomic_assignment_u8,
-    IR_or_atomic_assignment_u16,
-    IR_or_atomic_assignment_u32,
-    IR_or_atomic_assignment_u64,
-    
-    IR_xor_assignment_u8,
-    IR_xor_assignment_u16,
-    IR_xor_assignment_u32,
-    IR_xor_assignment_u64,
-    
-    IR_xor_atomic_assignment_u8,
-    IR_xor_atomic_assignment_u16,
-    IR_xor_atomic_assignment_u32,
-    IR_xor_atomic_assignment_u64,
-    
-    IR_multiply_assignment_s8,
-    IR_multiply_assignment_u8,
-    IR_multiply_assignment_s16,
-    IR_multiply_assignment_u16,
-    IR_multiply_assignment_s32,
-    IR_multiply_assignment_u32,
-    IR_multiply_assignment_s64,
-    IR_multiply_assignment_u64,
-    
-    IR_multiply_assignment_f32,
-    IR_multiply_assignment_f64,
-    
-    IR_divide_assignment_s8,
-    IR_divide_assignment_u8,
-    IR_divide_assignment_s16,
-    IR_divide_assignment_u16,
-    IR_divide_assignment_s32,
-    IR_divide_assignment_u32,
-    IR_divide_assignment_s64,
-    IR_divide_assignment_u64,
-    
-    IR_divide_assignment_f32,
-    IR_divide_assignment_f64,
-    
-    IR_modulo_assignment_s8,
-    IR_modulo_assignment_u8,
-    IR_modulo_assignment_s16,
-    IR_modulo_assignment_u16,
-    IR_modulo_assignment_s32,
-    IR_modulo_assignment_u32,
-    IR_modulo_assignment_s64,
-    IR_modulo_assignment_u64,
-    
-    IR_left_shift_assignment_s8,
-    IR_left_shift_assignment_u8,
-    IR_left_shift_assignment_s16,
-    IR_left_shift_assignment_u16,
-    IR_left_shift_assignment_s32,
-    IR_left_shift_assignment_u32,
-    IR_left_shift_assignment_s64,
-    IR_left_shift_assignment_u64,
-    
-    IR_right_shift_assignment_s8,
-    IR_right_shift_assignment_u8,
-    IR_right_shift_assignment_s16,
-    IR_right_shift_assignment_u16,
-    IR_right_shift_assignment_s32,
-    IR_right_shift_assignment_u32,
-    IR_right_shift_assignment_s64,
-    IR_right_shift_assignment_u64,
+    IR_left_shift_assignment,
+    IR_right_shift_assignment,
     
     IR_nop,
     IR_embed,
@@ -371,10 +160,6 @@ enum ir_kind{
     
     IR_cast_vector, 
     
-    IR_cast_to_void,
-    IR_cast_to_bool,
-    IR_cast_to_bool_lhs,
-    
     IR_vector_extract,
     IR_vector_add,
     IR_vector_sub,
@@ -383,117 +168,34 @@ enum ir_kind{
     IR_vector_or,
     
     // Casts are at the end here, so that we can use math to encode the operands.
-    IR_cast_f32_to_f64,
-    IR_cast_base = IR_cast_f32_to_f64,
     
-    IR_cast_f32_to_f64_lhs,
-    IR_cast_f64_to_f32,
-    IR_cast_f64_to_f32_lhs,
+    IR_cast_to_void,
+    IR_cast_to_pointer,
     
-    IR_cast_f32_to_u8,
-    IR_cast_f32_to_u8_lhs,
-    IR_cast_f32_to_u16,
-    IR_cast_f32_to_u16_lhs,
-    IR_cast_f32_to_u32,
-    IR_cast_f32_to_u32_lhs,
-    IR_cast_f32_to_u64,
-    IR_cast_f32_to_u64_lhs,
+    IR_cast_to_bool,
+    IR_cast_to_bool_lhs,
+    IR_cast_to_s8,
+    IR_cast_to_s8_lhs,
+    IR_cast_to_u8,
+    IR_cast_to_u8_lhs,
+    IR_cast_to_s16,
+    IR_cast_to_s16_lhs,
+    IR_cast_to_u16,
+    IR_cast_to_u16_lhs,
+    IR_cast_to_s32,
+    IR_cast_to_s32_lhs,
+    IR_cast_to_u32,
+    IR_cast_to_u32_lhs,
+    IR_cast_to_s64,
+    IR_cast_to_s64_lhs,
+    IR_cast_to_u64,
+    IR_cast_to_u64_lhs,
+    IR_cast_to_f32,
+    IR_cast_to_f32_lhs,
+    IR_cast_to_f64,
+    IR_cast_to_f64_lhs,
     
-    IR_cast_f32_to_s8,
-    IR_cast_f32_to_s8_lhs,
-    IR_cast_f32_to_s16,
-    IR_cast_f32_to_s16_lhs,
-    IR_cast_f32_to_s32,
-    IR_cast_f32_to_s32_lhs,
-    IR_cast_f32_to_s64,
-    IR_cast_f32_to_s64_lhs,
-    
-    IR_cast_f64_to_u8,
-    IR_cast_f64_to_u8_lhs,
-    IR_cast_f64_to_u16,
-    IR_cast_f64_to_u16_lhs,
-    IR_cast_f64_to_u32,
-    IR_cast_f64_to_u32_lhs,
-    IR_cast_f64_to_u64,
-    IR_cast_f64_to_u64_lhs,
-    
-    IR_cast_f64_to_s8,
-    IR_cast_f64_to_s8_lhs,
-    IR_cast_f64_to_s16,
-    IR_cast_f64_to_s16_lhs,
-    IR_cast_f64_to_s32,
-    IR_cast_f64_to_s32_lhs,
-    IR_cast_f64_to_s64,
-    IR_cast_f64_to_s64_lhs,
-    
-    IR_cast_s8_to_f32,
-    IR_cast_s8_to_f32_lhs,
-    IR_cast_s16_to_f32,
-    IR_cast_s16_to_f32_lhs,
-    IR_cast_s32_to_f32,
-    IR_cast_s32_to_f32_lhs,
-    IR_cast_s64_to_f32,
-    IR_cast_s64_to_f32_lhs,
-    
-    IR_cast_s8_to_f64,
-    IR_cast_s8_to_f64_lhs,
-    IR_cast_s16_to_f64,
-    IR_cast_s16_to_f64_lhs,
-    IR_cast_s32_to_f64,
-    IR_cast_s32_to_f64_lhs,
-    IR_cast_s64_to_f64,
-    IR_cast_s64_to_f64_lhs,
-    
-    IR_cast_u8_to_f32,
-    IR_cast_u8_to_f32_lhs,
-    IR_cast_u16_to_f32,
-    IR_cast_u16_to_f32_lhs,
-    IR_cast_u32_to_f32,
-    IR_cast_u32_to_f32_lhs,
-    IR_cast_u64_to_f32,
-    IR_cast_u64_to_f32_lhs,
-    
-    IR_cast_u8_to_f64,
-    IR_cast_u8_to_f64_lhs,
-    IR_cast_u16_to_f64,
-    IR_cast_u16_to_f64_lhs,
-    IR_cast_u32_to_f64,
-    IR_cast_u32_to_f64_lhs,
-    IR_cast_u64_to_f64,
-    IR_cast_u64_to_f64_lhs,
-    
-    IR_sign_extend_s8_to_s16,
-    IR_sign_extend_s8_to_s16_lhs,
-    IR_sign_extend_s8_to_s32,
-    IR_sign_extend_s8_to_s32_lhs,
-    IR_sign_extend_s16_to_s32,
-    IR_sign_extend_s16_to_s32_lhs,
-    IR_sign_extend_s8_to_s64,
-    IR_sign_extend_s8_to_s64_lhs,
-    IR_sign_extend_s16_to_s64,
-    IR_sign_extend_s16_to_s64_lhs,
-    IR_sign_extend_s32_to_s64,
-    IR_sign_extend_s32_to_s64_lhs,
-    
-    IR_zero_extend_u8_to_u16,
-    IR_zero_extend_u8_to_u16_lhs,
-    IR_zero_extend_u8_to_u32,
-    IR_zero_extend_u8_to_u32_lhs,
-    IR_zero_extend_u16_to_u32,
-    IR_zero_extend_u16_to_u32_lhs,
-    IR_zero_extend_u8_to_u64,
-    IR_zero_extend_u8_to_u64_lhs,
-    IR_zero_extend_u16_to_u64,
-    IR_zero_extend_u16_to_u64_lhs,
-    IR_zero_extend_u32_to_u64,
-    IR_zero_extend_u32_to_u64_lhs,
-    
-    IR_truncate_to_u8,
-    IR_truncate_to_u8_lhs,    
-    IR_truncate_to_u16,
-    IR_truncate_to_u16_lhs,
-    IR_truncate_to_u32,
-    IR_truncate_to_u32_lhs,
+    IR_cast_base = IR_cast_to_bool,
     
     IR_count,
 };
@@ -547,22 +249,12 @@ struct ir_compound_literal{ // @WARNING: This has to match identifier.
     smm trailing_array_size;
 };
 
-struct ir_pointer_increment{
-    struct ir base;
-    struct ast_pointer_type *pointer_type;
-};
-
-struct ir_bitfield_increment{
-    struct ir base;
-    struct ast_bitfield_type *bitfield_type;
-};
-
 struct ir_deref{
     struct ir base;
     struct ast_type *type;
 };
 
-struct ir_cast_vector{
+struct ir_typed_cast{
     struct ir base;
     struct ast_type *type;
 };
@@ -652,8 +344,6 @@ struct ir_asm_block{
         struct asm_instruction *last;
     }instructions;
 };
-
-
 
 // @note: needs to match ast_pointer_literal below
 struct ir_integer_literal{
