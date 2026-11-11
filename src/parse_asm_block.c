@@ -157,16 +157,11 @@ func struct asm_instruction *push_asm_instruction(struct context *context, enum 
     return asm_instruction;
 }
 
-func struct asm_operand asm_maybe_parse_gpr(struct context *context){
+func struct asm_operand asm_maybe_parse_gpr(struct string ident){
     struct asm_operand arg = zero_struct;
     
-    if(!peek_token(context, TOKEN_identifier)) return arg;
-    
-    struct token *ident_token = next_token(context);
     arg.reg = ASM_REGISTER_invalid;
     arg.register_kind_when_loaded = REGISTER_KIND_gpr;
-    
-    struct string ident = token_get_string(ident_token);
     
     if(string_match(ident, string("rax"))){
         arg.reg  = ASM_REGISTER_rax;
@@ -324,19 +319,7 @@ func struct asm_operand asm_maybe_parse_gpr(struct context *context){
     }else if(string_match(ident, string("bl"))){
         arg.reg  = ASM_REGISTER_rbx;
         arg.size = 1;
-    }else /*if(string_match(ident, string("ah"))){ for now these are dead
-    arg.reg  = ASM_REGISTER_rax;
-    arg.size = 1;
-    }else if(string_match(ident, string("ch"))){
-    arg.reg  = ASM_REGISTER_rcx;
-    arg.size = 1;
-    }else if(string_match(ident, string("dh"))){
-    arg.reg  = ASM_REGISTER_rdx;
-    arg.size = 1;
-    }else if(string_match(ident, string("bh"))){
-    arg.reg  = ASM_REGISTER_rbx;
-    arg.size = 1;
-    }else */if(string_match(ident, string("sil"))){
+    }else if(string_match(ident, string("sil"))){
         arg.reg  = ASM_REGISTER_rsi;
         arg.size = 1;
     }else if(string_match(ident, string("dil"))){
@@ -372,8 +355,6 @@ func struct asm_operand asm_maybe_parse_gpr(struct context *context){
     }else if(string_match(ident, string("r15b"))){
         arg.reg  = ASM_REGISTER_r15;
         arg.size = 1;
-    }else{
-        prev_token(context);
     }
     
     if(arg.reg != ASM_REGISTER_invalid){
@@ -383,16 +364,25 @@ func struct asm_operand asm_maybe_parse_gpr(struct context *context){
     return arg;
 }
 
-func struct asm_operand asm_maybe_parse_xmm_register(struct context *context){
+func struct asm_operand asm_maybe_parse_gpr_wrapper(struct context *context){
+    struct token *ident_token = next_token(context);
+    struct string ident = token_get_string(ident_token);
+    
+    struct asm_operand operand = asm_maybe_parse_gpr(ident);
+    
+    if(operand.kind == ASM_ARG_invalid){
+        prev_token(context);
+    }
+    
+    return operand;
+}
+
+func struct asm_operand asm_maybe_parse_xmm_register(struct string string){
     struct asm_operand arg = zero_struct;
     
-    if(!peek_token(context, TOKEN_identifier)) return arg;
     arg.reg = ASM_REGISTER_invalid;
     arg.register_kind_when_loaded = REGISTER_KIND_xmm;
     
-    struct token *ident = next_token(context);
-    
-    struct string string = token_get_string(ident);
     if(string.size == 4){
         if(string_front_match(string, "xmm") && '0' <= string.data[3] && string.data[3] <= '9'){
             arg.reg  = ASM_REGISTER_xmm0 + string.data[3] - '0';
@@ -405,25 +395,20 @@ func struct asm_operand asm_maybe_parse_xmm_register(struct context *context){
         }
     }
     
-    if(arg.reg == ASM_REGISTER_invalid){
-        prev_token(context);
-    }else{
+    if(arg.reg != ASM_REGISTER_invalid){
         arg.kind = ASM_ARG_register;
     }
     
     return arg;
 }
 
-func struct asm_operand asm_maybe_parse_ymm_register(struct context *context){
+func struct asm_operand asm_maybe_parse_ymm_register(struct string string){
     struct asm_operand arg = zero_struct;
     
-    if(!peek_token(context, TOKEN_identifier)) return arg;
     arg.reg = ASM_REGISTER_invalid;
     arg.register_kind_when_loaded = REGISTER_KIND_xmm;
     
-    struct token *ident = next_token(context);
     
-    struct string string = token_get_string(ident);
     if(string.size == 4){
         if(string_front_match(string, "ymm") && '0' <= string.data[3] && string.data[3] <= '9'){
             arg.reg  = ASM_REGISTER_xmm0 + string.data[3] - '0';
@@ -436,9 +421,7 @@ func struct asm_operand asm_maybe_parse_ymm_register(struct context *context){
         }
     }
     
-    if(arg.reg == ASM_REGISTER_invalid){
-        prev_token(context);
-    }else{
+    if(arg.reg != ASM_REGISTER_invalid){
         arg.kind = ASM_ARG_register;
     }
     
@@ -636,7 +619,7 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
     
     // [rax + 4 * rcx +/- 0x123]
     if(peek_token(context, TOKEN_identifier)){
-        struct asm_operand reg = asm_maybe_parse_gpr(context);
+        struct asm_operand reg = asm_maybe_parse_gpr_wrapper(context);
         if(reg.kind != ASM_ARG_invalid){
             base = reg.reg;
             
@@ -652,7 +635,7 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
     if(!finished && peek_token(context, TOKEN_integer_literal)){
         struct token *scale_or_offset = next_token(context);
         if(peek_token_eat(context, TOKEN_times)){
-            struct asm_operand reg = asm_maybe_parse_gpr(context);
+            struct asm_operand reg = asm_maybe_parse_gpr_wrapper(context);
             if(reg.kind == ASM_ARG_invalid){
                 report_syntax_error(context, get_current_token(context), "Expected a register name after '*' in asm memory operand.");
             }else{
@@ -704,7 +687,6 @@ func struct asm_operand asm_maybe_parse_memory_operand(struct context *context){
     }else{
         expect_token(context, TOKEN_closed_index, "Expected ']' ending the memory operand.");
     }
-    
     
     arg.kind   = ASM_ARG_memory_operand;
     arg.base   = base;
@@ -775,16 +757,34 @@ func enum memonic lookup_memonic_from_string(struct string string){
     return memonic;
 }
 
+func struct asm_operand asm_maybe_parse_register(struct string ident){
+    struct asm_operand operand = zero_struct;
+    
+    operand = asm_maybe_parse_gpr(ident);
+    if(operand.kind != ASM_ARG_invalid) return operand;
+    
+    operand = asm_maybe_parse_xmm_register(ident);
+    if(operand.kind != ASM_ARG_invalid) return operand;
+    
+    operand = asm_maybe_parse_ymm_register(ident);
+    if(operand.kind != ASM_ARG_invalid) return operand;
+    
+    return operand;
+}
+
 func struct asm_operand parse_asm_operand(struct context *context){
     
-    struct asm_operand operand = asm_maybe_parse_gpr(context);
-    if(operand.kind != ASM_ARG_invalid) return operand;
+    struct asm_operand operand = zero_struct;
     
-    operand = asm_maybe_parse_xmm_register(context);
-    if(operand.kind != ASM_ARG_invalid) return operand;
-    
-    operand = asm_maybe_parse_ymm_register(context);
-    if(operand.kind != ASM_ARG_invalid) return operand;
+    if(peek_token(context, TOKEN_identifier)){
+        struct token *ident_token = next_token(context);
+        struct string ident = token_get_string(ident_token);
+        
+        operand = asm_maybe_parse_register(ident);
+        if(operand.kind != ASM_ARG_invalid) return operand;
+        
+        prev_token(context);
+    }
     
     operand = asm_maybe_parse_memory_operand(context);
     if(operand.kind != ASM_ARG_invalid) return operand;
@@ -793,6 +793,623 @@ func struct asm_operand parse_asm_operand(struct context *context){
     if(operand.kind != ASM_ARG_invalid) return operand;
     
     return asm_maybe_parse_expression_operand(context);
+}
+
+char *check_asm_operand(struct asm_operand *incoming, enum asm_operand_kind_flags desired_operand_flags){
+    
+    struct asm_operand operand = *incoming;
+    
+    switch(operand.kind){
+        case ASM_ARG_invalid: return null;
+        case ASM_ARG_register:{
+            if(operand.register_kind_when_loaded == REGISTER_KIND_xmm){
+                // xmm
+                b32 should_error = false;
+                if(operand.size == 16 && !(ASM_OP_KIND_xmm & desired_operand_flags)) should_error = true;
+                if(operand.size == 32 && !(ASM_OP_KIND_ymm & desired_operand_flags)) should_error = true;
+                
+                if(should_error){
+                    return "is invalid";                    
+                }
+            }else if(operand.register_kind_when_loaded == REGISTER_KIND_gpr){
+                // gpr
+                b32 should_error = false;
+                if(operand.size == 1 && !(ASM_OP_KIND_reg8  & desired_operand_flags)) should_error = true;
+                if(operand.size == 2 && !(ASM_OP_KIND_reg16 & desired_operand_flags)) should_error = true;
+                if(operand.size == 4 && !(ASM_OP_KIND_reg32 & desired_operand_flags)) should_error = true;
+                if(operand.size == 8 && !(ASM_OP_KIND_reg64 & desired_operand_flags)) should_error = true;
+                
+                if(should_error){
+                    return "is invalid.";
+                }
+            }else{
+                invalid_code_path;
+            }
+        }break;
+        case ASM_ARG_declaration_dereference:
+        case ASM_ARG_memory_operand:{
+            b32 should_error = false;
+            
+            switch(operand.size){
+                case 1:  should_error = !(desired_operand_flags & ASM_OP_KIND_mem8);   break;
+                case 2:  should_error = !(desired_operand_flags & ASM_OP_KIND_mem16);  break;
+                case 4:  should_error = !(desired_operand_flags & ASM_OP_KIND_mem32);  break;
+                case 8:  should_error = !(desired_operand_flags & ASM_OP_KIND_mem64);  break;
+                case 16: should_error = !(desired_operand_flags & ASM_OP_KIND_mem128); break;
+                case 32: should_error = !(desired_operand_flags & ASM_OP_KIND_mem256); break;
+                
+                case 0:{
+                    //
+                    // we are supposed to infer the operand size!
+                    //
+                    u32 memory_flags = desired_operand_flags & ASM_OP_KIND_any_mem;
+                    
+                    if(!memory_flags){
+                        return "cannot be a memory operand.";
+                    }
+                    
+                    if(__popcnt(memory_flags) == 1){
+                        //
+                        // infer the operand size
+                        //
+                        
+                        if(memory_flags & ASM_OP_KIND_mem8)   operand.size = 1;
+                        if(memory_flags & ASM_OP_KIND_mem16)  operand.size = 2;
+                        if(memory_flags & ASM_OP_KIND_mem32)  operand.size = 4;
+                        if(memory_flags & ASM_OP_KIND_mem64)  operand.size = 8;
+                        if(memory_flags & ASM_OP_KIND_mem128) operand.size = 16;
+                        if(memory_flags & ASM_OP_KIND_mem256) operand.size = 32;
+                    }else{
+                        //
+                        // This will be handled explicitly below (in the big switch).
+                        //
+                    }
+                }break;
+                invalid_default_case();
+            }
+            
+            if(should_error){
+                return "is invalid.";
+            }
+        }break;
+        case ASM_ARG_float_literal:
+        case ASM_ARG_declaration_reference:{
+            b32 should_error = false;
+            
+            struct ast_type *type = operand.type;
+            if(operand.is_inline_asm_function_argument && type->kind == AST_integer_type){
+                
+                if((desired_operand_flags & ASM_OP_KIND_any_imm) == (desired_operand_flags & (ASM_OP_KIND_any_regm | ASM_OP_KIND_any_imm))){
+                    // If the operand needs to be an integer and we supplied a 'inline_asm_argument'
+                    
+                    operand.is_inline_asm_function_argument_that_needs_to_be_an_integer = true;
+                    break;
+                }
+                
+                if(desired_operand_flags & ASM_OP_KIND_any_imm){
+                    operand.is_inline_asm_function_argument_that_can_be_integer = true;
+                    break;
+                }
+            }
+            
+            if(type->kind == AST_integer_type){
+                
+                if(type->size == 1 && !(ASM_OP_KIND_regm8  & desired_operand_flags)) should_error = true;
+                if(type->size == 2 && !(ASM_OP_KIND_regm16 & desired_operand_flags)) should_error = true;
+                if(type->size == 4 && !(ASM_OP_KIND_regm32 & desired_operand_flags)) should_error = true;
+                if(type->size == 8 && !(ASM_OP_KIND_regm64 & desired_operand_flags)) should_error = true;
+            }else if(type->kind == AST_float_type){
+                
+                if(operand.size ==  4 && !(ASM_OP_KIND_xmmm32 & desired_operand_flags)) should_error = true;
+                if(operand.size ==  8 && !(ASM_OP_KIND_xmmm64 & desired_operand_flags)) should_error = true;
+            }else if(type->kind == AST_pointer_type){
+                
+                if(type->size == 8 && !(ASM_OP_KIND_regm64 & desired_operand_flags)) should_error = true;
+            }else if(type->kind == AST_vector_type){
+                
+                if(operand.size == 16 && !(ASM_OP_KIND_xmmm128 & desired_operand_flags)) should_error = true;
+                if(operand.size == 32 && !(ASM_OP_KIND_ymmm256 & desired_operand_flags)) should_error = true;
+            }
+            
+            if(should_error){
+                return "is invalid.";
+            }
+        }break;
+        case ASM_ARG_immediate:{
+            // @cleanup: this should warn if the immediate does not fit. This needs to know both signness things.
+            
+            if(desired_operand_flags & ASM_OP_KIND_imm64){
+                // we are good, any integer literal fits in a 64 bit
+            }else if(desired_operand_flags & ASM_OP_KIND_imm32){
+                
+            }else if(desired_operand_flags & ASM_OP_KIND_imm16){
+                
+            }else if(desired_operand_flags & ASM_OP_KIND_imm8){
+                operand.size = 1;
+            }else{
+                return "cannot be an integer.";
+            }
+        }break;
+        
+        case ASM_ARG_label:{
+            if(!(desired_operand_flags & ASM_OP_KIND_label)){
+                return "cannot be a label.";
+            }
+        }break;
+        
+        invalid_default_case();
+    }
+    
+    *incoming = operand;
+    return null;
+}
+
+char *check_asm_instruction(struct context *context, struct asm_instruction *asm_instruction){
+    
+    u32 amount_of_operands = asm_instruction->amount_of_operands;
+    
+    smm regm_index = -1;
+    for(smm operand_index = 0; operand_index < amount_of_operands; operand_index++){
+        if(asm_instruction->operands[operand_index].size == 0){
+            assert(asm_instruction->operands[operand_index].kind == ASM_ARG_memory_operand || /*[void_ptr]*/asm_instruction->operands[operand_index].kind == ASM_ARG_declaration_dereference);
+        }
+        
+        if(asm_instruction->operands[operand_index].kind == ASM_ARG_memory_operand || asm_instruction->operands[operand_index].kind == ASM_ARG_declaration_dereference){
+            if(regm_index == -1){
+                regm_index = operand_index;
+            }else{
+                return "x64-instructions can only have one memory operand.";
+            }
+        }
+    }
+    
+    enum memonic memonic = asm_instruction->memonic;
+    switch(memonic){
+        
+        //
+        // Two operand instructions that either have matching operand sizes, or an immediate as the second one.
+        //
+        
+        case MEMONIC_movnti:
+        case MEMONIC_cmovo:  case MEMONIC_cmovc:  case MEMONIC_cmovz:  case MEMONIC_cmovbe:  case MEMONIC_cmovs:  case MEMONIC_cmovp:  case MEMONIC_cmovl:  case MEMONIC_cmovle:
+        case MEMONIC_cmovno: case MEMONIC_cmovnc: case MEMONIC_cmovnz: case MEMONIC_cmovnbe: case MEMONIC_cmovns: case MEMONIC_cmovnp: case MEMONIC_cmovnl: case MEMONIC_cmovnle:
+        case MEMONIC_mov:
+        case MEMONIC_xchg: // 'op reg/m, reg' or 'op reg, reg/m'
+        case MEMONIC_xadd: case MEMONIC_cmpxchg: // 'op reg/m, reg'
+        case MEMONIC_add:  case MEMONIC_or: // 'op regm, imm8' or 'op regm, imm' or 'op regm, reg' or 'op reg, regm'
+        case MEMONIC_adc:  case MEMONIC_sbb:
+        case MEMONIC_and:  case MEMONIC_sub:
+        case MEMONIC_xor:  case MEMONIC_cmp:
+        case MEMONIC_bt:   case MEMONIC_bts: case MEMONIC_btr: case MEMONIC_btc: // 'op regm, reg' or 'op regm, imm8'
+        case MEMONIC_bsf:  case MEMONIC_bsr: // 'op reg, regm'
+        case MEMONIC_popcnt:{                // 'op reg, regm'
+            
+            //
+            // Operands have already been _base-checked_ thus we can more or less throw any two operand,
+            // gpr-operation in here.
+            //
+            
+            if(asm_instruction->operands[1].kind == ASM_ARG_immediate){
+                if(asm_instruction->operands[0].size == 0){
+                    return "Cannot infer operand size for memory operand.";
+                }
+                
+                if(asm_instruction->operands[1].immediate < 128 || (s64)asm_instruction->operands[1].immediate > -127){
+                    asm_instruction->operands[1].size = 1;
+                }else{
+                    
+                    // size 1 can be infered above
+                    if(asm_instruction->operands[0].size == 2) asm_instruction->operands[1].size = 2;
+                    if(asm_instruction->operands[0].size == 4) asm_instruction->operands[1].size = 4;
+                }
+                
+                // this is fine for now @cleanup: report warning if the immediate does not fit or if signness is not right
+                break;
+            }
+            
+            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
+                smm other_index = (regm_index + 1) & 1;
+                asm_instruction->operands[regm_index].size = asm_instruction->operands[other_index].size;
+            }
+            
+            if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
+                // @cleanup: should we try to perform a 'is_inline_asm_function_argument_that_needs_to_be_an_integer'?
+                return (char *)push_format_string(&context->scratch, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size).data;
+            }
+        }break;
+        
+        case MEMONIC_rol: case MEMONIC_ror: // 'op regm, imm8' or 'op regm, cl'
+        case MEMONIC_rcl: case MEMONIC_rcr:
+        case MEMONIC_shl: case MEMONIC_shr:
+        case MEMONIC_sal: case MEMONIC_sar:{
+            if(asm_instruction->operands[1].kind == ASM_ARG_register && asm_instruction->operands[1].reg != ASM_REGISTER_rcx){
+                return "The right side needs to be either 'cl' or an 8-bit integer.";
+            }
+        }break;
+        
+        case MEMONIC_shld: case MEMONIC_shrd:{ // 'op regm, reg, imm8' or 'op regm, reg, cl'
+            // dest and src must be the same width.
+            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
+                smm other_index = (regm_index + 1) & 1;
+                asm_instruction->operands[regm_index].size = asm_instruction->operands[other_index].size;
+            }
+            
+            if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
+                return (char *)push_format_string(&context->scratch, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size).data;
+            }
+            
+            if(asm_instruction->operands[2].kind == ASM_ARG_register && asm_instruction->operands[2].reg != ASM_REGISTER_rcx){
+                return "The right side needs to be either 'cl' or an 8-bit integer.";
+            }
+            
+            // The count is always an 8-bit immediate or 'cl'.
+            asm_instruction->operands[2].size = 1;
+        }break;
+        
+        // no need to do anything, can only have xmm register operands
+        case MEMONIC_movlhps: case MEMONIC_movhlps: 
+        
+        //
+        // Zero Operand Memonics
+        //
+        case MEMONIC_pause: case MEMONIC_sfence: case MEMONIC_lfence: case MEMONIC_mfence:
+        case MEMONIC_int:   case MEMONIC_int3: case MEMONIC_ret: case MEMONIC_int1: case MEMONIC_ud2:
+        case MEMONIC_syscall: case MEMONIC_cpuid: case MEMONIC_xgetbv:
+        case MEMONIC_rdtsc: case MEMONIC_rdtscp:
+        case MEMONIC_movsb: case MEMONIC_movsw:                     case MEMONIC_movsq:
+        case MEMONIC_stosb: case MEMONIC_stosw: case MEMONIC_stosd: case MEMONIC_stosq:{
+            // nothing to do here!
+        }break;
+        
+        case MEMONIC_seto:  case MEMONIC_setno:
+        case MEMONIC_setc:  case MEMONIC_setnc:
+        case MEMONIC_setz:  case MEMONIC_setnz:
+        case MEMONIC_setbe: case MEMONIC_setnbe:
+        case MEMONIC_sets:  case MEMONIC_setns:
+        case MEMONIC_setp:  case MEMONIC_setnp:
+        case MEMONIC_setl:  case MEMONIC_setnl:
+        case MEMONIC_setle: case MEMONIC_setnle:{
+            if(asm_instruction->operands[0].size == 0) asm_instruction->operands[0].size = 1;
+        }break;
+        
+        
+        case MEMONIC_neg: 
+        case MEMONIC_inc: case MEMONIC_dec:
+        case MEMONIC_movzx: case MEMONIC_movsx: case MEMONIC_movsxd:{
+            if(asm_instruction->operands[0].size == 0){
+                return "Cannot infer operand size for memory operand.";
+            }
+        }break;
+        
+        case MEMONIC_cvtsi2ss: case MEMONIC_cvtsi2sd:{
+            if(asm_instruction->operands[1].size == 0){ 
+                return "Cannot infer operand size for memory operand.";
+            }
+        }break;
+        
+        case MEMONIC_lea: case MEMONIC_clflush:{
+            asm_instruction->operands[regm_index].size = 4;
+        }break;
+        
+        // no need to do anything, we made sure that these only take memory addresses and the size does not matter to us
+        case MEMONIC_prefetch:{
+            if(asm_instruction->operands[1].size == 0){
+                asm_instruction->operands[1].size = 4;
+            }
+        }break;
+        
+        case MEMONIC_ldmxcsr: case MEMONIC_stmxcsr:        
+        case MEMONIC_cmpxchg16b: case MEMONIC_cmpxchg8b:{
+            if(asm_instruction->operands[0].size == 0){
+                asm_instruction->operands[0].size = 4;
+            }
+        }break;
+        
+        //
+        // SSE
+        //
+        case MEMONIC_vmovd: case MEMONIC_vmovq:
+        case MEMONIC_movq: case MEMONIC_movd:{
+            if(asm_instruction->operands[0].register_kind_when_loaded == asm_instruction->operands[1].register_kind_when_loaded){
+                if(asm_instruction->operands[0].register_kind_when_loaded == REGISTER_KIND_gpr){
+                    return "One operand needs to be a XMM register.";
+                }else{
+                    return "One operand needs to be a general purpose register or a memory location.";
+                }
+            }
+            
+            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
+                if(memonic == MEMONIC_movq){
+                    asm_instruction->operands[regm_index].size = 8;
+                }else{
+                    asm_instruction->operands[regm_index].size = 4;
+                }
+            }
+        }break;
+        
+        case MEMONIC_aesdec: case MEMONIC_aesenc: case MEMONIC_aesdeclast:
+        case MEMONIC_aesenclast: case MEMONIC_aesimc:
+        case MEMONIC_pshufb:
+        case MEMONIC_movntps: // op xmm/m, xmm
+        case MEMONIC_movntpd:
+        case MEMONIC_movntdq:
+        case MEMONIC_movups: case MEMONIC_movaps: // "op xmm/m, xmm" or "op xmm, xmm/m"
+        case MEMONIC_movupd: case MEMONIC_movapd:
+        case MEMONIC_movdqa: case MEMONIC_movdqu:{
+            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
+                asm_instruction->operands[regm_index].size = 16;
+            }
+        }break;
+        
+        case MEMONIC_vpmovmskb:
+        case MEMONIC_pmovmskb:
+        case MEMONIC_movmskps: case MEMONIC_movmskpd:{
+            // we allow you to write 'pmovmskb rax, xmm0' even tho it only takes 'eax'.
+            asm_instruction->operands[0].size = 4;
+        }break;
+        
+        // op xmm, xmm/m32
+        case MEMONIC_addss: case MEMONIC_subss:  case MEMONIC_mulss: case MEMONIC_divss:
+        case MEMONIC_rcpss: case MEMONIC_sqrtss: case MEMONIC_maxss: case MEMONIC_minss:
+        case MEMONIC_rsqrtss: case MEMONIC_comiss: case MEMONIC_ucomiss:
+        
+        case MEMONIC_cvtss2sd: case MEMONIC_cvtss2si: case MEMONIC_cvttss2si:
+        case MEMONIC_cmpeqss:  case MEMONIC_cmpltss:  case MEMONIC_cmpless:  case MEMONIC_cmpunordss:
+        case MEMONIC_cmpneqss: case MEMONIC_cmpnltss: case MEMONIC_cmpnless: case MEMONIC_cmpordss:{
+            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 4;
+        }break;
+        
+        case MEMONIC_cvtsd2ss: case MEMONIC_cvtsd2si: case MEMONIC_cvttsd2si:
+        case MEMONIC_addsd:    case MEMONIC_subsd:    case MEMONIC_mulsd: case MEMONIC_divsd:
+        case MEMONIC_sqrtsd:   case MEMONIC_maxsd:    case MEMONIC_minsd:
+        case MEMONIC_comisd:   case MEMONIC_ucomisd:
+        
+        case MEMONIC_cmpeqsd:  case MEMONIC_cmpltsd:  case MEMONIC_cmplesd:  case MEMONIC_cmpunordsd:
+        case MEMONIC_cmpneqsd: case MEMONIC_cmpnltsd: case MEMONIC_cmpnlesd: case MEMONIC_cmpordsd:
+        {
+            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 8;
+        }break;
+        
+        case MEMONIC_movlpd: case MEMONIC_movlps:
+        case MEMONIC_movhpd: case MEMONIC_movhps:{
+            if(asm_instruction->operands[0].size == 0) asm_instruction->operands[0].size = 8;
+            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 8;
+            
+            if(regm_index == -1){
+                return "One operand has to be a memory location.";
+            }
+        }break;
+        
+        // op xmm, xmm/m
+        
+        case MEMONIC_cvtdq2ps:  case MEMONIC_cvtps2dq: 
+        case MEMONIC_cvtdq2pd:  case MEMONIC_cvtpd2dq:
+        
+        case MEMONIC_cvttps2dq: case MEMONIC_cvttpd2dq:
+        
+        case MEMONIC_cvtpd2ps: case MEMONIC_cvtps2pd:
+        
+        case MEMONIC_unpckhps: case MEMONIC_unpckhpd:
+        case MEMONIC_unpcklps: case MEMONIC_unpcklpd:
+        
+        case MEMONIC_pcmpgtb: case MEMONIC_pcmpgtw: case MEMONIC_pcmpgtd:
+        // case MEMONIC_pcmpltb: case MEMONIC_pcmpltw: case MEMONIC_pcmpltd:
+        
+        case MEMONIC_pmaddwd:   case MEMONIC_pmullw:
+        case MEMONIC_paddb:     case MEMONIC_paddw:     case MEMONIC_paddd:     case MEMONIC_paddq:
+        case MEMONIC_psubb:     case MEMONIC_psubw:     case MEMONIC_psubd:     case MEMONIC_psubq:
+        case MEMONIC_paddsb:    case MEMONIC_paddsw:
+        case MEMONIC_psubsb:    case MEMONIC_psubsw:
+        case MEMONIC_paddusb:   case MEMONIC_paddusw:
+        case MEMONIC_psubusb:   case MEMONIC_psubusw:
+        case MEMONIC_pavgb:     case MEMONIC_pavgw:
+        
+        case MEMONIC_punpcklbw: case MEMONIC_punpcklwd: case MEMONIC_punpckldq: case MEMONIC_punpcklqdq:
+        case MEMONIC_punpckhbw: case MEMONIC_punpckhwd: case MEMONIC_punpckhdq: case MEMONIC_punpckhqdq:
+        case MEMONIC_packssdw:  case MEMONIC_packsswb:  case MEMONIC_packuswb:
+        case MEMONIC_pxor:      case MEMONIC_por:       case MEMONIC_pand:      case MEMONIC_pandn:
+        
+        case MEMONIC_addps: case MEMONIC_subps:  case MEMONIC_mulps: case MEMONIC_divps:
+        case MEMONIC_rcpps: case MEMONIC_sqrtps: case MEMONIC_maxps: case MEMONIC_minps:
+        case MEMONIC_rsqrtps:
+        case MEMONIC_haddps:
+        
+        case MEMONIC_andps: case MEMONIC_andnps: case MEMONIC_xorps: case MEMONIC_orps:
+        
+        case MEMONIC_addpd: case MEMONIC_subpd:  case MEMONIC_mulpd: case MEMONIC_divpd:
+        case MEMONIC_sqrtpd: case MEMONIC_maxpd: case MEMONIC_minpd:
+        case MEMONIC_haddpd:
+        
+        case MEMONIC_cmpeqps:  case MEMONIC_cmpltps:  case MEMONIC_cmpleps:  case MEMONIC_cmpunordps:
+        case MEMONIC_cmpneqps: case MEMONIC_cmpnltps: case MEMONIC_cmpnleps: case MEMONIC_cmpordps:
+        
+        case MEMONIC_cmpeqpd:  case MEMONIC_cmpltpd:  case MEMONIC_cmplepd:  case MEMONIC_cmpunordpd:
+        case MEMONIC_cmpneqpd: case MEMONIC_cmpnltpd: case MEMONIC_cmpnlepd: case MEMONIC_cmpordpd:
+        
+        case MEMONIC_andpd: case MEMONIC_andnpd: case MEMONIC_xorpd:  case MEMONIC_orpd:
+        
+        case MEMONIC_pcmpeqb:   case MEMONIC_pcmpeqw:   case MEMONIC_pcmpeqd:
+        case MEMONIC_pminub: case MEMONIC_pminuw:
+        case MEMONIC_pmaxub: case MEMONIC_pmaxuw:
+        case MEMONIC_pminsb: case MEMONIC_pminsw:
+        case MEMONIC_pmaxsb: case MEMONIC_pmaxsw:
+        
+        case MEMONIC_ptest:
+        
+        // op xmm, xmm/m, imm8
+        case MEMONIC_palignr:
+        case MEMONIC_pcmpistri:
+        case MEMONIC_pcmpestri:
+        case MEMONIC_pshufd: case MEMONIC_pshufhw: case MEMONIC_pshuflw: case MEMONIC_shufps: case MEMONIC_shufpd:{
+            if(asm_instruction->operands[1].size == 0){
+                asm_instruction->operands[1].size = 16;
+            }
+            asm_instruction->operands[2].size = 1;
+        }break;
+        
+        // 'op xmm, imm' or 'op xmm, xmm/m'
+        case MEMONIC_psllw: case MEMONIC_pslld: case MEMONIC_psllq: case MEMONIC_pslldq:
+        case MEMONIC_psrlw: case MEMONIC_psrld: case MEMONIC_psrlq: case MEMONIC_psrldq:
+        case MEMONIC_psraw: case MEMONIC_psrad:{
+            if(asm_instruction->operands[1].size == 0){
+                asm_instruction->operands[1].size = 16;
+            }
+        }break;
+        
+        case MEMONIC_psraq:{
+            return "Instruction 'psraq' does not exist, consider using 'vpsraq' instead (requires AVX512F).";
+        }break;
+        
+        // 'op xmm, xmm/m32' or 'op xmm, xmm/m64'
+        case MEMONIC_movsd: case MEMONIC_movss:{
+            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
+                u32 size = (memonic == MEMONIC_movsd) ? 8 : 4;
+                asm_instruction->operands[regm_index].size = size;
+            }
+        }break;
+        
+        case MEMONIC_pextrb:{
+            asm_instruction->operands[0].size = 1; // we allow eax instead of al, as it zero extends anyway
+        }break;
+        case MEMONIC_pextrw:{
+            asm_instruction->operands[0].size = 2; // we allow eax instead of ax, as it zero extends anyway
+        }break;
+        case MEMONIC_pextrd:{
+            if(asm_instruction->operands[0].size == 0) asm_instruction->operands[0].size = 4;
+        }break;
+        case MEMONIC_pextrq:{
+            if(asm_instruction->operands[0].size == 0) asm_instruction->operands[0].size = 8;
+        }break;
+        
+        case MEMONIC_pinsrb:{
+            asm_instruction->operands[1].size = 1; // we allow size reg32, because this instruction is r32/m8
+        }break;
+        case MEMONIC_pinsrw:{
+            asm_instruction->operands[1].size = 2; // we allow size reg32, because this instruction is r32/m8
+        }break;
+        case MEMONIC_pinsrd:{
+            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 4;
+        }break;
+        case MEMONIC_pinsrq:{
+            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 8;
+        }break;
+        
+        
+        // 'vmovups xmm/m, xmm' or 'vmovups xmm, xmm/m' 'vmovups ymm/m, ymm' or 'vmovups ymm, ymm/m'
+        case MEMONIC_vmovdqu:
+        case MEMONIC_vmovdqa:
+        case MEMONIC_vmovups:{
+            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
+                smm other_index = (regm_index + 1) & 1;
+                asm_instruction->operands[regm_index].size = asm_instruction->operands[other_index].size;
+            }
+            
+            if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
+                return (char *)push_format_string(&context->scratch, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size).data;
+            }
+        }break;
+        
+        case MEMONIC_vpbroadcastw:{
+            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
+                asm_instruction->operands[regm_index].size = 16;
+            }
+            
+        }break;
+        
+        case MEMONIC_vpcmpeqb:
+        case MEMONIC_vpcmpeqw:
+        case MEMONIC_vpshufb:
+        case MEMONIC_vshufps: case MEMONIC_vblendps: case MEMONIC_vperm2f128: // 'op ymm1, ymm2, ymm3/m256, imm8' or 'op xmm1, xmm2, xmm3/m128, imm8'
+        case MEMONIC_vpminub: case MEMONIC_vpxor:
+        case MEMONIC_vmulps:  case MEMONIC_vaddps:{ // 'op ymm1, ymm2, ymm3/m256' or 'op xmm1, xmm2, xmm3/m128'
+            if(asm_instruction->operands[2].size == 0){ // @cleanup: regm_index ? 
+                u32 size = (memonic == MEMONIC_movsd) ? 8 : 4;
+                asm_instruction->operands[regm_index].size = size;
+            }
+            
+            smm size = asm_instruction->operands[0].size;
+            if(size != asm_instruction->operands[1].size || size != asm_instruction->operands[2].size){
+                return (char *)push_format_string(&context->scratch, "Operand size mismatch. %lld vs %lld vs %lld.", size, asm_instruction->operands[1].size, asm_instruction->operands[2].size).data;
+            }
+        }break;
+        
+        // 'vop xmm, xmm/m' or 'vop ymm, ymm/m'
+        case MEMONIC_vptest:{
+            if(asm_instruction->operands[1].size == 0){
+                asm_instruction->operands[1].size = asm_instruction->operands[0].size;
+            }
+            
+            if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
+                return (char *)push_format_string(&context->scratch, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size).data;
+            }
+        }break;
+        
+        case MEMONIC_crc32:{
+            if(asm_instruction->operands[0].size == 0){
+                asm_instruction->operands[0].size = asm_instruction->operands[1].size == 8 ? 8 : 4;
+            }
+            // we allow any size on the lhs.
+        }break;
+        
+        case MEMONIC_vinsertf128:{
+            if(asm_instruction->operands[2].size == 0){
+                asm_instruction->operands[2].size = 16;
+            }
+        }break;
+        
+        case MEMONIC_vmovss:{ // @incomplete: this has weird forms we only support one right now
+            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
+                asm_instruction->operands[regm_index].size = 4;
+            }
+        }break;
+        
+        case MEMONIC_return_from_inline_asm_function:{
+            if(!context->in_inline_asm_function){
+                return "Cannot use hlc-specific memonic 'return' outside of a '__declspec(inline_asm)'-function.";
+            }
+            
+            //
+            // make sure the return type matches.
+            //
+            struct ast_function *function = context->current_function;
+            struct ast_type *return_type = function->type->return_type;
+            
+            if(return_type == &globals.typedef_void){
+                return "A function of type 'void' cannot return a value.";
+            }
+            
+            if(asm_instruction->operands[0].size != return_type->size){
+                if(get_register_kind_for_type(return_type) == REGISTER_KIND_xmm && asm_instruction->operands[0].register_kind_when_loaded){
+                    //
+                    // This is fine, we allow you to return any 'xmm' thing for any other.
+                    //
+                    
+                }else{
+                    return (char *)push_format_string(&context->scratch, "Returning a value of size %lld, but the return type is on size %lld.", asm_instruction->operands[0].size, return_type->size).data;
+                }
+            }
+            
+            if(!peek_token(context, TOKEN_closed_curly)){
+                // Error: This error sort of sucks, when you put like a ; at the end of it out of habit.
+                return "The hlc-specific 'return'-memonic has to be the last memonic in the function.";
+            }
+        }break;
+        
+        case MEMONIC_none:{
+            return "Unknown memonic in __asm__-block.";
+        }break;
+        
+        default: break;
+    }
+    
+    // Make sure the instruction has its size inferred.
+    assert(regm_index == -1 || asm_instruction->operands[regm_index].size != 0);
+    
+    if(asm_instruction){
+        asm_instruction->prefixes = context->current_asm_flags;
+    }
+    
+    return null;
 }
 
 func struct asm_instruction *parse_asm_instruction(struct context *context){
@@ -923,590 +1540,19 @@ func struct asm_instruction *parse_asm_instruction(struct context *context){
         struct token *operand_token = get_current_token(context);
         struct asm_operand operand = parse_asm_operand(context);
         
-        switch(operand.kind){
-            case ASM_ARG_invalid: return null;
-            case ASM_ARG_register:{
-                if(operand.register_kind_when_loaded == REGISTER_KIND_xmm){
-                    // xmm
-                    b32 should_error = false;
-                    if(operand.size == 16 && !(ASM_OP_KIND_xmm & desired_operand_flags)) should_error = true;
-                    if(operand.size == 32 && !(ASM_OP_KIND_ymm & desired_operand_flags)) should_error = true;
-                    
-                    if(should_error){
-                        report_error(context, operand_token, "Operand %u of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
-                    }
-                }else if(operand.register_kind_when_loaded == REGISTER_KIND_gpr){
-                    // gpr
-                    b32 should_error = false;
-                    if(operand.size == 1 && !(ASM_OP_KIND_reg8  & desired_operand_flags)) should_error = true;
-                    if(operand.size == 2 && !(ASM_OP_KIND_reg16 & desired_operand_flags)) should_error = true;
-                    if(operand.size == 4 && !(ASM_OP_KIND_reg32 & desired_operand_flags)) should_error = true;
-                    if(operand.size == 8 && !(ASM_OP_KIND_reg64 & desired_operand_flags)) should_error = true;
-                    
-                    if(should_error){
-                        report_error(context, operand_token, "Operand %u of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
-                    }
-                }else{
-                    invalid_code_path;
-                }
-            }break;
-            case ASM_ARG_declaration_dereference:
-            case ASM_ARG_memory_operand:{
-                b32 should_error = false;
-                
-                switch(operand.size){
-                    case 1:  should_error = !(desired_operand_flags & ASM_OP_KIND_mem8);   break;
-                    case 2:  should_error = !(desired_operand_flags & ASM_OP_KIND_mem16);  break;
-                    case 4:  should_error = !(desired_operand_flags & ASM_OP_KIND_mem32);  break;
-                    case 8:  should_error = !(desired_operand_flags & ASM_OP_KIND_mem64);  break;
-                    case 16: should_error = !(desired_operand_flags & ASM_OP_KIND_mem128); break;
-                    case 32: should_error = !(desired_operand_flags & ASM_OP_KIND_mem256); break;
-                    
-                    case 0:{
-                        //
-                        // we are supposed to infer the operand size!
-                        //
-                        u32 memory_flags = desired_operand_flags & ASM_OP_KIND_any_mem;
-                        
-                        if(!memory_flags){
-                            report_error(context, operand_token, "Operand %u of '%.*s' cannot be a memory operand.", operand_index + 1, token->size, token->data);
-                        }
-                        
-                        if(__popcnt(memory_flags) == 1){
-                            //
-                            // infer the operand size
-                            //
-                            
-                            if(memory_flags & ASM_OP_KIND_mem8)   operand.size = 1;
-                            if(memory_flags & ASM_OP_KIND_mem16)  operand.size = 2;
-                            if(memory_flags & ASM_OP_KIND_mem32)  operand.size = 4;
-                            if(memory_flags & ASM_OP_KIND_mem64)  operand.size = 8;
-                            if(memory_flags & ASM_OP_KIND_mem128) operand.size = 16;
-                            if(memory_flags & ASM_OP_KIND_mem256) operand.size = 32;
-                        }else{
-                            //
-                            // This will be handled explicitly below (in the big switch).
-                            //
-                        }
-                    }break;
-                    invalid_default_case();
-                }
-                
-                if(should_error){
-                    report_error(context, operand_token, "Operand %u of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
-                }
-            }break;
-            case ASM_ARG_float_literal:
-            case ASM_ARG_declaration_reference:{
-                b32 should_error = false;
-                
-                struct ast_type *type = operand.type;
-                if(operand.is_inline_asm_function_argument && type->kind == AST_integer_type){
-                    
-                    if((desired_operand_flags & ASM_OP_KIND_any_imm) == (desired_operand_flags & (ASM_OP_KIND_any_regm | ASM_OP_KIND_any_imm))){
-                        // If the operand needs to be an integer and we supplied a 'inline_asm_argument'
-                        
-                        operand.is_inline_asm_function_argument_that_needs_to_be_an_integer = true;
-                        break;
-                    }
-                    
-                    if(desired_operand_flags & ASM_OP_KIND_any_imm){
-                        operand.is_inline_asm_function_argument_that_can_be_integer = true;
-                        break;
-                    }
-                }
-                
-                if(type->kind == AST_integer_type){
-                    
-                    if(type->size == 1 && !(ASM_OP_KIND_regm8  & desired_operand_flags)) should_error = true;
-                    if(type->size == 2 && !(ASM_OP_KIND_regm16 & desired_operand_flags)) should_error = true;
-                    if(type->size == 4 && !(ASM_OP_KIND_regm32 & desired_operand_flags)) should_error = true;
-                    if(type->size == 8 && !(ASM_OP_KIND_regm64 & desired_operand_flags)) should_error = true;
-                }else if(type->kind == AST_float_type){
-                    
-                    if(operand.size ==  4 && !(ASM_OP_KIND_xmmm32 & desired_operand_flags)) should_error = true;
-                    if(operand.size ==  8 && !(ASM_OP_KIND_xmmm64 & desired_operand_flags)) should_error = true;
-                }else if(type->kind == AST_pointer_type){
-                    
-                    if(type->size == 8 && !(ASM_OP_KIND_regm64 & desired_operand_flags)) should_error = true;
-                }else if(type->kind == AST_vector_type){
-                    
-                    if(operand.size == 16 && !(ASM_OP_KIND_xmmm128 & desired_operand_flags)) should_error = true;
-                    if(operand.size == 32 && !(ASM_OP_KIND_ymmm256 & desired_operand_flags)) should_error = true;
-                }
-                
-                if(should_error){
-                    report_error(context, operand_token, "Operand %u of '%.*s' is invalid.", operand_index + 1, token->size, token->data);
-                }
-            }break;
-            case ASM_ARG_immediate:{
-                // @cleanup: this should warn if the immediate does not fit. This needs to know both signness things.
-                
-                if(desired_operand_flags & ASM_OP_KIND_imm64){
-                    // we are good, any integer literal fits in a 64 bit
-                }else if(desired_operand_flags & ASM_OP_KIND_imm32){
-                    
-                }else if(desired_operand_flags & ASM_OP_KIND_imm16){
-                    
-                }else if(desired_operand_flags & ASM_OP_KIND_imm8){
-                    operand.size = 1;
-                }else{
-                    report_error(context, operand_token, "Operand %u of '%.*s' cannot be an integer.", operand_index + 1, token->size, token->data);
-                }
-            }break;
-            
-            case ASM_ARG_label:{
-                if(!(desired_operand_flags & ASM_OP_KIND_label)){
-                    report_error(context, operand_token, "Operand %u of '%.*s' cannot be a label.", operand_index + 1, token->size, token->data);
-                }
-            }break;
-            
-            invalid_default_case();
+        char *error = check_asm_operand(&operand, desired_operand_flags);
+        if(error){
+            report_error(context, operand_token, "Operand %u of '%.*s' %s", operand_index + 1, token->size, token->data, error);
         }
         
         asm_instruction->operands[operand_index] = operand;
     }
     
-    smm regm_index = -1;
-    for(smm operand_index = 0; operand_index < amount_of_operands; operand_index++){
-        if(asm_instruction->operands[operand_index].size == 0){
-            assert(asm_instruction->operands[operand_index].kind == ASM_ARG_memory_operand || /*[void_ptr]*/asm_instruction->operands[operand_index].kind == ASM_ARG_declaration_dereference);
-        }
-        
-        if(asm_instruction->operands[operand_index].kind == ASM_ARG_memory_operand || asm_instruction->operands[operand_index].kind == ASM_ARG_declaration_dereference){
-            if(regm_index == -1){
-                regm_index = operand_index;
-            }else{
-                report_error(context, token, "x64-instructions can only have one memory operand.");
-            }
-        }
+    char *error = check_asm_instruction(context, asm_instruction);
+    if(error){
+        report_error(context, token, "%s", error);
     }
     
-    switch(memonic){
-        
-        //
-        // Two operand instructions that either have matching operand sizes, or an immediate as the second one.
-        //
-        
-        case MEMONIC_movnti:
-        case MEMONIC_cmovo:  case MEMONIC_cmovc:  case MEMONIC_cmovz:  case MEMONIC_cmovbe:  case MEMONIC_cmovs:  case MEMONIC_cmovp:  case MEMONIC_cmovl:  case MEMONIC_cmovle:
-        case MEMONIC_cmovno: case MEMONIC_cmovnc: case MEMONIC_cmovnz: case MEMONIC_cmovnbe: case MEMONIC_cmovns: case MEMONIC_cmovnp: case MEMONIC_cmovnl: case MEMONIC_cmovnle:
-        case MEMONIC_mov:
-        case MEMONIC_xchg: // 'op reg/m, reg' or 'op reg, reg/m'
-        case MEMONIC_xadd: case MEMONIC_cmpxchg: // 'op reg/m, reg'
-        case MEMONIC_add:  case MEMONIC_or: // 'op regm, imm8' or 'op regm, imm' or 'op regm, reg' or 'op reg, regm'
-        case MEMONIC_adc:  case MEMONIC_sbb:
-        case MEMONIC_and:  case MEMONIC_sub:
-        case MEMONIC_xor:  case MEMONIC_cmp:
-        case MEMONIC_bt:   case MEMONIC_bts: case MEMONIC_btr: case MEMONIC_btc: // 'op regm, reg' or 'op regm, imm8'
-        case MEMONIC_bsf:  case MEMONIC_bsr: // 'op reg, regm'
-        case MEMONIC_popcnt:{                // 'op reg, regm'
-            
-            //
-            // Operands have already been _base-checked_ thus we can more or less throw any two operand,
-            // gpr-operation in here.
-            //
-            
-            if(asm_instruction->operands[1].kind == ASM_ARG_immediate){
-                if(asm_instruction->operands[0].size == 0){
-                    report_error(context, token, "Cannot infer operand size for memory operand.");
-                }
-                
-                if(asm_instruction->operands[1].immediate < 128 || (s64)asm_instruction->operands[1].immediate > -127){
-                    asm_instruction->operands[1].size = 1;
-                }else{
-                    
-                    // size 1 can be infered above
-                    if(asm_instruction->operands[0].size == 2) asm_instruction->operands[1].size = 2;
-                    if(asm_instruction->operands[0].size == 4) asm_instruction->operands[1].size = 4;
-                }
-                
-                // this is fine for now @cleanup: report warning if the immediate does not fit or if signness is not right
-                break;
-            }
-            
-            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
-                smm other_index = (regm_index + 1) & 1;
-                asm_instruction->operands[regm_index].size = asm_instruction->operands[other_index].size;
-            }
-            
-            if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
-                // @cleanup: should we try to perform a 'is_inline_asm_function_argument_that_needs_to_be_an_integer'?
-                report_error(context, token, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size);
-            }
-        }break;
-        
-        case MEMONIC_rol: case MEMONIC_ror: // 'op regm, imm8' or 'op regm, cl'
-        case MEMONIC_rcl: case MEMONIC_rcr:
-        case MEMONIC_shl: case MEMONIC_shr:
-        case MEMONIC_sal: case MEMONIC_sar:{
-            if(asm_instruction->operands[1].kind == ASM_ARG_register && asm_instruction->operands[1].reg != ASM_REGISTER_rcx){
-                report_error(context, token, "The right side needs to be either 'cl' or an 8-bit integer.");
-            }
-        }break;
-        
-        // no need to do anything, can only have xmm register operands
-        case MEMONIC_movlhps: case MEMONIC_movhlps: 
-        
-        //
-        // Zero Operand Memonics
-        //
-        case MEMONIC_pause: case MEMONIC_sfence: case MEMONIC_lfence: case MEMONIC_mfence:
-        case MEMONIC_int:   case MEMONIC_int3: case MEMONIC_ret: case MEMONIC_int1: case MEMONIC_ud2:
-        case MEMONIC_syscall: case MEMONIC_cpuid: case MEMONIC_xgetbv:
-        case MEMONIC_rdtsc: case MEMONIC_rdtscp:
-        case MEMONIC_movsb: case MEMONIC_movsw:                     case MEMONIC_movsq:
-        case MEMONIC_stosb: case MEMONIC_stosw: case MEMONIC_stosd: case MEMONIC_stosq:{
-            // nothing to do here!
-        }break;
-        
-        case MEMONIC_seto:  case MEMONIC_setno:
-        case MEMONIC_setc:  case MEMONIC_setnc:
-        case MEMONIC_setz:  case MEMONIC_setnz:
-        case MEMONIC_setbe: case MEMONIC_setnbe:
-        case MEMONIC_sets:  case MEMONIC_setns:
-        case MEMONIC_setp:  case MEMONIC_setnp:
-        case MEMONIC_setl:  case MEMONIC_setnl:
-        case MEMONIC_setle: case MEMONIC_setnle:{
-            if(asm_instruction->operands[0].size == 0) asm_instruction->operands[0].size = 1;
-        }break;
-        
-        
-        case MEMONIC_neg: 
-        case MEMONIC_inc: case MEMONIC_dec:
-        case MEMONIC_movzx: case MEMONIC_movsx: case MEMONIC_movsxd:{
-            if(asm_instruction->operands[0].size == 0){
-                report_error(context, token, "Cannot infer operand size for memory operand.");
-            }
-        }break;
-        
-        case MEMONIC_cvtsi2ss: case MEMONIC_cvtsi2sd:{
-            if(asm_instruction->operands[1].size == 0){ 
-                report_error(context, token, "Cannot infer operand size for memory operand.");
-            }
-        }break;
-        
-        case MEMONIC_lea: case MEMONIC_clflush:{
-            asm_instruction->operands[regm_index].size = 4;
-        }break;
-        
-        // no need to do anything, we made sure that these only take memory addresses and the size does not matter to us
-         case MEMONIC_prefetch:{
-            if(asm_instruction->operands[1].size == 0){
-                asm_instruction->operands[1].size = 4;
-            }
-        }break;
-        
-        case MEMONIC_ldmxcsr: case MEMONIC_stmxcsr:        
-        case MEMONIC_cmpxchg16b: case MEMONIC_cmpxchg8b:{
-            if(asm_instruction->operands[0].size == 0){
-                asm_instruction->operands[0].size = 4;
-            }
-        }break;
-        
-        //
-        // SSE
-        //
-        case MEMONIC_vmovd: case MEMONIC_vmovq:
-        case MEMONIC_movq: case MEMONIC_movd:{
-            if(asm_instruction->operands[0].register_kind_when_loaded == asm_instruction->operands[1].register_kind_when_loaded){
-                if(asm_instruction->operands[0].register_kind_when_loaded == REGISTER_KIND_gpr){
-                    report_error(context, token, "One operand needs to be a XMM register.");
-                }else{
-                    report_error(context, token, "One operand needs to be a general purpose register or a memory location.");
-                }
-            }
-            
-            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
-                if(memonic == MEMONIC_movq){
-                    asm_instruction->operands[regm_index].size = 8;
-                }else{
-                    asm_instruction->operands[regm_index].size = 4;
-                }
-            }
-        }break;
-        
-        case MEMONIC_aesdec: case MEMONIC_aesenc: case MEMONIC_aesdeclast:
-        case MEMONIC_aesenclast: case MEMONIC_aesimc:
-        case MEMONIC_pshufb:
-        case MEMONIC_movntps: // op xmm/m, xmm
-        case MEMONIC_movntpd:
-        case MEMONIC_movntdq:
-        case MEMONIC_movups: case MEMONIC_movaps: // "op xmm/m, xmm" or "op xmm, xmm/m"
-        case MEMONIC_movupd: case MEMONIC_movapd:
-        case MEMONIC_movdqa: case MEMONIC_movdqu:{
-            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
-                asm_instruction->operands[regm_index].size = 16;
-            }
-        }break;
-        
-        case MEMONIC_vpmovmskb:
-        case MEMONIC_pmovmskb:
-        case MEMONIC_movmskps: case MEMONIC_movmskpd:{
-            // we allow you to write 'pmovmskb rax, xmm0' even tho it only takes 'eax'.
-            asm_instruction->operands[0].size = 4;
-        }break;
-        
-        // op xmm, xmm/m32
-        case MEMONIC_addss: case MEMONIC_subss:  case MEMONIC_mulss: case MEMONIC_divss:
-        case MEMONIC_rcpss: case MEMONIC_sqrtss: case MEMONIC_maxss: case MEMONIC_minss:
-        case MEMONIC_rsqrtss: case MEMONIC_comiss: case MEMONIC_ucomiss:
-        
-        case MEMONIC_cvtss2sd: case MEMONIC_cvtss2si: case MEMONIC_cvttss2si:
-        case MEMONIC_cmpeqss:  case MEMONIC_cmpltss:  case MEMONIC_cmpless:  case MEMONIC_cmpunordss:
-        case MEMONIC_cmpneqss: case MEMONIC_cmpnltss: case MEMONIC_cmpnless: case MEMONIC_cmpordss:{
-            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 4;
-        }break;
-        
-        case MEMONIC_cvtsd2ss: case MEMONIC_cvtsd2si: case MEMONIC_cvttsd2si:
-        case MEMONIC_addsd:    case MEMONIC_subsd:    case MEMONIC_mulsd: case MEMONIC_divsd:
-        case MEMONIC_sqrtsd:   case MEMONIC_maxsd:    case MEMONIC_minsd:
-        case MEMONIC_comisd:   case MEMONIC_ucomisd:
-        
-        case MEMONIC_cmpeqsd:  case MEMONIC_cmpltsd:  case MEMONIC_cmplesd:  case MEMONIC_cmpunordsd:
-        case MEMONIC_cmpneqsd: case MEMONIC_cmpnltsd: case MEMONIC_cmpnlesd: case MEMONIC_cmpordsd:
-        {
-            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 8;
-        }break;
-        
-        case MEMONIC_movlpd: case MEMONIC_movlps:
-        case MEMONIC_movhpd: case MEMONIC_movhps:{
-            if(asm_instruction->operands[0].size == 0) asm_instruction->operands[0].size = 8;
-            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 8;
-            
-            if(regm_index == -1){
-                report_error(context, token, "One operand of '%.*s' has to be a memory location.", token->size, token->data);
-            }
-        }break;
-        
-        // op xmm, xmm/m
-        
-        case MEMONIC_cvtdq2ps:  case MEMONIC_cvtps2dq: 
-        case MEMONIC_cvtdq2pd:  case MEMONIC_cvtpd2dq:
-        
-        case MEMONIC_cvttps2dq: case MEMONIC_cvttpd2dq:
-        
-        case MEMONIC_cvtpd2ps: case MEMONIC_cvtps2pd:
-        
-        case MEMONIC_unpckhps: case MEMONIC_unpckhpd:
-        case MEMONIC_unpcklps: case MEMONIC_unpcklpd:
-        
-        case MEMONIC_pcmpgtb: case MEMONIC_pcmpgtw: case MEMONIC_pcmpgtd:
-        // case MEMONIC_pcmpltb: case MEMONIC_pcmpltw: case MEMONIC_pcmpltd:
-        
-        case MEMONIC_pmaddwd:   case MEMONIC_pmullw:
-        case MEMONIC_paddb:     case MEMONIC_paddw:     case MEMONIC_paddd:     case MEMONIC_paddq:
-        case MEMONIC_psubb:     case MEMONIC_psubw:     case MEMONIC_psubd:     case MEMONIC_psubq:
-        case MEMONIC_paddsb:    case MEMONIC_paddsw:
-        case MEMONIC_psubsb:    case MEMONIC_psubsw:
-        case MEMONIC_paddusb:   case MEMONIC_paddusw:
-        case MEMONIC_psubusb:   case MEMONIC_psubusw:
-        case MEMONIC_pavgb:     case MEMONIC_pavgw:
-        
-        case MEMONIC_punpcklbw: case MEMONIC_punpcklwd: case MEMONIC_punpckldq: case MEMONIC_punpcklqdq:
-        case MEMONIC_punpckhbw: case MEMONIC_punpckhwd: case MEMONIC_punpckhdq: case MEMONIC_punpckhqdq:
-        case MEMONIC_packssdw:  case MEMONIC_packsswb:  case MEMONIC_packuswb:
-        case MEMONIC_pxor:      case MEMONIC_por:       case MEMONIC_pand:      case MEMONIC_pandn:
-        
-        case MEMONIC_addps: case MEMONIC_subps:  case MEMONIC_mulps: case MEMONIC_divps:
-        case MEMONIC_rcpps: case MEMONIC_sqrtps: case MEMONIC_maxps: case MEMONIC_minps:
-        case MEMONIC_rsqrtps:
-        case MEMONIC_haddps:
-        
-        case MEMONIC_andps: case MEMONIC_andnps: case MEMONIC_xorps: case MEMONIC_orps:
-        
-        case MEMONIC_addpd: case MEMONIC_subpd:  case MEMONIC_mulpd: case MEMONIC_divpd:
-        case MEMONIC_sqrtpd: case MEMONIC_maxpd: case MEMONIC_minpd:
-        case MEMONIC_haddpd:
-        
-        case MEMONIC_cmpeqps:  case MEMONIC_cmpltps:  case MEMONIC_cmpleps:  case MEMONIC_cmpunordps:
-        case MEMONIC_cmpneqps: case MEMONIC_cmpnltps: case MEMONIC_cmpnleps: case MEMONIC_cmpordps:
-        
-        case MEMONIC_cmpeqpd:  case MEMONIC_cmpltpd:  case MEMONIC_cmplepd:  case MEMONIC_cmpunordpd:
-        case MEMONIC_cmpneqpd: case MEMONIC_cmpnltpd: case MEMONIC_cmpnlepd: case MEMONIC_cmpordpd:
-        
-        case MEMONIC_andpd: case MEMONIC_andnpd: case MEMONIC_xorpd:  case MEMONIC_orpd:
-        
-        case MEMONIC_pcmpeqb:   case MEMONIC_pcmpeqw:   case MEMONIC_pcmpeqd:
-        case MEMONIC_pminub: case MEMONIC_pminuw:
-        case MEMONIC_pmaxub: case MEMONIC_pmaxuw:
-        case MEMONIC_pminsb: case MEMONIC_pminsw:
-        case MEMONIC_pmaxsb: case MEMONIC_pmaxsw:
-        
-        case MEMONIC_ptest:
-        
-        // op xmm, xmm/m, imm8
-        case MEMONIC_palignr:
-        case MEMONIC_pcmpistri:
-        case MEMONIC_pcmpestri:
-        case MEMONIC_pshufd: case MEMONIC_pshufhw: case MEMONIC_pshuflw: case MEMONIC_shufps: case MEMONIC_shufpd:{
-            if(asm_instruction->operands[1].size == 0){
-                asm_instruction->operands[1].size = 16;
-            }
-            asm_instruction->operands[2].size = 1;
-        }break;
-        
-        // 'op xmm, imm' or 'op xmm, xmm/m'
-        case MEMONIC_psllw: case MEMONIC_pslld: case MEMONIC_psllq: case MEMONIC_pslldq:
-        case MEMONIC_psrlw: case MEMONIC_psrld: case MEMONIC_psrlq: case MEMONIC_psrldq:
-        case MEMONIC_psraw: case MEMONIC_psrad:{
-            if(asm_instruction->operands[1].size == 0){
-                asm_instruction->operands[1].size = 16;
-            }
-        }break;
-        
-        case MEMONIC_psraq:{
-            report_error(context, token, "Instruction 'psraq' does not exist, consider using 'vpsraq' instead (requires AVX512F).");
-        }break;
-        
-        // 'op xmm, xmm/m32' or 'op xmm, xmm/m64'
-        case MEMONIC_movsd: case MEMONIC_movss:{
-            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
-                u32 size = (memonic == MEMONIC_movsd) ? 8 : 4;
-                asm_instruction->operands[regm_index].size = size;
-            }
-        }break;
-        
-        case MEMONIC_pextrb:{
-            asm_instruction->operands[0].size = 1; // we allow eax instead of al, as it zero extends anyway
-        }break;
-        case MEMONIC_pextrw:{
-            asm_instruction->operands[0].size = 2; // we allow eax instead of ax, as it zero extends anyway
-        }break;
-        case MEMONIC_pextrd:{
-            if(asm_instruction->operands[0].size == 0) asm_instruction->operands[0].size = 4;
-        }break;
-        case MEMONIC_pextrq:{
-            if(asm_instruction->operands[0].size == 0) asm_instruction->operands[0].size = 8;
-        }break;
-        
-        case MEMONIC_pinsrb:{
-            asm_instruction->operands[1].size = 1; // we allow size reg32, because this instruction is r32/m8
-        }break;
-        case MEMONIC_pinsrw:{
-            asm_instruction->operands[1].size = 2; // we allow size reg32, because this instruction is r32/m8
-        }break;
-        case MEMONIC_pinsrd:{
-            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 4;
-        }break;
-        case MEMONIC_pinsrq:{
-            if(asm_instruction->operands[1].size == 0) asm_instruction->operands[1].size = 8;
-        }break;
-        
-        
-        // 'vmovups xmm/m, xmm' or 'vmovups xmm, xmm/m' 'vmovups ymm/m, ymm' or 'vmovups ymm, ymm/m'
-        case MEMONIC_vmovdqu:
-        case MEMONIC_vmovdqa:
-        case MEMONIC_vmovups:{
-            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
-                smm other_index = (regm_index + 1) & 1;
-                asm_instruction->operands[regm_index].size = asm_instruction->operands[other_index].size;
-            }
-            
-            if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
-                report_error(context, token, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size);
-            }
-        }break;
-        
-        case MEMONIC_vpbroadcastw:{
-            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
-                asm_instruction->operands[regm_index].size = 16;
-            }
-            
-        }break;
-        
-        case MEMONIC_vpcmpeqb:
-        case MEMONIC_vpcmpeqw:
-        case MEMONIC_vpshufb:
-        case MEMONIC_vshufps: case MEMONIC_vblendps: case MEMONIC_vperm2f128: // 'op ymm1, ymm2, ymm3/m256, imm8' or 'op xmm1, xmm2, xmm3/m128, imm8'
-        case MEMONIC_vpminub: case MEMONIC_vpxor:
-        case MEMONIC_vmulps:  case MEMONIC_vaddps:{ // 'op ymm1, ymm2, ymm3/m256' or 'op xmm1, xmm2, xmm3/m128'
-            if(asm_instruction->operands[2].size == 0){ // @cleanup: regm_index ? 
-                u32 size = (memonic == MEMONIC_movsd) ? 8 : 4;
-                asm_instruction->operands[regm_index].size = size;
-            }
-            
-            smm size = asm_instruction->operands[0].size;
-            if(size != asm_instruction->operands[1].size || size != asm_instruction->operands[2].size){
-                report_error(context, token, "Operand size mismatch. %lld vs %lld vs %lld.", size, asm_instruction->operands[1].size, asm_instruction->operands[2].size);
-            }
-        }break;
-        
-        // 'vop xmm, xmm/m' or 'vop ymm, ymm/m'
-        case MEMONIC_vptest:{
-            if(asm_instruction->operands[1].size == 0){
-                asm_instruction->operands[1].size = asm_instruction->operands[0].size;
-            }
-            
-            if(asm_instruction->operands[0].size != asm_instruction->operands[1].size){
-                report_error(context, token, "Operand size mismatch. %lld vs %lld.", asm_instruction->operands[0].size, asm_instruction->operands[1].size);
-            }
-        }break;
-        
-        case MEMONIC_crc32:{
-            if(asm_instruction->operands[0].size == 0){
-                asm_instruction->operands[0].size = asm_instruction->operands[1].size == 8 ? 8 : 4;
-            }
-            // we allow any size on the lhs.
-        }break;
-        
-        case MEMONIC_vinsertf128:{
-            if(asm_instruction->operands[2].size == 0){
-                asm_instruction->operands[2].size = 16;
-            }
-        }break;
-        
-        case MEMONIC_vmovss:{ // @incomplete: this has weird forms we only support one right now
-            if(regm_index != -1 && asm_instruction->operands[regm_index].size == 0){
-                asm_instruction->operands[regm_index].size = 4;
-            }
-        }break;
-        
-        case MEMONIC_return_from_inline_asm_function:{
-            if(!context->in_inline_asm_function){
-                report_error(context, token, "Cannot use hlc-specific memonic 'return' outside of a '__declspec(inline_asm)'-function.");
-            }
-            
-            //
-            // make sure the return type matches.
-            //
-            struct ast_function *function = context->current_function;
-            struct ast_type *return_type = function->type->return_type;
-            
-            if(return_type == &globals.typedef_void){
-                report_error(context, token, "A function of type 'void' cannot return a value.");
-            }
-            
-            if(asm_instruction->operands[0].size != return_type->size){
-                if(get_register_kind_for_type(return_type) == REGISTER_KIND_xmm && asm_instruction->operands[0].register_kind_when_loaded){
-                    //
-                    // This is fine, we allow you to return any 'xmm' thing for any other.
-                    //
-                    
-                }else{
-                    report_error(context, token, "Returning a value of size %lld, but the return type is on size %lld.", asm_instruction->operands[0].size, return_type->size);
-                }
-            }
-            
-            if(!peek_token(context, TOKEN_closed_curly)){
-                // Error: This error sort of sucks, when you put like a ; at the end of it out of habit.
-                report_error(context, token, "The hlc-specific 'return'-memonic has to be the last memonic in the function.");
-            }
-        }break;
-        
-        case MEMONIC_none:{
-            report_error(context, token, "Unknown memonic in __asm__-block.");
-        }break;
-        
-        default: break;
-    }
-    
-    // Make sure the instruction has its size inferred.
-    assert(regm_index == -1 || asm_instruction->operands[regm_index].size != 0);
-    
-    if(asm_instruction){
-        asm_instruction->prefixes = context->current_asm_flags;
-    }
     return asm_instruction;
 }
 
@@ -1543,4 +1589,721 @@ func void parse_asm_block(struct context *context, struct ir_asm_block *asm_bloc
     if(ir_skip){
         ir_skip->size_to_skip = (u32)(arena_current(&context->ir_arena) - (u8*)ir_skip);
     }
+}
+
+//_____________________________________________________________________________________________________________________
+// GNU-style assembly stuff.
+
+struct gnu_asm_operand{
+    struct gnu_asm_operand *next;
+    int is_input;
+    int is_memory;
+    enum register_encoding named_register;
+    struct string asm_symbolic_name;
+    struct string constraints;
+    struct ast_declaration *temporary_declaration;
+    struct ast_declaration *write_back_declaration;
+};
+
+struct gnu_asm_operand_list{
+    struct gnu_asm_operand *first;
+    struct gnu_asm_operand *last;
+};
+
+func void gnu_asm_parse_single_operand(struct context *context, struct gnu_asm_operand_list operands, struct asm_operand *asm_operand, char **error, struct token *error_token){
+    
+    struct gnu_asm_operand *found = null;
+    
+    if(peek_token_eat_raw(context, TOKEN_mod)){
+        // 
+        // Register
+        // 
+        struct token token = next_token_raw(context);
+        *asm_operand = asm_maybe_parse_register(token_get_string(&token));
+        
+        if(token.type != TOKEN_identifier || asm_operand->kind == ASM_ARG_invalid){
+            *error = "Expected a register after '%%'. Got: '";
+            *error_token = token;
+            return;
+        }
+        
+        if(peek_token_eat_raw(context, TOKEN_colon)){
+            // %fs:<immediate>
+            struct token immediate = next_token_raw(context);
+            if(immediate.type != TOKEN_integer_literal){
+                *error = "Expected an integer after '%<reg>:'. Got: '";
+                *error_token = immediate;
+                return;
+            }
+        }
+        
+        return;
+    }else if(peek_token_eat_raw(context, TOKEN_open_index)){
+        // Asm symbolic name.
+        
+        struct token identifier = next_token_raw(context);
+        if(identifier.type != TOKEN_identifier){
+            *error = "Expected an identifier after '%['. Got: '";
+            *error_token = identifier;
+            return;
+        }
+        
+        struct token token = next_token_raw(context);
+        if(token.type != TOKEN_closed_index){
+            *error = "Expected ']' after named asm operand: '";
+            *error_token = token;
+            return;
+        }
+        
+        for(struct gnu_asm_operand *operand = operands.first; operand; operand = operand->next){
+            if(string_match(operand->asm_symbolic_name, token_get_string(&identifier))){
+                found = operand;
+                break;
+            }
+        }
+        
+        if(!found){
+            *error = "Could not find named asm operand '";
+            *error_token = identifier;
+            return;
+        }
+    }else{
+        // Output/Input name.
+        
+        struct token token = next_token_raw(context);
+        struct string identifier = token_get_string(&token);
+        
+        int size_modifier = 0;
+        if(identifier.data[0] == 'b' || identifier.data[0] == 'w' || identifier.data[0] == 'k' || identifier.data[0] == 'q'){
+            size_modifier = identifier.data[0];
+            identifier.data += 1;
+            identifier.size -= 1;
+        }
+        
+        int success = 1;
+        string_to_u64(identifier, &success);
+        if(!success){
+            *error = "Expected '%', '[' or a numbered argument to follow '%'. Got: '";
+            *error_token = next_token_raw(context);
+            return;
+        }
+        
+        for(struct gnu_asm_operand *operand = operands.first; operand; operand = operand->next){
+            if(string_match(operand->asm_symbolic_name, identifier)){
+                found = operand;
+                break;
+            }
+        }
+        
+        if(!found){
+            *error = "Could not find asm operand '%";
+            *error_token = token;
+            return;
+        }
+    }
+    
+    if(found->named_register != -1){
+        asm_operand->kind = ASM_ARG_register;
+        asm_operand->reg  = found->named_register;
+        
+    }else{
+        asm_operand->kind = found->is_memory ? ASM_ARG_declaration_dereference : ASM_ARG_declaration_reference;
+        asm_operand->declaration = found->temporary_declaration;
+    }
+    
+    struct ast_type *type = found->temporary_declaration->type;
+    if(found->is_memory && type->kind == AST_pointer_type){
+        type = ((struct ast_pointer_type *)type)->pointer_to;
+    }
+    
+    asm_operand->type = type;
+    asm_operand->size = type->size;
+    asm_operand->register_kind_when_loaded = get_register_kind_for_type(type);
+}
+
+void gnu_parse_inline_asm_block(struct context *context){
+    struct token *open = next_token(context);
+    
+    // GNU-style extended inline assembly, for example:
+    // 
+    //     __asm__ ("" : : "r"(ptr));
+    // 
+    
+    // 
+    // Syntax:
+    //    
+    //    asm asm-qualifiers ( AssemblerTemplate : OutputOperands [: InputOperands [: Clobers]] )
+    // 
+    // AssemblerTemplate:
+    //     "This is a literal string that is the template for the assembler code.
+    //      It is a combination of fixed text and tokens that refer to the input, output and goto parameters."
+    //     
+    // OutputOperands:
+    //     "A comma-separated list describing the C expressions modified by the instructions in the AssemblerTemplate.
+    //      An empty list is permitted."
+    // 
+    // InputOperands:
+    //     "A comma-separated list describing C expressions read by the instruction in the AssemblerTemplate. 
+    //      An empty list is permitted."
+    // 
+    // Clobbers:
+    //     "A comma-separted list of registers or other values changed by the AssemblerTemplate, beyond those listed as outputs.
+    //      An empty list is permitted."
+    //      
+    // GotoLabels:
+    //     "When you are using the goto form of asm, this section contains the list of all C labels to which the code
+    //      in the AssemblerTemplate may jump."
+    // 
+    
+    struct expr assembler_template = parse_expression(context, /*should_skip_comma_expression*/true);
+    if(assembler_template.ir->kind != IR_string_literal){
+        report_error(context, assembler_template.token, "Expected a string literal (the Assembler Template) in GNU-like inline assembly. If you intended to use HLC-like assembly please use '__asm__ {' instead of '__asm__ ('.");
+        return;
+    }
+    
+    struct ir_string_literal *ir_string_literal = (struct ir_string_literal *)assembler_template.ir;
+    struct string asm_string = ir_string_literal->value;
+    pop_from_ir_arena(context, ir_string_literal);
+    
+    struct gnu_asm_operand_list operands = {0};
+    
+    if(peek_token_eat(context, TOKEN_colon)){
+        // 
+        // OutputOperands: [[asmSymbolicName]] constraint (cvariablename)
+        // 
+        //    asmSymbolcName: 
+        //       Specifies an optional symbolic name for the operand.
+        //       The square brackets are required both in the operand specification
+        //       and references to the operand in the assembler template.
+        //       
+        //       When not using an asmSymbolicName, use the zero based position of the
+        //       operand in the list of operands in the assembler template.
+        //    
+        //    constraints:
+        //       Output constraints must begin with either = (a variable overwriting an existing value)
+        //       or + (when reading and writing). Other constraints include 'r' for register, and 'm' for memory.
+        //       
+        //    cvariablename:
+        //       Specifies a C lvalue expression to hold the output. Typically a variable name.
+        // 
+        
+        u32 operand_index = 0;
+        for(u32 is_input = 0; is_input < 2; is_input++){
+            
+            u32 is_output = !is_input;
+            
+            if(peek_token(context, TOKEN_colon)){
+                if(!is_input) next_token(context);
+                continue;
+            }
+            if(peek_token(context, TOKEN_closed_paren)) break;
+            
+            do{
+                struct string asm_symbolic_name = {0};
+                if(peek_token_eat(context, TOKEN_open_index)){
+                    struct token *identifier = expect_token(context, TOKEN_identifier, "Expected an identifier as the symbolic name of the asm operand.");
+                    struct string identifier_string = token_get_string(identifier);
+                    asm_symbolic_name = identifier_string;
+                    expect_token(context, TOKEN_closed_index, "Expected ']'");
+                }else{
+                    asm_symbolic_name = push_format_string(&context->scratch, "%u", operand_index);
+                }
+                
+                struct string constraints = {0};
+                struct token *constraint_token = peek_token_eat(context, TOKEN_string_literal);
+                if(constraint_token){
+                    
+                    constraints = strip_quotes(token_get_string(constraint_token));
+                    
+                    int constraints_as_number_success = 1;
+                    u64 constraints_as_number = string_to_u64(constraints, &constraints_as_number_success);
+                    if(constraints_as_number_success){
+                        struct gnu_asm_operand *matching_constraint_operand = operands.first;
+                        for(u64 index = 0; index < constraints_as_number; index++){
+                            if(!matching_constraint_operand) break;
+                            matching_constraint_operand = matching_constraint_operand->next;
+                        }
+                        
+                        if(!matching_constraint_operand){
+                            report_error(context, constraint_token, "Wants to match constrain %u, but that argument is not prior.");
+                        }else{
+                            constraints = matching_constraint_operand->constraints;
+                        }
+                    }
+                }
+                
+                expect_token(context, TOKEN_open_paren, "Expected '(' starting a parenthesized C expression.");
+                struct expr expression = parse_expression(context, /*should_skip_comma_expression*/false);
+                
+                int is_memory = string_contains(constraints, string("m"));
+                if((is_output || is_memory) && !context->in_lhs_expression){
+                    if(!is_output){
+                        report_error(context, expression.token, "Output must be an l-value.");
+                    }else{
+                        report_error(context, constraint_token, "Memory operand must be an l-value.");
+                    }
+                }
+                
+                struct ast_declaration *write_back_declaration = null;
+                
+                if(is_memory || is_output){
+                    if(is_memory){
+                        // For memory operands, we only need the address.
+                        
+                        expression.ir = push_ir(context, IR_load_address);
+                        expression.resolved_type = parser_push_pointer_type(context, expression.resolved_type, expression.defined_type);
+                        expression.defined_type = null;
+                    }else{
+                        // Store address in a temporary write back allocation.
+                        
+                        push_ir(context, IR_duplicate);
+                        push_ir(context, IR_load_address);
+                        
+                        struct ast_type *pointer = parser_push_pointer_type(context, expression.resolved_type, expression.defined_type);
+                        
+                        struct ast_declaration *decl = push_unnamed_declaration(context, pointer, null, expression.token);
+                        
+                        struct ir_identifier *temp = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
+                        temp->base.kind = IR_identifier;
+                        temp->decl = decl;
+                        
+                        push_ir(context, IR_swap_lhs_rhs);
+                        push_ir(context, IR_store);
+                        push_ir(context, IR_pop_expression);
+                        
+                        write_back_declaration = decl;
+                    }
+                }
+                
+                enum register_encoding named_register = INVALID_REGISTER;
+                if(string_contains(constraints, string("a"))) named_register = REGISTER_A;
+                if(string_contains(constraints, string("b"))) named_register = REGISTER_B;
+                if(string_contains(constraints, string("c"))) named_register = REGISTER_C;
+                if(string_contains(constraints, string("d"))) named_register = REGISTER_D;
+                if(string_contains(constraints, string("S"))) named_register = REGISTER_SI;
+                if(string_contains(constraints, string("D"))) named_register = REGISTER_DI;
+                
+                struct ast_declaration *decl = push_unnamed_declaration(context, expression.resolved_type, expression.defined_type, expression.token);
+                
+                struct ir_identifier *temp = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
+                temp->base.kind = IR_identifier;
+                temp->decl = decl;
+                
+                push_ir(context, IR_swap_lhs_rhs);
+                push_ir(context, IR_store);
+                push_ir(context, IR_pop_expression);
+                
+                struct gnu_asm_operand *operand = push_struct(&context->scratch, struct gnu_asm_operand);
+                operand->is_input = is_input;
+                operand->is_memory = is_memory;
+                operand->named_register = named_register;
+                operand->asm_symbolic_name = asm_symbolic_name;
+                operand->constraints = constraints;
+                operand->temporary_declaration = decl;
+                operand->write_back_declaration = write_back_declaration;
+                
+                sll_push_back(operands, operand);
+                operand_index += 1;
+                
+                expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of asm operand specification.");
+                
+            } while(peek_token_eat(context, TOKEN_comma));
+            
+            if(peek_token(context, TOKEN_colon)){
+                if(!is_input) next_token(context);
+                continue;
+            }
+        }
+        
+        if(peek_token_eat(context, TOKEN_colon)){
+            do{
+                if(peek_token(context, TOKEN_colon)) break;
+                expect_token(context, TOKEN_string_literal, "Expected a string-literal in the clobber section of the GNU asm statement.");
+            } while(peek_token_eat(context, TOKEN_comma));
+        }
+    }
+    
+    struct ir_asm_block *asm_block = push_struct(&context->ir_arena, struct ir_asm_block);
+    asm_block->base.kind = IR_asm_block;
+    asm_block->token = assembler_template.token;
+    
+    for(struct gnu_asm_operand *operand = operands.first; operand; operand = operand->next){
+        if(operand->named_register == INVALID_REGISTER) continue;
+        
+        // @cleanup: what about memory stuff.
+        
+        if(operand->is_input || string_contains(operand->constraints, string("+"))){
+            // Load the operand in the required register.
+            struct asm_instruction *asm_instruction = push_asm_instruction(context, MEMONIC_mov, 2, assembler_template.token);
+            
+            struct ast_type *type = operand->temporary_declaration->type;
+            
+            // @ughh these get switch around below.
+            asm_instruction->operands[1] = (struct asm_operand){
+                .kind = ASM_ARG_register,
+                .size = type->size,
+                .type = type,
+                .register_kind_when_loaded = REGISTER_KIND_gpr,
+                .reg = operand->named_register,
+            };
+            asm_instruction->operands[0] = (struct asm_operand){
+                .kind = ASM_ARG_declaration_reference,
+                .size = type->size,
+                .type = type,
+                .register_kind_when_loaded = REGISTER_KIND_gpr,
+                .declaration = operand->temporary_declaration,
+            };
+            
+            sll_push_back(asm_block->instructions, asm_instruction);
+        }
+    }
+    
+    if(asm_string.size > 30){
+        replace_characters(asm_string, ";", '\n');
+    }else{
+        replace_characters(asm_string, "\n", ';');
+    }
+    
+    struct file hack_file = {
+        .contents = asm_string,
+    };
+    struct raw_token_array tokens = tokenize_raw(context, asm_string);
+    
+    struct include_stack_node node;
+    context->include_stack.nodes = &node;
+    context->include_stack.size = 0;
+    context->include_stack.capacity = 1;
+    push_to_include_stack(context, tokens, &hack_file);
+    
+    char *error = null;
+    struct token error_token = {0};
+    
+    u32 asm_flags = 0;
+    
+    while(!peek_token_raw(context, TOKEN_invalid) && !error){
+        
+        if(peek_token_eat_raw(context, TOKEN_whitespace)) continue;
+        if(peek_token_eat_raw(context, TOKEN_semicolon)) continue;
+        if(peek_token_eat_raw(context, TOKEN_newline)) continue;
+        
+        struct token memonic_token = next_token_raw(context);
+        if(memonic_token.type != TOKEN_identifier){
+            error = "Expected a memonic in GNU asm block, got '";
+            error_token = memonic_token;
+            break;
+        }
+        
+        enum memonic memonic = lookup_memonic_from_string(token_get_string(&memonic_token));
+        
+        if(memonic == MEMONIC_lock_prefix){
+            asm_flags |= ASM_PREFIX_lock;
+            continue;
+        }
+        
+        if(memonic == MEMONIC_repe_prefix){
+            asm_flags |= ASM_PREFIX_repe;
+            continue;
+        }
+        
+        int size_modifiers[2] = {0};
+        
+        if(memonic == MEMONIC_none || memonic == MEMONIC_movq || memonic == MEMONIC_movd){ // Dunno man.
+            struct string memonic_string = token_get_string(&memonic_token);
+            for(int index = 0; index < 2; index++){
+                if(memonic_string.size == 0) break;
+                
+                int size_modifier = memonic_string.data[memonic_string.size-1];
+                size_modifiers[index] = size_modifier;
+                
+                if(size_modifier == 'b' || size_modifier == 'w' || size_modifier == 'l' || size_modifier == 'q'){
+                    
+                    // This is a valid size size modifier.
+                    memonic_string.size -= 1;
+                    if(string_match(memonic_string, string("movs"))) memonic_string = string("movsx");
+                    if(string_match(memonic_string, string("movz"))) memonic_string = string("movzx");
+                    
+                    memonic = lookup_memonic_from_string(memonic_string);
+                    if(memonic != MEMONIC_none) break;
+                }
+            }
+            
+            if(memonic == MEMONIC_none){
+                error = "Unknown memonic in GNU asm block, got '";
+                error_token = memonic_token;
+                break;
+            }
+        }
+        
+        u32 amount_of_operands = asm_parse_table[memonic].amount_of_operands;
+        struct asm_instruction *asm_instruction = push_asm_instruction(context, memonic, amount_of_operands, assembler_template.token);
+        
+        u32 asm_operand_index = 0;
+        do{
+            eat_whitespace_and_comments_raw(context);
+            if(peek_token_eat_raw(context, TOKEN_semicolon)) break;
+            if(peek_token_eat_raw(context, TOKEN_newline)) break;
+            if(peek_token_raw(context, TOKEN_invalid)) break;
+            
+            if(asm_operand_index >= amount_of_operands){
+                error = "Too many operands for instruction '";
+                error_token = memonic_token;
+                break;
+            }
+            
+            struct asm_operand *asm_operand = &asm_instruction->operands[asm_operand_index];
+            
+            // Operands:
+            //    %<register>
+            //    $<immediate>
+            //    <immediate>(%<base>,%<index>,scale)
+            //    
+            //    %<number>
+            //    %[asm-symbolic-name]
+            
+            if(peek_token_eat_raw(context, TOKEN_mod)){
+                gnu_asm_parse_single_operand(context, operands, asm_operand, &error, &error_token);
+            }else if(peek_token_raw(context, TOKEN_identifier)){
+                // $<immediate>
+                struct token immediate = next_token_raw(context);
+                if(immediate.data[0] != '$'){
+                    error = "Unexpected token while parsing instruction argument. Expected '%', '$', '(' or an immediate. Got: '";
+                    error_token = immediate;
+                    break;
+                }
+                
+                struct string immediate_string = token_get_string(&immediate);
+                
+                immediate_string.size -= 1;
+                immediate_string.data += 1;
+                
+                b32 success = 1;
+                
+                asm_operand->kind = ASM_ARG_immediate;
+                asm_operand->register_kind_when_loaded = REGISTER_KIND_gpr;
+                asm_operand->immediate = string_to_u64(immediate_string, &success);
+                asm_operand->size = 8;
+                asm_operand->type = &globals.typedef_s64;
+                
+                if(!success){
+                    error = "Could not parse immediate: '";
+                    error_token = immediate;
+                    break;
+                }
+            }else if(peek_token_raw(context, TOKEN_integer_literal) || peek_token_raw(context, TOKEN_open_paren)){
+                // <disp>(%<base>,%<index>,scale)
+                
+                u64 displacement_value = 0;
+                if(peek_token_raw(context, TOKEN_integer_literal)){
+                    struct token displacement_token = next_token_raw(context);
+                    struct string displacement = token_get_string(&displacement_token);
+                    
+                    int success = 1;
+                    displacement_value = string_to_u64(displacement, &success);
+                    if(!success){
+                        error = "Could not parse immediate: '";
+                        error_token = displacement_token;
+                        break;
+                    }
+                }
+                
+                asm_operand->kind = ASM_ARG_memory_operand;
+                asm_operand->offset = displacement_value;
+                asm_operand->index = INVALID_REGISTER;
+                
+                eat_whitespace_and_comments_raw(context);
+                
+                if(peek_token_eat_raw(context, TOKEN_open_paren)){
+                    
+                    for(u32 index = 0; index < 2; index++){
+                        eat_whitespace_and_comments_raw(context);
+                        
+                        struct token mod = next_token_raw(context);
+                        if(mod.type != TOKEN_mod){
+                            error = "Expected either '%%' or %<argument> in memory operand. Got: '";
+                            error_token = mod;
+                            break;
+                        }
+                        
+                        struct asm_operand sub_operand = zero_struct;
+                        gnu_asm_parse_single_operand(context, operands, &sub_operand, &error, &error_token);
+                        
+                        if(sub_operand.kind == ASM_ARG_register){
+                            if(index == 0){
+                                asm_operand->base = sub_operand.reg;
+                            }else{
+                                asm_operand->index = sub_operand.reg;
+                            }
+                        }else if(sub_operand.kind == ASM_ARG_declaration_reference){
+                            if(displacement_value || !peek_token_raw(context, TOKEN_closed_paren)){
+                                error = "Currently memory operand can be either (%<n>), (%[<named-arg>]), or [<displacement>](%<reg>[, %<reg>, scale]), but no mix.\n";
+                                error_token = mod;
+                                break;
+                            }
+                            
+                            *asm_operand = sub_operand;
+                            asm_operand->kind = ASM_ARG_declaration_dereference;
+                            if(asm_operand->type && asm_operand->type->kind == AST_pointer_type){
+                                struct ast_pointer_type *pointer = (struct ast_pointer_type *)asm_operand->type;
+                                asm_operand->size = pointer->pointer_to->size;
+                                asm_operand->type = pointer->pointer_to;
+                            }
+                        }else{
+                            assert(error);
+                            break;
+                        }
+                        
+                        eat_whitespace_and_comments_raw(context);
+                        if(index == 0 && !peek_token_eat_raw(context, TOKEN_comma)) break;
+                    }
+                    
+                    if(error) break;
+                    
+                    eat_whitespace_and_comments_raw(context);
+                    
+                    if(asm_operand->kind == ASM_ARG_memory_operand && peek_token_eat_raw(context, TOKEN_comma)){
+                        eat_whitespace_and_comments_raw(context);
+                        
+                        struct token token = next_token_raw(context);
+                        if(token.type != TOKEN_integer_literal){
+                            error = "Expected an integer literal as the scale. Got: '";
+                            error_token = token;
+                            break;
+                        }
+                        
+                        int success = 1;
+                        u64 scale = string_to_u64(token_get_string(&token), &success);
+                        if(!success){
+                            error = "Could not parse immediate: '";
+                            error_token = token;
+                            break;
+                        }
+                        asm_operand->scale = scale;
+                    }
+                    
+                    struct token token = next_token_raw(context);
+                    if(token.type != TOKEN_closed_paren){
+                        error = "Expected ')' at the end of memory operand. Got: '";
+                        error_token = token;
+                        break;
+                    }
+                }
+            }else if(peek_token_eat_raw(context, TOKEN_times)){
+                
+                struct token mod = next_token_raw(context);
+                if(mod.type != TOKEN_mod){
+                    error = "Expected either '%%' or %<argument> in memory operand. Got: '";
+                    error_token = mod;
+                    break;
+                }
+                
+                gnu_asm_parse_single_operand(context, operands, asm_operand, &error, &error_token);
+            }else{
+                error = "Unexpected token while parsing instruction argument. Expected '%', '$', '(' or an immediate. Got: '";
+                error_token = next_token_raw(context);
+                break;
+            }
+            
+            asm_operand_index++;
+        }while(peek_token_eat_raw(context, TOKEN_comma));
+        
+        sll_push_back(asm_block->instructions, asm_instruction);
+    }
+    
+    if(error){
+        // :Error Give the asm block string line numbers and then highlight the line with the error.
+        //        We have the location within the string.
+        struct string token_string = token_get_string(&error_token); 
+        report_error(context, assembler_template.token, "%s%.*s'. Here is the parsed asm: %.*s", error, token_string.size, token_string.data, asm_string.size, asm_string.data);
+        skip_until_tokens_are_balanced(context, open, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '(' in unsupported '__asm__'.");
+        return;
+    }else{
+        expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of GNU asm statement.");
+    }
+    
+    for(struct asm_instruction *asm_instruction = asm_block->instructions.first; asm_instruction; asm_instruction = asm_instruction->next){
+        
+        u32 amount_of_operands = asm_instruction->amount_of_operands;
+        if(amount_of_operands == 2){
+            // AT&T 'op src, dst' -> Intel 'op dst, src'.
+            // @cleanup: Is it only these?
+            struct asm_operand temp = asm_instruction->operands[0];
+            asm_instruction->operands[0] = asm_instruction->operands[1];
+            asm_instruction->operands[1] = temp;
+        }else if(amount_of_operands == 3){
+            // AT&T 'op src2, src1, dst' -> Intel 'op dst, src1, src2'.
+            struct asm_operand temp = asm_instruction->operands[0];
+            asm_instruction->operands[0] = asm_instruction->operands[2];
+            asm_instruction->operands[2] = temp;
+        }
+        
+        // Call check_asm_operand on all arguments.
+        for(u32 asm_operand_index = 0; asm_operand_index < amount_of_operands; asm_operand_index++){
+            struct asm_operand *asm_operand = &asm_instruction->operands[asm_operand_index];
+            enum asm_operand_kind_flags desired_operand_flags = asm_parse_table[asm_instruction->memonic].operand_kind_flags[asm_operand_index];
+            char *operand_error = check_asm_operand(asm_operand, desired_operand_flags);
+            if(operand_error){
+                struct string memonic_string = asm_parse_table[asm_instruction->memonic].memonic;
+                
+                // Report the operand index in the original AT&T template order.
+                u32 error_asm_operand_index = asm_operand_index;
+                if(amount_of_operands == 2) error_asm_operand_index = asm_operand_index ^ 1;
+                if(amount_of_operands == 3) error_asm_operand_index = 2 - asm_operand_index;
+                
+                report_error(context, assembler_template.token, "Operand %u of '%.*s' %s", error_asm_operand_index, memonic_string.size, memonic_string.data, operand_error);
+                return;
+            }
+        }
+        
+        // check the instruction.
+        error = check_asm_instruction(context, asm_instruction);
+        if(error){
+            report_error(context, asm_instruction->token, "%s", error); // :error
+        }
+    }
+    
+    // 
+    // Write back.
+    // 
+    
+    for(struct gnu_asm_operand *operand = operands.first; operand; operand = operand->next){
+        if(operand->is_input) continue;
+        if(operand->is_memory) continue;
+        
+        // Load the operand in the required register.
+        struct asm_instruction *asm_instruction = push_asm_instruction(context, MEMONIC_mov, 2, assembler_template.token);
+        
+        struct ast_type *type = operand->temporary_declaration->type;
+        enum register_kind register_kind = get_register_kind_for_type(type);
+        
+        assert(operand->write_back_declaration);
+        
+        asm_instruction->operands[0] = (struct asm_operand){
+            .kind = ASM_ARG_declaration_dereference,
+            .size = type->size,
+            .type = type,
+            .register_kind_when_loaded = register_kind,
+            .declaration = operand->write_back_declaration,
+        };
+        
+        if(operand->named_register != INVALID_REGISTER){
+            asm_instruction->operands[1] = (struct asm_operand){
+                .kind = ASM_ARG_register,
+                .size = type->size,
+                .type = type,
+                .register_kind_when_loaded = register_kind,
+                .reg = operand->named_register,
+            };
+        }else{
+            asm_instruction->operands[1] = (struct asm_operand){
+                .kind = ASM_ARG_declaration_reference,
+                .size = type->size,
+                .type = type,
+                .register_kind_when_loaded = register_kind,
+                .declaration = operand->temporary_declaration,
+            };
+        }
+        
+        sll_push_back(asm_block->instructions, asm_instruction);
+    }
+    
 }
