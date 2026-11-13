@@ -953,6 +953,11 @@ struct context{
         struct ast_label *last;
     } label_list;
     
+    struct {
+        struct ast_label *first;
+        struct ast_label *last;
+    } local_label_list;
+    
     //
     // Error stream
     //

@@ -10677,10 +10677,16 @@ func void parse_statement(struct context *context){
             if(!peek_token(context, TOKEN_closed_curly)) parse_statement(context);
             
         }break;
+        
         case TOKEN_else:{
             report_syntax_error(context, initial_token, "'else' without matching 'if'.");
             return;
         }break;
+        case TOKEN___label__:{
+            report_syntax_error(context, initial_token, "'__label__' only allowed before any other statement in the scope.");
+            return;
+        }break;
+        
         case TOKEN_return:{
             struct ast_function_type *current_function_type = context->current_function->type;
             
@@ -10737,18 +10743,30 @@ func void parse_statement(struct context *context){
         // }break;
         
         case TOKEN_goto:{
-            
-            struct ast_goto *ast_goto = push_struct(&context->scratch, struct ast_goto);
             struct token *ident = expect_token(context, TOKEN_identifier, "Missing identifier after 'goto'.");
-            ast_goto->ident = ident->atom;
-            ast_goto->token = ident;
-            ast_goto->statement_expression_index = context->statement_expression_index;
+            struct ast_label *local_label = null;
             
-            sll_push_back(context->goto_list, ast_goto);
+            for(struct ast_label *label = context->local_label_list.first; label; label = label->next){
+                if(atoms_match(label->ident, ident->atom)){
+                    local_label = label;
+                    break;
+                }
+            }
             
-            // :ir_refactor - new way.
             struct ir_jump_node *goto_jump = push_jump(context, IR_jump);
-            if(context->prevent_evaluation_for_dead_code == 0) ast_goto->jump = goto_jump;
+            
+            if(local_label){
+                goto_jump->label_number = local_label->local_label_number;
+                local_label->referenced = 1;
+            }else{
+                struct ast_goto *ast_goto = push_struct(&context->scratch, struct ast_goto);
+                ast_goto->ident = ident->atom;
+                ast_goto->token = ident;
+                ast_goto->statement_expression_index = context->statement_expression_index;
+                
+                sll_push_back(context->goto_list, ast_goto);
+                if(context->prevent_evaluation_for_dead_code == 0) ast_goto->jump = goto_jump;
+            }
             
             context->current_statement_returns_a_value = 1;
         }break;
@@ -10759,7 +10777,6 @@ func void parse_statement(struct context *context){
             if(specifiers.specifier_flags == SPECIFIER_fallthrough){
                 // Only fallthrough.
             }else{
-                
                 struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
                 
                 // @note: A function declaration (which is not a definition) does need a semicolon.
@@ -10935,31 +10952,59 @@ func void parse_statement(struct context *context){
                 struct atom ident = initial_token->atom;
                 needs_semicolon = false;
                 
-                for(struct ast_label *label = context->label_list.first; label; label = label->next){
-                    if(atoms_match(label->ident, ident)){
-                        begin_error_report(context);
-                        report_error(context, initial_token, "Redefinition of label '%.*s'.", ident.size, ident.data);
-                        report_error(context, label->token, "... Here is the previous definition.");
-                        end_error_report(context);
-                        return;
-                    }
-                }
-                
                 // We assume we can jump here arbitrarily so the containing scope should not return a value anymore.
                 context->current_statement_returns_a_value = 0;
                 
-                struct ast_label *label = push_struct(&context->scratch, struct ast_label);
-                label->ident = ident;
-                label->token = initial_token;
-                label->statement_expression_index = context->statement_expression_index;
-                sll_push_back(context->label_list, label);
+                struct ast_label *local_label = null;
                 
-                struct ir_jump_node *jump_label = push_jump(context, IR_jump_label);
-                jump_label->label_number = context->jump_label_index++;
-                if(context->prevent_evaluation_for_dead_code == 0) label->jump_label = jump_label;
+                for(struct ast_label *label = context->local_label_list.first; label; label = label->next){
+                    if(atoms_match(label->ident, ident)){
+                        local_label = label;
+                        break;
+                    }
+                }
+                
+                if(local_label){
+                    struct ir_jump_node *jump_label = push_jump(context, IR_jump_label);
+                    jump_label->label_number = local_label->local_label_number;
+                    
+                    if(local_label->jump_label){
+                        begin_error_report(context);
+                        report_error(context, initial_token, "Local __label__ filled in twice.");
+                        report_error(context, local_label->token, "... Here was the previous definition.");
+                        end_error_report(context);
+                    }else if(local_label->statement_expression_index != context->statement_expression_index){
+                        begin_error_report(context);
+                        report_error(context, initial_token, "Cannot fill in local __label__ in statement expression..");
+                        report_error(context, local_label->token, "... Here the __label__ was declared.");
+                        end_error_report(context);
+                    }else{
+                        local_label->token = initial_token;
+                        local_label->jump_label = jump_label;
+                    }
+                }else{
+                    for(struct ast_label *label = context->label_list.first; label; label = label->next){
+                        if(atoms_match(label->ident, ident)){
+                            begin_error_report(context);
+                            report_error(context, initial_token, "Redefinition of label '%.*s'.", ident.size, ident.data);
+                            report_error(context, label->token, "... Here is the previous definition.");
+                            end_error_report(context);
+                            return;
+                        }
+                    }
+                    
+                    struct ast_label *label = push_struct(&context->scratch, struct ast_label);
+                    label->ident = ident;
+                    label->token = initial_token;
+                    label->statement_expression_index = context->statement_expression_index;
+                    sll_push_back(context->label_list, label);
+                    
+                    struct ir_jump_node *jump_label = push_jump(context, IR_jump_label);
+                    jump_label->label_number = context->jump_label_index++;
+                    if(context->prevent_evaluation_for_dead_code == 0) label->jump_label = jump_label;
+                }
                 
                 if(!peek_token(context, TOKEN_closed_curly)) parse_statement(context);
-                
                 break;
             }
             
@@ -11029,6 +11074,26 @@ func void parse_imperative_scope(struct context *context){
     struct ast_scope *scope = context->current_scope;
     assert(scope);
     
+    smm number_of_local_labels = 0;
+    
+    if(peek_token_eat(context, TOKEN___label__)){
+        do{
+            number_of_local_labels += 1;
+            
+            struct token *identifier = expect_token(context, TOKEN_identifier, "Expected an identifier (name for the __label__).");
+            
+            struct ast_label *label = push_struct(&context->scratch, struct ast_label);
+            label->ident = identifier->atom;
+            label->token = identifier;
+            label->local_label_number = context->jump_label_index++;
+            label->statement_expression_index = context->statement_expression_index;
+            sll_push_front(context->local_label_list, label);
+            
+        }while(peek_token_eat(context, TOKEN_comma));
+        
+        expect_token(context, TOKEN_semicolon, "Expected ';' at the end of __label__ declaration.");
+    }
+    
     // Keep parsing inputs even after an error has occurred!
     while(true){
         // Statements only occur at function scope, so there should not be any sleeping.
@@ -11067,8 +11132,20 @@ func void parse_imperative_scope(struct context *context){
         }
     }
     
-    // @cleanup: reachability.
-    push_ir_for_cleanup_calls(context, scope->parent);
+    if(!context->current_statement_returns_a_value){
+        // @cleanup: reachability.
+        push_ir_for_cleanup_calls(context, scope->parent);
+    }
+    
+    for(smm index = 0; index < number_of_local_labels; index++){
+        struct ast_label *label = context->local_label_list.first;
+        
+        if(label->referenced && !label->jump_label){
+            report_error(context, label->token, "Local __label__ was declared and referenced but never defined.");
+        }
+        
+        sll_pop_front(context->local_label_list);
+    }
 }
 
 func struct declarator_return parse_declarator(struct context* context, struct ast_type *_initial_type, enum ast_kind *_initial_defined_type, enum declarator_kind_flags declarator_kind_flags){

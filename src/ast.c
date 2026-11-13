@@ -129,6 +129,7 @@ enum token_type{
     
     TOKEN_last_basic_type = TOKEN_float128,
     
+    TOKEN___label__,
     TOKEN___func__,
     TOKEN_static_assert,
     TOKEN_declspec,
@@ -235,6 +236,7 @@ static struct{
     {const_string("_cdecl"),        TOKEN_cdecl},
     
     {const_string("__asm__"),       TOKEN_asm},
+    {const_string("__label__"),     TOKEN___label__},
     
     // basic types
     {const_string("void"),     TOKEN_void},
@@ -904,7 +906,9 @@ struct ast_label{
     struct token *token;
     struct atom ident;
     
+    int referenced;
     int statement_expression_index;
+    smm local_label_number; // for context->local_label_list
     
     struct ir_jump_node *jump_label;
 };
