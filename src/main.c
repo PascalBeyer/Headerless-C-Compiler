@@ -701,11 +701,7 @@ static struct{
 
 // this is fine, as typedef's and enum's actually resolved to these.
 func b32 type_is_signed(struct ast_type *type){
-    if(&globals.typedef_s8  == type) return true;
-    if(&globals.typedef_s16 == type) return true;
-    if(&globals.typedef_s32 == type) return true;
-    if(&globals.typedef_s64 == type) return true; // @cleanup: atomics?
-    return false;
+    return (type->flags & TYPE_FLAG_is_signed) != 0;
 }
 
 func b32 type_is_arithmetic(struct ast_type *type){
@@ -4642,6 +4638,10 @@ globals.typedef_##postfix = (struct ast_type){                                  
         make_const_typedef(s16,  TOKEN_short,    AST_integer_type, "short",              2, 2);
         make_const_typedef(s32,  TOKEN_int,      AST_integer_type, "int",                4, 4);
         make_const_typedef(s64,  TOKEN_long,     AST_integer_type, "long long",          8, 8);
+        globals.typedef_s8.flags |= TYPE_FLAG_is_signed;
+        globals.typedef_s16.flags |= TYPE_FLAG_is_signed;
+        globals.typedef_s32.flags |= TYPE_FLAG_is_signed;
+        globals.typedef_s64.flags |= TYPE_FLAG_is_signed;
         
         make_const_typedef(atomic_bool, TOKEN_identifier, AST_atomic_integer_type, "atomic_bool",   1, 1);
         
@@ -4660,10 +4660,10 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.typedef_atomic_u16.flags  |= TYPE_FLAG_is_atomic;
         globals.typedef_atomic_u32.flags  |= TYPE_FLAG_is_atomic;
         globals.typedef_atomic_u64.flags  |= TYPE_FLAG_is_atomic;
-        globals.typedef_atomic_s8.flags   |= TYPE_FLAG_is_atomic;
-        globals.typedef_atomic_s16.flags  |= TYPE_FLAG_is_atomic;
-        globals.typedef_atomic_s32.flags  |= TYPE_FLAG_is_atomic;
-        globals.typedef_atomic_s64.flags  |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_s8.flags   |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_signed;
+        globals.typedef_atomic_s16.flags  |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_signed;
+        globals.typedef_atomic_s32.flags  |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_signed;
+        globals.typedef_atomic_s64.flags  |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_signed;
         
         make_const_typedef(f32,  TOKEN_float,    AST_float_type,   "float",              4, 4);
         make_const_typedef(f64,  TOKEN_double,   AST_float_type,   "double",             8, 8);

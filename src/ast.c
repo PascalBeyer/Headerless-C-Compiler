@@ -522,6 +522,7 @@ enum type_flags{
     TYPE_FLAG_is_user_aligned = 0x20,
     TYPE_FLAG_contains_unaligned_type = 0x40,
     TYPE_FLAG_is_transparent_union = 0x80,
+    TYPE_FLAG_is_signed = 0x100,
 };
 
 struct ast_type{
