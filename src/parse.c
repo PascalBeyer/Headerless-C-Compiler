@@ -669,53 +669,39 @@ func void maybe_insert_arithmetic_conversion_casts(struct context *context, stru
     }
 }
 
-func void maybe_cast_literal_0_to_void_pointer(struct expr *lhs, struct expr *rhs){
-    
-    if(lhs->resolved_type->kind == AST_pointer_type && rhs->ir->kind == IR_integer_literal){
-        
-        if(integer_literal_as_u64(rhs) == 0){
-            rhs->ir->kind = IR_pointer_literal;
-            
-            rhs->resolved_type = lhs->resolved_type;
-            rhs->defined_type  = lhs->defined_type;
-            
-            struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)rhs->ir;
-            pointer_lit->type = lhs->resolved_type;
-            pointer_lit->pointer = 0; // need to write the pointer to zero, because only s32 might have been zeroed.
-        }
-        return;
-    }
-    
-    if(rhs->resolved_type->kind == AST_pointer_type && lhs->ir->kind == IR_integer_literal){
-        if(integer_literal_as_u64(lhs) == 0){
-            lhs->ir->kind = IR_pointer_literal;
-            
-            lhs->resolved_type = rhs->resolved_type;
-            lhs->defined_type  = rhs->defined_type;
-            
-            struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)lhs->ir;
-            pointer_lit->type = rhs->resolved_type;
-            pointer_lit->pointer = 0; // need to write the pointer to zero, because only s32 might have been zeroed.
-        }
-    }
+func int expression_is_null_pointer_constant(struct expr *expr){
+    // "An integer constant expression with the value 0, 
+    //  or such an expression cast to type void *, is called a null pointer constant."
+    struct ir *ir = expr->ir;
+    if(ir->kind == IR_pointer_literal) return ((struct ir_pointer_literal *)ir)->pointer == null;
+    if(ir->kind == IR_integer_literal) return integer_literal_as_u64(expr) == 0;
+    return 0;
 }
 
-func void maybe_insert_cast_from_void_pointer(struct expr *lhs, struct expr *rhs){
+func void maybe_cast_literal_0_to_pointer(struct expr *lhs, struct expr *rhs){
     
-    if(lhs->resolved_type->kind != AST_pointer_type) return;
-    if(rhs->resolved_type->kind != AST_pointer_type) return;
-    
-    struct ast_pointer_type *lhs_pointer = (struct ast_pointer_type *)lhs->resolved_type;
-    struct ast_pointer_type *rhs_pointer = (struct ast_pointer_type *)rhs->resolved_type;
-    
-    if(lhs_pointer->pointer_to == &globals.typedef_void){
-        lhs->resolved_type = rhs->resolved_type;
+    if(lhs->resolved_type->kind == AST_pointer_type && expression_is_null_pointer_constant(rhs)){
+        rhs->ir->kind = IR_pointer_literal;
+        
+        rhs->resolved_type = lhs->resolved_type;
+        rhs->defined_type  = lhs->defined_type;
+        
+        struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)rhs->ir;
+        pointer_lit->type = lhs->resolved_type;
+        pointer_lit->pointer = 0; // need to write the pointer to zero, because only s32 might have been zeroed.
+        
         return;
     }
     
-    if(rhs_pointer->pointer_to == &globals.typedef_void){
-        rhs->resolved_type = lhs->resolved_type;
-        return;
+    if(rhs->resolved_type->kind == AST_pointer_type && expression_is_null_pointer_constant(lhs)){
+        lhs->ir->kind = IR_pointer_literal;
+        
+        lhs->resolved_type = rhs->resolved_type;
+        lhs->defined_type  = rhs->defined_type;
+        
+        struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)lhs->ir;
+        pointer_lit->type = rhs->resolved_type;
+        pointer_lit->pointer = 0; // need to write the pointer to zero, because only s32 might have been zeroed.
     }
 }
 
@@ -6358,6 +6344,12 @@ case NUMBER_KIND_##type:{ \
                         operand.ir = push_ir(context, ir_kind);
                         operand.resolved_type = op_lhs->resolved_type;
                         operand.defined_type = defined_type;
+                        
+                        if(ast_kind == AST_binary_times && ((op_lhs->ir->kind == IR_integer_literal && integer_literal_as_u64(op_lhs) == 0) || (op_rhs->ir->kind == IR_integer_literal && integer_literal_as_u64(op_rhs) == 0))){
+                            // Crazy stuff. This is required `__is_constexpr` in the linux source code.
+                            push_ir(context, IR_pop_expression);
+                            operand.ir = push_u64_literal(context, 0, stack_entry->token).ir;
+                        }
                     }
                 }
                 context->in_lhs_expression = false;
@@ -6603,7 +6595,7 @@ case NUMBER_KIND_##type:{ \
                 
                 // @cleanup: this seems sus to me, but all compilers seem to do this.
                 //           This needs to be before msvc_extension_maybe_insert_cast_from_pointer_to_u64 to avoid warning.
-                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs);
+                maybe_cast_literal_0_to_pointer(op_lhs, op_rhs);
                 
                 msvc_extension_maybe_insert_cast_from_pointer_to_u64(context, op_lhs, op_rhs, stack_entry->token);
                 maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
@@ -6663,7 +6655,7 @@ case NUMBER_KIND_##type:{ \
                 maybe_load_address_for_array_or_function(context, IR_load_address,     op_rhs);
                 
                 // This needs to be before msvc_extension_maybe_insert_cast_from_pointer_to_u64 to avoid warning.
-                maybe_cast_literal_0_to_void_pointer(op_lhs, op_rhs);
+                maybe_cast_literal_0_to_pointer(op_lhs, op_rhs);
                 
                 msvc_extension_maybe_insert_cast_from_pointer_to_u64(context, op_lhs, op_rhs, stack_entry->token);
                 maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
@@ -6676,15 +6668,17 @@ case NUMBER_KIND_##type:{ \
                 
                 if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_basic)) return operand;
                 
-                maybe_insert_cast_from_void_pointer(op_lhs, op_rhs);
-                
-                struct ast_type *match = types_are_equal(op_lhs->resolved_type, op_rhs->resolved_type);
-                if(!match){
-                    if(op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_pointer_type){
-                        report_type_mismatch_warning(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, op_token);
-                    }else{
-                        report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, op_token);
-                        return operand;
+                if(op_lhs->resolved_type == &globals.typedef_void_pointer.base || op_rhs->resolved_type == &globals.typedef_void_pointer.base){
+                    // We are fine!
+                }else{
+                    struct ast_type *match = types_are_equal(op_lhs->resolved_type, op_rhs->resolved_type);
+                    if(!match){
+                        if(op_lhs->resolved_type->kind == AST_pointer_type && op_rhs->resolved_type->kind == AST_pointer_type){
+                            report_type_mismatch_warning(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, op_token);
+                        }else{
+                            report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, op_token);
+                            return operand;
+                        }
                     }
                 }
                 
@@ -7153,11 +7147,16 @@ case NUMBER_KIND_##type:{ \
                     result_type = arithmetic_type;
                 }else{
                     
-                    // "- one is a pointer to an object and the other is a pointer to void"
-                    maybe_insert_cast_from_void_pointer(if_true, if_false);
-                    
                     // "- one operand is a pointer and the other is a null pointer constant"
-                    maybe_cast_literal_0_to_void_pointer(if_true, if_false);
+                    // "if one operand is a null pointer constant, the result has the type of the other operand."
+                    maybe_cast_literal_0_to_pointer(if_true, if_false);
+                    
+                    // "- one is a pointer to an object and the other is a pointer to void"
+                    // "otherwise, one operand is a pointer to void in which case the result type is a pointer to void."
+                    if(if_true->resolved_type == &globals.typedef_void_pointer.base || if_false->resolved_type == &globals.typedef_void_pointer.base){
+                        if_true->resolved_type = &globals.typedef_void_pointer.base;
+                        if_false->resolved_type = &globals.typedef_void_pointer.base;
+                    }
                     
                     if(if_true->resolved_type->kind == AST_void_type || if_false->resolved_type->kind == AST_void_type){
                         
@@ -7223,12 +7222,19 @@ case NUMBER_KIND_##type:{ \
                 struct expr *value = null;
                 struct expr *other = null; // Warning: other->ir is deleted.
                 
+                int other_is_null_pointer_constant = 0;
+                
                 if(ast_kind == AST_conditional_expression_false){
                     value = &operand;
                     other = &stack_entry->operand;
+                    
+                    other_is_null_pointer_constant = other->ir != null;
+                    
                 }else{
                     value = &stack_entry->operand;
                     other = &operand;
+                    
+                    other_is_null_pointer_constant = expression_is_null_pointer_constant(other);
                     
                     exit_dead_code(context, stack_entry->other);
                 }
@@ -7245,27 +7251,27 @@ case NUMBER_KIND_##type:{ \
                     
                 }else{
                     
-                    // "- one is a pointer to an object and the other is a pointer to void"
-                    maybe_insert_cast_from_void_pointer(value, other);
-                    
                     // "- one operand is a pointer and the other is a null pointer constant"
-                    if(value->resolved_type->kind == AST_integer_type && other->resolved_type->kind == AST_pointer_type){
-                        if(integer_literal_as_u64(value) == 0){
-                            value->resolved_type = other->resolved_type;
-                            value->defined_type = other->defined_type;
-                            
-                            struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)value->ir;
-                            pointer_lit->base.kind = IR_pointer_literal;
-                            pointer_lit->type = other->resolved_type;
-                            pointer_lit->pointer = 0; // need to write the pointer to zero, because only s32 might have been zeroed.
-                        }
+                    if(expression_is_null_pointer_constant(value) && other->resolved_type->kind == AST_pointer_type){
+                        value->resolved_type = other->resolved_type;
+                        value->defined_type  = other->defined_type;
+                        
+                        struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)value->ir;
+                        pointer_lit->base.kind = IR_pointer_literal;
+                        pointer_lit->type = other->resolved_type;
+                        pointer_lit->pointer = 0; // need to write the pointer to zero, because only s32 might have been zeroed.
                     }
                     
-                    if(other->resolved_type->kind == AST_integer_type && value->resolved_type->kind == AST_pointer_type){
-                        if(other->token->size == 1 && other->token->data[0] == '0'){ // @hmm: I think I should use this check everywhere instead of checking for value 0.
-                            other->resolved_type = value->resolved_type;
-                            other->defined_type = value->defined_type;
-                        }
+                    if(other_is_null_pointer_constant && value->resolved_type->kind == AST_pointer_type){
+                        other->resolved_type = value->resolved_type;
+                        other->defined_type  = value->defined_type;
+                    }
+                    
+                    // "- one is a pointer to an object and the other is a pointer to void"
+                    // "otherwise, one operand is a pointer to void in which case the result type is a pointer to void."
+                    if(value->resolved_type == &globals.typedef_void_pointer.base || other->resolved_type == &globals.typedef_void_pointer.base){
+                        value->resolved_type = &globals.typedef_void_pointer.base;
+                        other->resolved_type = &globals.typedef_void_pointer.base;
                     }
                     
                     if(value->resolved_type->kind == AST_void_type || other->resolved_type->kind == AST_void_type){
@@ -7763,7 +7769,10 @@ case NUMBER_KIND_##type:{ \
                     expect_token(context, TOKEN_colon, "Expected ':' in conditional expression.");
                     if(context->should_exit_statement) return operand;
                     
-                    if(!is_true) exit_dead_code(context, dead_code_marker);
+                    if(!is_true){
+                        if_true.ir = (struct ir *)(smm)expression_is_null_pointer_constant(&if_true); // @hack
+                        exit_dead_code(context, dead_code_marker);
+                    }
                 }
                 
                 struct ast_stack_entry *entry = ast_stack_push(context, conditional_expression_kind, question_mark, &if_true);
