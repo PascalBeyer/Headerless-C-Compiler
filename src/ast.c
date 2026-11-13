@@ -254,6 +254,8 @@ static struct{
     {const_string("__int64"),  TOKEN_int64},
     {const_string("__int128_t"),   TOKEN_int128},
     {const_string("__uint128_t"),   TOKEN_uint128},
+    {const_string("__int128"),     TOKEN_int128},
+    {const_string("__uint128"),    TOKEN_uint128},
     {const_string("float"),    TOKEN_float},
     {const_string("double"),   TOKEN_double},
     {const_string("__float128"),   TOKEN_float128},
@@ -525,6 +527,7 @@ enum type_flags{
     TYPE_FLAG_contains_unaligned_type = 0x40,
     TYPE_FLAG_is_transparent_union = 0x80,
     TYPE_FLAG_is_signed = 0x100,
+    TYPE_FLAG_is_extended_type = 0x200,
 };
 
 struct ast_type{

@@ -16,6 +16,9 @@ enum CV_basic_type{
     CV_u32 = 0x75,
     CV_s64 = 0x76,
     CV_u64 = 0x77,
+    CV_s128 = 0x78,
+    CV_u128 = 0x79,
+    
     
     CV_f32 = 0x40,
     CV_f64 = 0x41,
@@ -1893,10 +1896,12 @@ void write_obj(struct string output_file_path, struct memory_arena *arena, struc
         pdb_init_basic_type_index(s16);
         pdb_init_basic_type_index(s32);
         pdb_init_basic_type_index(s64);
+        pdb_init_basic_type_index(s128);
         pdb_init_basic_type_index(u8);
         pdb_init_basic_type_index(u16);
         pdb_init_basic_type_index(u32);
         pdb_init_basic_type_index(u64);
+        pdb_init_basic_type_index(u128);
         pdb_init_basic_type_index(f32);
         pdb_init_basic_type_index(f64);
         pdb_init_basic_type_index(f80);

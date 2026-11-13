@@ -2108,10 +2108,12 @@ string_lexically_smaller( \
     pdb_init_basic_type_index(s16);
     pdb_init_basic_type_index(s32);
     pdb_init_basic_type_index(s64);
+    pdb_init_basic_type_index(s128);
     pdb_init_basic_type_index(u8);
     pdb_init_basic_type_index(u16);
     pdb_init_basic_type_index(u32);
     pdb_init_basic_type_index(u64);
+    pdb_init_basic_type_index(u128);
     pdb_init_basic_type_index(f32);
     pdb_init_basic_type_index(f64);
     pdb_init_basic_type_index(f80);

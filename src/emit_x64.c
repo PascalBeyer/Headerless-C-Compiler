@@ -3570,6 +3570,27 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 }else if(lhs_type->kind == AST_bitfield_type){
                     struct ast_bitfield_type *bitfield = (struct ast_bitfield_type *)lhs_type;
                     emit_store_bitfield(context, bitfield, dest, initializer_location);
+                }else if(lhs_type->flags & TYPE_FLAG_is_extended_type){
+                    if(initializer_location->state == EMIT_LOCATION_immediate){
+                        dest->type = &globals.typedef_u64;
+                        initializer_location->type = &globals.typedef_u64;
+                        
+                        if(type_is_signed(lhs_type)){
+                            emit_store(context, dest, initializer_location);
+                            dest->offset += 8;
+                            if(initializer_location->value < 0){
+                                emit_store(context, dest, emit_location_immediate(context, &globals.typedef_u64, (u64)-1));
+                            }else{
+                                emit_store(context, dest, emit_location_immediate(context, &globals.typedef_u64, 0));
+                            }
+                        }else{
+                            emit_store(context, dest, initializer_location);
+                            dest->offset += 8;
+                            emit_store(context, dest, emit_location_immediate(context, &globals.typedef_u64, 0));
+                        }
+                    }else{
+                        emit_store(context, dest, initializer_location);
+                    }
                 }else if(lhs_type->flags & TYPE_FLAG_is_atomic){
                     emit_store_atomic_integer(context, dest, initializer_location);
                 }else{
@@ -3894,6 +3915,65 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 loc->type = dest_type;
                 emit_location_stack[stack_index] = loc;
+            }break;
+            
+            case IR_cast_to_u128: case IR_cast_to_u128_lhs:
+            case IR_cast_to_s128: case IR_cast_to_s128_lhs:{
+                ir_arena_at += sizeof(struct ir);
+                
+                smm stack_index = emit_location_stack_at-1-((ir_kind-IR_cast_base)&1);
+                struct emit_location *loc = emit_location_stack[stack_index];
+                struct ast_type *source_type = loc->type;
+                
+                int is_signed = ir_kind == IR_cast_to_s128 || ir_kind == IR_cast_to_s128_lhs;
+                int source_is_signed = type_is_signed(source_type);
+                
+                if(loc->type->size == 16){
+                    loc->type = is_signed ? &globals.typedef_s128 : &globals.typedef_u128;
+                    break;
+                }
+                
+                enum ir_type source_ir_type = ir_type_from_type(source_type);
+                
+                struct ast_type *dest_type = &globals.typedef_u64;
+                
+                switch(source_ir_type){
+                    case IR_TYPE_atomic_bool: case IR_TYPE_bool:
+                    case IR_TYPE_atomic_s8:   case IR_TYPE_s8:  loc = emit_integer_cast(context, loc, dest_type, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM8));  break;
+                    case IR_TYPE_atomic_s16:  case IR_TYPE_s16: loc = emit_integer_cast(context, loc, dest_type, two_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM16)); break;
+                    case IR_TYPE_atomic_s32:  case IR_TYPE_s32: loc = emit_integer_cast(context, loc, dest_type, one_byte_opcode(MOVE_WITH_SIGN_EXTENSION_REG_REGM));   break;
+                    case IR_TYPE_atomic_u8:   case IR_TYPE_u8:  loc = emit_integer_cast(context, loc, dest_type, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM8));  break;
+                    case IR_TYPE_atomic_u16:  case IR_TYPE_u16: loc = emit_integer_cast(context, loc, dest_type, two_byte_opcode(MOVE_WITH_ZERO_EXTENSION_REG_REGM16)); break;
+                    case IR_TYPE_atomic_u32:  case IR_TYPE_u32: loc = emit_integer_cast(context, loc, &globals.typedef_u32, one_byte_opcode(MOVE_REG_REGM)); break;
+                    default: break;
+                }
+                
+                // 'emit_integer_cast' keeps a 32-bit source at 32 bits (the load
+                // zero-extends it), but the low half of the 128-bit value is
+                // stored as a full 64-bit slot.
+                loc->type = dest_type;
+                
+                struct emit_location *high = 0;
+                
+                if(source_is_signed){
+                    loc = emit_load_into_specific_gpr(context, loc, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_A));
+                    high = emit_location_loaded(context, &globals.typedef_u64, allocate_specific_register(context, REGISTER_KIND_gpr, REGISTER_D));
+                    emit(0x48); emit(0x99); // CQO - RDX:RAX := sign-extend of RAX.
+                }else{
+                    high = emit_load(context, emit_location_immediate(context, &globals.typedef_u64, 0));
+                }
+                
+                struct ast_type *type = is_signed ? &globals.typedef_s128 : &globals.typedef_u128;
+                struct emit_location *dest = emit_allocate_temporary_stack_location(context, type);
+                
+                dest->type = &globals.typedef_u64;
+                emit_store(context, dest, loc);
+                dest->offset += 8;
+                emit_store(context, dest, high);
+                dest->offset -= 8;
+                dest->type = type;
+                
+                emit_location_stack[stack_index] = dest;
             }break;
             
             // 
@@ -4635,7 +4715,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                         break;
                     }
                     
-                    if(return_type->kind == AST_struct || return_type->kind == AST_union || return_type->kind == AST_array_type){
+                    if(return_type->kind == AST_struct || return_type->kind == AST_union || return_type->kind == AST_array_type || (return_type->flags & TYPE_FLAG_is_extended_type)){
                         // 
                         // If we are a compound type or whatever we have return a 'register_relative' emit location, 
                         // so we spill rax to the stack.

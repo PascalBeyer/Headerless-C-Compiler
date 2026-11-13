@@ -624,6 +624,9 @@ static struct{
     struct ast_type typedef_s64;
     struct ast_type typedef_u64;
     
+    struct ast_type typedef_s128;
+    struct ast_type typedef_u128;
+    
     struct ast_type typedef_f32;
     struct ast_type typedef_f64;
     struct ast_type typedef_f80;
@@ -666,10 +669,6 @@ static struct{
     struct ast_pointer_type typedef_f64_pointer;
     struct ast_pointer_type typedef_f80_pointer;
     struct ast_pointer_type typedef_f128_pointer;
-    
-    
-    struct ast_type typedef_s128;
-    struct ast_type typedef_u128;
     
     struct ast_vector_type typedef_m128;
     struct ast_vector_type typedef_m256;
@@ -898,7 +897,6 @@ struct context{
     // 
     smm prevent_evaluation_for_dead_code;
     int current_statement_returns_a_value;
-    
     
     struct ast_scope *statement_expression_scope;
     struct expr statement_expression_return;
@@ -3778,11 +3776,9 @@ func int worker_work(struct context *context, struct work_queue *queue, void (*w
     
     end_temporary_memory(scratch_temp);
     
-    
     if(context->error){
         atomic_store(b32, globals.an_error_has_occurred, true);
     }
-    
     
     atomic_add(&queue->work_entries_in_flight, -1);
     return 1;
@@ -4638,15 +4634,21 @@ globals.typedef_##postfix = (struct ast_type){                                  
         make_const_typedef(u16,  TOKEN_short,    AST_integer_type, "unsigned short",     2, 2);
         make_const_typedef(u32,  TOKEN_unsigned, AST_integer_type, "unsigned int",       4, 4);
         make_const_typedef(u64,  TOKEN_long,     AST_integer_type, "unsigned long long", 8, 8);
+        make_const_typedef(u128, TOKEN_uint128,  AST_integer_type, "__uint128_t",      16, 16);
         
-        make_const_typedef(s8,   TOKEN_char,     AST_integer_type, "char",               1, 1);
-        make_const_typedef(s16,  TOKEN_short,    AST_integer_type, "short",              2, 2);
-        make_const_typedef(s32,  TOKEN_int,      AST_integer_type, "int",                4, 4);
-        make_const_typedef(s64,  TOKEN_long,     AST_integer_type, "long long",          8, 8);
+        make_const_typedef(s8,   TOKEN_char,     AST_integer_type, "char",       1, 1);
+        make_const_typedef(s16,  TOKEN_short,    AST_integer_type, "short",      2, 2);
+        make_const_typedef(s32,  TOKEN_int,      AST_integer_type, "int",        4, 4);
+        make_const_typedef(s64,  TOKEN_long,     AST_integer_type, "long long",  8, 8);
+        make_const_typedef(s128, TOKEN_int128,   AST_integer_type, "__int128_t", 16, 16);
+        
         globals.typedef_s8.flags |= TYPE_FLAG_is_signed;
         globals.typedef_s16.flags |= TYPE_FLAG_is_signed;
         globals.typedef_s32.flags |= TYPE_FLAG_is_signed;
         globals.typedef_s64.flags |= TYPE_FLAG_is_signed;
+        globals.typedef_s128.flags |= TYPE_FLAG_is_signed | TYPE_FLAG_is_extended_type;
+        
+        globals.typedef_u128.flags |= TYPE_FLAG_is_extended_type;
         
         make_const_typedef(atomic_bool, TOKEN_identifier, AST_atomic_integer_type, "atomic_bool",   1, 1);
         
@@ -4665,16 +4667,20 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.typedef_atomic_u16.flags  |= TYPE_FLAG_is_atomic;
         globals.typedef_atomic_u32.flags  |= TYPE_FLAG_is_atomic;
         globals.typedef_atomic_u64.flags  |= TYPE_FLAG_is_atomic;
+        globals.typedef_atomic_u128.flags |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_extended_type;
         globals.typedef_atomic_s8.flags   |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_signed;
         globals.typedef_atomic_s16.flags  |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_signed;
         globals.typedef_atomic_s32.flags  |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_signed;
         globals.typedef_atomic_s64.flags  |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_signed;
+        globals.typedef_atomic_s128.flags |= TYPE_FLAG_is_atomic | TYPE_FLAG_is_signed | TYPE_FLAG_is_extended_type;
         
         make_const_typedef(f32,  TOKEN_float,    AST_float_type,   "float",              4, 4);
         make_const_typedef(f64,  TOKEN_double,   AST_float_type,   "double",             8, 8);
         make_const_typedef(f80,  TOKEN_double,   AST_float_type,   "long double",        16, 16);
         make_const_typedef(f128,  TOKEN_double,   AST_float_type,  "__float128",          16, 16);
         make_const_typedef(poison, TOKEN_void,   AST_void_type,    "poison",             8, 8);
+        
+        globals.typedef_f128.flags |= TYPE_FLAG_is_extended_type;
         
         // @note: only used during asm.
         globals.typedef_m128 = (struct ast_vector_type){.base = { .kind = AST_vector_type, .size = 16, .alignment = 16}, .base_type = &globals.typedef_s64};

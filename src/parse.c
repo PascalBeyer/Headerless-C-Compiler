@@ -273,6 +273,7 @@ func u64 integer_literal_as_u64(struct expr *lit){
             case 2: value = (u64)literal->_s16; break;
             case 4: value = (u64)literal->_s32; break;
             case 8: value = (u64)literal->_s64; break;
+            case 16: value = (u64)literal->_s64; break;
             invalid_default_case(value = 0);
         }
     }else{
@@ -281,6 +282,7 @@ func u64 integer_literal_as_u64(struct expr *lit){
             case 2: value = literal->_u16; break;
             case 4: value = literal->_u32; break;
             case 8: value = literal->_u64; break;
+            case 16: value = literal->_u64; break;
             invalid_default_case(value = 0);
         }
     }
@@ -401,17 +403,19 @@ func void push_cast(struct context *context, enum ast_kind lhs_or_rhs, struct as
             lit->type = cast_to;
             should_skip_cast = 1;
         }else if(cast_to->kind == AST_integer_type){
-            // @hmm: I trust my self, that I thought about this...
-            if(type_is_signed(cast_to)){
-                s64 value = integer_literal_as_s64(cast_what);
-                lit->_s64 = value;
-            }else{
-                u64 value = integer_literal_as_u64(cast_what);
-                lit->_u64 = value;
+            if(!(cast_to->flags & TYPE_FLAG_is_extended_type)){
+                // @hmm: I trust my self, that I thought about this...
+                if(type_is_signed(cast_to)){
+                    s64 value = integer_literal_as_s64(cast_what);
+                    lit->_s64 = value;
+                }else{
+                    u64 value = integer_literal_as_u64(cast_what);
+                    lit->_u64 = value;
+                }
+                
+                lit->type = cast_to;
+                should_skip_cast = 1;
             }
-            
-            lit->type = cast_to;
-            should_skip_cast = 1;
         }else if(cast_to->kind == AST_float_type){
             struct ir_float_literal *f = (struct ir_float_literal *)cast_what->ir;
             
@@ -620,6 +624,8 @@ func void maybe_insert_integer_promotion_cast(struct context *context, enum ast_
 func struct ast_type *perform_usual_arithmetic_conversions(struct ast_type *lhs, struct ast_type *rhs){
     assert(type_is_arithmetic(lhs) && type_is_arithmetic(rhs));
     
+    if(lhs == &globals.typedef_f128) return &globals.typedef_f128;
+    if(rhs == &globals.typedef_f128) return &globals.typedef_f128;
     if(lhs == &globals.typedef_f64) return &globals.typedef_f64;
     if(rhs == &globals.typedef_f64) return &globals.typedef_f64;
     if(lhs == &globals.typedef_f32) return &globals.typedef_f32;
@@ -629,34 +635,7 @@ func struct ast_type *perform_usual_arithmetic_conversions(struct ast_type *lhs,
     lhs = perform_integer_promotions(lhs);
     rhs = perform_integer_promotions(rhs);
     
-    // "if they are of the same type no further conversion is needed"
-    if(lhs == rhs) return lhs;
-    
-    // if they have same signedness we uppromote the lower
-    if(lhs == &globals.typedef_s32 && rhs == &globals.typedef_s64) return &globals.typedef_s64;
-    if(rhs == &globals.typedef_s32 && lhs == &globals.typedef_s64) return &globals.typedef_s64;
-    if(lhs == &globals.typedef_u32 && rhs == &globals.typedef_u64) return &globals.typedef_u64;
-    if(rhs == &globals.typedef_u32 && lhs == &globals.typedef_u64) return &globals.typedef_u64;
-    
-    // if the unsigned type has greater or equal rank result is the result is the unsigned type
-    if(lhs == &globals.typedef_u32 && rhs == &globals.typedef_s32) return &globals.typedef_u32;
-    if(rhs == &globals.typedef_u32 && lhs == &globals.typedef_s32) return &globals.typedef_u32;
-    if(lhs == &globals.typedef_u64 && rhs == &globals.typedef_s32) return &globals.typedef_u64;
-    if(rhs == &globals.typedef_u64 && lhs == &globals.typedef_s32) return &globals.typedef_u64;
-    if(lhs == &globals.typedef_u64 && rhs == &globals.typedef_s64) return &globals.typedef_u64;
-    if(rhs == &globals.typedef_u64 && lhs == &globals.typedef_s64) return &globals.typedef_u64;
-    
-    // if all unsigned values can be represented by the signed type we convert to the signed type
-    if(lhs == &globals.typedef_u32 && rhs == &globals.typedef_s64) return &globals.typedef_s64;
-    if(rhs == &globals.typedef_u32 && lhs == &globals.typedef_s64) return &globals.typedef_s64;
-    
-    // "otherwise both operands are converted to the unsigned type corresoponding to the signed type"
-    if(lhs == &globals.typedef_s32) return &globals.typedef_u32;
-    if(rhs == &globals.typedef_s32) return &globals.typedef_u32;
-    if(lhs == &globals.typedef_s64) return &globals.typedef_u64;
-    if(rhs == &globals.typedef_s64) return &globals.typedef_u64;
-    
-    invalid_code_path;
+    return (lhs > rhs) ? lhs : rhs;
 }
 
 func void maybe_insert_arithmetic_conversion_casts(struct context *context, struct expr *op_lhs, struct expr *op_rhs){
@@ -1947,6 +1926,7 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
                     case 2: fits = (min_s16 <= value && value <= max_s16); break;
                     case 4: fits = (min_s32 <= value && value <= max_s32); break;
                     case 8: fits = (min_s64 <= value && value <= max_s64); break;
+                    case 16: fits = true; break;
                     invalid_default_case(fits = false);
                 }
             }else{
@@ -1955,7 +1935,8 @@ func void maybe_insert_implicit_assignment_cast_and_check_that_types_match(struc
                     case 1: fits = (value <= max_u8); break;
                     case 2: fits = (value <= max_u16); break;
                     case 4: fits = (value <= max_u32); break;
-                    case 8: fits = (value <= max_u64); break;
+                    case 8: fits = true; break;
+                    case 16: fits = true; break;
                     invalid_default_case(fits = false);
                 }
             }
@@ -6034,8 +6015,6 @@ case NUMBER_KIND_##type:{ \
                 if(!check_unary_for_basic_types(context, operand.resolved_type, CHECK_integer, stack_entry->token)) return operand;
                 
                 maybe_insert_integer_promotion_cast(context, AST_cast, &operand);
-                
-                assert(operand.resolved_type == &globals.typedef_s32 || operand.resolved_type == &globals.typedef_u32 || operand.resolved_type == &globals.typedef_s64 || operand.resolved_type == &globals.typedef_u64);
                 
                 operand.ir = push_ir(context, IR_bitwise_not);
                 

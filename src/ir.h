@@ -15,6 +15,9 @@ enum ir_type{
     IR_TYPE_s64, 
     IR_TYPE_u64,
     
+    IR_TYPE_s128, 
+    IR_TYPE_u128,
+    
     IR_TYPE_f32,
     IR_TYPE_f64,
     IR_TYPE_f80,
@@ -190,6 +193,10 @@ enum ir_kind{
     IR_cast_to_s64_lhs,
     IR_cast_to_u64,
     IR_cast_to_u64_lhs,
+    IR_cast_to_s128,
+    IR_cast_to_s128_lhs,
+    IR_cast_to_u128,
+    IR_cast_to_u128_lhs,
     IR_cast_to_f32,
     IR_cast_to_f32_lhs,
     IR_cast_to_f64,
@@ -208,11 +215,13 @@ static int ir_type_size[] = {
     [IR_TYPE_u16] = 2, 
     [IR_TYPE_u32] = 4,
     [IR_TYPE_u64] = 8, 
+    [IR_TYPE_u128] = 16, 
     
     [IR_TYPE_s8] = 1, 
     [IR_TYPE_s16] = 2, 
     [IR_TYPE_s32] = 4,
     [IR_TYPE_s64] = 8, 
+    [IR_TYPE_s128] = 16, 
     
     [IR_TYPE_f32] = 4,
     [IR_TYPE_f64] = 8, 
