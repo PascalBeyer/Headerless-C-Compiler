@@ -158,7 +158,7 @@ func struct expr ast_push_s64_literal(struct context *context, s64 value, struct
     return (struct expr){.ir = &lit->base, token, &globals.typedef_s64, null};
 }
 
-func struct expr ast_push_u64_literal(struct context *context, u64 value, struct token *token){
+func struct expr push_u64_literal(struct context *context, u64 value, struct token *token){
     
     struct ir_integer_literal *lit = push_uninitialized_struct(&context->ir_arena, struct ir_integer_literal);
     lit->base.kind = IR_integer_literal;
@@ -174,7 +174,7 @@ func struct expr ast_push_u64_literal(struct context *context, u64 value, struct
 }
 
 
-func struct expr ast_push_s32_literal(struct context *context, s64 value, struct token *token){
+func struct expr push_s32_literal(struct context *context, s64 value, struct token *token){
     
     assert(value <= s32_max);
     assert(value >= s32_min);
@@ -265,7 +265,7 @@ func s64 integer_literal_as_s64(struct expr *lit){
 func u64 integer_literal_as_u64(struct expr *lit){
     struct ir_integer_literal *literal = (struct ir_integer_literal *)lit->ir;
     struct ast_type *type = lit->resolved_type;
-    assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type);
+    assert(type->kind == AST_integer_type || type->kind == AST_bitfield_type); // @cleanup: bitfield type?
     u64 value;
     if(type_is_signed(type)){
         switch(type->size){
@@ -287,6 +287,12 @@ func u64 integer_literal_as_u64(struct expr *lit){
         }
     }
     return value;
+}
+
+func u64 integer_literal_to_bytes(struct ir *ast){
+    assert(ast->kind == IR_integer_literal);
+    struct ir_integer_literal *lit = (struct ir_integer_literal *)ast;
+    return integer_literal_as_u64(&(struct expr){.ir = &lit->base, null, lit->type, null});
 }
 
 func f64 float_literal_as_f64(struct ir_float_literal *float_literal){
@@ -2041,7 +2047,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
             // This is an extension, we allow 'int a = {}' and '(int){}'.
             // GCC/Clang complain about empty scalar initializer, but I think its pretty obvious 
             // what you want here and makes some type-agnostic macros work.
-            initializer = ast_push_s32_literal(context, 0, initial_open_curly);
+            initializer = push_s32_literal(context, 0, initial_open_curly);
         }else{
             // 
             // 'int a = {1, 2, 3}' only generates a warning in gcc and clang.
@@ -3440,7 +3446,7 @@ void printlike__infer_format_string_and_arguments_for_argument(struct context *c
                 }else if(type->kind == AST_array_type){
                     struct ast_array_type *array_type = (struct ast_array_type *)type;
                     
-                    ast_push_u64_literal(context, node->array_at, null);
+                    push_u64_literal(context, node->array_at, null);
                     
                     struct ir_subscript *subscript = push_uninitialized_struct(&context->ir_arena, struct ir_subscript);
                     subscript->base.kind = IR_array_subscript;
@@ -4361,7 +4367,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                 
                 if(!context->current_function){
                     report_error(context, open_paren, "Cannot use ({<statement>}) expressions at global scope.");
-                    operand = ast_push_s32_literal(context, 0, open_paren);
+                    operand = push_s32_literal(context, 0, open_paren);
                     break;
                 }
                 
@@ -4393,7 +4399,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                 memset(&context->statement_expression_return, 0, sizeof(context->statement_expression_return));
                 
                 if(!operand.ir){
-                    operand = ast_push_s32_literal(context, 0, open_paren);
+                    operand = push_s32_literal(context, 0, open_paren);
                 }
                 
                 operand.ir = push_ir(context, IR_nop); // Prevent constant-propagation.
@@ -4518,7 +4524,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     exit_dead_code(context, size_or_alignof->other);
                     
                     // "The [..] type (an unsigned integer type) is 'size_t', defined in <stddef.h>."
-                    operand = ast_push_u64_literal(context, value, size_or_alignof->token);
+                    operand = push_u64_literal(context, value, size_or_alignof->token);
                     
                     context->in_lhs_expression = false;
                     
@@ -4680,7 +4686,7 @@ case NUMBER_KIND_##type:{ \
             
             if(lit_token->size == 1){
                 // @note: Fast path for 0-9.
-                operand = ast_push_s32_literal(context, lit_token->data[0] - '0', lit_token);
+                operand = push_s32_literal(context, lit_token->data[0] - '0', lit_token);
                 context->in_lhs_expression = false;
                 break;
             }
@@ -5566,7 +5572,7 @@ case NUMBER_KIND_##type:{ \
                         pop_from_ir_arena(context, identifier);
                         
                         int compatible = type_info_a.type && type_info_b.type && types_are_equal(type_info_a.type, type_info_b.type);
-                        operand = ast_push_s32_literal(context, compatible, call_token);
+                        operand = push_s32_literal(context, compatible, call_token);
                     }else if(atoms_match(call_token->atom, atom_for_string(string("__builtin_constant_p")))){
                         
                         u8 *ir_arena_at = enter_dead_code(context);
@@ -5578,7 +5584,7 @@ case NUMBER_KIND_##type:{ \
                         
                         pop_from_ir_arena(context, identifier);
                         
-                        operand = ast_push_s32_literal(context, constant, call_token);
+                        operand = push_s32_literal(context, constant, call_token);
                     }else if(atoms_match(call_token->atom, atom_for_string(string("__builtin_choose_expr")))){
                         
                         pop_from_ir_arena(context, identifier);
@@ -5973,7 +5979,7 @@ case NUMBER_KIND_##type:{ \
                 exit_dead_code(context, stack_entry->other);
                 
                 // Sets in op->operand in the next iteration.
-                operand = ast_push_u64_literal(context, size, operand.token);
+                operand = push_u64_literal(context, size, operand.token);
                 
                 
                 context->in_lhs_expression = false;
@@ -5995,7 +6001,7 @@ case NUMBER_KIND_##type:{ \
                 exit_dead_code(context, stack_entry->other);
                 
                 // Sets in op->operand in the next iteration.
-                operand = ast_push_u64_literal(context, alignment, operand.token);
+                operand = push_u64_literal(context, alignment, operand.token);
                 
                 context->in_lhs_expression = false;
             }break;
@@ -6913,7 +6919,7 @@ case NUMBER_KIND_##type:{ \
                     lhs->base.kind = IR_identifier;
                     lhs->decl = temp;
                     
-                    ast_push_s32_literal(context, 1, null);
+                    push_s32_literal(context, 1, null);
                     push_ir(context, IR_store);
                     push_ir(context, IR_pop_expression);
                     
@@ -6926,7 +6932,7 @@ case NUMBER_KIND_##type:{ \
                     lhs = push_uninitialized_struct(&context->ir_arena, struct ir_identifier);
                     lhs->base.kind = IR_identifier;
                     lhs->decl = temp;
-                    ast_push_s32_literal(context, 0, null);
+                    push_s32_literal(context, 0, null);
                     push_ir(context, IR_store);
                     push_ir(context, IR_pop_expression);
                     
@@ -7035,7 +7041,7 @@ case NUMBER_KIND_##type:{ \
                     lhs->base.kind = IR_identifier;
                     lhs->decl = temp;
                     
-                    ast_push_s32_literal(context, 0, null);
+                    push_s32_literal(context, 0, null);
                     push_ir(context, IR_store);
                     push_ir(context, IR_pop_expression);
                     
@@ -7049,7 +7055,7 @@ case NUMBER_KIND_##type:{ \
                     lhs->base.kind = IR_identifier;
                     lhs->decl = temp;
                     
-                    ast_push_s32_literal(context, 1, null);
+                    push_s32_literal(context, 1, null);
                     push_ir(context, IR_store);
                     push_ir(context, IR_pop_expression);
                     
@@ -10224,7 +10230,7 @@ func void parse_statement(struct context *context){
                 for_label->label_number = for_label_index;
                 
                 if(peek_token(context, TOKEN_semicolon)){
-                    condition = ast_push_s32_literal(context, 1, next_token(context)); // desugars to true
+                    condition = push_s32_literal(context, 1, next_token(context)); // desugars to true
                 }else{
                     condition = parse_expression(context, false);
                     maybe_report_warning_for_assignment_in_condition(context, condition.token);

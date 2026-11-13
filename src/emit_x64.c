@@ -1860,12 +1860,6 @@ func struct emit_location *emit_location_copy(struct context *context, struct em
     return copy;
 }
 
-func u64 integer_literal_to_bytes(struct ir *ast){
-    assert(ast->kind == IR_integer_literal);
-    struct ir_integer_literal *lit = (struct ir_integer_literal *)ast;
-    return integer_literal_as_u64(&(struct expr){.ir = &lit->base, null, lit->type, null});
-}
-
 func void emit_store(struct context *context, struct emit_location *dest, struct emit_location *source){
     assert(dest->state == EMIT_LOCATION_register_relative);
     

@@ -3719,7 +3719,7 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             //  reaching the } that terminates the main function returns a value of 0."
             if(function_type->return_type == &globals.typedef_s32){
                 
-                ast_push_s32_literal(context, 0, null);
+                push_s32_literal(context, 0, null);
                 push_ir(context, IR_return);
             }
         }else{
