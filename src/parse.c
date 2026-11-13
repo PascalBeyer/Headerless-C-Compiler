@@ -1573,7 +1573,7 @@ func struct expr parse_constant_integer_expression(struct context *context, int 
 
 
 // @cleanup: Rename to 'maybe_parse_type_name' ?
-static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct context *context){
+static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct context *context, int sleep_on_unresolved){
     
     
     struct type_info_return ret = zero_struct;
@@ -1657,7 +1657,9 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
         ret.defined_type = declarator.defined_type;
     }
     
-    maybe_resolve_unresolved_type_or_sleep_or_error(context, &ret.type);
+    if(sleep_on_unresolved){
+        maybe_resolve_unresolved_type_or_sleep_or_error(context, &ret.type);
+    }
     
     return ret;
 }
@@ -4424,7 +4426,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
             
             context->maybe_in_cast = peek_token(context, TOKEN_identifier);
             
-            struct type_info_return type_to_cast_to = maybe_parse_type_for_cast_or_sizeof(context);
+            struct type_info_return type_to_cast_to = maybe_parse_type_for_cast_or_sizeof(context, /*sleep_on_unresolved*/true);
             if(context->should_exit_statement) return invalid_ast(context);
             
             if(type_to_cast_to.type){
@@ -5245,7 +5247,7 @@ case NUMBER_KIND_##type:{ \
                         ir_arena_reset = arena_current(&context->ir_arena);
                     }
                 }else{
-                    struct type_info_return type_name = maybe_parse_type_for_cast_or_sizeof(context);
+                    struct type_info_return type_name = maybe_parse_type_for_cast_or_sizeof(context, /*sleep_on_unresolved*/true);
                     if(!type_name.type){
                         report_error(context, get_current_token_for_error_report(context), "Expected a type-name or 'default' while parsing a _Generic association list.");
                         type_name.type = &globals.typedef_s32;
@@ -5569,13 +5571,13 @@ case NUMBER_KIND_##type:{ \
                     struct ir_identifier *identifier = (struct ir_identifier *)operand.ir;
                     
                     if(atoms_match(call_token->atom, atom_for_string(string("__builtin_types_compatible_p")))){
-                        struct type_info_return type_info_a = maybe_parse_type_for_cast_or_sizeof(context);
+                        struct type_info_return type_info_a = maybe_parse_type_for_cast_or_sizeof(context, /*sleep_on_unresolved*/false);
                         if(!type_info_a.type){
                             report_error(context, get_current_token_for_error_report(context), "Expected a type. Arguments of __builtin_types_compatible_p need to be types.");
                         }
                         
                         expect_token(context, TOKEN_comma, "Expected ',' for __builtin_types_compatible_p(<type>, <type>).");
-                        struct type_info_return type_info_b = maybe_parse_type_for_cast_or_sizeof(context);
+                        struct type_info_return type_info_b = maybe_parse_type_for_cast_or_sizeof(context, /*sleep_on_unresolved*/false);
                         if(!type_info_b.type){
                             report_error(context, get_current_token_for_error_report(context), "Expected a type. Arguments of __builtin_types_compatible_p need to be types.");
                         }
@@ -8235,8 +8237,7 @@ func void parse_declaration_specifiers(struct context *context, struct declarati
                 type_qualifiers |= QUALIFIER_atomic;
                 
                 if(peek_token_eat(context, TOKEN_open_paren)){
-                    struct type_info_return type_info = maybe_parse_type_for_cast_or_sizeof(context);
-                    
+                    struct type_info_return type_info = maybe_parse_type_for_cast_or_sizeof(context, /*sleep_on_unresolved*/true); // Maybe this should not sleep?
                     if(!type_info.type){
                         report_error(context, get_current_token_for_error_report(context), "Expected a type after '_Atomic('.");
                         break;
@@ -8269,7 +8270,7 @@ func void parse_declaration_specifiers(struct context *context, struct declarati
             case TOKEN_alignas:{
                 expect_token(context, TOKEN_open_paren, "Expected '(' to follow '_Alignas'.");
                 
-                struct type_info_return type_name = maybe_parse_type_for_cast_or_sizeof(context);
+                struct type_info_return type_name = maybe_parse_type_for_cast_or_sizeof(context, /*sleep_on_unresolved*/true);
                 
                 u64 value = 0;
                 if(type_name.type){
@@ -9235,7 +9236,7 @@ case TOKEN_##type_name:{                                                 \
                 
                 expect_token(context, TOKEN_open_paren, "Expected '(' after typeof.");
                 
-                struct type_info_return type_info_return = maybe_parse_type_for_cast_or_sizeof(context);
+                struct type_info_return type_info_return = maybe_parse_type_for_cast_or_sizeof(context, /*sleep_on_unresolved*/false);
                 if(type_info_return.type){
                     specifiers->type_specifier = type_info_return.type;
                     specifiers->defined_type_specifier = type_info_return.defined_type;
