@@ -1084,40 +1084,35 @@ enum declaration_specifier_flag{
     SPECIFIER_extern   = 0x2,
     SPECIFIER_static   = 0x4,
     SPECIFIER_register = 0x8,
-    // SPECIFIER_auto
-    SPECIFIER_thread_local = 0x10,
+    SPECIFIER_auto     = 0x10,
+    SPECIFIER_thread_local = 0x20,
     
     // 
     // __declspec storage-class specifiers.
     // 
-    SPECIFIER_dllimport = 0x20,
-    SPECIFIER_dllexport = 0x40,
-    SPECIFIER_selectany = 0x80,
-    
-    SPECIFIER_packed    = 0x100,
+    SPECIFIER_dllimport = 0x40,
+    SPECIFIER_dllexport = 0x80,
+    SPECIFIER_selectany = 0x100,
+    SPECIFIER_packed    = 0x200,
     
     // 
     // function-specifiers.
     // 
-    SPECIFIER_inline     = 0x200,
-    SPECIFIER_noreturn   = 0x400,
-    SPECIFIER_noinline   = 0x800,
+    SPECIFIER_inline     = 0x400,
+    SPECIFIER_noreturn   = 0x800,
+    SPECIFIER_noinline   = 0x1000,
     
     // 
     // HLC-specific declspecs.
     // 
-    SPECIFIER_inline_asm = 0x1000,
-    SPECIFIER_printlike  = 0x2000,
-    SPECIFIER_constructor = 0x4000,
+    SPECIFIER_inline_asm = 0x2000,
+    SPECIFIER_printlike  = 0x4000,
+    SPECIFIER_constructor = 0x8000,
     
-    // 
-    // Type specifiers.
-    // 
+    
     SPECIFIER_transparent_union = 0x10000,
-    
     SPECIFIER_fallthrough = 0x20000,
     SPECIFIER_vector_size = 0x40000,
-    SPECIFIER_aligned = 0x80000,
 };
 
 struct declaration_specifiers{
@@ -1580,6 +1575,7 @@ func struct expr parse_constant_integer_expression(struct context *context, int 
 // @cleanup: Rename to 'maybe_parse_type_name' ?
 static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct context *context){
     
+    
     struct type_info_return ret = zero_struct;
     
     // 
@@ -1598,7 +1594,7 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
     
     switch(token->type){
         case TOKEN_identifier:{
-            struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, token, /*silent*/true);
+            struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, token);
             
             // This was not a typedef, hence '(identifier' does not start a type-name.
             if(!ast_typedef) return ret;
@@ -2694,10 +2690,17 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
     struct ast_type *type = decl->type;
     
     if(peek_token(context, TOKEN_open_curly)){
+        
         // 
         // Parse an initializer like 'struct s asd = {1,2,3};' or '(struct s){1,2,3};'.
         // 
         struct token *open_curly = get_current_token(context);
+        
+        if(type == &globals.typedef_auto){
+            report_error(context, open_curly, "Cannot initialize 'auto'-typed variable with an initializer list.");
+            skip_until_tokens_are_balanced(context, open_curly, TOKEN_open_curly, TOKEN_closed_curly, "This error should never be seen");
+            return;
+        }
         
         struct ir_compound_literal *compound_literal = push_uninitialized_struct(&context->ir_arena, struct ir_compound_literal);
         compound_literal->base.kind = IR_compound_literal;
@@ -2759,6 +2762,11 @@ func void parse_initializer(struct context *context, struct ast_declaration *dec
         // 'int a = 1, 2, 3;' Is not legal.
         //
         struct expr expr = parse_expression(context, /*skip_comma_expression*/true);
+        
+        if(decl->type == &globals.typedef_auto){
+            type = decl->type = expr.resolved_type;
+            decl->defined_type = expr.defined_type;
+        }
         
         if(expr.ir->kind == IR_compound_literal && types_are_equal(type, expr.resolved_type)){
             
@@ -8202,7 +8210,9 @@ func void parse_declaration_specifiers(struct context *context, struct declarati
             case TOKEN_thread_local:{
                 check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_thread_local, token, "thread_local");
             }break;
-            
+            case TOKEN_auto:{
+                check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_auto, token, "auto");
+            }break;
             case TOKEN_pragma_pack:{
                 parse_and_process_pragma_pack(context);
             }break;
@@ -9185,7 +9195,7 @@ case TOKEN_##type_name:{                                                 \
                     break;
                 }
                 
-                struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, token, /*silent*/false);
+                struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, token);
                 if(ast_typedef){
                     // 
                     // :unresolved_types
@@ -9195,13 +9205,24 @@ case TOKEN_##type_name:{                                                 \
                     
                     specifiers->defined_type_specifier = &ast_typedef->kind;
                     specifiers->type_specifier = ast_typedef->type;
+                }else if(specifiers->specifier_flags & SPECIFIER_auto){
+                    // This is fine!
+                    prev_token(context);
+                    should_break = 1;
                 }else{
-                    if(globals.compile_stage < COMPILE_STAGE_parse_function){
-                        parser_sleep(context, token, SLEEP_on_decl);
+                    struct ast_declaration *declaration = lookup_declaration(context->current_scope, context->current_compilation_unit, token->atom);
+                    if(declaration){
+                        begin_error_report(context);
+                        report_error(context, token, "Expected a type, got a declaration. E.g: int a; a b;");
+                        report_error(context, declaration->identifier, "... Here is the declaration.");
+                        end_error_report(context);
                     }else{
-                        report_error(context, token, "Undeclared identifier.");
+                        if(globals.compile_stage < COMPILE_STAGE_parse_function){
+                            parser_sleep(context, token, SLEEP_on_decl);
+                        }else{
+                            report_error(context, token, "Undeclared identifier.");
+                        }
                     }
-                    
                     specifiers->type_specifier = &globals.typedef_poison;
                 }
             }break;
@@ -9247,7 +9268,13 @@ case TOKEN_##type_name:{                                                 \
     }
     
     if(!specifiers->type_specifier && c_type == C_TYPE_none){
-        report_error(context, get_current_token_for_error_report(context), "Expected a type.");
+        if(specifiers->specifier_flags & SPECIFIER_auto){
+            specifiers->type_specifier = &globals.typedef_auto;
+        }else{
+            report_error(context, get_current_token_for_error_report(context), "Expected a type.");
+        }
+    }else{
+        specifiers->specifier_flags &= ~SPECIFIER_auto;
     }
     
     if(context->should_exit_statement){
@@ -9897,8 +9924,10 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             //    int a = 1;
             // works (we would otherwise not call 'evaluate_initializer' on the right decl).
             // 
-            decl = register_declaration(context, decl);
-            if(context->should_exit_statement) goto end;
+            if(!(specifiers.specifier_flags & SPECIFIER_auto)){
+                decl = register_declaration(context, decl);
+                if(context->should_exit_statement) goto end;
+            }
             
             if(peek_token(context, TOKEN_equals)){
                 struct token *equals = next_token(context);
@@ -9942,6 +9971,15 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 if(dead_code_marker) exit_dead_code(context, dead_code_marker);
                 
                 if(context->should_exit_statement) goto end;
+            }
+            
+            if(specifiers.specifier_flags & SPECIFIER_auto){
+                if(!decl->assign_expr){
+                    report_error(context, decl->identifier, "A declaration with 'auto'-typeing must be initialized.");
+                }else{
+                    decl = register_declaration(context, decl);
+                    if(context->should_exit_statement) goto end;
+                }
             }
             
             if(!(specifiers.specifier_flags & SPECIFIER_typedef) && !(decl->flags & DECLARATION_FLAGS_is_local_persist) && !(decl->flags & DECLARATION_FLAGS_is_global)){
@@ -10733,7 +10771,7 @@ func void parse_statement(struct context *context){
         case TOKEN_alignas: case TOKEN_atomic: 
         case TOKEN_unaligned: case TOKEN_restrict:
         case TOKEN_const:    case TOKEN_volatile: case TOKEN_static: case TOKEN_extern: case TOKEN_typedef:
-        case TOKEN_register: case TOKEN_signed:   case TOKEN_unsigned:
+        case TOKEN_auto:     case TOKEN_register: case TOKEN_signed: case TOKEN_unsigned:
         case TOKEN_void:     case TOKEN_Bool:     case TOKEN_char:   case TOKEN_short:  case TOKEN_int: case TOKEN_long:
         case TOKEN_int8:     case TOKEN_int16:    case TOKEN_int32:  case TOKEN_int64: case TOKEN_int128: case TOKEN_uint128:
         case TOKEN_float:    case TOKEN_double:   case TOKEN_float128:
@@ -10924,7 +10962,7 @@ func void parse_statement(struct context *context){
                 break;
             }
             
-            struct ast_declaration *lookup = lookup_typedef(context, context->current_compilation_unit, initial_token, /*silent*/true);
+            struct ast_declaration *lookup = lookup_typedef(context, context->current_compilation_unit, initial_token);
             if(lookup){
                 struct declaration_specifiers specifiers = {
                     .type_specifier = lookup->type,
@@ -11078,6 +11116,11 @@ func struct declarator_return parse_declarator(struct context* context, struct a
     //     type-qualifier-list type-qualifier
     // 
     
+    if(ret.type == &globals.typedef_auto && peek_token(context, TOKEN_times)){
+        report_error(context, get_current_token(context), "Cannot declare a pointer to 'auto'.");
+        return ret;
+    }
+    
     while(peek_token_eat(context, TOKEN_times)){
         
         ret.type = parser_push_pointer_type(context, ret.type, ret.defined_type);
@@ -11091,8 +11134,8 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             // 
             // @cleanup: these are flags which should probably be modifiers on the pointer type.
             // 
-            if(peek_token_eat(context, TOKEN_sptr))     type_qualifiers |= QUALIFIER_sptr;
-            if(peek_token_eat(context, TOKEN_uptr))     type_qualifiers |= QUALIFIER_uptr;
+            if(peek_token_eat(context, TOKEN_sptr))      type_qualifiers |= QUALIFIER_sptr;
+            if(peek_token_eat(context, TOKEN_uptr))      type_qualifiers |= QUALIFIER_uptr;
             if(peek_token_eat(context, TOKEN_ptr32))     type_qualifiers |= QUALIFIER_ptr32;
             if(peek_token_eat(context, TOKEN_ptr64))     type_qualifiers |= QUALIFIER_ptr64;
             if(peek_token_eat(context, TOKEN_unaligned)) type_qualifiers |= QUALIFIER_unaligned;
@@ -11216,7 +11259,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 //                                                             -Pascal Beyer 04.10.2024
                 struct token *identifier = peek_token(context, TOKEN_identifier);
                 if(identifier){
-                    struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, identifier, /*silent*/true);
+                    struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, identifier);
                     if(!ast_typedef) have_nested_declarator = true;
                 }
             }
@@ -11457,6 +11500,12 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         }else{
             break;
         }
+    }
+    
+    if(post_types && ret.type == &globals.typedef_auto){
+        char *kind = post_types->type->kind == AST_function ? "function" : "array";
+        report_error(context, post_types->token, "auto in combination with %s is illegal.", kind);
+        return ret;
     }
     
     // 

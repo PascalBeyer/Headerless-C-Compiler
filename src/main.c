@@ -648,6 +648,7 @@ static struct{
     struct ast_type typedef_atomic_u128;
     
     struct ast_type typedef_poison;
+    struct ast_type typedef_auto;
     
     struct ast_pointer_type typedef_void_pointer;
     struct ast_pointer_type typedef_Bool_pointer;
@@ -1768,29 +1769,11 @@ static struct ast_type *lookup_unresolved_type(struct ast_type *type){
     return (struct ast_type *)ast_table_get(&globals.compound_types, ident);
 }
 
-func struct ast_declaration *lookup_typedef(struct context *context, struct compilation_unit *compilation_unit, struct token *type_name, int silent){
+func struct ast_declaration *lookup_typedef(struct context *context, struct compilation_unit *compilation_unit, struct token *type_name){
     struct ast_declaration *decl = lookup_declaration(context->current_scope, compilation_unit, type_name->atom);
     if(!decl) return null;
     
-    if(decl->kind != IR_typedef){
-        if(!silent){
-            // 
-            // @note: We need to report an error here in some cases, to prevent infinite loops for something like:
-            // 
-            //     int main() {}
-            //     main asd(){}
-            //     
-            // Here, it beleaves 'main' to be a typedef, and we need to error on that, otherwise it spins.
-            // 
-            
-            
-            begin_error_report(context);
-            report_error(context, type_name, "Expected a type, got a declaration.");
-            report_error(context, decl->identifier, "... Here is the declaration.");
-            end_error_report(context);
-        }
-        return null;
-    }
+    if(decl->kind != IR_typedef) return null;
     
     // @note: Read the type once, as another thread might try to resolve it at the same time.
     struct ast_type *type = atomic_load(struct ast_type *, decl->type);

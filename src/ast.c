@@ -75,9 +75,9 @@ enum token_type{
     TOKEN_static,
     TOKEN_extern,
     TOKEN_register,
-    // TOKEN_auto,
+    
+    TOKEN_auto,
     // TOKEN_constexpr,
-    // TOKEN_thread_local,
     
     TOKEN_atomic,
     TOKEN_unaligned,
@@ -202,6 +202,8 @@ static struct{
     {const_string("static"),        TOKEN_static}, 
     {const_string("extern"),        TOKEN_extern},
     {const_string("register"),      TOKEN_register},
+    {const_string("auto"),          TOKEN_auto},
+    {const_string("__auto_type"),   TOKEN_auto},
     {const_string("inline"),        TOKEN_inline},
     {const_string("_inline"),       TOKEN_inline},
     {const_string("__inline"),      TOKEN_inline},
