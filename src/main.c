@@ -3678,12 +3678,11 @@ func void worker_parse_function(struct context *context, struct work_queue_entry
             if(atoms_match(label->ident, ast_goto->ident)){
                 found = true;
                 
-                if(ast_goto->statement_expression_index != label->statement_expression_index){
+                // note: Allow goto out of an expression statement.
+                if(ast_goto->statement_expression_index != label->statement_expression_index && label->statement_expression_index != 0){
                     begin_error_report(context);
                     if(ast_goto->statement_expression_index == 0){
                         report_error(context, ast_goto->token, "goto into ({<statement>})-expression.");
-                    }else if(label->statement_expression_index == 0){
-                        report_error(context, ast_goto->token, "goto out of ({<statement>})-expression.");
                     }else{
                         report_error(context, ast_goto->token, "goto between ({<statement>})-expressions.");
                     }
