@@ -10531,11 +10531,13 @@ func void parse_statement(struct context *context){
             struct expr       previous_switch_on = context->current_switch_on;
             struct token     *previous_switch_default_label_token = context->current_switch_default_label_token;
             int previous_switch_was_alive = context->current_switch_was_alive;
+            int previous_switch_on_constant_found_case = context->current_switch_on_constant_found_case;
             
             context->current_switch = ir_switch;
             context->current_switch_on = switch_on;
             context->current_switch_default_label_token = 0;
             context->current_switch_was_alive = !statement_returns_a_value;
+            context->current_switch_on_constant_found_case = 0;
             
             struct ast_scope *scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_can_break);
             
@@ -10548,6 +10550,7 @@ func void parse_statement(struct context *context){
             context->current_switch_on = previous_switch_on;
             context->current_switch_default_label_token = previous_switch_default_label_token;
             context->current_switch_was_alive = previous_switch_was_alive;
+            context->current_switch_on_constant_found_case = previous_switch_on_constant_found_case;
             
             // The switch returns a value, if its statement does, there is a default case (or in the future if its exhaustive ) and there was no alive break.
             int switch_returns_a_value = context->current_statement_returns_a_value && !(scope->flags & SCOPE_FLAG_found_an_alive_break);
@@ -10567,11 +10570,6 @@ func void parse_statement(struct context *context){
             if(!context->current_switch){
                 report_syntax_error(context, initial_token, "'case' is only allowed within 'switch'-statement.");
                 return;
-            }
-            
-            if(context->current_switch_was_alive){
-                // If the switch was alive, we can get here!
-                context->current_statement_returns_a_value = 0;
             }
             
             struct expr const_expr = parse_constant_integer_expression(context, false, "Operand of 'case' has to be constant.");
@@ -10605,6 +10603,22 @@ func void parse_statement(struct context *context){
                     report_error(context, initial_token, "Case range start is greater than its end.");
                     return;
                 }
+            }
+            
+            int case_is_dead = 0;
+            
+            if(switch_on->ir->kind == IR_integer_literal){
+                u64 switch_value = integer_literal_as_u64(switch_on);
+                if(!(low_value <= switch_value && switch_value <= high_value)){
+                    case_is_dead = 1;
+                }else{
+                    context->current_switch_on_constant_found_case = 1;
+                }
+            }
+            
+            if(context->current_switch_was_alive && !case_is_dead){
+                // If the switch was alive, we can get here!
+                context->current_statement_returns_a_value = 0;
             }
             
             struct ir_case *previous_case = null;
@@ -10658,8 +10672,8 @@ func void parse_statement(struct context *context){
             }
             
             if(context->current_switch_was_alive){
-                // If the switch was alive, we can get here!
-                context->current_statement_returns_a_value = 0;
+                // If the switch was alive, we can get here, unless this is a switch on a constant and we already found a case.
+                context->current_statement_returns_a_value = context->current_switch_on_constant_found_case;
             }
             
             if(context->current_switch->default_jump_label){

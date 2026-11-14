@@ -928,6 +928,7 @@ struct context{
     struct expr current_switch_on;
     struct token *current_switch_default_label_token;
     int current_switch_was_alive;
+    int current_switch_on_constant_found_case;
     
     struct token *in_inline_asm_function;
     b32 current_asm_flags;
