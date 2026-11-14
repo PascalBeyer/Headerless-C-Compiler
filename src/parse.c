@@ -2090,9 +2090,12 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                 end_error_report(context);
                 goto error;
             }
+        }else{
+            initial_node.offset_at += ast_struct->members[0].offset_in_type; // Can be non-zero for struct {int : 32; int a; };
         }
         
         initial_node.member_at = 0;
+        
     }
     
     // :trailing_arrays
@@ -2519,7 +2522,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     // 
                     new_node = push_struct(&context->scratch, struct designator_node);
                     new_node->lhs_type = current_object_type;
-                    new_node->offset_at = designator_stack.first->offset_at;
+                    new_node->offset_at = designator_stack.first->offset_at + compound->members[0].offset_in_type; // Can be non-zero for struct {int : 32; int a; };
                     new_node->member_at = 0;
                 }else if(type->kind == AST_array_type){
                     new_node = push_struct(&context->scratch, struct designator_node);
@@ -8428,6 +8431,7 @@ case TOKEN_##type_name:{                                                 \
                     
                     struct ast_type *current_bitfield_type = null;
                     s64 current_bitfield_index = 0;
+                    smm last_bitfield_offset = 0;
                     
                     struct token *had_array_of_unknown_size = null;
                     
@@ -8583,34 +8587,13 @@ case TOKEN_##type_name:{                                                 \
                                     //   
                                     //   struct { int : 4; int a: 4; };
                                     // 
-                                    if(compound->amount_of_members) this_was_a_bitfield_type_that_fits = true;
+                                    this_was_a_bitfield_type_that_fits = true;
                                     
                                     current_bitfield_index += width;
                                 }else{
                                     bitfield_base = 0;
                                     current_bitfield_type  = declarator.type;
                                     current_bitfield_index = width;
-                                }
-                                
-                                if(declarator.ident == globals.invalid_identifier_token){
-                                    // 
-                                    // If this was an anonymous bitfield, do not create a declaration for it.
-                                    // This will cause it to get _skipped_ during initialization:
-                                    // 
-                                    //     struct{
-                                    //         int a : 4;
-                                    //         int   : 4;
-                                    //         int b : 4;
-                                    //     } bitfield = {1, 1};
-                                    // 
-                                    // Should have 'bitfield.a == 1' and 'bitfield.b == 1'.
-                                    // 
-                                    
-                                    // If there is another thing after this continue the declarator loop. 
-                                    if(peek_token(context, TOKEN_comma)) continue;
-                                    
-                                    // No more declarators.
-                                    break;
                                 }
                                 
                                 struct ast_bitfield_type *bitfield = parser_type_push(context, bitfield_type);
@@ -8635,6 +8618,7 @@ case TOKEN_##type_name:{                                                 \
                                 decl_alignment = struct_specifiers.alignment; // Member specifiers are the most inner so they should take precedence.
                                 compound->base.flags |= TYPE_FLAG_is_user_aligned;
                             }else if(is_packed){
+                                
                                 decl_alignment = 1; // If the struct is __declspec(packed), overwrite the _natural_ alignment.
                             }else if(!(declarator.type->flags & TYPE_FLAG_is_user_aligned) && decl_alignment > context->pragma_alignment){
                                 decl_alignment = context->pragma_alignment;
@@ -8646,8 +8630,7 @@ case TOKEN_##type_name:{                                                 \
                                 // 
                                 // Copy the offset from the previous bitfield type.
                                 // 
-                                assert(compound->members[compound->amount_of_members-1].type->kind == AST_bitfield_type);
-                                offset_in_type = compound->members[compound->amount_of_members-1].offset_in_type;
+                                offset_in_type = last_bitfield_offset;
                             }else if(is_union){
                                 offset_in_type = 0;
                                 size = max_of(declarator.type->size, size);
@@ -8661,6 +8644,8 @@ case TOKEN_##type_name:{                                                 \
                                 size += declarator.type->size;
                             }
                             
+                            last_bitfield_offset = offset_in_type;
+                            
                             // The alignment is the strictest alignment for any of the members.
                             alignment = max_of(decl_alignment, alignment);
                             
@@ -8673,6 +8658,29 @@ case TOKEN_##type_name:{                                                 \
                                     }
                                     
                                     register_compound_member(context, compound, ident, declarator.type, offset_in_type, /*next_member_increment*/1);
+                                }else if(declarator.type->kind == AST_bitfield_type){
+                                    // 
+                                    // If this was an anonymous bitfield, do not create a declaration for it.
+                                    // This will cause it to get _skipped_ during initialization:
+                                    // 
+                                    //     struct{
+                                    //         int a : 4;
+                                    //         int   : 4;
+                                    //         int b : 4;
+                                    //     } bitfield = {1, 1};
+                                    // 
+                                    // Should have 'bitfield.a == 1' and 'bitfield.b == 1'.
+                                    // 
+                                    // We have already adjusted `alignment` and `size` for the case of 
+                                    // 
+                                    //   struct{
+                                    //       int : 32;
+                                    //       int : 32;
+                                    //       int : 32;
+                                    //       int a;
+                                    //   } bitfield;
+                                    //   
+                                    
                                 }else if(declarator.type->kind != AST_struct && declarator.type->kind != AST_union){
                                     report_error(context, ident, "Declaration does not declare anything.");
                                 }else{

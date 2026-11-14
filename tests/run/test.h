@@ -13,7 +13,7 @@ typedef int b32;
 typedef s64 smm; 
 
 void _exit(int status);
-#define assert(a) (!(a) ? (_exit(1), 0) : 0)
+#define assert(a) (!(a) ? (_exit(__LINE__), 0) : 0)
 
 #define true 1
 #define false 0
