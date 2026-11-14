@@ -235,6 +235,8 @@ static struct{
     {const_string("__cdecl"),       TOKEN_cdecl},
     {const_string("_cdecl"),        TOKEN_cdecl},
     
+    {const_string("asm"),           TOKEN_asm},
+    {const_string("__asm"),         TOKEN_asm},
     {const_string("__asm__"),       TOKEN_asm},
     {const_string("__label__"),     TOKEN___label__},
     
