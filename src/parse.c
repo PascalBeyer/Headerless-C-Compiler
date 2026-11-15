@@ -8924,7 +8924,7 @@ case TOKEN_##type_name:{                                                 \
                     
                     s64 current_value = -1;
                     do{
-                        if(peek_token_eat(context, TOKEN_closed_curly)) goto enum_skip_curly;
+                        if(peek_token(context, TOKEN_closed_curly)) break;
                         
                         struct token *ident = expect_token(context, TOKEN_identifier, "Expected an identifier in enum declaration.");
                         
@@ -9066,9 +9066,12 @@ case TOKEN_##type_name:{                                                 \
                     
                     expect_token(context, TOKEN_closed_curly, "Expected '}' ending enum declaration or ',' to keep going.");
                     
-                    enum_skip_curly:;
-                    
+                    // Trailing attributes, e.g. 'enum foo { ... } __attribute__((packed));'.
+                    while(peek_token_eat(context, TOKEN_declspec)){
+                        parse_extended_attribute(context, &enum_specifiers);
                     }
+                    
+                    is_packed |= (enum_specifiers.specifier_flags & SPECIFIER_packed) != 0;
                     
                     // "Each enumerated type should be compatible with a signed or unsigned integer type. 
                     //  Implementation defined but should be able to hold all of the members"
