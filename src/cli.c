@@ -34,6 +34,7 @@ enum cli_option_kind{
     CLI_OPTION_thread_count,
     CLI_OPTION_MP,
     CLI_OPTION_I,
+    CLI_OPTION_include,
     CLI_OPTION_LIBPATH,
     CLI_OPTION_D,
     CLI_OPTION_Wall,
@@ -58,6 +59,7 @@ enum cli_option_kind{
     CLI_OPTION_MT,
     CLI_OPTION_MQ,
     CLI_OPTION_MF,
+    CLI_OPTION_language,
     CLI_OPTION_std,
     CLI_OPTION_warning_limit,
     CLI_OPTION_error_limit,
@@ -114,6 +116,7 @@ struct cli_option_hash_table_entry{
     [83] = {{7, (u8 *)"isystem"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [63] = {{9, (u8 *)"idirafter"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
     [29] = {{6, (u8 *)"iquote"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
+    [10] = {{7, (u8 *)"include"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_include, 0},
     [42] = {{7, (u8 *)"libpath"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_LIBPATH, 0},
     [21] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
     [12] = {{5, (u8 *)"wnone"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wnone, -1},
@@ -123,6 +126,7 @@ struct cli_option_hash_table_entry{
     [99] = {{11, (u8 *)"relocatable"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_relocatable, -1},
     [14] = {{12, (u8 *)"dependencies"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dependencies, -1},
     [88] = {{17, (u8 *)"writedependencies"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_write_dependencies, -1},
+    [73] = {{8, (u8 *)"language"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_language, 0},
     [58] = {{12, (u8 *)"warninglimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_warning_limit, 0},
     [46] = {{10, (u8 *)"errorlimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_error_limit, 0},
     [74] = {{11, (u8 *)"syntaxcheck"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
@@ -241,6 +245,7 @@ struct cli_options{
     u64 thread_count; // Sets the amount of threads to be used during compilation. Default: 1
     int MP; // Sets the amount of threads to the number of processors on the system.
     struct string_list I; // Specify an additional include directory.
+    struct string_list include; // Specify a file to be include into every compilation unit.
     struct string_list LIBPATH; // Specify an additional search path for .lib/.so files.
     struct string_list D; // Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
     int Wall; // Enable all warnings.
@@ -263,6 +268,7 @@ struct cli_options{
     struct string_list MT; // Sets the target name in the dependency file.
     struct string_list MQ; // Sets the target name in the dependency file, but quote special characters.
     struct string MF; // Sets the file name of the dependency file.
+    struct string language; // Sets the language. Only 'c' is allowed.
     enum std std; // The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.
     int warning_limit_specified;
     u64 warning_limit; // A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.
@@ -588,6 +594,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                 option_argument_type = CLI_ARGUMENT_TYPE_none;
                 option_kind          = CLI_OPTION_dependencies;
                 argument_is_optional = -1;
+            }else if(string_front_match_eat(&option, "x")){
+                option_argument_type = CLI_ARGUMENT_TYPE_string;
+                option_kind          = CLI_OPTION_language;
+                argument_is_optional = 0;
             }
             
             if(option_kind == CLI_OPTION_none){
@@ -882,6 +892,12 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "This makes it possible to use your own headers in <>-includes.\n"
                             "", 63);
                 }break;
+                case CLI_OPTION_include:{
+                    print("-include <string_list> | Specify a file to be include into every compilation unit.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
                 case CLI_OPTION_LIBPATH:{
                     print("-LIBPATH <dir_list> | Specify an additional search path for .lib/.so files.\n\n");
                     os_print_string(
@@ -1059,6 +1075,18 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "TODO\n"
                             "", 5);
                 }break;
+                case CLI_OPTION_language:{
+                    print("-language <string> | Sets the language. Only 'c' is allowed.\n\n");
+                    os_print_string(
+                            "We can only compile C! \n"
+                            "The option is mostly here for compatibility, it will also disable file extension warnings, e.g:\n"
+                            "> hlc main.c > main.i\n"
+                            "> hlc main.i\n"
+                            "> Warning: 'main.i' has uncanonical file extension. File is treated as c-file.\n"
+                            "> hlc -xc main.i \n"
+                            "> <sweet silence>\n"
+                            "", 270);
+                }break;
                 case CLI_OPTION_std:{
                     print("-std <standard> | The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.\n\n");
                     if(option_argument){
@@ -1225,6 +1253,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -thread_count <u64>         | Sets the amount of threads to be used during compilation. Default: 1\n"
                             "  -MP                         | Sets the amount of threads to the number of processors on the system.\n"
                             "  -I <dir_list>               | Specify an additional include directory.\n"
+                            "  -include <string_list>      | Specify a file to be include into every compilation unit.\n"
                             "  -LIBPATH <dir_list>         | Specify an additional search path for .lib/.so files.\n"
                             "  -D <name[=<text>]>          | Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.\n"
                             "  -Wall                       | Enable all warnings.\n"
@@ -1249,12 +1278,13 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -MT <file>                  | Sets the target name in the dependency file.\n"
                             "  -MQ <file>                  | Sets the target name in the dependency file, but quote special characters.\n"
                             "  -MF <file>                  | Sets the file name of the dependency file.\n"
+                            "  -language <string>          | Sets the language. Only 'c' is allowed.\n"
                             "  -std <standard>             | The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.\n"
                             "  -warning_limit <u64>        | A loose limit to the amount of warnings reported. This limit is keept on a per-thread basis.\n"
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 4208);
+                    , 4370);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1325,21 +1355,25 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_MP: cli_options->MP = 1; break;
             
             case CLI_OPTION_I:{
-                string_list_postfix(&cli_options->I, arena, argument_string);
+                string_list_postfix_no_copy(&cli_options->I, arena, argument_string);
+            }break;
+            
+            case CLI_OPTION_include:{
+                string_list_postfix_no_copy(&cli_options->include, arena, argument_string);
             }break;
             
             case CLI_OPTION_LIBPATH:{
-                string_list_postfix(&cli_options->LIBPATH, arena, argument_string);
+                string_list_postfix_no_copy(&cli_options->LIBPATH, arena, argument_string);
             }break;
             
             case CLI_OPTION_D:{
-                string_list_postfix(&cli_options->D, arena, argument_string);
+                string_list_postfix_no_copy(&cli_options->D, arena, argument_string);
             }break;
             case CLI_OPTION_Wall: memset(warning_enabled, 1, sizeof(warning_enabled)); break;
             case CLI_OPTION_Wnone: memset(warning_enabled, 0, sizeof(warning_enabled)); break;
             
             case CLI_OPTION_Wl:{
-                string_list_postfix(&cli_options->Wl, arena, argument_string);
+                string_list_postfix_no_copy(&cli_options->Wl, arena, argument_string);
             }break;
             
             case CLI_OPTION_W:{
@@ -1448,7 +1482,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             }break;
             
             case CLI_OPTION_l:{
-                string_list_postfix(&cli_options->l, arena, argument_string);
+                string_list_postfix_no_copy(&cli_options->l, arena, argument_string);
             }break;
             case CLI_OPTION_quiet: cli_options->quiet = 1; break;
             case CLI_OPTION_EP: cli_options->EP = 1; break;
@@ -1467,15 +1501,19 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_MMD: cli_options->MMD = 1; break;
             
             case CLI_OPTION_MT:{
-                string_list_postfix(&cli_options->MT, arena, argument_string);
+                string_list_postfix_no_copy(&cli_options->MT, arena, argument_string);
             }break;
             
             case CLI_OPTION_MQ:{
-                string_list_postfix(&cli_options->MQ, arena, argument_string);
+                string_list_postfix_no_copy(&cli_options->MQ, arena, argument_string);
             }break;
             
             case CLI_OPTION_MF:{
                 cli_options->MF = argument_string;
+            }break;
+            
+            case CLI_OPTION_language:{
+                cli_options->language = argument_string;
             }break;
             
             case CLI_OPTION_std:{

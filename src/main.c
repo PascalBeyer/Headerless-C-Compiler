@@ -4132,6 +4132,16 @@ int main(int argc, char *argv[]){
         return 0;
     }
     
+    int disable_file_extention_warning = 0;
+    if(globals.cli_options.language.data){
+        if(string_match(globals.cli_options.language, string("c"))){
+            disable_file_extention_warning = 1;
+        }else{
+            print("Error: Specified language is not \"c\".");
+            return 1;
+        }
+    }
+    
     // 
     // Check some random arguments.
     // 
@@ -4269,8 +4279,10 @@ int main(int argc, char *argv[]){
                 return 2;
             }
             
-            if(!string_match(extension, string(".c")) && !string_match(extension, string(".h"))){
-                print("Warning: Input file '%.*s' has uncanonical file extension. File is treated as c-file.\n", path.size, path.data);
+            if(!disable_file_extention_warning){
+                if(!string_match(extension, string(".c")) && !string_match(extension, string(".h"))){
+                    print("Warning: Input file '%.*s' has uncanonical file extension. File is treated as c-file.\n", path.size, path.data);
+                }
             }
             
             struct work_tokenize_file *work = push_struct(arena, struct work_tokenize_file);
@@ -4864,6 +4876,15 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 // We cannot simply patch up the value of the predefine node, as it would leave the total string size wrong.
                 struct string define = push_format_string(arena, "#define %.*s %.*s\n", to_define.size, to_define.data, define_to.size, define_to.data);
                 string_list_postfix_no_copy(&predefines, arena, define);
+            }
+            
+            for(struct string_list_node *node = globals.cli_options.include.list.first; node; node = node->next){
+                struct string path = node->string;
+                if(!path_is_absolute(path)){
+                    path = push_format_string(arena, "%.*s/%.*s", globals.working_directory.size, globals.working_directory.data, path.size, path.data);
+                }
+                struct string include = push_format_string(arena, "#include \"%.*s\"\n", path.size, path.data);
+                string_list_postfix_no_copy(&predefines, arena, include);
             }
             
             struct string predefines_string = string_list_flatten(predefines, arena);

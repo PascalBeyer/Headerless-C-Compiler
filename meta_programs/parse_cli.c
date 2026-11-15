@@ -1364,7 +1364,7 @@ int main(int argc, char *argv[]){
             
             case CLI_ARGUMENT_TYPE_string_list:
             case CLI_ARGUMENT_TYPE_directory_list:{
-                print("                string_list_postfix(&cli_options->%.*s, arena, argument_string);\n", option->option_name.size, option->option_name.data);
+                print("                string_list_postfix_no_copy(&cli_options->%.*s, arena, argument_string);\n", option->option_name.size, option->option_name.data);
             }break;
         }
         print("            }break;\n");

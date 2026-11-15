@@ -168,6 +168,10 @@ This is the "whatever" throw some cores at it option.
 
 This makes it possible to use your own headers in <>-includes.
 
+/include <string_list> - Specify a file to be include into every compilation unit.
+
+TODO
+
 /LIBPATH <dir_list> | /L <dir_list> - Specify an additional search path for .lib/.so files.
 
 @incomplete:
@@ -293,6 +297,16 @@ TODO
 /MF <file:string> - Sets the file name of the dependency file.
 
 TODO
+
+/language <string> | /x <string> - Sets the language. Only 'c' is allowed.
+
+We can only compile C! 
+The option is mostly here for compatibility, it will also disable file extension warnings, e.g:
+> hlc main.c > main.i
+> hlc main.i
+> Warning: 'main.i' has uncanonical file extension. File is treated as c-file.
+> hlc -xc main.i 
+> <sweet silence>
 
 /std <standard:enum> - The standard to use e.g: c89, c90, c99, c11, c17, c23, gnu89, gnu90, gnu99, gnu11. This currently only sets __STDC_VERSION__ and is otherwise ignored.
 
