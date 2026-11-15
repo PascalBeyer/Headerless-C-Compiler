@@ -9818,7 +9818,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
         }else{
             
-            if(!(specifiers.specifier_flags & SPECIFIER_typedef) && declarator.type == &globals.typedef_void){
+            if(!(specifiers.specifier_flags & (SPECIFIER_typedef|SPECIFIER_extern)) && declarator.type == &globals.typedef_void){
                 report_error(context, declarator.ident, "Cannot declare a variable of type void.");
                 goto end;
             }
