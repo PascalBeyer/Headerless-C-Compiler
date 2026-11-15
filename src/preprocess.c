@@ -2923,7 +2923,7 @@ func s64 static_if_evaluate(struct context *context){
         
         case TOKEN_question_mark: static_if_stack_push(context, test, STATIC_IF_EVALUATE_ternary_condition, value, is_unsigned); goto retry;
         
-        default: break;
+        default: prev_token(context); break;
     }
     
     
@@ -3069,7 +3069,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 
                 struct raw_token *raw_token = &tokens.data[token_index];
                 
-                if(define_parsing_stack_size == 0 && raw_token->type == TOKEN_whitespace) continue;
+                if((define_parsing_stack_size == 0 || context->in_static_if_condition) && raw_token->type == TOKEN_whitespace) continue;
                 
                 if(raw_token->type == TOKEN_hash && got_newline){
                     include_stack_node->at = token_index + 1;
@@ -3167,6 +3167,12 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         }else{
                             static_if_stack.first->is_true = static_if_evaluate(context) != 0;
                             if(context->should_exit_statement) goto end;
+                        }
+                        
+                        if(in_current_token_array(context)){
+                            // @cleanup: Do I really have to copy?
+                            struct string directive_string = token_get_string(postponed_directive.directive);
+                            report_warning(context, WARNING_junk_after_directive, get_current_token(context), "Junk after '#%.*s'.", directive_string.size, directive_string.data);
                         }
                         
                         //
