@@ -2725,9 +2725,16 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
             case IR_nop:{
                 ir_offset += sizeof(struct ir);
             }break;
+            
+            
+            // Casts that don't change the size are fine.
             case IR_cast_to_pointer:{
                 ir_offset += sizeof(struct ir_typed_cast);
-            }break; // Don't think this does anything.
+            }break;
+            
+            case IR_cast_to_u64: case IR_cast_to_s64:{
+                ir_offset += sizeof(struct ir);
+            }break;
             
             // @cleanup: There should probably be handling for IR_skip?
             
