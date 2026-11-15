@@ -3341,7 +3341,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         
                         for(token = next_token_define(context); token != &globals.invalid_token; token = next_token_define(context)){
                             
-                            if(token->type == TOKEN_whitespace) continue;
+                            if((define_parsing_stack_size == 0 || context->in_static_if_condition) && token->type == TOKEN_whitespace) continue;
                             
                             if(token->type == TOKEN_identifier){
                                 if(define_parsing_stack_size == 0){

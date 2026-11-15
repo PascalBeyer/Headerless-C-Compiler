@@ -8,6 +8,8 @@
 
 #define expand(a) a
 
+#define stringify_r(a) stringify(a)
+
 int main(){
     //
     // normal tests
@@ -100,6 +102,7 @@ int main(){
     if(stringify("hello") == "\"hello\""); else return 1;
     if(stringify("hello" "hello") == "\"hello\" \"hello\""); else return 1;
     
+    if(stringify_r(a + b) != "a + b") return 1;
     
     return 0;
 }
