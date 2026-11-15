@@ -804,12 +804,7 @@ func int maybe_resolve_unresolved_type_or_sleep_or_error(struct context *context
             sleep_or_error_on_unresolved_type(context, type);
             return 1;
         }else{
-            if(resolved->kind == AST_enum){
-                // @cleanup: this is sort of weird... this should maybe also take a defined type?
-                *in_out_type = &globals.typedef_s32;
-            }else{
-                *in_out_type = resolved;
-            }
+            *in_out_type = resolved;
         }
     }
     return 0;
@@ -9073,9 +9068,6 @@ case TOKEN_##type_name:{                                                 \
                     
                     enum_skip_curly:;
                     
-                    if(name){
-                        ast_enum->compilation_unit = context->current_compilation_unit;
-                        register_compound_type(context, &ast_enum->base, ast_enum->identifier);
                     }
                     
                     // "Each enumerated type should be compatible with a signed or unsigned integer type. 
@@ -9159,6 +9151,11 @@ case TOKEN_##type_name:{                                                 \
                     ast_enum->enum_underlying_type = specifiers->type_specifier;
                     ast_enum->base.size      = specifiers->type_specifier->size;
                     ast_enum->base.alignment = specifiers->type_specifier->alignment;
+                    
+                    if(name){
+                        ast_enum->compilation_unit = context->current_compilation_unit;
+                        register_compound_type(context, &ast_enum->base, ast_enum->identifier);
+                    }
                 }else{ // no open curly
                     if(!name){
                         report_syntax_error(context, get_current_token_for_error_report(context), "Expected an identifier or '{' after 'enum'.");
@@ -9179,11 +9176,19 @@ case TOKEN_##type_name:{                                                 \
                         
                         specifiers->defined_type_specifier = &lookup->kind;
                         
-                        if(lookup->kind == AST_enum){
+                        if(lookup->kind == AST_unresolved_type){
+#if _WIN32
+                            // With MSVC, all enums are ints and we have to support using undefined enums, hence, just return int!
+                            specifiers->type_specifier = &globals.typedef_s32;
+#else
+                            // With GCC, the size of the enum might vary. Therefore, we have to return an unresolved type.
+                            specifiers->type_specifier = lookup;
+#endif
+                        }else if(lookup->kind == AST_enum){
                             struct ast_compound_type *enum_type = (struct ast_compound_type *)lookup;
                             specifiers->type_specifier = enum_type->enum_underlying_type ? enum_type->enum_underlying_type : &globals.typedef_s32;
                         }else{
-                            specifiers->type_specifier = &globals.typedef_s32; // @cleanup: This is probably incorrect on linux. We should sleep i think.
+                            assert(context->error); // Can get here for wrong tag.
                         }
                     }
                 }

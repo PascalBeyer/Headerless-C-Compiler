@@ -1753,6 +1753,8 @@ static struct ast_type *lookup_unresolved_type(struct ast_type *type){
     // does not compile.
     // 
     
+    struct ast_type *resolved = null;
+    
     if(unresolved->containing_scope){
         
         struct ast_scope *scope = unresolved->containing_scope;
@@ -1761,12 +1763,19 @@ static struct ast_type *lookup_unresolved_type(struct ast_type *type){
             struct ast_compound_type *compound = scope->compound_types[compound_index];
             
             if(atoms_match(ident, compound->identifier->atom)){
-                return &compound->base;
+                resolved = &compound->base;
+                break;
             }
         }
     }
     
-    return (struct ast_type *)ast_table_get(&globals.compound_types, ident);
+    if(!resolved) resolved = (struct ast_type *)ast_table_get(&globals.compound_types, ident);
+    
+    if(resolved && resolved->kind == AST_enum){
+        return ((struct ast_compound_type *)resolved)->enum_underlying_type;
+    }
+    
+    return resolved;
 }
 
 func struct ast_declaration *lookup_typedef(struct context *context, struct compilation_unit *compilation_unit, struct token *type_name){
@@ -1789,17 +1798,8 @@ func struct ast_declaration *lookup_typedef(struct context *context, struct comp
         // actually needs the type to be resolved.
         //
         struct ast_type *resolved = lookup_unresolved_type(type);
-        
-        if(resolved){
-            if(resolved->kind == AST_enum){
-                decl->type = &globals.typedef_s32;
-                decl->defined_type = &resolved->kind;
-            }else{
-                decl->type = resolved;
-            }
-        }
+        if(resolved) decl->type = resolved;
     }
-    
     
     return decl;
 }
