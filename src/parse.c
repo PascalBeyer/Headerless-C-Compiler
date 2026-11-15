@@ -4440,12 +4440,12 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                 memset(&context->statement_expression_return, 0, sizeof(context->statement_expression_return));
                 
                 if(!operand.ir){
-                    operand = push_s32_literal(context, 0, open_paren);
+                    push_s32_literal(context, 0, open_paren);
+                    operand.ir = push_ir(context, IR_nop); // @note: little bit paranoid about it ignoring the void, if its an integer literal.
                     operand.resolved_type = &globals.typedef_void;
                     operand.defined_type = null;
+                    operand.token = open_paren;
                 }
-                
-                operand.ir = push_ir(context, IR_nop); // Prevent constant-propagation.
                 
                 goto skip_primary_expression_because_we_got_a_struct_literal;
             }
@@ -6912,18 +6912,47 @@ case NUMBER_KIND_##type:{ \
                 struct ir_jump_node *conditional_jump = stack_entry->other;
                 
                 if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
-                    struct ir_integer_literal *lit = cast(struct ir_integer_literal *)op_lhs->ir;
-                    if(integer_literal_as_u64(op_lhs) && integer_literal_as_u64(op_rhs)){
-                        lit->_u64 = 1;
+                    u64 value = integer_literal_as_u64(op_lhs) && integer_literal_as_u64(op_rhs);
+                    
+                    if((void *)(conditional_jump + 1) == (void *)operand.ir){
+                        pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
+                        pop_from_ir_arena(context, conditional_jump);
+                        
+                        struct ir_integer_literal *lit = (struct ir_integer_literal *)op_lhs->ir;
+                        lit->_u64 = value;
+                        lit->type = &globals.typedef_s32;
+                        operand.ir = &lit->base;
                     }else{
-                        lit->_u64 = 0;
+                        // 1
+                        // skip jump
+                        // rhs-stuff
+                        // lit
+                        struct ir_skip *ir_skip = (struct ir_skip *)conditional_jump;
+                        ir_skip->base.kind = IR_skip;
+                        ir_skip->size_to_skip = sizeof(struct ir_jump_node) - sizeof(struct ir);
+                        struct ir *pop = (struct ir *)((u8 *)ir_skip + ir_skip->size_to_skip);
+                        pop->kind = IR_pop_expression;
+                        
+                        struct ir_integer_literal *lit = (struct ir_integer_literal *)op_rhs->ir;
+                        lit->_u64 = value;
+                        lit->type = &globals.typedef_s32;
+                        operand.ir = &lit->base;
+                    }
+                }else if(op_rhs->ir->kind == IR_integer_literal && integer_literal_as_u64(op_rhs) == 0){
+                    //
+                    // 'lhs && 0' is always 0. 
+                    //
+                    
+                    if((void *)(conditional_jump + 1) == (void *)operand.ir){
+                        pop_from_ir_arena(context, (struct ir_integer_literal *)op_rhs->ir);
+                        pop_from_ir_arena(context, conditional_jump);
+                    }else{
+                        struct ir_jump_node *false_label = push_jump(context, IR_jump_label);
+                        false_label->label_number = conditional_jump->label_number;
                     }
                     
-                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
-                    pop_from_ir_arena(context, conditional_jump);
-                    
-                    lit->type = &globals.typedef_s32;
-                    operand.ir = &lit->base;
+                    push_ir(context, IR_pop_expression);
+                    operand = push_s32_literal(context, 0, operand.token);
                 }else{
                     
                     // 
@@ -7033,22 +7062,48 @@ case NUMBER_KIND_##type:{ \
                 // 
                 
                 if(op_lhs->kind == IR_integer_literal && op_rhs->kind == IR_integer_literal){
-                    struct ir_integer_literal *lit = cast(struct ir_integer_literal *)op_lhs;
-                    if(integer_literal_as_u64(op_lhs_expr) || integer_literal_as_u64(op_rhs_expr)){
-                        lit->_u64 = 1;
+                    u64 value = integer_literal_as_u64(op_lhs_expr) || integer_literal_as_u64(op_rhs_expr);
+                    
+                    if((void *)(conditional_jump + 1) == (void *)operand.ir){
+                        pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
+                        pop_from_ir_arena(context, conditional_jump);
+                        
+                        struct ir_integer_literal *lit = (struct ir_integer_literal *)op_lhs;
+                        lit->_u64 = value;
+                        lit->type = &globals.typedef_s32;
+                        operand.ir = &lit->base;
                     }else{
-                        lit->_u64 = 0;
+                        // 0
+                        // skip jump
+                        // rhs-stuff
+                        // lit
+                        struct ir_skip *ir_skip = (struct ir_skip *)conditional_jump;
+                        ir_skip->base.kind = IR_skip;
+                        ir_skip->size_to_skip = sizeof(struct ir_jump_node) - sizeof(struct ir);
+                        struct ir *pop = (struct ir *)((u8 *)ir_skip + ir_skip->size_to_skip);
+                        pop->kind = IR_pop_expression;
+                        
+                        struct ir_integer_literal *lit = (struct ir_integer_literal *)op_rhs;
+                        lit->_u64 = value;
+                        lit->type = &globals.typedef_s32;
+                        operand.ir = &lit->base;
+                    }
+                }else if(op_rhs->kind == IR_integer_literal && integer_literal_as_u64(op_rhs_expr) != 0){
+                    //
+                    // 'lhs || 1' is always 1.
+                    //
+                    
+                    if((void *)(conditional_jump + 1) == (void *)operand.ir){
+                        pop_from_ir_arena(context, (struct ir_integer_literal *)op_rhs);
+                        pop_from_ir_arena(context, conditional_jump);
+                    }else{
+                        struct ir_jump_node *false_label = push_jump(context, IR_jump_label);
+                        false_label->label_number = conditional_jump->label_number;
                     }
                     
-                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
-                    pop_from_ir_arena(context, conditional_jump);
-                    
-                    lit->type = &globals.typedef_s32;
-                    operand.ir = &lit->base;
+                    push_ir(context, IR_pop_expression);
+                    operand = push_s32_literal(context, 1, operand.token);
                 }else{
-                    
-                    // 
-                    // @copy and paste from ast_logical_and:
                     // 
                     // Something like this is necessary for expressions like a + (b && c),
                     // but for the case where a logical and / logical or leads into a condition
@@ -7645,9 +7700,6 @@ case NUMBER_KIND_##type:{ \
             
             case AST_comma_expression:{
                 assert(!should_skip_comma_expression);
-                
-                // We have to change the operand, as otherwise we may try to const propagate in situations where we should not.
-                operand.ir = push_ir(context, IR_nop);
                 
                 context->in_lhs_expression = false; // @hmm: should we allow (3, a) = 3; probably not
             }break;
