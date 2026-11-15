@@ -10285,8 +10285,9 @@ func void parse_statement(struct context *context){
                     //         continue; // This marks everything after it as dead, deleating the call to 'increment'.
                     //     }
                     // 
+                    int found_alive_continue = (scope->flags & SCOPE_FLAG_found_an_alive_continue) != 0;
                     int body_returns_a_value = context->current_statement_returns_a_value;
-                    context->current_statement_returns_a_value = 0;
+                    context->current_statement_returns_a_value &= !found_alive_continue;
                     
                     parse_expression(context, false);
                     
@@ -10407,6 +10408,10 @@ func void parse_statement(struct context *context){
             
             struct ast_scope *scope = parser_push_new_scope(context, get_current_token_for_error_report(context), SCOPE_FLAG_can_continue | SCOPE_FLAG_can_break);
             
+            // We could be jumping into the body and then the it loops back.
+            // This would make any earlier statement reachable.
+            context->current_statement_returns_a_value = 0;
+            
             parse_statement(context);
             parser_scope_pop(context, scope);
             
@@ -10414,12 +10419,21 @@ func void parse_statement(struct context *context){
             struct token *while_open_paren = expect_token(context, TOKEN_open_paren, "Expected '(' following 'while'.");
             function_maybe_add_line_information(context, while_open_paren, /*is_statement*/0);
             
-            // We could be jumping into the body and then the it loops back.
-            // This would make any earlier statement reachable.
-            context->current_statement_returns_a_value = 0;
-            
             struct ir_jump_node *continue_label = push_jump(context, IR_jump_label);
             continue_label->label_number = continue_label_index;
+            
+            int found_alive_continue = (scope->flags & SCOPE_FLAG_found_an_alive_continue) != 0;
+            
+            // Even if the body returns a value, we can reach the condition through continue.
+            // While we 'parse_expression' here, it might be a statement expression that discards.
+            // E.g.: 
+            //    
+            //     do{
+            //         continue; // This marks everything after it as dead, deleating the call to 'increment'.
+            //     } while(({condition();}));
+            //     
+            // 
+            context->current_statement_returns_a_value &= !found_alive_continue;
             
             struct expr condition = parse_expression(context, false);
             maybe_report_warning_for_assignment_in_condition(context, condition.token);
@@ -10440,7 +10454,7 @@ func void parse_statement(struct context *context){
             break_label->label_number = break_label_index;
             
             // This is an infinite loop, if we found no alive break and the condition is constant != 0.
-            int is_infinite_loop = ((scope->flags & SCOPE_FLAG_found_an_alive_break) == 0) && condition.ir->kind == IR_integer_literal && integer_literal_as_u64(&condition) != 0;
+            int is_infinite_loop = !(scope->flags & SCOPE_FLAG_found_an_alive_break) && condition.ir->kind == IR_integer_literal && integer_literal_as_u64(&condition) != 0;
             
             // do <> while(); loops are a little bit different to the other loops, as their body is guaranteed to be executed one time.
             // Hence, we can say they return a value, if their body (or condition) returns a value, or its an infinite loop.
@@ -10487,6 +10501,11 @@ func void parse_statement(struct context *context){
             if(!scope){
                 report_syntax_error(context, initial_token, "'continue' is not inside of a continue-able scope.");
                 return;
+            }
+            
+            if(!context->current_statement_returns_a_value){
+                // Found an alive continue! We need to track this for do-while statements.
+                scope->flags |= SCOPE_FLAG_found_an_alive_continue;
             }
             
             push_ir_for_cleanup_calls(context, scope->parent);
