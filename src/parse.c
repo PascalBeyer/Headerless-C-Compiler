@@ -2253,8 +2253,8 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         
                         expect_token(context, TOKEN_closed_index, "Expected ']' at the end of range-designator (e.g.: `[1 ... `).");
                         
-                        if(end_value <= value){
-                            report_error(context, end_index.token, "Invalid range [%llu, %llu] specified, second index must be larger than the first.", value, end_value);
+                        if(end_value < value){
+                            report_error(context, end_index.token, "Invalid range [%llu, %llu] specified, second index must be <= than the first.", value, end_value);
                             end_value = value + 1;
                         }
                         
