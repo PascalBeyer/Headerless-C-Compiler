@@ -4394,6 +4394,8 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                 
                 if(!operand.ir){
                     operand = push_s32_literal(context, 0, open_paren);
+                    operand.resolved_type = &globals.typedef_void;
+                    operand.defined_type = null;
                 }
                 
                 operand.ir = push_ir(context, IR_nop); // Prevent constant-propagation.
