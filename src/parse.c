@@ -10278,7 +10278,19 @@ func void parse_statement(struct context *context){
                     
                     function_maybe_add_line_information(context, get_current_token_for_error_report(context), /*is_statement*/0);
                     
+                    // Even if the body returns a value, we can reach the increment through continue.
+                    // While we 'parse_expression' here, it might be a statement expression that discards.
+                    // E.g.: 
+                    //     for(;; ({increment();})){
+                    //         continue; // This marks everything after it as dead, deleating the call to 'increment'.
+                    //     }
+                    // 
+                    int body_returns_a_value = context->current_statement_returns_a_value;
+                    context->current_statement_returns_a_value = 0;
+                    
                     parse_expression(context, false);
+                    
+                    context->current_statement_returns_a_value = body_returns_a_value;
                     
                     // Because of how expressions work, this is also where skip_until_tokens_are_balanced moved us.
                     expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'for'.");
