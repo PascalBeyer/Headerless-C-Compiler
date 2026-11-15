@@ -5161,6 +5161,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             
             struct ast_function_type *va_start_type = parser_type_push(context, function_type);
             va_start_type->return_type = &globals.typedef_void;
+            va_start_type->flags |= FUNCTION_TYPE_FLAGS_is_varargs;
             
             struct declarator_return parameter_declarator = {
                 .type = &globals.typedef_void_pointer.base,

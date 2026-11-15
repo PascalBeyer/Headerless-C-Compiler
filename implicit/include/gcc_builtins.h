@@ -16,6 +16,16 @@
 #define __INT32_TYPE__ int
 #define __INT64_TYPE__ long int
 
+#define __SIZEOF_INT128__ 16
+
+// Allow people to reference this without stdarg.h
+typedef struct{
+    unsigned int gp_offset;
+    unsigned int fp_offset;
+    void *overflow_arg_area;
+    void *reg_save_area;
+} __builtin_va_list[1];
+
 #define __UINT8_TYPE__ unsigned char
 #define __UINT16_TYPE__ short unsigned int
 #define __UINT32_TYPE__ unsigned int

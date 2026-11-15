@@ -13,7 +13,7 @@
 //    va_end:   Do nothing!
 // 
 
-typedef struct __va_list{
+typedef struct{
     __int64 unused;
 } *va_list;
 
@@ -27,12 +27,8 @@ typedef struct __va_list{
 
 #else
 
-typedef struct{
-    unsigned int gp_offset;
-    unsigned int fp_offset;
-    void *overflow_arg_area;
-    void *reg_save_area;
-} va_list[1];
+// See gcc_builtins.h
+typedef __builtin_va_list va_list;
 
 #define va_start(list, ...)  __builtin_va_start(list)
 #define va_arg(list, type) *(type *)__builtin_va_arg((list))
