@@ -2034,15 +2034,24 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                     assert(decl->assign_expr);
                     assert(redecl->assign_expr->kind == IR_integer_literal);
                     assert(decl->assign_expr->kind == IR_integer_literal);
-                    struct ir_integer_literal *decl_lit   = (struct ir_integer_literal *)decl->assign_expr;
-                    struct ir_integer_literal *redecl_lit = (struct ir_integer_literal *)redecl->assign_expr;
                     
-                    if(decl_lit->_s32 == redecl_lit->_s32){
+                    if(integer_literal_to_bytes(decl->assign_expr) == integer_literal_to_bytes(redecl->assign_expr)){
                         return redecl; // This is fine, we redefine the literal as it self.
                     }else{
+                        struct ir_integer_literal *decl_lit   = (struct ir_integer_literal *)decl->assign_expr;
+                        struct ir_integer_literal *redecl_lit = (struct ir_integer_literal *)redecl->assign_expr;
+                        
                         begin_error_report(context);
-                        report_error(context, decl->identifier, "[%lld] Redeclaration of enum value as '%d'.", decl->compilation_unit->index, decl_lit->_s32);
-                        report_error(context, redecl->identifier, "[%lld] ... Here was the previous declaration of value '%d'.", redecl->compilation_unit->index, redecl_lit->_s32);
+                        if(type_is_signed(decl_lit->type)){
+                            report_error(context, decl->identifier, "[%lld] Redeclaration of enum value as '%lld'.", decl->compilation_unit->index, (s64)integer_literal_to_bytes(&decl_lit->base));
+                        }else{
+                            report_error(context, decl->identifier, "[%lld] Redeclaration of enum value as '%llu'.", decl->compilation_unit->index, integer_literal_to_bytes(&decl_lit->base));
+                        }
+                        if(type_is_signed(decl_lit->type)){
+                            report_error(context, redecl->identifier, "[%lld] ... Here was the previous declaration of value '%lld'.", redecl->compilation_unit->index, (s64)integer_literal_to_bytes(&redecl_lit->base));
+                        }else{
+                            report_error(context, redecl->identifier, "[%lld] ... Here was the previous declaration of value '%llu'.", redecl->compilation_unit->index, integer_literal_to_bytes(&decl_lit->base));
+                        }
                         end_error_report(context);
                         return decl;
                     }

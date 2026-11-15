@@ -373,6 +373,8 @@ struct ir_integer_literal{
     };
 };
 
+func u64 integer_literal_to_bytes(struct ir *ast);
+
 // @note: needs to match ast_integer_literal above
 struct ir_pointer_literal{
     struct ir base;
