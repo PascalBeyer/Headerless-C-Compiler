@@ -10810,10 +10810,7 @@ func void parse_statement(struct context *context){
         }break;
         
         case TOKEN_asm:{
-            // GCC allows '__asm__ volatile (...)' and '__asm__ __volatile__ (...)'.
-            if(peek_token(context, TOKEN_volatile)) next_token(context);
-            // if(peek_token(context, TOKEN_inline)) next_token(context);
-            // if(peek_token(context, TOKEN_goto)) next_token(context);
+            while(peek_token(context, TOKEN_volatile) || peek_token(context, TOKEN_inline) || peek_token(context, TOKEN_goto)) next_token(context);
             
             if(peek_token_eat(context, TOKEN_open_curly)){
                 
