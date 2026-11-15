@@ -240,10 +240,10 @@ static int ir_type_signed(enum ir_type ir_type){
 
 struct ir{
     // enum ir_kind kind;
-    u16 kind;
+    u8 kind;
 };
 
-static_assert(IR_count < 0x10000);
+static_assert(IR_count < 0x100);
 
 struct ir_identifier{ 
     struct ir base;
