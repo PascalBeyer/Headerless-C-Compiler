@@ -9204,22 +9204,22 @@ case TOKEN_##type_name:{                                                 \
                     break;
                 }
                 
-                struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, token);
-                if(ast_typedef){
+                struct ast_declaration *declaration = lookup_declaration(context->current_scope, context->current_compilation_unit, token->atom);
+                if(declaration && declaration->kind == AST_typedef){
                     // 
                     // :unresolved_types
                     //
                     // If it is a typedef to an unresolved type, we just give back an unresolved type and its fine.
                     // This is treated the same way 'struct unresolved' would be.
+                    maybe_resolve_unresolved_type(&declaration->type);
                     
-                    specifiers->defined_type_specifier = &ast_typedef->kind;
-                    specifiers->type_specifier = ast_typedef->type;
+                    specifiers->defined_type_specifier = &declaration->kind;
+                    specifiers->type_specifier = declaration->type;
                 }else if(specifiers->specifier_flags & SPECIFIER_auto){
                     // This is fine!
                     prev_token(context);
                     should_break = 1;
                 }else{
-                    struct ast_declaration *declaration = lookup_declaration(context->current_scope, context->current_compilation_unit, token->atom);
                     if(declaration){
                         begin_error_report(context);
                         report_error(context, token, "Expected a type, got a declaration. E.g: int a; a b;");
