@@ -1695,10 +1695,11 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
     
     if(integer->ir->kind == IR_integer_literal && pointer->ir->kind == IR_pointer_literal){
         struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)pointer->ir;
+        s64 scaled = integer_literal_as_s64(integer) * deref_type->size;
         if(ir_kind == IR_add){
-            pointer_lit->pointer += integer_literal_as_s64(integer);
+            pointer_lit->pointer += scaled;
         }else{
-            pointer_lit->pointer -= integer_literal_as_s64(integer);
+            pointer_lit->pointer -= scaled;
         }
         
         struct ir_pointer_literal *lower  = (struct ir_pointer_literal *)((integer->ir < pointer->ir) ? integer->ir : pointer->ir);
