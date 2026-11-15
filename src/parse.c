@@ -1518,11 +1518,13 @@ void parse_and_process_pragma_pack(struct context *context){
 
 func struct expr parse_constant_integer_expression(struct context *context, int should_skip_comma_expression, char *message){
     
+    u8 *start = context->ir_arena.current;
+    
     struct expr constant_expression = parse_expression(context, should_skip_comma_expression);
     
     struct ir_integer_literal *ret = push_uninitialized_struct(context->arena, struct ir_integer_literal);
     
-    if(constant_expression.ir->kind != IR_integer_literal){
+    if(constant_expression.ir->kind != IR_integer_literal || start != (u8 *)constant_expression.ir){
         report_error(context, constant_expression.token, message);
         ret->base.kind = IR_integer_literal;
         ret->_u64 = 0;
@@ -1692,8 +1694,6 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
     assert(deref_type->size >= 0);
     
     if(integer->ir->kind == IR_integer_literal && pointer->ir->kind == IR_pointer_literal){
-        struct ir_integer_literal *lit = (struct ir_integer_literal *)integer->ir;
-        
         struct ir_pointer_literal *pointer_lit = (struct ir_pointer_literal *)pointer->ir;
         if(ir_kind == IR_add){
             pointer_lit->pointer += integer_literal_as_s64(integer);
@@ -1701,13 +1701,19 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
             pointer_lit->pointer -= integer_literal_as_s64(integer);
         }
         
-        if(integer->ir < pointer->ir){
-            *(struct ir_pointer_literal *)lit = *pointer_lit;
-            pop_from_ir_arena(context, pointer_lit);
-            operand->ir = &lit->base;
+        struct ir_pointer_literal *lower  = (struct ir_pointer_literal *)((integer->ir < pointer->ir) ? integer->ir : pointer->ir);
+        struct ir_pointer_literal *higher = (struct ir_pointer_literal *)((integer->ir > pointer->ir) ? integer->ir : pointer->ir);
+        
+        if(lower + 1 == higher){
+            *lower = *pointer_lit;
+            pop_from_ir_arena(context, higher);
+            operand->ir = &lower->base;
         }else{
-            pop_from_ir_arena(context, lit);
-            operand->ir = &pointer_lit->base;
+            *higher = *pointer_lit;
+            struct ir_skip *skip = (struct ir_skip *)lower;
+            skip->base.kind = IR_skip;
+            skip->size_to_skip = sizeof(*lower);
+            operand->ir = &higher->base;
         }
     }else if(integer->ir->kind == IR_integer_literal){
         struct ir_integer_literal *lit = (struct ir_integer_literal *)integer->ir;
@@ -1776,10 +1782,20 @@ func void push_nodes_for_subscript(struct context *context, struct expr *lhs, st
             pointer_literal_deref->pointer += array->element_type->size * integer_literal_as_u64(index); // @cleanup: overflow?
             pointer_literal_deref->type = array->element_type;
             
+            struct ir_pointer_literal *rhs = (struct ir_pointer_literal *)index->ir;
+            
+            if(pointer_literal_deref + 1 == rhs){
+                pop_from_ir_arena(context, rhs);
+            }else{
+                *rhs = *pointer_literal_deref;
+                struct ir_skip *skip = (struct ir_skip *)pointer_literal_deref;
+                skip->base.kind = IR_skip;
+                skip->size_to_skip = sizeof(*pointer_literal_deref);
+                lhs->ir = &rhs->base;
+            }
+            
             lhs->resolved_type = array->element_type;
             lhs->defined_type = array->element_type_defined_type;
-            
-            pop_from_ir_arena(context, (struct ir_integer_literal *)index->ir);
             return;
         }
         
@@ -2898,7 +2914,15 @@ func void perform_float_operation(struct context *context, enum ast_kind binary_
         }
     }
     
-    pop_from_ir_arena(context, rhs);
+    if(lhs + 1 == rhs){
+        pop_from_ir_arena(context, rhs);
+    }else{
+        *rhs = *lhs;
+        struct ir_skip *skip = (struct ir_skip *)lhs;
+        skip->base.kind = IR_skip;
+        skip->size_to_skip = sizeof(*lhs);
+        lhs = rhs;
+    }
     
     if(compare_value != -1){
         // "The result has type int".
@@ -3149,7 +3173,15 @@ func void perform_integer_operation(struct context *context, struct token *opera
     
     lhs->type = promoted_type;
     
-    pop_from_ir_arena(context, rhs);
+    if(lhs + 1 == rhs){
+        pop_from_ir_arena(context, rhs);
+    }else{
+        *rhs = *lhs;
+        struct ir_skip *skip = (struct ir_skip *)lhs;
+        skip->base.kind = IR_skip;
+        skip->size_to_skip = sizeof(*lhs);
+        lhs = rhs;
+    }
     
     rhs_expr->ir = &lhs->base;
     rhs_expr->resolved_type = promoted_type;
@@ -6443,7 +6475,16 @@ case NUMBER_KIND_##type:{ \
                             
                             s64 value = (s64)(lhs->pointer - rhs->pointer) / (s64)size;
                             
-                            pop_from_ir_arena(context, rhs);
+                            if(lhs + 1 == rhs){
+                                pop_from_ir_arena(context, rhs);
+                            }else{
+                                *rhs = *lhs;
+                                struct ir_skip *skip = (struct ir_skip *)lhs;
+                                skip->base.kind = IR_skip;
+                                skip->size_to_skip = sizeof(*lhs);
+                                lhs = rhs;
+                            }
+                            
                             lhs->base.kind = IR_integer_literal;
                             lhs->type = &globals.typedef_s64;
                             ((struct ir_integer_literal *)lhs)->_s64 = value;
@@ -6568,11 +6609,19 @@ case NUMBER_KIND_##type:{ \
                             }
                         }
                         
+                        if(lhs_lit + 1 == rhs_lit){
+                            pop_from_ir_arena(context, rhs_lit);
+                        }else{
+                            *rhs_lit = *lhs_lit;
+                            struct ir_skip *skip = (struct ir_skip *)lhs_lit;
+                            skip->base.kind = IR_skip;
+                            skip->size_to_skip = sizeof(*lhs_lit);
+                            lhs_lit = rhs_lit;
+                        }
+                        
                         operand.ir = &lhs_lit->base;
                         operand.resolved_type = lhs_type;
                         operand.defined_type = null; // ?
-                        
-                        pop_from_ir_arena(context, literal);
                         break;
                     }
                 }
@@ -6724,25 +6773,52 @@ case NUMBER_KIND_##type:{ \
             // 
             //    lhs & rhs
             //    
-            case AST_binary_and:{
+            // :bitwise_xor_expression parse_bitwise_xor_expression
+            // 
+            // Precedence 9: Bitwise XOR, Left-to-Right Associative
+            // 
+            //    lhs ^ rhs
+            //    
+            // :bitwise_or_expression parse_bitwise_or_expression
+            // 
+            // Precedence 10: Bitwise OR, Left-to-Right Associative
+            // 
+            //    lhs | rhs
+            //    
+            
+            case AST_binary_and:
+            case AST_binary_xor:
+            case AST_binary_or:{
                 struct expr *op_lhs = &stack_entry->operand;
                 struct expr *op_rhs = &operand;
                 
                 if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
-                    u64 lhs = integer_literal_as_u64(op_lhs);
-                    u64 rhs = integer_literal_as_u64(op_rhs);
+                    u64 lhs_val = integer_literal_as_u64(op_lhs);
+                    u64 rhs_val = integer_literal_as_u64(op_rhs);
                     
-                    lhs &= rhs;
+                    if(ast_kind == AST_binary_and) lhs_val &= rhs_val;
+                    if(ast_kind == AST_binary_xor) lhs_val ^= rhs_val;
+                    if(ast_kind == AST_binary_or)  lhs_val |= rhs_val;
                     
                     struct ast_type *promoted_type = perform_usual_arithmetic_conversions(op_lhs->resolved_type, op_rhs->resolved_type);
                     
-                    struct ir_integer_literal *lit = (struct ir_integer_literal *)op_lhs->ir;
-                    lit->type = promoted_type;
-                    lit->_u64 = lhs;
+                    struct ir_integer_literal *lhs = (struct ir_integer_literal *)op_lhs->ir;
+                    struct ir_integer_literal *rhs = (struct ir_integer_literal *)op_rhs->ir;
+                    lhs->type = promoted_type;
+                    lhs->_u64 = lhs_val;
                     
-                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
+                    if(lhs + 1 == rhs){
+                        pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
+                    }else{
+                        
+                        *rhs = *lhs;
+                        struct ir_skip *skip = (struct ir_skip *)lhs;
+                        skip->base.kind = IR_skip;
+                        skip->size_to_skip = sizeof(*lhs);
+                        lhs = rhs;
+                    }
                     
-                    operand.ir = op_lhs->ir;
+                    operand.ir = &lhs->base;
                     operand.resolved_type = promoted_type;
                     operand.defined_type = null;
                 }else{
@@ -6756,11 +6832,17 @@ case NUMBER_KIND_##type:{ \
                         return operand;
                     }
                     
+                    enum ir_kind ir_kind = 0;
                     if(op_lhs->resolved_type->kind == AST_vector_type){
-                        operand.ir = push_ir(context, IR_vector_and);
+                        if(ast_kind == AST_binary_and) ir_kind = IR_vector_and;
+                        if(ast_kind == AST_binary_xor) ir_kind = IR_vector_xor;
+                        if(ast_kind == AST_binary_or)  ir_kind = IR_vector_or;
                     }else{
-                        operand.ir = push_ir(context, IR_and);
+                        if(ast_kind == AST_binary_and) ir_kind = IR_and;
+                        if(ast_kind == AST_binary_xor) ir_kind = IR_xor;
+                        if(ast_kind == AST_binary_or)  ir_kind = IR_or;
                     }
+                    operand.ir = push_ir(context, ir_kind);
                     
                     // @note: The right hand side defined type "bounds" the lhs type as this is an and.
                     //        Hence, we simply reuse the defined type of the rhs. @cleanup: This seems weird, feel like it should be the _smaller_ defined type.
@@ -6768,108 +6850,6 @@ case NUMBER_KIND_##type:{ \
                     operand.resolved_type = op_lhs->resolved_type;
                     operand.defined_type = op_rhs->defined_type;
                     
-                    context->in_lhs_expression = false;
-                }
-            }break;
-            
-            // :bitwise_xor_expression parse_bitwise_xor_expression
-            // 
-            // Precedence 9: Bitwise XOR, Left-to-Right Associative
-            // 
-            //    lhs ^ rhs
-            //    
-            // @cleanup: copy and paste
-            case AST_binary_xor:{
-                struct expr *op_lhs = &stack_entry->operand;
-                struct expr *op_rhs = &operand;
-                
-                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
-                    
-                    u64 lhs = integer_literal_as_u64(op_lhs);
-                    u64 rhs = integer_literal_as_u64(op_rhs);
-                    
-                    lhs ^= rhs;
-                    
-                    struct ast_type *promoted_type = perform_usual_arithmetic_conversions(op_lhs->resolved_type, op_rhs->resolved_type);
-                    
-                    struct ir_integer_literal *lit = (struct ir_integer_literal *)op_lhs->ir;
-                    lit->type = promoted_type;
-                    lit->_u64 = lhs;
-                    
-                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
-                    
-                    operand.ir = op_lhs->ir;
-                    operand.resolved_type = promoted_type;
-                    operand.defined_type = null;
-                }else{
-                    if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer | CHECK_vector)) return operand;
-                    
-                    maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
-                    
-                    if(op_lhs->resolved_type != op_rhs->resolved_type){
-                        report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, stack_entry->token);
-                        return operand;
-                    }
-                    
-                    if(op_lhs->resolved_type->kind == AST_vector_type){
-                        operand.ir = push_ir(context, IR_vector_xor);
-                    }else{
-                        operand.ir = push_ir(context, IR_xor);
-                    }
-                    
-                    operand.resolved_type = op_lhs->resolved_type;
-                    operand.defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
-                    
-                    context->in_lhs_expression = false;
-                }
-            }break;
-            
-            // :bitwise_or_expression parse_bitwise_or_expression
-            // 
-            // Precedence 10: Bitwise OR, Left-to-Right Associative
-            // 
-            //    lhs | rhs
-            //    
-            case AST_binary_or:{
-                struct expr *op_lhs = &stack_entry->operand;
-                struct expr *op_rhs = &operand;
-                
-                if(op_lhs->ir->kind == IR_integer_literal && op_rhs->ir->kind == IR_integer_literal){
-                    
-                    u64 lhs = integer_literal_as_u64(op_lhs);
-                    u64 rhs = integer_literal_as_u64(op_rhs);
-                    
-                    lhs |= rhs;
-                    
-                    struct ast_type *promoted_type = perform_usual_arithmetic_conversions(op_lhs->resolved_type, op_rhs->resolved_type);
-                    
-                    struct ir_integer_literal *lit = (struct ir_integer_literal *)op_lhs->ir;
-                    lit->type = promoted_type;
-                    lit->_u64 = lhs;
-                    
-                    pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
-                    
-                    operand.ir = op_lhs->ir;
-                    operand.resolved_type = promoted_type;
-                    operand.defined_type  = null;
-                }else{
-                    if(!check_binary_for_basic_types(context, op_lhs->resolved_type, op_rhs->resolved_type, stack_entry->token, CHECK_integer | CHECK_vector)) return operand;
-                    
-                    maybe_insert_arithmetic_conversion_casts(context, op_lhs, op_rhs);
-                    
-                    if(op_lhs->resolved_type != op_rhs->resolved_type){
-                        report_type_mismatch_error(context, op_lhs->resolved_type, op_lhs->defined_type, op_rhs->resolved_type, op_rhs->defined_type, stack_entry->token);
-                        return operand;
-                    }        
-                    
-                    if(op_lhs->resolved_type->kind == AST_vector_type){
-                        operand.ir = push_ir(context, IR_vector_or);
-                    }else{
-                        operand.ir = push_ir(context, IR_or);
-                    }
-                    
-                    operand.resolved_type = op_lhs->resolved_type;
-                    operand.defined_type = defined_type_for_binary_op(op_lhs, op_rhs);
                     context->in_lhs_expression = false;
                 }
             }break;
@@ -8020,7 +8000,11 @@ case NUMBER_KIND_##type:{ \
                 break;
             }
             
-            push_ir(context, IR_pop_expression);
+            if(operand.ir->kind == IR_integer_literal || operand.ir->kind == IR_float_literal || operand.ir->kind == IR_pointer_literal){
+                pop_from_ir_arena(context, (struct ir_integer_literal *)operand.ir);
+            }else{
+                push_ir(context, IR_pop_expression);
+            }
             
             ast_stack_push(context, AST_comma_expression, binary_expression, &operand);
             goto restart;
