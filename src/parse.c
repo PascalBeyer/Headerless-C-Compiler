@@ -4383,6 +4383,11 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                 expect_token(context, TOKEN_closed_paren, "Expected ')' ending ({<statement>}) expression.");
                 
                 operand = context->statement_expression_return;
+                
+                // @note: Maybe this is not the correct solution. Maybe this should propagate 
+                //        and we should do something special on sizeof, alignof, typeof
+                //        and all of the other things that don't produce all the code.
+                //        But, for now I think its fine.
                 context->current_statement_returns_a_value = old_returns_a_value;
                 
                 memset(&context->statement_expression_return, 0, sizeof(context->statement_expression_return));
@@ -11046,11 +11051,32 @@ func void parse_statement(struct context *context){
             // If it is nothing else; it's gotta be an assignment or expression.
             struct expr expr = parse_expression(context, false);
             
-            if(!dead_code_marker && peek_token_eat(context, TOKEN_semicolon)){
+            if(peek_token_eat(context, TOKEN_semicolon)){
                 needs_semicolon = false;
                 
                 if(context->current_scope == context->statement_expression_scope && peek_token(context, TOKEN_closed_curly)){
                     context->statement_expression_return = expr;
+                    
+                    if(dead_code_marker){
+                        exit_dead_code(context, dead_code_marker);
+                        
+                        // We just deleted the ir and returned a dangeling pointer.
+                        // The code we are returning the value to might nevertheless be compiled.
+                        // E.g.:
+                        // 
+                        //    struct s s = ({return 1; s});
+                        //
+                        // Hence, we need a valid value of the correct type.
+                        // We know the type from the operand, so I guess let's push an unnamed declaration.
+                        struct ast_declaration *decl = push_unnamed_declaration(context, expr.resolved_type, expr.defined_type, expr.token);
+                        struct ir_identifier *identifier = push_struct(&context->ir_arena, struct ir_identifier);
+                        identifier->base.kind = IR_identifier;
+                        identifier->decl = decl;
+                        
+                        expr.ir = &identifier->base;
+                        dead_code_marker = null;
+                    }
+                    
                 }else{
                     push_ir(context, IR_pop_expression);
                 }
