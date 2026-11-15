@@ -722,4 +722,14 @@ Example:
 Example:
 > int main(){ return sizeof(main) } // Warning: Expression of function type has undefined size, returning 0.
 
+-> generic_compatible_types - The _Generic has two compatible types in its association list.
 
+This should be an error, but because we currently ignore type qualifiers, association lists like:
+
+> const char *a;
+> _Generic(a,
+>    char *: 1,
+>    const char *: 2,
+> )
+
+Will produce 1.

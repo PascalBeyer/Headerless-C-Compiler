@@ -5247,6 +5247,14 @@ case NUMBER_KIND_##type:{ \
             
             exit_dead_code(context, ir_arena_start);
             
+            struct{
+                struct generic_previous_match_node{
+                    struct generic_previous_match_node *next;
+                    struct ast_type *type;
+                    struct token *token;
+                } *first, *last;
+            } previous_types = zero_struct;
+            
             struct expr default_expression = zero_struct;
             struct expr choosen_expression = zero_struct;
             
@@ -5259,7 +5267,7 @@ case NUMBER_KIND_##type:{ \
                     expect_token(context, TOKEN_colon, "Expected ':' after 'default' while parsing a _Generic association list.");
                     
                     u8 *dead_code_marker = null;
-                    if(choosen_expression.ir) dead_code_marker = enter_dead_code(context);;
+                    if(choosen_expression.ir) dead_code_marker = enter_dead_code(context);
                     
                     struct expr expression = parse_expression(context, /*skip_comma_expression*/1);
                     
@@ -5284,7 +5292,21 @@ case NUMBER_KIND_##type:{ \
                         skip_until_tokens_are_balanced(context, get_current_token(context), TOKEN_open_paren, TOKEN_closed_paren, "This error is never reported as we have an 'report_error' just before it.");
                     }
                     
-                    expect_token(context, TOKEN_colon, "Expected ':' after the type-name while parsing a _Generic association list.");
+                    struct token *colon = expect_token(context, TOKEN_colon, "Expected ':' after the type-name while parsing a _Generic association list.");
+                    
+                    for(struct generic_previous_match_node *node = previous_types.first; node; node = node->next){
+                        if(types_are_equal(type_name.type, node->type)){
+                            begin_error_report(context);
+                            report_warning(context, WARNING_generic_compatible_types, colon, "Matching types in _Generic association list. Type qualifiers (e.g.: const, volatile) are currently ignored.");
+                            report_warning(context, WARNING_generic_compatible_types, node->token, "... Here is the previous association.");
+                            end_error_report(context);
+                        }
+                    }
+                    
+                    struct generic_previous_match_node *new_node = push_struct(&context->scratch, struct generic_previous_match_node);
+                    new_node->type  = type_name.type;
+                    new_node->token = colon;
+                    sll_push_back(previous_types, new_node);
                     
                     if(types_are_equal(type_name.type, choice)){
                         
@@ -5293,19 +5315,17 @@ case NUMBER_KIND_##type:{ \
                             memset(&default_expression, 0, sizeof(default_expression));
                         }
                         
+                        u8 *dead_code_marker = null;
+                        if(choosen_expression.ir) dead_code_marker = enter_dead_code(context);
+                        
                         struct expr expression = parse_expression(context, /*skip_comma_expression*/1);
                         
                         if(choosen_expression.ir){
-                            begin_error_report(context);
-                            struct string type_string = push_type_string(&context->scratch, &context->scratch, choice);
-                            report_error(context, choice_expression.token, "The expression of type '%.*s' matches two associations.", type_string.size, type_string.data);
-                            report_error(context, choosen_expression.token, "... Here is the first match.");
-                            report_error(context, expression.token, "... Here is the second match.");
-                            end_error_report(context);
+                            exit_dead_code(context, dead_code_marker);
+                        }else{
+                            choosen_expression = expression;
+                            ir_arena_reset = arena_current(&context->ir_arena);
                         }
-                        
-                        choosen_expression = expression;
-                        ir_arena_reset = arena_current(&context->ir_arena);
                     }else{
                         u8 *dead_code_marker = enter_dead_code(context);
                         

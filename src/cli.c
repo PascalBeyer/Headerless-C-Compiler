@@ -214,6 +214,7 @@ enum warning{
     WARNING_comparing_integer_to_pointer                  = 46, // Comparing an integer to a pointer without a cast is an MSVC extension.
     WARNING_preprocessor_warning                          = 47, // The #warning preprocessor directive was used.
     WARNING_sizeof_function                               = 48, // Using sizeof on a function is a GNU extension.
+    WARNING_generic_compatible_types                      = 49, // The _Generic has two compatible types in its association list.
 };
 
 struct cli_options{
@@ -286,7 +287,7 @@ struct cli_options{
 };
 
 #define WARNING_none 0
-#define WARNING_count 49
+#define WARNING_count 50
 
 static u8 warning_enabled[WARNING_count]; // Later filled in for now.
 
@@ -342,6 +343,7 @@ struct warning_table_entry{
     [7] = {{25, (u8 *)"comparingintegertopointer"}, WARNING_comparing_integer_to_pointer},
     [8] = {{19, (u8 *)"preprocessorwarning"}, WARNING_preprocessor_warning},
     [33] = {{14, (u8 *)"sizeoffunction"}, WARNING_sizeof_function},
+    [11] = {{22, (u8 *)"genericcompatibletypes"}, WARNING_generic_compatible_types},
 };
 
 int cli_parse_options(struct cli_options *cli_options, struct memory_arena *arena, int argc, char *argv[]){
@@ -1208,7 +1210,8 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                                 "comparing_integer_to_pointer (46)       | Comparing an integer to a pointer without a cast is an MSVC extension.\n"
                                 "preprocessor_warning (47)               | The #warning preprocessor directive was used.\n"
                                 "sizeof_function (48)                    | Using sizeof on a function is a GNU extension.\n"
-                                , 5072);
+                                "generic_compatible_types (49)           | The _Generic has two compatible types in its association list.\n"
+                                , 5177);
                     }
                 }break;
                 invalid_default_case();
