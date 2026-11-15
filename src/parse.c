@@ -3215,6 +3215,58 @@ func struct ast_declaration *push_unnamed_declaration(struct context *context, s
     return decl;
 }
 
+int maybe_insert_cast_to_union(struct context *context, struct ast_type *type_to_cast_to, enum ast_kind *defined_type_to_cast_to, struct expr *operand){
+    struct ast_compound_type *compound_type = (struct ast_compound_type *)type_to_cast_to;
+    
+    struct compound_member *found = 0;
+    
+    for(u32 index = 0; index < compound_type->amount_of_members; index++){
+        struct compound_member *member = compound_type->members + index;
+        
+        if(operand->resolved_type == &globals.typedef_void_pointer.base && member->type->kind == AST_pointer_type){
+            found = member;
+            break;
+        }
+        
+        if(member->type == &globals.typedef_void_pointer.base && operand->resolved_type->kind == AST_pointer_type){
+            found = member;
+            break;
+        }
+        
+        if(types_are_equal(member->type, operand->resolved_type)){
+            found = member;
+            break;
+        }
+    }
+    
+    if(found){
+        struct ast_declaration *compound_literal_declaration = push_unnamed_declaration(context, type_to_cast_to, defined_type_to_cast_to, operand->token);
+        
+        struct ir_compound_literal *compound_literal = push_uninitialized_struct(&context->ir_arena, struct ir_compound_literal);
+        compound_literal->base.kind = IR_compound_literal;
+        compound_literal->decl = compound_literal_declaration;
+        compound_literal->decl->assign_expr = &compound_literal->base;
+        
+        // @note: this is not an initializer list, so there is no
+        //       trailing array. 'get_declaration_size' reads this.
+        compound_literal->trailing_array_size = 0;
+        compound_literal->initializer_size = 0;
+        
+        push_ir(context, IR_swap_lhs_rhs);
+        
+        struct ir_initializer *ir_initializer = push_uninitialized_struct(&context->ir_arena, struct ir_initializer);
+        ir_initializer->base.kind = IR_initializer;
+        ir_initializer->offset = 0;
+        ir_initializer->lhs_type = operand->resolved_type;
+        
+        operand->ir = &compound_literal->base;
+        operand->resolved_type = type_to_cast_to;
+        operand->defined_type  = defined_type_to_cast_to;
+    }
+    
+    return (found != 0);
+}
+
 void maybe_insert_implicit_nodes_for_varargs_argument(struct context *context, struct expr *expr){
     maybe_load_address_for_array_or_function(context, IR_load_address, expr);
     
@@ -5654,31 +5706,15 @@ case NUMBER_KIND_##type:{ \
                                 // "the arguments are implicitly converted, as if by assignment"
                                 maybe_load_address_for_array_or_function(context, IR_load_address, &expr);
                                 
-                                if((decl->type->flags & TYPE_FLAG_is_transparent_union) && expr.resolved_type->kind == AST_pointer_type){
-                                    struct ast_compound_type *union_type = (struct ast_compound_type *)decl->type;
-                                    
-                                    // @cleanup: 0 literal should also work.
-                                    //           gcc also allows any pointer if the union contains a void *pointer, but that seems like a useless feature to me.
-                                    
-                                    int match = 0;
-                                    
-                                    if(expr.resolved_type == &globals.typedef_void_pointer.base){
-                                        match = 1;
-                                    }else{
-                                        for(u32 member_index = 0; member_index < union_type->amount_of_members; member_index++){
-                                            struct compound_member *member = &union_type->members[member_index];
-                                            if(types_are_equal(member->type, expr.resolved_type)){
-                                                match = 1;
-                                            }
-                                        }
-                                    }
-                                    
+                                if((decl->type->flags & TYPE_FLAG_is_transparent_union)){
+                                    int match = maybe_insert_cast_to_union(context, decl->type, decl->defined_type, &expr);
                                     if(!match){
+                                        struct ast_compound_type *union_type = (struct ast_compound_type *)decl->type;
                                         struct string type_string = push_type_string(context->arena, &context->scratch, expr.resolved_type);
                                         struct string union_name = token_get_string(union_type->identifier);
                                         
                                         begin_error_report(context);
-                                        report_error(context, expr.token, "Expression of type '%.*s' matches none of the members of __attribute__((transparent_union))-%.*s.", type_string.size, type_string.data, union_name.size, union_name.data);
+                                        report_error(context, expr.token, "Expression of type '%.*s' matches none of the members of __attribute__((transparent_union)) '%.*s'.", type_string.size, type_string.data, union_name.size, union_name.data);
                                         report_error(context, union_type->identifier, "... Here is the union.");
                                         end_error_report(context);
                                     }
@@ -6209,40 +6245,7 @@ case NUMBER_KIND_##type:{ \
                             // 
                             // GNU-extension to cast stuff to unions.
                             // 
-                            
-                            struct ast_compound_type *compound_type = (struct ast_compound_type *)type_to_cast_to;
-                            
-                            struct compound_member *found = 0;
-                            
-                            for(u32 index = 0; index < compound_type->amount_of_members; index++){
-                                struct compound_member *member = compound_type->members + index;
-                                if(types_are_equal(member->type, operand.resolved_type)){
-                                    found = member;
-                                    break;
-                                }
-                            }
-                            
-                            if(found){
-                                okay = 1;
-                                
-                                struct ast_declaration *compound_literal_declaration = push_unnamed_declaration(context, type_to_cast_to, defined_type_to_cast_to, operand.token);
-                                
-                                struct ir_compound_literal *compound_literal = push_uninitialized_struct(&context->ir_arena, struct ir_compound_literal);
-                                compound_literal->base.kind = IR_compound_literal;
-                                compound_literal->decl = compound_literal_declaration;
-                                compound_literal->decl->assign_expr = &compound_literal->base;
-                                
-                                push_ir(context, IR_swap_lhs_rhs);
-                                
-                                struct ir_initializer *ir_initializer = push_uninitialized_struct(&context->ir_arena, struct ir_initializer);
-                                ir_initializer->base.kind = IR_initializer;
-                                ir_initializer->offset = 0;
-                                ir_initializer->lhs_type = operand.resolved_type;
-                                
-                                operand.ir = &compound_literal->base;
-                                operand.resolved_type = type_to_cast_to;
-                                operand.defined_type  = defined_type_to_cast_to;
-                            }
+                            okay = maybe_insert_cast_to_union(context, type_to_cast_to, defined_type_to_cast_to, &operand);
                         }
                         
                         if(!okay){
@@ -8864,16 +8867,7 @@ case TOKEN_##type_name:{                                                 \
                         }
                         
                         if(compound->amount_of_members == 0){
-                            report_error(context, transparent_union_token, "'transparent_union' union must have at least one pointer member.");
-                        }
-                        
-                        for(u32 member_index = 0; member_index < compound->amount_of_members; member_index++){
-                            if(compound->members[member_index].type->kind != AST_pointer_type){
-                                begin_error_report(context);
-                                report_error(context, transparent_union_token, "'transparent_union' is currently only supported for unions whose members are all pointer types.");
-                                report_error(context, compound->members[member_index].name, "... This member is not a pointer.");
-                                end_error_report(context);
-                            }
+                            report_error(context, transparent_union_token, "'transparent_union' union must have at least one member.");
                         }
                         
                         compound->base.flags |= TYPE_FLAG_is_transparent_union;
@@ -9496,22 +9490,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 struct ast_compound_type *new_compound = parser_compound_type_push(context, union);
                 *new_compound = *original;
                 new_compound->base.flags |= TYPE_FLAG_is_transparent_union;
-                
-                if(original->amount_of_members == 0){
-                    begin_error_report(context);
-                    report_error(context, specifiers.transparent_union_token, "'transparent_union' union must have at least one pointer member.");
-                    report_error(context, original->identifier, "... Here is the union type.");
-                    end_error_report(context);
-                }
-                
-                for(u32 member_index = 0; member_index < original->amount_of_members; member_index++){
-                    if(original->members[member_index].type->kind != AST_pointer_type){
-                        begin_error_report(context);
-                        report_error(context, specifiers.transparent_union_token, "'transparent_union' is currently only supported for unions whose members are all pointer types.");
-                        report_error(context, original->members[member_index].name, "... This member is not a pointer.");
-                        end_error_report(context);
-                    }
-                }
                 
                 declarator.type = &new_compound->base;
             }else{
