@@ -104,6 +104,10 @@ int main(){
     
     if(stringify_r(a + b) != "a + b") return 1;
     
+    
+#define stringify_b(a) stringify(a b)
+    if(stringify2(woop) != "woop b") return 1;
+    
     return 0;
 }
 

@@ -3829,7 +3829,20 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             if(arg){
                                 next_token_raw(context);
                                 handled = true;
-                                eat_whitespace_and_comments_raw(context);
+                                
+                                // We need to lookahead for the ##, but we cannot eat the tokens because that will cause the whitespaces
+                                // to be incorrectly eaten and not added to the array.
+                                struct include_stack_node *argument_node = &context->include_stack.nodes[context->include_stack.size - 1]; // Guaranteed != 0, because last token was not newline.
+                                for(smm lookahead = argument_node->at, offset = 0; lookahead < argument_node->tokens.amount; lookahead++){
+                                    if(argument_node->tokens.data[lookahead].type == TOKEN_hashhash){
+                                        argument_node->at = lookahead;
+                                        argument_node->offset += offset;
+                                        break;
+                                    }
+                                    
+                                    if(argument_node->tokens.data[lookahead].type != TOKEN_whitespace) break;
+                                    offset += argument_node->tokens.data[lookahead].size;
+                                }
                                 
                                 struct define_replacement_node *replacement = push_struct(&context->scratch, struct define_replacement_node);
                                 
@@ -3969,8 +3982,6 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             define_amount   = 0;
                             define_tokens = null;
                         }
-                        
-                        eat_whitespace_and_comments_raw(context);
                     }
                     
                     struct define_node *redecl = lookup_define(context, name);
