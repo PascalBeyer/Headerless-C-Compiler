@@ -30,6 +30,7 @@ enum cli_option_kind{
     CLI_OPTION_fPIC,
     CLI_OPTION_fPIE,
     CLI_OPTION_fno_PIE,
+    CLI_OPTION_fshort_wchar,
     CLI_OPTION_obj,
     CLI_OPTION_thread_count,
     CLI_OPTION_MP,
@@ -115,6 +116,7 @@ struct cli_option_hash_table_entry{
     [8] = {{4, (u8 *)"fpic"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_fPIC, -1},
     [9] = {{4, (u8 *)"fpie"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_fPIE, -1},
     [70] = {{6, (u8 *)"fnopie"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_fno_PIE, -1},
+    [80] = {{11, (u8 *)"fshortwchar"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_fshort_wchar, -1},
     [71] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
     [83] = {{7, (u8 *)"isystem"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_isystem, 0},
     [63] = {{9, (u8 *)"idirafter"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_idirafter, 0},
@@ -134,7 +136,7 @@ struct cli_option_hash_table_entry{
     [46] = {{10, (u8 *)"errorlimit"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_error_limit, 0},
     [74] = {{11, (u8 *)"syntaxcheck"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_syntax_check, -1},
     [125] = {{30, (u8 *)"reportwarningsinsystemincludes"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_report_warnings_in_system_includes, -1},
-    [80] = {{8, (u8 *)"addstdin"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_add_stdin, -1},
+    [81] = {{8, (u8 *)"addstdin"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_add_stdin, -1},
     [92] = {{17, (u8 *)"dontprintthefiles"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_dont_print_the_files, -1},
     [38] = {{4, (u8 *)"seed"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_seed, 0},
     [43] = {{6, (u8 *)"ignore"}, CLI_ARGUMENT_TYPE_string, CLI_OPTION_ignore, 0},
@@ -244,6 +246,7 @@ struct cli_options{
     int fPIC; // Generate position-independent code for ELF object files.
     int fPIE; // Generate code for a position-independent executable. This is default.
     int fno_PIE; // Generate code for a NON position-independent executable.
+    int fshort_wchar; // wchar is 'unsigned short' instead of 'int'.
     int obj; // Produce an object file instead of an executable.
     int thread_count_specified;
     u64 thread_count; // Sets the amount of threads to be used during compilation. Default: 1
@@ -870,6 +873,12 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "TODO\n"
                             "", 5);
                 }break;
+                case CLI_OPTION_fshort_wchar:{
+                    print("-fshort_wchar | wchar is 'unsigned short' instead of 'int'.\n\n");
+                    os_print_string(
+                            "This is useful for Wine and other stuff that has to have some compatibility with Windows.\n"
+                            "", 90);
+                }break;
                 case CLI_OPTION_obj:{
                     print("-obj | Produce an object file instead of an executable.\n\n");
                     os_print_string(
@@ -1279,6 +1288,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -fPIC                       | Generate position-independent code for ELF object files.\n"
                             "  -fPIE                       | Generate code for a position-independent executable. This is default.\n"
                             "  -fno_PIE                    | Generate code for a NON position-independent executable.\n"
+                            "  -fshort_wchar               | wchar is 'unsigned short' instead of 'int'.\n"
                             "  -obj                        | Produce an object file instead of an executable.\n"
                             "  -thread_count <u64>         | Sets the amount of threads to be used during compilation. Default: 1\n"
                             "  -MP                         | Sets the amount of threads to the number of processors on the system.\n"
@@ -1317,7 +1327,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 4761);
+                    , 4837);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1379,6 +1389,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             case CLI_OPTION_fPIC: cli_options->fPIC = 1; break;
             case CLI_OPTION_fPIE: cli_options->fPIE = 1; break;
             case CLI_OPTION_fno_PIE: cli_options->fno_PIE = 1; break;
+            case CLI_OPTION_fshort_wchar: cli_options->fshort_wchar = 1; break;
             case CLI_OPTION_obj: cli_options->obj = 1; break;
             
             case CLI_OPTION_thread_count:{

@@ -146,6 +146,10 @@ TODO
 
 TODO
 
+/fshort_wchar - wchar is 'unsigned short' instead of 'int'. 
+
+This is useful for Wine and other stuff that has to have some compatibility with Windows.
+
 /obj | /c - Produce an object file instead of an executable.
 
 Using the /obj option allows you to compile in "more classic" c-compiler fashion.

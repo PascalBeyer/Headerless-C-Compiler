@@ -4798,6 +4798,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 }
                 
                 if(globals.output_file_type == OUTPUT_FILE_elf){
+                    
+                    if(globals.cli_options.fshort_wchar){
+                        string_list_postfix_no_copy(&predefines, arena, string("#define __FSHORT_WCHAR__\n"));
+                    }
+                    
                     struct string linux_predefines = string_from_cstring(
                             
                             "#define __STDC__ 1\n"
