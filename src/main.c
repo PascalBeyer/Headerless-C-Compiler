@@ -563,6 +563,7 @@ static struct{
     struct atom keyword_dllimport;
     struct atom keyword_dllexport;
     struct atom keyword_selectany;
+    struct atom keyword_used;
     
     // GNU declspecs
     struct atom keyword_transparent_union;
@@ -2026,6 +2027,7 @@ func struct ast_declaration *register_declaration(struct context *context, struc
                 }
             }
             
+            if(decl->flags & DECLARATION_FLAGS_is_used) redecl->flags |= DECLARATION_FLAGS_is_used;
             if(redecl->kind == IR_declaration && decl->kind == IR_declaration){
                 
                 if((redecl->flags & DECLARATION_FLAGS_is_enum_member) && (decl->flags & DECLARATION_FLAGS_is_enum_member)){
@@ -4959,6 +4961,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.keyword_Noreturn    = atom_for_string(string("_Noreturn"));
         globals.keyword_noinline    = atom_for_string(string("noinline"));
         globals.keyword_selectany   = atom_for_string(string("selectany"));
+        globals.keyword_used        = atom_for_string(string("used"));
         globals.keyword_constructor = atom_for_string(string("constructor"));
         globals.keyword_cleanup     = atom_for_string(string("cleanup"));
         globals.keyword_fallthrough = atom_for_string(string("fallthrough"));

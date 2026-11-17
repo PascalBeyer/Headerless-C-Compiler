@@ -1067,18 +1067,22 @@ enum declaration_specifier_flag{
     SPECIFIER_inline     = 0x400,
     SPECIFIER_noreturn   = 0x800,
     SPECIFIER_noinline   = 0x1000,
+    SPECIFIER_gnu_inline = 0x2000,
     
     // 
     // HLC-specific declspecs.
     // 
-    SPECIFIER_inline_asm = 0x2000,
-    SPECIFIER_printlike  = 0x4000,
-    SPECIFIER_constructor = 0x8000,
+    SPECIFIER_inline_asm  = 0x4000,
+    SPECIFIER_printlike   = 0x8000,
+    SPECIFIER_constructor = 0x10000,
     
+    SPECIFIER_transparent_union = 0x20000,
     
-    SPECIFIER_transparent_union = 0x10000,
-    SPECIFIER_fallthrough = 0x20000,
-    SPECIFIER_vector_size = 0x40000,
+    SPECIFIER_fallthrough = 0x40000,
+    SPECIFIER_vector_size = 0x80000,
+    SPECIFIER_weak        = 0x100000,
+    SPECIFIER_used        = 0x200000,
+    SPECIFIER_unused      = 0x400000,
 };
 
 struct declaration_specifiers{
@@ -9708,6 +9712,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(specifiers.specifier_flags & SPECIFIER_extern)    function->as_decl.flags |= DECLARATION_FLAGS_is_extern;
             if(specifiers.specifier_flags & SPECIFIER_static)    function->as_decl.flags |= DECLARATION_FLAGS_is_static;
             if(specifiers.specifier_flags & SPECIFIER_selectany) function->as_decl.flags |= DECLARATION_FLAGS_is_selectany;
+            if(specifiers.specifier_flags & SPECIFIER_used)      function->as_decl.flags |= DECLARATION_FLAGS_is_used;
             
             if(!context->current_scope){
                 function->as_decl.flags |= DECLARATION_FLAGS_is_global;
@@ -9875,7 +9880,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     //                                                                              - 19.10.2024
                     function->scope = scope;
                     decl = &function->as_decl;
-                }else if(specifiers.specifier_flags & SPECIFIER_dllexport){
+                }else if(decl->flags & (DECLARATION_FLAGS_is_dllexport | DECLARATION_FLAGS_is_used)){
                     add_global_reference_for_declaration(context->arena, &function->as_decl);
                 }
             }
@@ -10009,7 +10014,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     goto end;
                 }
                 
-                if(specifiers.specifier_flags & SPECIFIER_dllexport){
+                if(decl->flags & (DECLARATION_FLAGS_is_dllexport | DECLARATION_FLAGS_is_used)){
                     add_global_reference_for_declaration(context->arena, decl);
                 }
                 
