@@ -1021,18 +1021,12 @@ enum type_qualifiers{
     QUALIFIER_uptr      = 0x100,
 };
 
-struct declarator_return{
-    struct token *ident;
-    struct ast_type *type;
-    enum ast_kind *defined_type;
-};
-
-func struct ast_declaration *push_declaration_for_declarator(struct context *context, struct declarator_return declarator){
+func struct ast_declaration *push_declaration(struct context *context, struct ast_type *type, enum ast_kind *defined_type, struct token *identifier){
     struct ast_declaration *decl = push_uninitialized_struct(context->arena, struct ast_declaration); // @note: No need to zero, 'arena' never has any non-zero bytes.
     decl->kind         = IR_declaration;
-    decl->type         = declarator.type;
-    decl->defined_type = declarator.defined_type;
-    decl->identifier   = declarator.ident;
+    decl->type         = type;
+    decl->defined_type = defined_type;
+    decl->identifier   = identifier;
     decl->offset_on_stack = -1;
     return decl;
 }
@@ -1087,8 +1081,8 @@ enum declaration_specifier_flag{
 
 struct declaration_specifiers{
     
-    enum ast_kind *defined_type_specifier;
-    struct ast_type *type_specifier;
+    enum ast_kind *defined_type;
+    struct ast_type *type;
     
     u64 specifier_flags;
     u64 alignment;
@@ -1109,7 +1103,7 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
 func void parse_imperative_scope(struct context *context);
 
 func struct declaration_list parse_declaration_list(struct context *context, struct declaration_specifiers *optional_specifiers);
-func struct declarator_return parse_declarator(struct context *context, struct ast_type *initial_type, enum ast_kind *initial_defined_type, enum declarator_kind_flags declarator_kind_flags);
+func struct token *parse_declarator(struct context *context, struct declaration_specifiers *specifiers, enum declarator_kind_flags declarator_kind_flags);
 
 func struct ast_type *push_unresolved_type(struct context *context, struct token *sleep_on, enum ast_kind kind){
     
@@ -1606,15 +1600,12 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
     
     
     struct declaration_specifiers specifiers = {
-        .type_specifier = type_specifier,
-        .defined_type_specifier = defined_type_specifier,
+        .type = type_specifier,
+        .defined_type = defined_type_specifier,
     };
     
     parse_declaration_specifiers(context, &specifiers);
     if(context->should_exit_statement) return ret;
-    
-    ret.type = specifiers.type_specifier;
-    ret.defined_type = specifiers.defined_type_specifier;
     
     // 
     // Check if there is no abstract-declarator.
@@ -1623,11 +1614,13 @@ static struct type_info_return maybe_parse_type_for_cast_or_sizeof(struct contex
         // 
         // Parse the abstract-declarator.
         // 
-        struct declarator_return declarator = parse_declarator(context, ret.type, ret.defined_type, DECLARATOR_type_name);
-        
-        ret.type = declarator.type;
-        ret.defined_type = declarator.defined_type;
+        parse_declarator(context, &specifiers, DECLARATOR_type_name);
     }
+    
+    
+    ret.type = specifiers.type;
+    ret.defined_type = specifiers.defined_type;
+    
     
     if(sleep_on_unresolved){
         maybe_resolve_unresolved_type_or_sleep_or_error(context, &ret.type);
@@ -3232,12 +3225,8 @@ func b32 check_types_for_increment_or_decrement(struct context *context, struct 
 // is not reachable. It then returns an identifier that references this declaration.
 // This is used for struct literal kind of situations.
 func struct ast_declaration *push_unnamed_declaration(struct context *context, struct ast_type *type, enum ast_kind *defined_type, struct token *site){
-    struct declarator_return declarator = {
-        .ident = site,
-        .type  = type,
-        .defined_type = defined_type,
-    };
-    struct ast_declaration *decl = push_declaration_for_declarator(context, declarator);
+    
+    struct ast_declaration *decl = push_declaration(context, type, defined_type, site);
     decl->flags |= DECLARATION_FLAGS_is_unnamed;
     
     if(!(type->flags & TYPE_FLAG_ends_in_array_of_unknown_size)){
@@ -5457,7 +5446,7 @@ case NUMBER_KIND_##type:{ \
                     context->in_lhs_expression = initial_in_lhs_expression;
                     break;
                 }
-                    
+                
                 if(operand.resolved_type->kind != AST_pointer_type && operand.resolved_type->kind != AST_array_type){
                     begin_error_report(context);
                     
@@ -5608,7 +5597,8 @@ case NUMBER_KIND_##type:{ \
                 }else{
                     
                     if(pointer->pointer_to->kind != AST_struct && pointer->pointer_to->kind != AST_union){
-                        report_error(context, test, "Left of '->' needs to be of pointer to struct or union type.");
+                        struct string type_string = push_type_string(&context->scratch, &context->scratch, pointer->pointer_to);
+                        report_error(context, test, "Left of '->' needs to be of pointer to struct or union type, but is of type '%.*s'.", type_string.size, type_string.data);
                         return operand;
                     }
                     
@@ -8218,8 +8208,8 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
 func void parse_declaration_specifiers(struct context *context, struct declaration_specifiers *specifiers){
     
     if(maybe_report_error_for_stack_exhaustion(context, "Type nests too deep.")){
-        specifiers->type_specifier = &globals.typedef_poison;
-        specifiers->defined_type_specifier = 0;
+        specifiers->type = &globals.typedef_poison;
+        specifiers->defined_type = 0;
         return;
     }
     
@@ -8317,13 +8307,13 @@ func void parse_declaration_specifiers(struct context *context, struct declarati
                     
                     expect_token(context, TOKEN_closed_paren, "Expected a ')' after '_Atomic(<...>'");
                     
-                    if(specifiers->type_specifier || c_type != C_TYPE_none){
+                    if(specifiers->type || c_type != C_TYPE_none){
                         report_error(context, token, "Declaration specifies more than one data type.");
                     }
                     
                     // @note: The type will be adjust later on.
-                    specifiers->type_specifier = type_info.type;
-                    specifiers->defined_type_specifier = type_info.defined_type;
+                    specifiers->type = type_info.type;
+                    specifiers->defined_type = type_info.defined_type;
                 }
             }break;
             
@@ -8413,7 +8403,7 @@ case TOKEN_##type_name:{                                                 \
             case_c_type(void);
             
             case TOKEN_struct: case TOKEN_union:{
-                if(specifiers->type_specifier || c_type != C_TYPE_none){
+                if(specifiers->type || c_type != C_TYPE_none){
                     report_error(context, token, "Declaration specifies more than one data type.");
                 }
                 
@@ -8477,8 +8467,8 @@ case TOKEN_##type_name:{                                                 \
                             report_error(context, name, "Got '%s %.*s', but '%.*s' is %s.", union_or_struct, name->size, name->data, name->size, name->data, error);
                         }
                         
-                        specifiers->type_specifier         = lookup;
-                        specifiers->defined_type_specifier = null;
+                        specifiers->type         = lookup;
+                        specifiers->defined_type = null;
                     }
                 }else{
                     if(!context->sleeping_ident && name) context->sleeping_ident = name;
@@ -8540,9 +8530,6 @@ case TOKEN_##type_name:{                                                 \
                         struct declaration_specifiers struct_specifiers = {0};
                         parse_declaration_specifiers(context, &struct_specifiers);
                         
-                        struct ast_type *lhs_type    = struct_specifiers.type_specifier;
-                        enum ast_kind *lhs_defined_type = struct_specifiers.defined_type_specifier;
-                        
                         // @cleanup: Disallow extern typedef static register thread_local...
                         
                         // :unresolved_types
@@ -8564,7 +8551,9 @@ case TOKEN_##type_name:{                                                 \
                             //     declarator_opt : constant-expression
                             //     
                             
-                            struct declarator_return declarator = zero_struct;
+                            struct declaration_specifiers declarator_specifiers = struct_specifiers;
+                            
+                            struct token *declarator_token = null;
                             if(peek_token(context, TOKEN_colon) || peek_token(context, TOKEN_semicolon)){
                                 //
                                 // This is here to handle 'struct{ int : 3; }', which is legal, 
@@ -8572,16 +8561,16 @@ case TOKEN_##type_name:{                                                 \
                                 // 
                                 // This also handles struct inclusions like 'struct{ struct other_struct; }'.
                                 //
-                                declarator.ident = globals.invalid_identifier_token;
-                                declarator.type  = lhs_type;
-                                declarator.defined_type = lhs_defined_type;
+                                declarator_token = globals.invalid_identifier_token;
                             }else{
-                                declarator = parse_declarator(context, lhs_type, lhs_defined_type, DECLARATOR_identifier);
+                                declarator_token = parse_declarator(context, &declarator_specifiers, DECLARATOR_identifier);
                             }
                             
-                            struct token *ident = (declarator.ident != globals.invalid_identifier_token) ? declarator.ident : get_current_token(context);
+                            struct token *ident = (declarator_token != globals.invalid_identifier_token) ? declarator_token : get_current_token(context);
+                            struct ast_type *type = declarator_specifiers.type;
+                            enum ast_kind *defined_type = declarator_specifiers.defined_type;
                             
-                            if(declarator.type->kind == AST_unresolved_type){
+                            if(type->kind == AST_unresolved_type){
                                 // :unresolved_types
                                 // 
                                 // At this point there is an unresolved struct member, e.g.:
@@ -8590,21 +8579,21 @@ case TOKEN_##type_name:{                                                 \
                                 // Hence, the structure we are currently trying to parse
                                 // needs to wait for the structure.
                                 
-                                sleep_or_error_on_unresolved_type(context, declarator.type);
-                                declarator.type = &globals.typedef_s32;
+                                sleep_or_error_on_unresolved_type(context, type);
+                                type = &globals.typedef_s32;
                             }
                             
-                            if(declarator.type == &globals.typedef_void){
+                            if(type == &globals.typedef_void){
                                 report_error(context, ident, "Cannot declare a struct member with type void.");
-                                declarator.type = &globals.typedef_s32;
+                                type = &globals.typedef_s32;
                             }
                             
-                            if(declarator.type->kind == AST_function_type){
+                            if(type->kind == AST_function_type){
                                 report_error(context, ident, "Cannot declare a function in a struct.");
-                                declarator.type = &globals.typedef_s32;
+                                type = &globals.typedef_s32;
                             }
                             
-                            if(declarator.type->flags & TYPE_FLAG_ends_in_array_of_unknown_size){
+                            if(type->flags & TYPE_FLAG_ends_in_array_of_unknown_size){
                                 had_array_of_unknown_size = ident;
                                 compound->base.flags |= TYPE_FLAG_ends_in_array_of_unknown_size;
                             }
@@ -8614,7 +8603,7 @@ case TOKEN_##type_name:{                                                 \
                             if(peek_token(context, TOKEN_colon)){
                                 struct token *colon = next_token(context);
                                 
-                                if(declarator.type->kind != AST_integer_type){
+                                if(type->kind != AST_integer_type){
                                     report_error(context, colon, "Bitfield must be of integer type.");
                                 }
                                 
@@ -8633,7 +8622,7 @@ case TOKEN_##type_name:{                                                 \
                                     current_bitfield_type = null;
                                     current_bitfield_index = 0;
                                     
-                                    if(declarator.ident != globals.invalid_identifier_token){
+                                    if(declarator_token != globals.invalid_identifier_token){
                                         report_error(context, colon, "Named bitfield cannot have zero width.");
                                     }
                                     
@@ -8644,15 +8633,15 @@ case TOKEN_##type_name:{                                                 \
                                     break;
                                 }
                                 
-                                if(width > (declarator.type->size * 8)){
-                                    struct string type_string = report_type_mismatch__internal(context, "", declarator.type, declarator.defined_type);
-                                    report_error(context, colon, "Bitfield width for type '%.*s' must be '<= %lld', but is '%lld'.", type_string.size, type_string.data, (declarator.type->size * 8), width);
+                                if(width > (type->size * 8)){
+                                    struct string type_string = report_type_mismatch__internal(context, "", type, defined_type);
+                                    report_error(context, colon, "Bitfield width for type '%.*s' must be '<= %lld', but is '%lld'.", type_string.size, type_string.data, (type->size * 8), width);
                                     width = 1;
                                 }
                                 
                                 u64 bitfield_base = current_bitfield_index;
                                 
-                                if(current_bitfield_type && current_bitfield_type->size == declarator.type->size && current_bitfield_index + width <= declarator.type->size * 8){
+                                if(current_bitfield_type && current_bitfield_type->size == type->size && current_bitfield_index + width <= type->size * 8){
                                     // 
                                     // If there was no prior named bitfield, it was not a bitfield that fits. This can happen for e.g.:
                                     //   
@@ -8663,35 +8652,34 @@ case TOKEN_##type_name:{                                                 \
                                     current_bitfield_index += width;
                                 }else{
                                     bitfield_base = 0;
-                                    current_bitfield_type  = declarator.type;
+                                    current_bitfield_type  = type;
                                     current_bitfield_index = width;
                                 }
                                 
                                 struct ast_bitfield_type *bitfield = parser_type_push(context, bitfield_type);
                                 bitfield->width      = to_u32(width);
                                 bitfield->bit_index  = to_u32(bitfield_base);
-                                bitfield->base_type  = declarator.type;
-                                bitfield->base.size  = declarator.type->size;
-                                bitfield->base.alignment = declarator.type->alignment;
+                                bitfield->base_type  = type;
+                                bitfield->base.size  = type->size;
+                                bitfield->base.alignment = type->alignment;
                                 
-                                declarator.type = &bitfield->base;
+                                type = &bitfield->base;
                             }else{
                                 current_bitfield_type = null;
                                 current_bitfield_index = 0;
                             }
                             
                             while(peek_token_eat(context, TOKEN_declspec)){
-                                parse_extended_attribute(context, &struct_specifiers);
+                                parse_extended_attribute(context, &declarator_specifiers);
                             }
                             
-                            smm decl_alignment = declarator.type->alignment;
-                            if(struct_specifiers.alignment){ 
-                                decl_alignment = struct_specifiers.alignment; // Member specifiers are the most inner so they should take precedence.
+                            smm decl_alignment = type->alignment;
+                            if(declarator_specifiers.alignment){ 
+                                decl_alignment = declarator_specifiers.alignment; // Member specifiers are the most inner so they should take precedence.
                                 compound->base.flags |= TYPE_FLAG_is_user_aligned;
                             }else if(is_packed){
-                                
                                 decl_alignment = 1; // If the struct is __declspec(packed), overwrite the _natural_ alignment.
-                            }else if(!(declarator.type->flags & TYPE_FLAG_is_user_aligned) && decl_alignment > context->pragma_alignment){
+                            }else if(!(type->flags & TYPE_FLAG_is_user_aligned) && decl_alignment > context->pragma_alignment){
                                 decl_alignment = context->pragma_alignment;
                             }
                             
@@ -8704,7 +8692,7 @@ case TOKEN_##type_name:{                                                 \
                                 offset_in_type = last_bitfield_offset;
                             }else if(is_union){
                                 offset_in_type = 0;
-                                size = max_of(declarator.type->size, size);
+                                size = max_of(type->size, size);
                             }else{
                                 // 
                                 // @note: first align up!
@@ -8712,7 +8700,7 @@ case TOKEN_##type_name:{                                                 \
                                 size = align_up(size, decl_alignment);
                                 
                                 offset_in_type = size;
-                                size += declarator.type->size;
+                                size += type->size;
                             }
                             
                             last_bitfield_offset = offset_in_type;
@@ -8722,14 +8710,14 @@ case TOKEN_##type_name:{                                                 \
                             
                             if(!context->should_exit_statement){
                                 
-                                if(declarator.ident != globals.invalid_identifier_token){
+                                if(declarator_token != globals.invalid_identifier_token){
                                     
                                     if(find_member_in_compound(compound, ident->atom)){
                                         report_error(context, ident, "Redeclaration of member '%.*s'.", ident->size, ident->data);
                                     }
                                     
-                                    register_compound_member(context, compound, ident, declarator.type, offset_in_type, /*next_member_increment*/1);
-                                }else if(declarator.type->kind == AST_bitfield_type){
+                                    register_compound_member(context, compound, ident, type, offset_in_type, /*next_member_increment*/1);
+                                }else if(type->kind == AST_bitfield_type){
                                     // 
                                     // If this was an anonymous bitfield, do not create a declaration for it.
                                     // This will cause it to get _skipped_ during initialization:
@@ -8752,15 +8740,15 @@ case TOKEN_##type_name:{                                                 \
                                     //   } bitfield;
                                     //   
                                     
-                                }else if(declarator.type->kind != AST_struct && declarator.type->kind != AST_union){
+                                }else if(type->kind != AST_struct && type->kind != AST_union){
                                     report_error(context, ident, "Declaration does not declare anything.");
                                 }else{
-                                    struct ast_compound_type *nested_compound = (struct ast_compound_type *)declarator.type;
+                                    struct ast_compound_type *nested_compound = (struct ast_compound_type *)type;
                                     
                                     // :member_list_contains_both_linear_and_nested
                                     // 
                                     // First register the "anonymous" nested member, then each of the members of the substructure.
-                                    register_compound_member(context, compound, declarator.ident, declarator.type, offset_in_type, nested_compound->amount_of_members + /*the nested compound itself*/1);
+                                    register_compound_member(context, compound, declarator_token, type, offset_in_type, nested_compound->amount_of_members + /*the nested compound itself*/1);
                                     
                                     for(u32 member_index = 0; member_index < nested_compound->amount_of_members; member_index++){
                                         struct compound_member *member = &nested_compound->members[member_index];
@@ -8934,7 +8922,7 @@ case TOKEN_##type_name:{                                                 \
                         compound->base.flags |= TYPE_FLAG_is_transparent_union;
                     }
                     
-                    specifiers->type_specifier = &compound->base;
+                    specifiers->type = &compound->base;
                 }
             }break;
             
@@ -8942,7 +8930,7 @@ case TOKEN_##type_name:{                                                 \
                 
                 // :parse_enum
                 
-                if(specifiers->type_specifier || c_type != C_TYPE_none){
+                if(specifiers->type || c_type != C_TYPE_none){
                     report_error(context, token, "Declaration specifies more than one data type.");
                 }
                 
@@ -9151,32 +9139,32 @@ case TOKEN_##type_name:{                                                 \
                     
                     if(!is_packed){
 #if _WIN32
-                        specifiers->type_specifier = &globals.typedef_s32;
+                        specifiers->type = &globals.typedef_s32;
 #else
                         if(largest_negative_value == 0){
                             if(largest_positive_value <= max_u32){
-                                specifiers->type_specifier = &globals.typedef_u32;
+                                specifiers->type = &globals.typedef_u32;
                             }else{
-                                specifiers->type_specifier = &globals.typedef_u64;
+                                specifiers->type = &globals.typedef_u64;
                             }
                         }else{
                             if(largest_positive_value <= max_s32 && largest_negative_value >= min_s32){
-                                specifiers->type_specifier = &globals.typedef_s32;
+                                specifiers->type = &globals.typedef_s32;
                             }else{
-                                specifiers->type_specifier = &globals.typedef_s64;
+                                specifiers->type = &globals.typedef_s64;
                             }
                         }
 #endif
                     }else{
                         if(largest_negative_value == 0){
                             if(largest_positive_value <= max_u8){
-                                specifiers->type_specifier = &globals.typedef_u8;
+                                specifiers->type = &globals.typedef_u8;
                             }else if(largest_positive_value <= max_u16){
-                                specifiers->type_specifier = &globals.typedef_u16;
+                                specifiers->type = &globals.typedef_u16;
                             }else if(largest_positive_value <= max_u32){
-                                specifiers->type_specifier = &globals.typedef_u32;
+                                specifiers->type = &globals.typedef_u32;
                             }else{
-                                specifiers->type_specifier = &globals.typedef_u64;
+                                specifiers->type = &globals.typedef_u64;
                             }
                         }else{
                             struct ast_type *negative_needed;
@@ -9202,7 +9190,7 @@ case TOKEN_##type_name:{                                                 \
                                 positive_needed = &globals.typedef_s64;
                             }
                             
-                            specifiers->type_specifier = negative_needed->size > positive_needed->size ? negative_needed : positive_needed;
+                            specifiers->type = negative_needed->size > positive_needed->size ? negative_needed : positive_needed;
                         }
                     }
                     
@@ -9215,11 +9203,11 @@ case TOKEN_##type_name:{                                                 \
                         }
                     }
                     
-                    specifiers->defined_type_specifier = &ast_enum->base.kind;
+                    specifiers->defined_type = &ast_enum->base.kind;
                     
-                    ast_enum->enum_underlying_type = specifiers->type_specifier;
-                    ast_enum->base.size      = specifiers->type_specifier->size;
-                    ast_enum->base.alignment = specifiers->type_specifier->alignment;
+                    ast_enum->enum_underlying_type = specifiers->type;
+                    ast_enum->base.size      = specifiers->type->size;
+                    ast_enum->base.alignment = specifiers->type->alignment;
                     
                     if(name){
                         ast_enum->compilation_unit = context->current_compilation_unit;
@@ -9243,19 +9231,19 @@ case TOKEN_##type_name:{                                                 \
                             report_error(context, name, "Got 'enum %.*s' but '%.*s' is %s.", name->size, name->data, name->size, name->data, error);
                         }
                         
-                        specifiers->defined_type_specifier = &lookup->kind;
+                        specifiers->defined_type = &lookup->kind;
                         
                         if(lookup->kind == AST_unresolved_type){
 #if _WIN32
                             // With MSVC, all enums are ints and we have to support using undefined enums, hence, just return int!
-                            specifiers->type_specifier = &globals.typedef_s32;
+                            specifiers->type = &globals.typedef_s32;
 #else
                             // With GCC, the size of the enum might vary. Therefore, we have to return an unresolved type.
-                            specifiers->type_specifier = lookup;
+                            specifiers->type = lookup;
 #endif
                         }else if(lookup->kind == AST_enum){
                             struct ast_compound_type *enum_type = (struct ast_compound_type *)lookup;
-                            specifiers->type_specifier = enum_type->enum_underlying_type ? enum_type->enum_underlying_type : &globals.typedef_s32;
+                            specifiers->type = enum_type->enum_underlying_type ? enum_type->enum_underlying_type : &globals.typedef_s32;
                         }else{
                             assert(context->error); // Can get here for wrong tag.
                         }
@@ -9267,7 +9255,7 @@ case TOKEN_##type_name:{                                                 \
                 // 
                 // Enable shadowing of typedefs.
                 // 
-                if(specifiers->type_specifier || c_type){
+                if(specifiers->type || c_type){
                     prev_token(context);
                     should_break = 1;
                     break;
@@ -9282,8 +9270,8 @@ case TOKEN_##type_name:{                                                 \
                     // This is treated the same way 'struct unresolved' would be.
                     maybe_resolve_unresolved_type(&declaration->type);
                     
-                    specifiers->defined_type_specifier = &declaration->kind;
-                    specifiers->type_specifier = declaration->type;
+                    specifiers->defined_type = &declaration->kind;
+                    specifiers->type = declaration->type;
                 }else if(specifiers->specifier_flags & SPECIFIER_auto){
                     // This is fine!
                     prev_token(context);
@@ -9301,13 +9289,13 @@ case TOKEN_##type_name:{                                                 \
                             report_error(context, token, "Undeclared identifier.");
                         }
                     }
-                    specifiers->type_specifier = &globals.typedef_poison;
+                    specifiers->type = &globals.typedef_poison;
                 }
             }break;
             
             case TOKEN_typeof:{
                 
-                if(specifiers->type_specifier || c_type != C_TYPE_none){
+                if(specifiers->type || c_type != C_TYPE_none){
                     report_error(context, token, "Declaration specifies more than one data type.");
                 }
                 
@@ -9315,8 +9303,8 @@ case TOKEN_##type_name:{                                                 \
                 
                 struct type_info_return type_info_return = maybe_parse_type_for_cast_or_sizeof(context, /*sleep_on_unresolved*/false);
                 if(type_info_return.type){
-                    specifiers->type_specifier = type_info_return.type;
-                    specifiers->defined_type_specifier = type_info_return.defined_type;
+                    specifiers->type = type_info_return.type;
+                    specifiers->defined_type = type_info_return.defined_type;
                 }else{
                     
                     u8 *dead_code_marker = enter_dead_code(context);
@@ -9326,8 +9314,8 @@ case TOKEN_##type_name:{                                                 \
                     // The operand of typeof is not evaluated.
                     exit_dead_code(context, dead_code_marker);
                     
-                    specifiers->type_specifier = operand.resolved_type;
-                    specifiers->defined_type_specifier = operand.defined_type;
+                    specifiers->type = operand.resolved_type;
+                    specifiers->defined_type = operand.defined_type;
                 }
                 
                 expect_token(context, TOKEN_closed_paren, "Expected ')' after typeof expression.");
@@ -9340,14 +9328,14 @@ case TOKEN_##type_name:{                                                 \
         }
     }
     
-    if(specifiers->type_specifier && c_type != C_TYPE_none){
+    if(specifiers->type && c_type != C_TYPE_none){
         // @note: This can happen for 'size_t int' or something.
         report_error(context, get_current_token_for_error_report(context), "Declaration specifies more than one data type.");
     }
     
-    if(!specifiers->type_specifier && c_type == C_TYPE_none){
+    if(!specifiers->type && c_type == C_TYPE_none){
         if(specifiers->specifier_flags & SPECIFIER_auto){
-            specifiers->type_specifier = &globals.typedef_auto;
+            specifiers->type = &globals.typedef_auto;
         }else{
             report_error(context, get_current_token_for_error_report(context), "Expected a type.");
         }
@@ -9356,8 +9344,8 @@ case TOKEN_##type_name:{                                                 \
     }
     
     if(context->should_exit_statement){
-        specifiers->type_specifier = &globals.typedef_poison;
-        specifiers->defined_type_specifier = null;
+        specifiers->type = &globals.typedef_poison;
+        specifiers->defined_type = null;
         return;
     }
     
@@ -9365,108 +9353,108 @@ case TOKEN_##type_name:{                                                 \
         
         switch((int)c_type){
             
-            case C_TYPE_void: specifiers->type_specifier = &globals.typedef_void; break;
+            case C_TYPE_void: specifiers->type = &globals.typedef_void; break;
             
-            case C_TYPE_Bool: specifiers->type_specifier = &globals.typedef_Bool; break;
+            case C_TYPE_Bool: specifiers->type = &globals.typedef_Bool; break;
             
-            case C_TYPE_unsigned: specifiers->type_specifier = &globals.typedef_u32; break;
-            case C_TYPE_signed:   specifiers->type_specifier = &globals.typedef_s32; break;
-            case C_TYPE_char:     specifiers->type_specifier = &globals.typedef_s8; break;
-            case C_TYPE_short:    specifiers->type_specifier = &globals.typedef_s16; break;
-            case C_TYPE_int:      specifiers->type_specifier = &globals.typedef_s32; break;
+            case C_TYPE_unsigned: specifiers->type = &globals.typedef_u32; break;
+            case C_TYPE_signed:   specifiers->type = &globals.typedef_s32; break;
+            case C_TYPE_char:     specifiers->type = &globals.typedef_s8; break;
+            case C_TYPE_short:    specifiers->type = &globals.typedef_s16; break;
+            case C_TYPE_int:      specifiers->type = &globals.typedef_s32; break;
             
 #ifdef _WIN32
-            case C_TYPE_long:     specifiers->type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_unsigned | C_TYPE_long):  specifiers->type_specifier = &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_u32; break;
-            case (C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long):  specifiers->type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s32; break;
+            case C_TYPE_long:     specifiers->type = &globals.typedef_s32; break;
+            case (C_TYPE_unsigned | C_TYPE_long):  specifiers->type = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers->type = &globals.typedef_u32; break;
+            case (C_TYPE_long  | C_TYPE_int): specifiers->type = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long):  specifiers->type = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers->type = &globals.typedef_s32; break;
 #else
-            case C_TYPE_long:     specifiers->type_specifier = &globals.typedef_s64; break;
-            case (C_TYPE_unsigned | C_TYPE_long):  specifiers->type_specifier = &globals.typedef_u64; break;
-            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_u64; break;
-            case (C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s64; break;
-            case (C_TYPE_signed | C_TYPE_long):  specifiers->type_specifier = &globals.typedef_s64; break;
-            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s64; break;
+            case C_TYPE_long:     specifiers->type = &globals.typedef_s64; break;
+            case (C_TYPE_unsigned | C_TYPE_long):  specifiers->type = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_long  | C_TYPE_int): specifiers->type = &globals.typedef_u64; break;
+            case (C_TYPE_long  | C_TYPE_int): specifiers->type = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_long):  specifiers->type = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_long  | C_TYPE_int): specifiers->type = &globals.typedef_s64; break;
 #endif
             
-            case (C_TYPE_short | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s16; break;
-            case (C_TYPE_long  | C_TYPE_long_long): specifiers->type_specifier = &globals.typedef_s64; break;
-            case (C_TYPE_long  | C_TYPE_long_long | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_short | C_TYPE_int): specifiers->type = &globals.typedef_s16; break;
+            case (C_TYPE_long  | C_TYPE_long_long): specifiers->type = &globals.typedef_s64; break;
+            case (C_TYPE_long  | C_TYPE_long_long | C_TYPE_int): specifiers->type = &globals.typedef_s64; break;
             
-            case (C_TYPE_unsigned | C_TYPE_char):  specifiers->type_specifier = &globals.typedef_u8; break;
-            case (C_TYPE_unsigned | C_TYPE_short): specifiers->type_specifier = &globals.typedef_u16; break;
-            case (C_TYPE_unsigned | C_TYPE_int):   specifiers->type_specifier = &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long): specifiers->type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_char):  specifiers->type = &globals.typedef_u8; break;
+            case (C_TYPE_unsigned | C_TYPE_short): specifiers->type = &globals.typedef_u16; break;
+            case (C_TYPE_unsigned | C_TYPE_int):   specifiers->type = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long): specifiers->type = &globals.typedef_u64; break;
             
-            case (C_TYPE_unsigned | C_TYPE_short | C_TYPE_int): specifiers->type_specifier = &globals.typedef_u16; break;
+            case (C_TYPE_unsigned | C_TYPE_short | C_TYPE_int): specifiers->type = &globals.typedef_u16; break;
             
-            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers->type_specifier = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers->type = &globals.typedef_u64; break;
             
-            case (C_TYPE_signed | C_TYPE_char):  specifiers->type_specifier = &globals.typedef_s8; break;
-            case (C_TYPE_signed | C_TYPE_short): specifiers->type_specifier = &globals.typedef_s16; break;
-            case (C_TYPE_signed | C_TYPE_int):   specifiers->type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long): specifiers->type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_char):  specifiers->type = &globals.typedef_s8; break;
+            case (C_TYPE_signed | C_TYPE_short): specifiers->type = &globals.typedef_s16; break;
+            case (C_TYPE_signed | C_TYPE_int):   specifiers->type = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long): specifiers->type = &globals.typedef_s64; break;
             
-            case (C_TYPE_signed | C_TYPE_short | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s16; break;
+            case (C_TYPE_signed | C_TYPE_short | C_TYPE_int): specifiers->type = &globals.typedef_s16; break;
             
-            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers->type_specifier = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_long | C_TYPE_long_long | C_TYPE_int): specifiers->type = &globals.typedef_s64; break;
             
-            case C_TYPE_int8:  specifiers->type_specifier = &globals.typedef_s8; break;
-            case C_TYPE_int16: specifiers->type_specifier = &globals.typedef_s16; break;
-            case C_TYPE_int32: specifiers->type_specifier = &globals.typedef_s32; break;
-            case C_TYPE_int64: specifiers->type_specifier = &globals.typedef_s64; break;
-            case C_TYPE_int128: specifiers->type_specifier = &globals.typedef_s128; break;
-            case C_TYPE_uint128: specifiers->type_specifier = &globals.typedef_u128; break;
+            case C_TYPE_int8:  specifiers->type = &globals.typedef_s8; break;
+            case C_TYPE_int16: specifiers->type = &globals.typedef_s16; break;
+            case C_TYPE_int32: specifiers->type = &globals.typedef_s32; break;
+            case C_TYPE_int64: specifiers->type = &globals.typedef_s64; break;
+            case C_TYPE_int128: specifiers->type = &globals.typedef_s128; break;
+            case C_TYPE_uint128: specifiers->type = &globals.typedef_u128; break;
             
-            case (C_TYPE_signed | C_TYPE_int8):  specifiers->type_specifier = &globals.typedef_s8; break;
-            case (C_TYPE_signed | C_TYPE_int16): specifiers->type_specifier = &globals.typedef_s16; break;
-            case (C_TYPE_signed | C_TYPE_int32): specifiers->type_specifier = &globals.typedef_s32; break;
-            case (C_TYPE_signed | C_TYPE_int64): specifiers->type_specifier = &globals.typedef_s64; break;
-            case (C_TYPE_signed | C_TYPE_int128): specifiers->type_specifier = &globals.typedef_s128; break;
+            case (C_TYPE_signed | C_TYPE_int8):  specifiers->type = &globals.typedef_s8; break;
+            case (C_TYPE_signed | C_TYPE_int16): specifiers->type = &globals.typedef_s16; break;
+            case (C_TYPE_signed | C_TYPE_int32): specifiers->type = &globals.typedef_s32; break;
+            case (C_TYPE_signed | C_TYPE_int64): specifiers->type = &globals.typedef_s64; break;
+            case (C_TYPE_signed | C_TYPE_int128): specifiers->type = &globals.typedef_s128; break;
             
-            case (C_TYPE_unsigned | C_TYPE_int8):  specifiers->type_specifier = &globals.typedef_u8; break;
-            case (C_TYPE_unsigned | C_TYPE_int16): specifiers->type_specifier = &globals.typedef_u16; break;
-            case (C_TYPE_unsigned | C_TYPE_int32): specifiers->type_specifier = &globals.typedef_u32; break;
-            case (C_TYPE_unsigned | C_TYPE_int64): specifiers->type_specifier = &globals.typedef_u64; break;
-            case (C_TYPE_unsigned | C_TYPE_int128): specifiers->type_specifier = &globals.typedef_u128; break;
-            case (C_TYPE_unsigned | C_TYPE_uint128): specifiers->type_specifier = &globals.typedef_u128; break;
+            case (C_TYPE_unsigned | C_TYPE_int8):  specifiers->type = &globals.typedef_u8; break;
+            case (C_TYPE_unsigned | C_TYPE_int16): specifiers->type = &globals.typedef_u16; break;
+            case (C_TYPE_unsigned | C_TYPE_int32): specifiers->type = &globals.typedef_u32; break;
+            case (C_TYPE_unsigned | C_TYPE_int64): specifiers->type = &globals.typedef_u64; break;
+            case (C_TYPE_unsigned | C_TYPE_int128): specifiers->type = &globals.typedef_u128; break;
+            case (C_TYPE_unsigned | C_TYPE_uint128): specifiers->type = &globals.typedef_u128; break;
             
-            case C_TYPE_float:    specifiers->type_specifier = &globals.typedef_f32; break;
-            case C_TYPE_double:   specifiers->type_specifier = &globals.typedef_f64; break;
-            case C_TYPE_float128: specifiers->type_specifier = &globals.typedef_f128; break;
+            case C_TYPE_float:    specifiers->type = &globals.typedef_f32; break;
+            case C_TYPE_double:   specifiers->type = &globals.typedef_f64; break;
+            case C_TYPE_float128: specifiers->type = &globals.typedef_f128; break;
             
 #ifdef _WIN32
-            case (C_TYPE_long | C_TYPE_double): specifiers->type_specifier = &globals.typedef_f64; break;
+            case (C_TYPE_long | C_TYPE_double): specifiers->type = &globals.typedef_f64; break;
 #else
-            case (C_TYPE_long | C_TYPE_double): specifiers->type_specifier = &globals.typedef_f80; break;
+            case (C_TYPE_long | C_TYPE_double): specifiers->type = &globals.typedef_f80; break;
 #endif
             
             default:{
                 prev_token(context); // This token is valid, as we just now got a c type.
                 report_error(context, next_token(context), "Invalid combination of base types.");
-                specifiers->type_specifier = &globals.typedef_poison;
+                specifiers->type = &globals.typedef_poison;
             }break;
         }
     }
     
     if(type_qualifiers & QUALIFIER_atomic){
         
-        if(specifiers->type_specifier->kind != AST_integer_type && specifiers->type_specifier->kind != AST_pointer_type){
+        if(specifiers->type->kind != AST_integer_type && specifiers->type->kind != AST_pointer_type){
             report_error(context, get_current_token_for_error_report(context), "_Atomic is currently only implemented for integer and pointer types.");
-            specifiers->type_specifier = &globals.typedef_poison;
+            specifiers->type = &globals.typedef_poison;
         }else{
-            if(specifiers->type_specifier->kind == AST_integer_type){
+            if(specifiers->type->kind == AST_integer_type){
                 // :translate_atomic_to_non_atomic_and_back
-                specifiers->type_specifier = specifiers->type_specifier + (&globals.typedef_atomic_bool - &globals.typedef_Bool);
+                specifiers->type = specifiers->type + (&globals.typedef_atomic_bool - &globals.typedef_Bool);
             }else{
                 // Atomic pointer type
                 struct ast_pointer_type *copied_pointer = push_uninitialized_struct(context->arena, struct ast_pointer_type);
-                *copied_pointer = *(struct ast_pointer_type *)specifiers->type_specifier;
+                *copied_pointer = *(struct ast_pointer_type *)specifiers->type;
                 copied_pointer->base.flags |= TYPE_FLAG_is_atomic;
-                specifiers->type_specifier = &copied_pointer->base;
-                specifiers->defined_type_specifier = null;
+                specifiers->type = &copied_pointer->base;
+                specifiers->defined_type = null;
             }
         }
     }
@@ -9507,8 +9495,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
     // If the unresolved type turn out to be the type of a declaration in the end, we have to error.
     //                                                                                   07.02.2023
     
-    ret.defined_type_specifier = in_specifiers->defined_type_specifier;
-    ret.type_specifier         = in_specifiers->type_specifier;
+    ret.defined_type_specifier = in_specifiers->defined_type;
+    ret.type_specifier         = in_specifiers->type;
     if(peek_token(context, TOKEN_semicolon)){
         // :unresolved_types
         // 
@@ -9519,8 +9507,10 @@ func struct declaration_list parse_declaration_list(struct context *context, str
     }
     
     do{
-        struct declarator_return declarator = parse_declarator(context, ret.type_specifier, ret.defined_type_specifier, DECLARATOR_identifier);
-        if(should_set_sleeping_ident) context->sleeping_ident = declarator.ident;
+        struct declaration_specifiers specifiers = *in_specifiers;
+        
+        struct token *identifier = parse_declarator(context, &specifiers, DECLARATOR_identifier);
+        if(should_set_sleeping_ident) context->sleeping_ident = identifier;
         
         struct string asm_name = zero_struct;
         if(peek_token_eat(context, TOKEN_asm)){
@@ -9545,8 +9535,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
         }
         
-        struct declaration_specifiers specifiers = *in_specifiers;
-        
         while(peek_token_eat(context, TOKEN_declspec)){
             parse_extended_attribute(context, &specifiers);
         }
@@ -9556,25 +9544,25 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             report_error(context, get_current_token_for_error_report(context), "A declaration cannot be '__declspec(packed)'. Please declare a __declspec(packed)-type instead. (I.e please use 'struct __declspec(packed) packed_type' instead of '__declspec(packed) struct packed_type'.");
         }
         
-        if((specifiers.specifier_flags & SPECIFIER_transparent_union) && !(declarator.type->flags & TYPE_FLAG_is_transparent_union)){
-            if(declarator.type->kind == AST_union){
+        if((specifiers.specifier_flags & SPECIFIER_transparent_union) && !(specifiers.type->flags & TYPE_FLAG_is_transparent_union)){
+            if(specifiers.type->kind == AST_union){
                 
-                struct ast_compound_type *original = (struct ast_compound_type *)declarator.type;
+                struct ast_compound_type *original = (struct ast_compound_type *)specifiers.type;
                 
                 struct ast_compound_type *new_compound = parser_compound_type_push(context, union);
                 *new_compound = *original;
                 new_compound->base.flags |= TYPE_FLAG_is_transparent_union;
                 
-                declarator.type = &new_compound->base;
+                specifiers.type = &new_compound->base;
             }else{
                 report_error(context, specifiers.transparent_union_token, "'transparent_union' can only be applied to a union.");
             }
         }
         
         if(specifiers.specifier_flags & SPECIFIER_vector_size){
-            struct ast_type *type = declarator.type;
+            struct ast_type *type = specifiers.type;
             if(type->kind != AST_integer_type && type->kind != AST_float_type){
-                report_error(context, declarator.ident, "Declaration with vector_size attribute must be of integer or floating point type.");
+                report_error(context, identifier, "Declaration with vector_size attribute must be of integer or floating point type.");
                 type = &globals.typedef_s32;
             }
             
@@ -9583,7 +9571,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 // @cleanup: Gcc checks the following:
                 //    1. integral multiple of the component size.
                 //    2. power of two.
-                report_error(context, declarator.ident, "vector_size attribute must be 16 or 32.");
+                report_error(context, identifier, "vector_size attribute must be 16 or 32.");
                 vector_size = 16;
             }
             
@@ -9592,13 +9580,13 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             new_type->base.size = specifiers.vector_size;
             new_type->base.alignment = specifiers.vector_size;
             
-            declarator.type = &new_type->base;
-            declarator.defined_type = null;
+            specifiers.type = &new_type->base;
+            specifiers.defined_type = null;
         }
         
         if(context->should_exit_statement) goto end;
         
-        if(context->current_scope && declarator.type->kind == AST_function_type && !(specifiers.specifier_flags & SPECIFIER_typedef)){
+        if(context->current_scope && specifiers.type->kind == AST_function_type && !(specifiers.specifier_flags & SPECIFIER_typedef)){
             // @cleanup: this feels really hacky.
             //           The use case here is that a function declaration at local scope, e.g.
             //               int asd();
@@ -9623,8 +9611,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             // If we are at global scope, look in the 'token_to_is_static' table, if this identifier is
             // actually defined as static later on (or previously) in the file.
             // We overwrite the usual is static.                                         -20.11.2020
-            if(declarator.ident != globals.invalid_identifier_token){
-                if(compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(context->current_compilation_unit, declarator.ident->atom) == IDENTIFIER_is_static){
+            if(identifier != globals.invalid_identifier_token){
+                if(compilation_unit_is_static_table_lookup_whether_this_identifier_is_static(context->current_compilation_unit, identifier->atom) == IDENTIFIER_is_static){
                     specifiers.specifier_flags |= SPECIFIER_static;
                 }
             }
@@ -9644,27 +9632,28 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             // are at 'COMPILE_STAGE_parse_function', meaning we parsed all global scope entries.
             //                                                                             07.08.2021
             
-            struct ast_table *table = compilation_unit_get_declaration_table_for_ident(context->current_compilation_unit, declarator.ident->atom);
-            decl = (struct ast_declaration *)ast_table_get(table, declarator.ident->atom);
+            struct ast_table *table = compilation_unit_get_declaration_table_for_ident(context->current_compilation_unit, identifier->atom);
+            decl = (struct ast_declaration *)ast_table_get(table, identifier->atom);
             
             if(!decl){
-                // Push the declaration so we can continue as if it was defined.
-                decl = push_declaration_for_declarator(context, declarator);
-                if(declarator.type->kind == AST_function_type) decl->kind = IR_function;
+                // Push the declaration so we can continue as if it was defined. @cleanup: This seems iffy.
+                decl = push_declaration(context, specifiers.type, specifiers.defined_type, identifier);
+                
+                if(specifiers.type->kind == AST_function_type) decl->kind = IR_function;
                 decl->flags |= DECLARATION_FLAGS_is_global;
                 
                 if(globals.compile_to_object){
                     // If we are compiling to an object, this is fine. 
                     // The declaration is just an unresolved external in the end.
-                    struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(&globals.external_declarations_at_function_scope, &decl->kind, declarator.ident);
+                    struct ast_declaration *redecl = (struct ast_declaration *)ast_table_add_or_return_previous_entry(&globals.external_declarations_at_function_scope, &decl->kind, identifier);
                     if(redecl) decl = redecl;
                 }else{
-                    report_error(context, declarator.ident, "This 'extern' variable was never defined.");
+                    report_error(context, identifier, "This 'extern' variable was never defined.");
                 }
             }
             
-            if(!types_are_equal(decl->type, declarator.type)){
-                if(type_is_array_of_unknown_size(declarator.type) && decl->type->kind == AST_array_type && types_are_equal(((struct ast_array_type *)declarator.type)->element_type, ((struct ast_array_type *)decl->type)->element_type)){
+            if(!types_are_equal(decl->type, specifiers.type)){
+                if(type_is_array_of_unknown_size(specifiers.type) && decl->type->kind == AST_array_type && types_are_equal(((struct ast_array_type *)specifiers.type)->element_type, ((struct ast_array_type *)decl->type)->element_type)){
                     // This is fine, something like:
                     // 
                     // char buffer[0x200];
@@ -9675,7 +9664,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     // 
                 }else{
                     begin_error_report(context);
-                    report_error(context, declarator.ident, "'extern' declaration inside function has different type from original definition.");
+                    report_error(context, identifier, "'extern' declaration inside function has different type from original definition.");
                     report_error(context, decl->identifier, "... Here is the original definition.");
                     end_error_report(context);
                 }
@@ -9696,7 +9685,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             //                                                                      - 03.10.2021
             parser_register_declaration_in_scope(context, context->current_scope, decl);
             
-        }else if(!(specifiers.specifier_flags & SPECIFIER_typedef) && declarator.type->kind == AST_function_type){
+        }else if(!(specifiers.specifier_flags & SPECIFIER_typedef) && specifiers.type->kind == AST_function_type){
             
             // 
             // This is a function declaration or definition at global or local scope.
@@ -9704,8 +9693,8 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             struct ast_function *function = push_uninitialized_struct(context->arena, struct ast_function); // @note: No need to zero, 'arena' never has any non-zero bytes.
             function->kind = IR_function;
-            function->type = cast(struct ast_function_type *)declarator.type;
-            function->identifier = declarator.ident;
+            function->type = cast(struct ast_function_type *)specifiers.type;
+            function->identifier = identifier;
             function->asm_name = asm_name;
             function->memory_location = null;
             function->offset_in_text_section = -1; // Set atomically when done emitting.
@@ -9873,7 +9862,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(!context->current_scope && scope){
                 // This is a global declaration and we define it!
                 
-                int we_have_defined_the_function = parser_register_definition(context, decl, (void *)scope, scope->token, declarator.type);
+                int we_have_defined_the_function = parser_register_definition(context, decl, (void *)scope, scope->token, specifiers.type);
                 
                 if(!we_have_defined_the_function){
                     // If we have not defined the function, we are either `__declspec(selectany) or there was an error. 
@@ -9889,44 +9878,44 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             }
         }else{
             
-            if(!(specifiers.specifier_flags & (SPECIFIER_typedef|SPECIFIER_extern)) && declarator.type == &globals.typedef_void){
-                report_error(context, declarator.ident, "Cannot declare a variable of type void.");
+            if(!(specifiers.specifier_flags & (SPECIFIER_typedef|SPECIFIER_extern)) && specifiers.type == &globals.typedef_void){
+                report_error(context, identifier, "Cannot declare a variable of type void.");
                 goto end;
             }
             
             if(specifiers.specifier_flags & SPECIFIER_inline){
-                report_error(context, declarator.ident, "Data declaration cannot be marked 'inline'.");
+                report_error(context, identifier, "Data declaration cannot be marked 'inline'.");
                 goto end;
             }
             
             if(specifiers.specifier_flags & SPECIFIER_noreturn){
-                report_error(context, declarator.ident, "Data declaration cannot be marked '_Noreturn'.");
+                report_error(context, identifier, "Data declaration cannot be marked '_Noreturn'.");
                 goto end;
             }
             
             if(specifiers.specifier_flags & SPECIFIER_static){
                 if(specifiers.specifier_flags & SPECIFIER_dllexport){
-                    report_error(context, declarator.ident, "Variable declared '__declspec(dllexport)' cannot also be declared 'static'.");
+                    report_error(context, identifier, "Variable declared '__declspec(dllexport)' cannot also be declared 'static'.");
                     goto end;
                 }
                 
                 if(specifiers.specifier_flags & SPECIFIER_dllimport){
-                    report_error(context, declarator.ident, "Variable declared '__declspec(dllimport)' cannot also be declared 'static'.");
+                    report_error(context, identifier, "Variable declared '__declspec(dllimport)' cannot also be declared 'static'.");
                     goto end;
                 }
                 
                 if(specifiers.specifier_flags & SPECIFIER_extern){
-                    report_error(context, declarator.ident, "Variable declared 'extern' cannot also be declared 'static'.");
+                    report_error(context, identifier, "Variable declared 'extern' cannot also be declared 'static'.");
                     goto end;
                 }
             }
             
             if(context->current_scope && (specifiers.specifier_flags & SPECIFIER_dllexport) && !(specifiers.specifier_flags & SPECIFIER_extern)){
-                report_error(context, declarator.ident, "Cannot define a variable declared '__declspec(dllexport)' inside of a function. Did you forget to add 'extern'?");
+                report_error(context, identifier, "Cannot define a variable declared '__declspec(dllexport)' inside of a function. Did you forget to add 'extern'?");
                 goto end;
             }
             
-            decl = push_declaration_for_declarator(context, declarator);
+            decl = push_declaration(context, specifiers.type, specifiers.defined_type, identifier);
             if(specifiers.specifier_flags & SPECIFIER_typedef) decl->kind = IR_typedef;
             
             if(specifiers.alignment > 0) decl->overwrite_alignment = specifiers.alignment;
@@ -10007,7 +9996,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &decl->type)) goto end;
                 
                 if(specifiers.specifier_flags & SPECIFIER_dllimport){
-                    report_error(context, declarator.ident, "Variable declared '__declspec(dllimport)' cannot be initialized.");
+                    report_error(context, identifier, "Variable declared '__declspec(dllimport)' cannot be initialized.");
                     goto end;
                 }
                 
@@ -11135,8 +11124,8 @@ func void parse_statement(struct context *context){
             struct ast_declaration *lookup = lookup_typedef(context, context->current_compilation_unit, initial_token);
             if(lookup){
                 struct declaration_specifiers specifiers = {
-                    .type_specifier = lookup->type,
-                    .defined_type_specifier = &lookup->kind,
+                    .type = lookup->type,
+                    .defined_type = &lookup->kind,
                 };
                 
                 struct declaration_list declaration_list = parse_declaration_list(context, &specifiers);
@@ -11293,16 +11282,13 @@ func void parse_imperative_scope(struct context *context){
     }
 }
 
-func struct declarator_return parse_declarator(struct context* context, struct ast_type *_initial_type, enum ast_kind *_initial_defined_type, enum declarator_kind_flags declarator_kind_flags){
+func struct token *parse_declarator(struct context *context, struct declaration_specifiers *specifiers, enum declarator_kind_flags declarator_kind_flags){
     
-    struct declarator_return ret = zero_struct;
-    ret.type = _initial_type;
-    ret.defined_type = _initial_defined_type;
-    ret.ident = globals.invalid_identifier_token;
+    struct token *identifier = globals.invalid_identifier_token;
     
-    if(context->should_exit_statement) return ret;
+    if(context->should_exit_statement) return identifier;
     
-    if(maybe_report_error_for_stack_exhaustion(context, "Declaration nests to deep.")) return ret;
+    if(maybe_report_error_for_stack_exhaustion(context, "Declaration nests to deep.")) return identifier;
     
     // 
     // Microsoft extension:
@@ -11316,12 +11302,6 @@ func struct declarator_return parse_declarator(struct context* context, struct a
     // 
     // @note: We just ignore these for now. All calling conventions are the same on x64-windows.
     // 
-    while(true){
-        struct token *begin = get_current_token(context);
-        peek_token_eat(context, TOKEN_cdecl);
-        peek_token_eat(context, TOKEN_stdcall);
-        if(get_current_token(context) == begin) break;
-    }
     
     // declarator:
     //     pointer_opt direct-declarator
@@ -11339,52 +11319,48 @@ func struct declarator_return parse_declarator(struct context* context, struct a
     //     type-qualifier-list type-qualifier
     // 
     
-    if(ret.type == &globals.typedef_auto && peek_token(context, TOKEN_times)){
-        report_error(context, get_current_token(context), "Cannot declare a pointer to 'auto'.");
-        return ret;
-    }
+    enum type_qualifiers type_qualifiers = 0;
     
-    while(peek_token_eat(context, TOKEN_times)){
+    while(1){
+        struct token *token = next_token(context);
         
-        ret.type = parser_push_pointer_type(context, ret.type, ret.defined_type);
-        ret.defined_type = null;
-        
-        enum type_qualifiers type_qualifiers = 0;
-        
-        while(true){
-            struct token *begin = get_current_token(context);
+        int should_break = 0;
+        switch(token->type){
+            case TOKEN_cdecl:   break;
+            case TOKEN_stdcall: break;
             
-            // 
-            // @cleanup: these are flags which should probably be modifiers on the pointer type.
-            // 
-            if(peek_token_eat(context, TOKEN_sptr))      type_qualifiers |= QUALIFIER_sptr;
-            if(peek_token_eat(context, TOKEN_uptr))      type_qualifiers |= QUALIFIER_uptr;
-            if(peek_token_eat(context, TOKEN_ptr32))     type_qualifiers |= QUALIFIER_ptr32;
-            if(peek_token_eat(context, TOKEN_ptr64))     type_qualifiers |= QUALIFIER_ptr64;
-            if(peek_token_eat(context, TOKEN_unaligned)) type_qualifiers |= QUALIFIER_unaligned;
+            case TOKEN_sptr:      type_qualifiers |= QUALIFIER_sptr;      break;
+            case TOKEN_uptr:      type_qualifiers |= QUALIFIER_uptr;      break;
+            case TOKEN_ptr32:     type_qualifiers |= QUALIFIER_ptr32;     break;
+            case TOKEN_ptr64:     type_qualifiers |= QUALIFIER_ptr64;     break;
+            case TOKEN_unaligned: type_qualifiers |= QUALIFIER_unaligned; break;
+            case TOKEN_restrict:  type_qualifiers |= QUALIFIER_restrict;  break;
+            case TOKEN_const:     type_qualifiers |= QUALIFIER_const;     break;
+            case TOKEN_volatile:  type_qualifiers |= QUALIFIER_volatile;  break;
+            case TOKEN_atomic:    type_qualifiers |= QUALIFIER_atomic;    break;
             
-            if(peek_token_eat(context, TOKEN_restrict))  type_qualifiers |= QUALIFIER_restrict;
-            if(peek_token_eat(context, TOKEN_const))     type_qualifiers |= QUALIFIER_const;
-            if(peek_token_eat(context, TOKEN_volatile))  type_qualifiers |= QUALIFIER_volatile;
-            if(peek_token_eat(context, TOKEN_atomic))    type_qualifiers |= QUALIFIER_atomic;
+            case TOKEN_times:{
+                if(specifiers->type == &globals.typedef_auto){
+                    report_error(context, get_current_token(context), "Cannot declare a pointer to 'auto'.");
+                    return identifier;
+                }
+                
+                specifiers->type = parser_push_pointer_type(context, specifiers->type, specifiers->defined_type);
+                specifiers->defined_type = null;
+            }break;
             
-            if(peek_token_eat(context, TOKEN_declspec)){
-                report_warning(context, WARNING_unsupported_declspec, get_current_token_for_error_report(context), "__attribute__ ignored in this place.");
-                struct declaration_specifiers pointer_specifiers = {0};
-                parse_extended_attribute(context, &pointer_specifiers);
+            case TOKEN_declspec:{
+                parse_extended_attribute(context, specifiers);
+            }break;
+            
+            default:{
+                prev_token(context);
+                should_break = 1;
+                break;
             }
-            
-            if(get_current_token(context) == begin) break;
         }
         
-        // @incomplete: If there are type qualifiers, we need to set them on the pointer somehow...
-    }
-    
-    while(true){ // @note: See above.
-        struct token *begin = get_current_token(context);
-        peek_token_eat(context, TOKEN_cdecl);
-        peek_token_eat(context, TOKEN_stdcall);
-        if(get_current_token(context) == begin) break;
+        if(should_break) break;
     }
     
     // 
@@ -11434,11 +11410,11 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         // This is only valid in the direct-declartor case.
         // Error, if we are only searching for a type-name.
         // 
-        ret.ident = next_token(context);
+        identifier = next_token(context);
         if(!(declarator_kind_flags & DECLARATOR_identifier)){
             // :Error
             report_error(context, prev_token(context), "Identifier in an abstract declarator.");
-            return ret;
+            return identifier;
         }
     }else if(peek_token(context, TOKEN_open_paren)){
         // 
@@ -11464,7 +11440,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             }
             
             // @cleanup: Not sure how to handle these...
-            if(peek_token(context, TOKEN_cdecl) || peek_token(context, TOKEN_stdcall)){
+            if(peek_token(context, TOKEN_cdecl) || peek_token(context, TOKEN_stdcall) || peek_token(context, TOKEN_declspec)){
                 have_nested_declarator = true;
             }
             
@@ -11480,9 +11456,9 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 // @cleanup: Currently, this will depend on the order we are compiling stuff in, 
                 //           which is bad.
                 //                                                             -Pascal Beyer 04.10.2024
-                struct token *identifier = peek_token(context, TOKEN_identifier);
-                if(identifier){
-                    struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, identifier);
+                struct token *maybe_typedef = peek_token(context, TOKEN_identifier);
+                if(maybe_typedef){
+                    struct ast_declaration *ast_typedef = lookup_typedef(context, context->current_compilation_unit, maybe_typedef);
                     if(!ast_typedef) have_nested_declarator = true;
                 }
             }
@@ -11490,7 +11466,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         
         if(have_nested_declarator){
             if(!skip_until_tokens_are_balanced(context, open_paren, TOKEN_open_paren, TOKEN_closed_paren, "Unmatched '('.")){
-                return ret;
+                return identifier;
             }
         }else{
             // It was not a nested declarator, move back to the open paren and try to parse it 
@@ -11509,7 +11485,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         if(!(declarator_kind_flags & DECLARATOR_type_name)){
             // :Error
             report_syntax_error(context, get_current_token_for_error_report(context), "Expected an identifier or '(' in a direct declarator.");
-            return ret;
+            return identifier;
         }
         
         if(!peek_token(context, TOKEN_open_index)){
@@ -11517,7 +11493,7 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             // There is no direct-abstract-declarator after the pointer.
             // This is valid, just return what we have got.
             // 
-            return ret;
+            return identifier;
         }
     }
     
@@ -11593,10 +11569,10 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                     
                     struct declaration_specifiers declaration_specifiers = {0};
                     parse_declaration_specifiers(context, &declaration_specifiers);
-                    if(context->should_exit_statement) return ret;
+                    if(context->should_exit_statement) return identifier;
                     
-                    struct declarator_return declarator = parse_declarator(context, declaration_specifiers.type_specifier, declaration_specifiers.defined_type_specifier, DECLARATOR_type_name | DECLARATOR_identifier);
-                    if(context->should_exit_statement) return ret;
+                    struct token *parameter_token = parse_declarator(context, &declaration_specifiers, DECLARATOR_type_name | DECLARATOR_identifier);
+                    if(context->should_exit_statement) return identifier;
                     
                     // Attributes may appear after a function-parameter declarator,
                     // for example: 'uint8_t *buf __attribute__((unused))'.
@@ -11606,37 +11582,37 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                         parse_extended_attribute(context, &parameter_attributes);
                     }
                     
-                    if(declarator.type->kind == AST_array_type){
+                    if(declaration_specifiers.type->kind == AST_array_type){
                         // 
                         // "A declaration of a parameter as 'array of type' shall be adjusted to
                         // 'qualified pointer to type' [...]."
                         // 
-                        struct ast_array_type *array = cast(struct ast_array_type *)declarator.type;
-                        declarator.type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type);
-                        if(!declarator.defined_type){
-                            declarator.defined_type = &array->base.kind;
+                        struct ast_array_type *array = (struct ast_array_type *)declaration_specifiers.type;
+                        declaration_specifiers.type = parser_push_pointer_type(context, array->element_type, array->element_type_defined_type);
+                        if(!declaration_specifiers.defined_type){
+                            declaration_specifiers.defined_type = &array->base.kind;
                         }
-                    }else if(declarator.type->kind == AST_function_type){
+                    }else if(declaration_specifiers.type->kind == AST_function_type){
                         // 
                         // "A declaration of a parameter as 'function returning type' shall be adjusted to
                         //  'pointer to function returning type'."
                         //  
-                        declarator.type = parser_push_pointer_type(context, declarator.type, null);
+                        declaration_specifiers.type = parser_push_pointer_type(context, declaration_specifiers.type, null);
                     }
                     
-                    struct ast_declaration *decl = push_declaration_for_declarator(context, declarator);
+                    struct ast_declaration *decl = push_declaration(context, declaration_specifiers.type, declaration_specifiers.defined_type, parameter_token);
                     
                     ast_list_append(&function->argument_list, context->arena, &decl->kind);
                     
                     if(peek_token(context, TOKEN_equals)){
                         report_error(context, get_current_token(context), "Cannot assign to function parameter. Default arguments are unsupported.");
-                        return ret;
+                        return identifier;
                     }
                     
                 }while(peek_token_eat(context, TOKEN_comma));
                 
                 expect_token(context, TOKEN_closed_paren, "Expected ')' ending function declarator.");
-                if(context->should_exit_statement) return ret;
+                if(context->should_exit_statement) return identifier;
             }
             
             if(function->argument_list.count == 1){
@@ -11704,14 +11680,14 @@ func struct declarator_return parse_declarator(struct context* context, struct a
                 
                 if(value < 0){
                     report_error(context, index_expression.token, "Array size must be positive.");
-                    return ret;
+                    return identifier;
                 }
                 
                 // A zero-sized array is a GNU extension. Unlike '[]', it is a
                 // complete zero-sized type and may appear before other members.
                 array_type->amount_of_elements = value;
                 
-                if(context->should_exit_statement) return ret;
+                if(context->should_exit_statement) return identifier;
             }
             
             struct post_type_node *post_type_node = push_struct(&context->scratch, struct post_type_node);
@@ -11725,10 +11701,10 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         }
     }
     
-    if(post_types && ret.type == &globals.typedef_auto){
+    if(post_types && specifiers->type == &globals.typedef_auto){
         char *kind = post_types->type->kind == AST_function ? "function" : "array";
         report_error(context, post_types->token, "auto in combination with %s is illegal.", kind);
-        return ret;
+        return identifier;
     }
     
     // 
@@ -11744,18 +11720,18 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             // We have to set the return type.
             // 
             
-            if(ret.type->kind == AST_function_type){
+            if(specifiers->type->kind == AST_function_type){
                 // :Error
                 report_error(context, token, "Function returning function is illegal. Return a function pointer instead.");
-                return ret;
-            }else if(ret.type->kind == AST_array_type){
+                return identifier;
+            }else if(specifiers->type->kind == AST_array_type){
                 // :Error
                 report_error(context, token, "Function returning array is illegal. You can wrap the array inside of a struct.");
-                return ret;
+                return identifier;
             }
             
-            function_type->return_type = ret.type;
-            function_type->return_type_defined_type = ret.defined_type;
+            function_type->return_type = specifiers->type;
+            function_type->return_type_defined_type = specifiers->defined_type;
             
         }else if(post_type->kind == AST_array_type){
             // 
@@ -11763,46 +11739,46 @@ func struct declarator_return parse_declarator(struct context* context, struct a
             // 
             struct ast_array_type *array_type = (struct ast_array_type *)post_type;
             
-            if(ret.type->kind == AST_unresolved_type){
+            if(specifiers->type->kind == AST_unresolved_type){
                 // :unresolved_types
                 // Disallow of 'unresolved_types'.
-                sleep_or_error_on_unresolved_type(context, ret.type);
-                return ret;
+                sleep_or_error_on_unresolved_type(context, specifiers->type);
+                return identifier;
             }
             
-            if(ret.type == &globals.typedef_void){
+            if(specifiers->type == &globals.typedef_void){
                 report_error(context, token, "Array of type void is illegal.");
-                return ret;
+                return identifier;
             }
             
-            if(ret.type->kind == AST_function_type){
+            if(specifiers->type->kind == AST_function_type){
                 report_error(context, token, "Array of functions is illegal, please use function pointers.");
-                return ret;
+                return identifier;
             }
             
-            if(type_is_array_of_unknown_size(ret.type)){
+            if(type_is_array_of_unknown_size(specifiers->type)){
                 // @note: only the first array in the chain can be 'unknown_size'.
                 //        Meaning 'char a[][2]' is legal, 'char a[2][]' is not.
                 
                 // :Error find a better word for 'outer'.
                 report_error(context, token, "Only the most outer array can be of unknown size. ('char a[][2]' is legal, 'char a[2][]' is not).");
-                return ret;
+                return identifier;
             }
             
-            array_type->element_type = ret.type;
-            array_type->element_type_defined_type = ret.defined_type;
+            array_type->element_type = specifiers->type;
+            array_type->element_type_defined_type = specifiers->defined_type;
             
             if(!array_type->is_of_unknown_size){
                 patch_array_size(context, array_type, array_type->amount_of_elements, token);
             }
             
-            array_type->base.alignment = ret.type->alignment;
+            array_type->base.alignment = specifiers->type->alignment;
         }else{
             invalid_code_path;
         }
         
-        ret.type = post_type;
-        ret.defined_type = null;
+        specifiers->type = post_type;
+        specifiers->defined_type = null;
     }
     
     if(have_nested_declarator){
@@ -11819,15 +11795,15 @@ func struct declarator_return parse_declarator(struct context* context, struct a
         
         next_token(context);
         
-        ret = parse_declarator(context, ret.type, ret.defined_type, declarator_kind_flags);
+        identifier = parse_declarator(context, specifiers, declarator_kind_flags);
         
         expect_token(context, TOKEN_closed_paren, "Expected a ')' ending parenthesized declarator.");
         
-        if(context->should_exit_statement) return ret;
+        if(context->should_exit_statement) return identifier;
         
         context->token_at = saved_marker;
     }
     
-    return ret;
+    return identifier;
 }
 

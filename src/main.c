@@ -5199,12 +5199,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct ast_function_type *alloca_type = parser_type_push(context, function_type);
             alloca_type->return_type = &globals.typedef_void_pointer.base;
             
-            struct declarator_return parameter_declarator = {
-                .type = &globals.typedef_u64,
-                .ident = size_token,
-            };
-            
-            struct ast_declaration *parameter_declaration = push_declaration_for_declarator(context, parameter_declarator);
+            struct ast_declaration *parameter_declaration = push_declaration(context, &globals.typedef_u64, null, size_token);
             parameter_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
             ast_list_append(&alloca_type->argument_list, context->arena, &parameter_declaration->kind);
             
@@ -5219,12 +5214,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             va_start_type->return_type = &globals.typedef_void;
             va_start_type->flags |= FUNCTION_TYPE_FLAGS_is_varargs;
             
-            struct declarator_return parameter_declarator = {
-                .type = &globals.typedef_void_pointer.base,
-                .ident = va_list_token,
-            };
-            
-            struct ast_declaration *parameter_declaration = push_declaration_for_declarator(context, parameter_declarator);
+            struct ast_declaration *parameter_declaration = push_declaration(context, &globals.typedef_void_pointer.base, null, va_list_token);
             parameter_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
             ast_list_append(&va_start_type->argument_list, context->arena, &parameter_declaration->kind);
             
@@ -5238,12 +5228,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
             struct ast_function_type *va_arg_type = parser_type_push(context, function_type);
             va_arg_type->return_type = &globals.typedef_void_pointer.base;
             
-            struct declarator_return parameter_declarator = {
-                .type = &globals.typedef_void_pointer.base,
-                .ident = va_list_token,
-            };
-            
-            struct ast_declaration *parameter_declaration = push_declaration_for_declarator(context, parameter_declarator);
+            struct ast_declaration *parameter_declaration = push_declaration(context, &globals.typedef_void_pointer.base, null, va_list_token);
             parameter_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
             ast_list_append(&va_arg_type->argument_list, context->arena, &parameter_declaration->kind);
             
@@ -5378,19 +5363,14 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.invalid_token.location_index = -1;
         globals.invalid_identifier_token = push_dummy_token(arena, globals.invalid_identifier, TOKEN_identifier);
         
-        struct declarator_return poison_declarator = {.ident = globals.invalid_identifier_token, .type = &globals.typedef_poison };
-        globals.poison_declaration = push_declaration_for_declarator(context, poison_declarator);
+        globals.poison_declaration = push_declaration(context, &globals.typedef_poison, null, globals.invalid_identifier_token);
         
         if(globals.output_file_type != OUTPUT_FILE_elf){
             // 
             // Special _Linker_ declarations. @cleanup _ImageBase.
             // 
             
-            struct declarator_return _tls_index_declarator = {
-                .ident = push_dummy_token(arena, atom_for_string(string("_tls_index")), TOKEN_identifier),
-                .type  = &globals.typedef_u32,
-            };
-            globals.tls_index_declaration = push_declaration_for_declarator(context, _tls_index_declarator);
+            globals.tls_index_declaration = push_declaration(context, &globals.typedef_u32, null, push_dummy_token(arena, atom_for_string(string("_tls_index")), TOKEN_identifier));
             globals.tls_index_declaration->flags |= DECLARATION_FLAGS_is_global | DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_intrinsic;
             globals.tls_index_declaration->compilation_unit = &globals.hacky_global_compilation_unit;
             ast_table_add_or_return_previous_entry(&globals.global_declarations, &globals.tls_index_declaration->kind, globals.tls_index_declaration->identifier);
