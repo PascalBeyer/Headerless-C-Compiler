@@ -164,7 +164,21 @@ The number of threads must be between 1 and 10 times the amount of cores your sy
 
 This is the "whatever" throw some cores at it option.
 
-/I <dir_list> | /isystem <dir_list> | /idirafter <dir_list> | /iquote <dir_list> - Specify an additional include directory.
+/I <dir_list> - Specify an additional include directory. Will be searched by <>- and \"\"-includes.
+
+TODO
+
+/isystem <dir_list> - Specify an additional system include directory. Same as -I, but also sets the system-flag.
+ 
+TODO
+ 
+/idirafter <dir_list> - Specify an include directory that will be searched after the all other include directories.
+
+TODO
+
+/iquote <dir_list> - Specify an include directory that will only be found by ""-includes.
+
+TODO
 
 This makes it possible to use your own headers in <>-includes.
 

@@ -34,6 +34,9 @@ enum cli_option_kind{
     CLI_OPTION_thread_count,
     CLI_OPTION_MP,
     CLI_OPTION_I,
+    CLI_OPTION_isystem,
+    CLI_OPTION_idirafter,
+    CLI_OPTION_iquote,
     CLI_OPTION_include,
     CLI_OPTION_LIBPATH,
     CLI_OPTION_D,
@@ -113,9 +116,9 @@ struct cli_option_hash_table_entry{
     [9] = {{4, (u8 *)"fpie"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_fPIE, -1},
     [70] = {{6, (u8 *)"fnopie"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_fno_PIE, -1},
     [71] = {{11, (u8 *)"threadcount"}, CLI_ARGUMENT_TYPE_u64, CLI_OPTION_thread_count, 0},
-    [83] = {{7, (u8 *)"isystem"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
-    [63] = {{9, (u8 *)"idirafter"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
-    [29] = {{6, (u8 *)"iquote"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_I, 0},
+    [83] = {{7, (u8 *)"isystem"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_isystem, 0},
+    [63] = {{9, (u8 *)"idirafter"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_idirafter, 0},
+    [29] = {{6, (u8 *)"iquote"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_iquote, 0},
     [10] = {{7, (u8 *)"include"}, CLI_ARGUMENT_TYPE_string_list, CLI_OPTION_include, 0},
     [42] = {{7, (u8 *)"libpath"}, CLI_ARGUMENT_TYPE_directory_list, CLI_OPTION_LIBPATH, 0},
     [21] = {{4, (u8 *)"wall"}, CLI_ARGUMENT_TYPE_none, CLI_OPTION_Wall, -1},
@@ -245,7 +248,10 @@ struct cli_options{
     int thread_count_specified;
     u64 thread_count; // Sets the amount of threads to be used during compilation. Default: 1
     int MP; // Sets the amount of threads to the number of processors on the system.
-    struct string_list I; // Specify an additional include directory.
+    struct string_list I; // Specify an additional include directory. Will be searched by <>- and \"\"-includes.
+    struct string_list isystem; // Specify an additional system include directory. Same as -I, but also sets the system-flag.
+    struct string_list idirafter; // Specify an include directory that will be searched after the all other include directories.
+    struct string_list iquote; // Specify an include directory that will only be found by ""-includes.
     struct string_list include; // Specify a file to be include into every compilation unit.
     struct string_list LIBPATH; // Specify an additional search path for .lib/.so files.
     struct string_list D; // Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.
@@ -889,10 +895,31 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "", 54);
                 }break;
                 case CLI_OPTION_I:{
-                    print("-I <dir_list> | Specify an additional include directory.\n\n");
+                    print("-I <dir_list> | Specify an additional include directory. Will be searched by <>- and \"\"-includes.\n\n");
                     os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
+                case CLI_OPTION_isystem:{
+                    print("-isystem <dir_list> | Specify an additional system include directory. Same as -I, but also sets the system-flag.\n\n");
+                    os_print_string(
+                            " \n"
+                            "TODO\n"
+                            "", 7);
+                }break;
+                case CLI_OPTION_idirafter:{
+                    print("-idirafter <dir_list> | Specify an include directory that will be searched after the all other include directories.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "", 5);
+                }break;
+                case CLI_OPTION_iquote:{
+                    print("-iquote <dir_list> | Specify an include directory that will only be found by ""-includes.\n\n");
+                    os_print_string(
+                            "TODO\n"
+                            "\n"
                             "This makes it possible to use your own headers in <>-includes.\n"
-                            "", 63);
+                            "", 69);
                 }break;
                 case CLI_OPTION_include:{
                     print("-include <string_list> | Specify a file to be include into every compilation unit.\n\n");
@@ -1255,7 +1282,10 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -obj                        | Produce an object file instead of an executable.\n"
                             "  -thread_count <u64>         | Sets the amount of threads to be used during compilation. Default: 1\n"
                             "  -MP                         | Sets the amount of threads to the number of processors on the system.\n"
-                            "  -I <dir_list>               | Specify an additional include directory.\n"
+                            "  -I <dir_list>               | Specify an additional include directory. Will be searched by <>- and \"\"-includes.\n"
+                            "  -isystem <dir_list>         | Specify an additional system include directory. Same as -I, but also sets the system-flag.\n"
+                            "  -idirafter <dir_list>       | Specify an include directory that will be searched after the all other include directories.\n"
+                            "  -iquote <dir_list>          | Specify an include directory that will only be found by ""-includes.\n"
                             "  -include <string_list>      | Specify a file to be include into every compilation unit.\n"
                             "  -LIBPATH <dir_list>         | Specify an additional search path for .lib/.so files.\n"
                             "  -D <name[=<text>]>          | Define a macro. Equivalent to '#define <name> <text>' or '#define <name> 1'.\n"
@@ -1287,7 +1317,7 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
                             "  -error_limit <u64>          | A loose limit to the amount of errors reported. This limit is keept on a per-thread basis.\n"
                             "  -syntax_check               | Only check syntax. No compilation after type-checking.\n"
                             "  -report_warnings_in_system_includes | Self explanatory.\n"
-                    , 4370);
+                    , 4761);
                 }else{
                     //
                     //@HACK: We want to handle --help=argument exactly as we handle --help argument.
@@ -1359,6 +1389,18 @@ int cli_parse_options(struct cli_options *cli_options, struct memory_arena *aren
             
             case CLI_OPTION_I:{
                 string_list_postfix_no_copy(&cli_options->I, arena, argument_string);
+            }break;
+            
+            case CLI_OPTION_isystem:{
+                string_list_postfix_no_copy(&cli_options->isystem, arena, argument_string);
+            }break;
+            
+            case CLI_OPTION_idirafter:{
+                string_list_postfix_no_copy(&cli_options->idirafter, arena, argument_string);
+            }break;
+            
+            case CLI_OPTION_iquote:{
+                string_list_postfix_no_copy(&cli_options->iquote, arena, argument_string);
             }break;
             
             case CLI_OPTION_include:{

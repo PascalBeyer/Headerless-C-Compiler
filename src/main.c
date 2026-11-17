@@ -4533,32 +4533,6 @@ int main(int argc, char *argv[]){
     
     int no_standard_library = globals.cli_options.no_stdlib;
     
-    // 
-    // Include ordering:
-    //    
-    //    Because there were some #include_next problems, our headers have to come first.
-    //    Then the user-specified headers have to come, as we want the user to be able to overwrite 
-    //    any of the system headers. For example, if we are compiling a different version of openssl,
-    //    we don't want it to use the system openssl headers.
-    // 
-    
-    add_system_include_directory(arena, strip_file_name(compiler_path), string("/implicit/include"), false);
-    
-    for(struct string_list_node *dir = globals.cli_options.I.list.first; dir; dir = dir->next){
-        
-        // 
-        // Add all of the specified system include directories.
-        // 
-        
-        struct string file_path = dir->string;
-        canonicalize_slashes(file_path);
-        if(path_is_relative(file_path)){
-            file_path = concatenate_file_paths(arena, working_directory, file_path);
-        }
-        
-        add_system_include_directory(arena, file_path, string(""), true);
-    }
-    
     globals.library_paths = globals.cli_options.LIBPATH;
     string_list_add_uniquely(&globals.library_paths, arena, working_directory);
     
@@ -4643,6 +4617,72 @@ int main(int argc, char *argv[]){
     add_system_include_directory(arena, string("/usr/include"), string(""), false);
     
 #endif // linux
+    
+    // 
+    // Include ordering:
+    //    
+    //    Because there were some #include_next problems, our headers have to come first.
+    //    Then the user-specified headers have to come, as we want the user to be able to overwrite 
+    //    any of the system headers. For example, if we are compiling a different version of openssl,
+    //    we don't want it to use the system openssl headers.
+    //    So then there are the system includes and finally the -idirafter include.
+    //    
+    //    These directories however are sort of deduplicated in a weird way.
+    //    First, the builtin are added (as above). Then the -isystem are added ahead of the system ones.
+    //    Then the -idirafter are added, then the -I. The idirafter are appended while all the other ones
+    //    are prepended.
+    // 
+    
+    struct{
+        struct string_list list;
+        u32 prepend;
+    } additional_include_directory_sources[] = {
+        {globals.cli_options.isystem, 1},
+        {globals.cli_options.idirafter, 0},
+        {globals.cli_options.I, 1},
+        {globals.cli_options.iquote, 1},
+    };
+    
+    for(u32 source_index = 0; source_index < array_count(additional_include_directory_sources); source_index++){
+        struct string_list list = additional_include_directory_sources[source_index].list;
+        u32 prepend = additional_include_directory_sources[source_index].prepend;
+        
+        for(struct string_list_node *dir = prepend ? list.list.last : list.list.first; dir; dir = prepend ? dir->prev : dir->next){
+            
+            // 
+            // Add all of the specified system include directories.
+            // 
+            
+            struct string file_path = dir->string;
+            canonicalize_slashes(file_path);
+            if(path_is_relative(file_path)){
+                file_path = concatenate_file_paths(arena, working_directory, file_path);
+            }
+            
+            if(!path_is_directory((char *)file_path.data)){
+                print("Error: Specified system include directory '%s' is not a directory.\n", file_path.data);
+                return 1;
+            }
+            
+            int found = 0;
+            for(struct string_list_node *node = globals.system_include_directories.list.first; node; node = node->next){
+                if(string_match(node->string, file_path)){
+                    found = 1;
+                    break;
+                }
+            }
+            
+            if(!found){
+                if(prepend){
+                    string_list_prefix(&globals.system_include_directories, arena, file_path);
+                }else{
+                    string_list_postfix(&globals.system_include_directories, arena, file_path);
+                }
+            }
+        }
+    }
+    
+    string_list_prefix(&globals.system_include_directories, arena, concatenate_file_paths(arena, strip_file_name(compiler_path), string("/implicit/include")));
     
     {  // :init_globals :globals init globals
         
