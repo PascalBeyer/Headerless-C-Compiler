@@ -340,6 +340,7 @@ struct ir_initializer{
 struct ir_range_initializer{
     struct ir base;
     u64 offset;
+    u64 stride;
     u64 count;
     struct ast_type *type;
 };

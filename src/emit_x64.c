@@ -3602,7 +3602,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 
                 u64 offset = range_initializer->offset;
                 u64 count  = range_initializer->count;
-                u64 size   = type->size;
+                u64 stride = range_initializer->stride;
                 
                 struct emit_location *source = emit_location_stack_relative(context, type, 0);
                 source->offset = decl_location->offset + offset; // @cleanup: my system is way to confusing about stack offsets
@@ -3613,7 +3613,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                 emit_location_prevent_freeing(context, dest);
                 
                 for(u32 index = 1; index < count; index++){
-                    dest->offset = decl_location->offset + offset + index * size; // @cleanup: my system is way to confusing about stack offsets
+                    dest->offset = decl_location->offset + offset + index * stride;
                     emit_memcpy(context, dest, source);
                 }
                 

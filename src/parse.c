@@ -2160,6 +2160,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
         struct token *site = get_current_token_for_error_report(context);
         
         u64 range_initializer_count = 0;
+        u64 range_initializer_stride = 0;
         
         if(peek_token(context, TOKEN_dot) || peek_token(context, TOKEN_open_index)){
             //
@@ -2275,7 +2276,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                             goto error;
                         }
                         
-                        if(peek_token(context, TOKEN_dot) || peek_token(context, TOKEN_open_index)){
+                        if(range_initializer_count){
                             report_error(context, get_current_token(context), "Nested range designators are unsupported. (e.g.: `[1 .. 5][1 .. 3] = 1`).");
                         }
                         
@@ -2288,6 +2289,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                         new_node->offset_at = start_offset;
                         sll_push_front(designator_stack, new_node);
                         
+                        range_initializer_stride = array->element_type->size;
                         range_initializer_count = (end_value - value) + 1;
                     }else{
                         
@@ -2568,6 +2570,7 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
             range_initializer->count  = range_initializer_count;
             range_initializer->type   = current_object_type;
             range_initializer->offset = node->offset_at;
+            range_initializer->stride = range_initializer_stride;
             
             node->array_at  += (range_initializer_count-1);
             node->offset_at += (range_initializer_count-1) * current_object_type->size;

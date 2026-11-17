@@ -2719,6 +2719,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 ir_offset += sizeof(*range_initializer);
                 
                 u64 offset = range_initializer->offset;
+                u64 stride = range_initializer->stride;
                 u64 element_size = range_initializer->type->size;
                 u64 element_count = range_initializer->count;
                 
@@ -2727,7 +2728,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 memcpy(element_data, data + offset, element_size);
                 
                 for(u64 index = 1; index < element_count; index++){
-                    memcpy(data + offset + element_size * index, element_data, element_size);
+                    memcpy(data + offset + stride * index, element_data, element_size);
                 }
             }break;
             
