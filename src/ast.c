@@ -597,6 +597,7 @@ func void ast_list_append(struct ast_list *list, struct memory_arena *arena, enu
 #define DECLARATION_FLAGS_is_thread_local                          0x4000
 #define DECLARATION_FLAGS_is_intrinsic                             0x8000
 #define DECLARATION_FLAGS_is_used                                  0x10000
+#define DECLARATION_FLAGS_is_unused                                0x20000
 
 struct ast_declaration{
     // @WARNING: This needs to match the part in ast_function.
@@ -913,7 +914,8 @@ struct ast_label{
     struct token *token;
     struct atom ident;
     
-    int referenced;
+    int referenced : 1;
+    int unused : 1;
     int statement_expression_index;
     smm local_label_number; // for context->local_label_list
     

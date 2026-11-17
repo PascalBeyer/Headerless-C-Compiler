@@ -8163,6 +8163,8 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
             expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of vector_size attribute.");
         }else if(atoms_match(directive_string, globals.keyword_selectany)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_selectany, directive, "__declspec(selectany)");
+        }else if(atoms_match(directive_string, globals.keyword_unused)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_unused, directive, "__attribute__((unused))");
         }else if(atoms_match(directive_string, globals.keyword_inline_asm)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_inline_asm, directive, "__declspec(inline_asm)");
         }else if(atoms_match(directive_string, globals.keyword_packed)){
@@ -9713,6 +9715,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(specifiers.specifier_flags & SPECIFIER_static)    function->as_decl.flags |= DECLARATION_FLAGS_is_static;
             if(specifiers.specifier_flags & SPECIFIER_selectany) function->as_decl.flags |= DECLARATION_FLAGS_is_selectany;
             if(specifiers.specifier_flags & SPECIFIER_used)      function->as_decl.flags |= DECLARATION_FLAGS_is_used;
+            if(specifiers.specifier_flags & SPECIFIER_unused)      function->as_decl.flags |= DECLARATION_FLAGS_is_unused;
             
             if(!context->current_scope){
                 function->as_decl.flags |= DECLARATION_FLAGS_is_global;
@@ -9941,6 +9944,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(specifiers.specifier_flags & SPECIFIER_extern)    decl->flags |= DECLARATION_FLAGS_is_extern;
             if(specifiers.specifier_flags & SPECIFIER_selectany) decl->flags |= DECLARATION_FLAGS_is_selectany;
+            if(specifiers.specifier_flags & SPECIFIER_unused)    decl->flags |= DECLARATION_FLAGS_is_unused;
             
             if(specifiers.specifier_flags & SPECIFIER_dllimport) decl->flags |= DECLARATION_FLAGS_is_dllimport;
             if(specifiers.specifier_flags & SPECIFIER_dllexport) decl->flags |= DECLARATION_FLAGS_is_dllexport;
@@ -10239,7 +10243,7 @@ func void parse_statement(struct context *context){
                 
                 struct ir_jump_node *end_label = push_jump(context, IR_jump_label);
                 end_label->label_number = jump_over_else->label_number;
-            
+                
                 int else_statement_returns_a_value = context->current_statement_returns_a_value;
                 
                 // An else returns a value if both branches return a value.
@@ -11066,6 +11070,8 @@ func void parse_statement(struct context *context){
                     }
                 }
                 
+                struct ast_label *ast_label;
+                
                 if(local_label){
                     struct ir_jump_node *jump_label = push_jump(context, IR_jump_label);
                     jump_label->label_number = local_label->local_label_number;
@@ -11084,6 +11090,8 @@ func void parse_statement(struct context *context){
                         local_label->token = initial_token;
                         local_label->jump_label = jump_label;
                     }
+                    
+                    ast_label = local_label;
                 }else{
                     for(struct ast_label *label = context->label_list.first; label; label = label->next){
                         if(atoms_match(label->ident, ident)){
@@ -11104,6 +11112,20 @@ func void parse_statement(struct context *context){
                     struct ir_jump_node *jump_label = push_jump(context, IR_jump_label);
                     jump_label->label_number = context->jump_label_index++;
                     if(context->prevent_evaluation_for_dead_code == 0) label->jump_label = jump_label;
+                    
+                    ast_label = label;
+                }
+                
+                struct token *attribute = peek_token(context, TOKEN_declspec);
+                if(attribute && string_match(token_get_string(attribute), string("__attribute__"))){
+                    next_token(context);
+                    struct declaration_specifiers specifiers = zero_struct;
+                    parse_extended_attribute(context, &specifiers);
+                    if(specifiers.specifier_flags & ~SPECIFIER_unused){
+                        report_warning(context, WARNING_unsupported_declspec, attribute, "GNU-style __attribute__ after label applies to label.");
+                    }else if(specifiers.specifier_flags & SPECIFIER_unused){
+                        ast_label->unused = 1;
+                    }
                 }
                 
                 if(!peek_token(context, TOKEN_closed_curly)) parse_statement(context);
