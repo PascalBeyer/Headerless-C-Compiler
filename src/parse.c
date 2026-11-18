@@ -8153,6 +8153,8 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
             expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of vector_size attribute.");
         }else if(atoms_match(directive_string, globals.keyword_selectany)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_selectany, directive, "__declspec(selectany)");
+        }else if(atoms_match(directive_string, globals.keyword_used)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_used, directive, "__attribute__((used))");
         }else if(atoms_match(directive_string, globals.keyword_unused)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_unused, directive, "__attribute__((unused))");
         }else if(atoms_match(directive_string, globals.keyword_inline_asm)){
@@ -9933,6 +9935,7 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             
             if(specifiers.specifier_flags & SPECIFIER_extern)    decl->flags |= DECLARATION_FLAGS_is_extern;
             if(specifiers.specifier_flags & SPECIFIER_selectany) decl->flags |= DECLARATION_FLAGS_is_selectany;
+            if(specifiers.specifier_flags & SPECIFIER_used)      decl->flags |= DECLARATION_FLAGS_is_used;
             if(specifiers.specifier_flags & SPECIFIER_unused)    decl->flags |= DECLARATION_FLAGS_is_unused;
             
             if(specifiers.specifier_flags & SPECIFIER_dllimport) decl->flags |= DECLARATION_FLAGS_is_dllimport;
