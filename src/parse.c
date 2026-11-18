@@ -2088,14 +2088,18 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
     if(type_to_initialize->kind == AST_struct || type_to_initialize->kind == AST_union){
         struct ast_compound_type *ast_struct = (struct ast_compound_type *)type_to_initialize;
         
-        if(!ast_struct->amount_of_members){
+        if(ast_struct->base.size == 0 && !(ast_struct->base.flags & TYPE_FLAG_ends_in_array_of_unknown_size)){
             //
             // struct {} x = {}; is allowed, struct {} x = {10}; is not!
+            // The same holds for zero-sized types whose only member is a
+            // zero-length array. A trailing flexible array member is the
+            // exception: it is initialized by the elements after it.
             //
             if(!peek_token(context, TOKEN_closed_curly)){
+                char *empty_or_zero_sized = ast_struct->amount_of_members ? "zero-sized" : "empty";
                 begin_error_report(context);
-                report_error(context, get_current_token_for_error_report(context), "Cannot initialize an empty structure with non-empty initializer-list.");
-                report_error(context, ast_struct->identifier, "... Here is the definition of the empty structure.");
+                report_error(context, get_current_token_for_error_report(context), "Cannot initialize an %s structure with non-empty initializer-list.", empty_or_zero_sized);
+                report_error(context, ast_struct->identifier, "... Here is the definition of the %s structure.", empty_or_zero_sized);
                 end_error_report(context);
                 goto error;
             }
@@ -2523,8 +2527,9 @@ func void parse_initializer_list(struct context *context, struct ast_type *type_
                     
                     struct ast_compound_type *compound = (struct ast_compound_type *)type;
                     
-                    if(!compound->amount_of_members){
-                        report_error(context, site, "Initializing empty structure or union requires explicit '%s'.", "{}");
+                    if(compound->base.size == 0 && !(compound->base.flags & TYPE_FLAG_ends_in_array_of_unknown_size)){
+                        char *empty_or_zero_sized = compound->amount_of_members ? "zero-sized" : "empty";
+                        report_error(context, site, "Initializing %s structure or union requires explicit '%s'.", empty_or_zero_sized, "{}");
                         goto error;
                     }
                     
