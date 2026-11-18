@@ -986,7 +986,7 @@ func b32 casts_implicitly_to_bool(struct ast_type *resolved_type){
         return false;
     }
     
-    if(resolved_type->kind == AST_struct || resolved_type->kind == AST_union){
+    if(resolved_type->kind == AST_struct || resolved_type->kind == AST_union || resolved_type->kind == AST_unresolved_type){
         return false;
     }
     
@@ -4563,6 +4563,8 @@ func struct expr parse_expression(struct context *context, b32 should_skip_comma
                     b32 is_alignof = (size_or_alignof->ast_kind == AST_alignof);
                     struct ast_type *type = type_to_cast_to.type;
                     
+                    if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &type)) return invalid_ast(context);
+                    
                     u64 value = type->size;
                     if(is_alignof){
                         value = type_to_cast_to.defined_type && *type_to_cast_to.defined_type == AST_typedef ? get_declaration_alignment((struct ast_declaration *)type_to_cast_to.defined_type) : type->alignment;
@@ -6011,6 +6013,8 @@ case NUMBER_KIND_##type:{ \
             
             case AST_sizeof:{
                 
+                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &operand.resolved_type)) return invalid_ast(context);
+                
                 if(operand.resolved_type->kind == AST_function_type){
                     report_warning(context, WARNING_sizeof_function, stack_entry->token, "Expression of function type has undefined size, returning 0.");
                 }
@@ -6062,6 +6066,8 @@ case NUMBER_KIND_##type:{ \
                 context->in_lhs_expression = false;
             }break;
             case AST_alignof:{
+                
+                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &operand.resolved_type)) return invalid_ast(context);
                 
                 if(operand.resolved_type->kind == AST_function_type){
                     report_error(context, stack_entry->token, "Expression of function type has undefined alignment.");
@@ -6219,7 +6225,7 @@ case NUMBER_KIND_##type:{ \
                 }else{
                     
                     struct ast_pointer_type *pointer = (struct ast_pointer_type *)operand.resolved_type;
-                    if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &pointer->pointer_to)) return operand;
+                    maybe_resolve_unresolved_type(&pointer->pointer_to);
                     
                     if(pointer->pointer_to == &globals.typedef_void){
                         report_warning(context, WARNING_extension_used, stack_entry->token, "Dereferencing a void-pointer is a GNU-extension.");
@@ -7378,6 +7384,9 @@ case NUMBER_KIND_##type:{ \
             //    
             case AST_assignment:{
                 struct expr *lhs = &stack_entry->operand;
+                
+                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &lhs->resolved_type)) return invalid_ast(context);
+                if(maybe_resolve_unresolved_type_or_sleep_or_error(context, &operand.resolved_type)) return invalid_ast(context);
                 
                 if(lhs->ir->kind == IR_identifier){
                     // 
