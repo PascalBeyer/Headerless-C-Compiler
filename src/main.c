@@ -6722,6 +6722,11 @@ globals.typedef_##postfix = (struct ast_type){                                  
     
     end:; 
     
+    if(globals.wake_event){
+        os_destroy_event(globals.wake_event);
+        globals.wake_event = 0;
+    }
+    
     print_warning_or_error_reports(context);
     
     stage_four_linking = os_get_time_in_seconds();

@@ -1122,3 +1122,7 @@ HANDLE os_create_event(void){
     return CreateEventA(0, true, 0, 0);
 }
 
+void os_destroy_event(HANDLE event){
+    CloseHandle(event);
+}
+

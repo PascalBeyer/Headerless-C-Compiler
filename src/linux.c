@@ -520,6 +520,10 @@ HANDLE os_create_event(void){
     return eventfd(0, 0);
 }
 
+void os_destroy_event(HANDLE event){
+    if(event >= 0) close(event);
+}
+
 void os_wait_for_event(HANDLE event){
     u64 value;
     read(event, &value, sizeof(value));
