@@ -2368,6 +2368,7 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
     } *ir_stack = push_uninitialized_data(&context->scratch, struct evaluate_static_initializer_ir_stack_node, ir_stack_size);
     smm ir_stack_at = 0;
     
+    struct patch_node *last_initializer_patches = context->local_patch_list.last;
     
     u8 *base = (u8 *)initializer;
     smm ir_offset = 0;
@@ -2468,6 +2469,8 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 if(next_ir->kind == IR_initializer){
                     struct ir_initializer *initializer_for_offset = (struct ir_initializer *)next_ir;
                     ir_offset += sizeof(*initializer_for_offset);
+                    
+                    last_initializer_patches = context->local_patch_list.last;
                     
                     smm offset = root_offset + initializer_for_offset->offset;
                     struct ast_type *lhs_type = initializer_for_offset->lhs_type;
@@ -2596,6 +2599,8 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 struct ir_initializer *initializer_for_offset = (struct ir_initializer *)ir_node;
                 ir_offset += sizeof(*initializer_for_offset);
                 
+                last_initializer_patches = context->local_patch_list.last;
+                
                 ir_stack_at -= 1;
                 
                 smm offset = root_offset + initializer_for_offset->offset;
@@ -2722,6 +2727,9 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 struct ir_range_initializer *range_initializer = (struct ir_range_initializer *)ir_node;
                 ir_offset += sizeof(*range_initializer);
                 
+                struct patch_node *first_patch_to_copy = last_initializer_patches ? last_initializer_patches->next : context->local_patch_list.first;
+                struct patch_node *last_patch_to_copy  = context->local_patch_list.last;
+                
                 u64 offset = range_initializer->offset;
                 u64 stride = range_initializer->stride;
                 u64 element_size = range_initializer->type->size;
@@ -2733,11 +2741,28 @@ func void evaluate_static_initializer__internal(struct context *context, struct 
                 
                 for(u64 index = 1; index < element_count; index++){
                     memcpy(data + offset + stride * index, element_data, element_size);
+                    
+                    for(struct patch_node *patch_node = first_patch_to_copy; patch_node; patch_node = patch_node->next){
+                        
+                        struct patch_node *copy = push_uninitialized_struct(context->arena, struct patch_node);
+                        *copy = *patch_node;
+                        copy->location_offset_in_dest_declaration += stride * index;
+                        
+                        sll_push_back(context->local_patch_list, copy);
+                        
+                        if(patch_node == last_patch_to_copy) break;
+                    }
                 }
+                
+                last_initializer_patches = context->local_patch_list.last;
             }break;
             
             case IR_nop:{
                 ir_offset += sizeof(struct ir);
+            }break;
+            case IR_skip:{
+                struct ir_skip *ir_skip = (struct ir_skip *)ir_node;
+                ir_offset += ir_skip->size_to_skip;
             }break;
             
             
