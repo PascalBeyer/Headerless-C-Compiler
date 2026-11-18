@@ -1680,12 +1680,14 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
     
     if(deref_type == &globals.typedef_void){
         // GNU C treats void-pointer arithmetic as byte-wise arithmetic.
+        report_warning(context, WARNING_extension_used, token, "Pointer arithmetic on function-pointers is a GNU extension.");
         deref_type = &globals.typedef_u8;
     }
     
     if(deref_type->kind == AST_function_type){
-        report_error(context, token, "Cannot use pointer arithmetic on function-pointer.");
-        return;
+        // GNU C treats function-pointer arithmetic as byte-wise arithmetic.
+        report_warning(context, WARNING_extension_used, token, "Pointer arithmetic on void-pointers is a GNU extension.");
+        deref_type = &globals.typedef_u8;
     }
     
     assert(deref_type->size >= 0);
