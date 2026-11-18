@@ -3129,6 +3129,9 @@ func void worker_preprocess_file(struct context *context, struct work_queue_entr
                 if(last_token->type == TOKEN_times && token->type == TOKEN_times) skip = 1;
                 if(last_token->type == TOKEN_times && token->type == TOKEN_identifier) skip = 1;
                 
+                if(token->type == TOKEN_dot || last_token->type == TOKEN_dot) skip = 1;
+                if(token->type == TOKEN_arrow || last_token->type == TOKEN_arrow) skip = 1;
+                
                 if(token->type == TOKEN_semicolon) skip = 1;
                 
                 if(!skip) *push_uninitialized_struct(&context->scratch, char) = ' ';
