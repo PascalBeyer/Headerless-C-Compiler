@@ -3054,6 +3054,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
         struct token *parameter_token_start;
     } *define_parsing_stack = push_data(context->arena, struct define_parsing_stack, define_parsing_stack_capacity);
     
+    u64 define_parsing_stack_bottom = 0;
+    
     while(1){
         
         while(1){
@@ -3069,7 +3071,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                 
                 struct raw_token *raw_token = &tokens.data[token_index];
                 
-                if((define_parsing_stack_size == 0 || context->in_static_if_condition) && raw_token->type == TOKEN_whitespace) continue;
+                if(define_parsing_stack_size == define_parsing_stack_bottom && raw_token->type == TOKEN_whitespace) continue;
                 
                 if(raw_token->type == TOKEN_hash && got_newline){
                     include_stack_node->at = token_index + 1;
@@ -3088,7 +3090,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     struct atom raw_token_atom = atom_for_string(create_string(include_file->contents.data + offset, raw_token->size));
                     raw_token_string_hash = raw_token_atom.string_hash;
                     
-                    if(define_parsing_stack_size == 0){
+                    if(define_parsing_stack_size == define_parsing_stack_bottom){
                         struct define_node *define = lookup_define(context, raw_token_atom);
                         
                         if(define){
@@ -3186,6 +3188,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         // by reseting the 'emitted_tokens' back to where the 'postponed_directive' started.
                         //
                         have_postponed_directive = false;
+                        define_parsing_stack_bottom = 0;
+                        
                         context->emit_arena.current = (u8 *)postponed_directive.saved_postponed_directive_base;
                         context->in_static_if_condition = 0;
                         
@@ -3213,7 +3217,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                     out_token->size = raw_token->size;
                     out_token->string_hash = raw_token_string_hash;
                     
-                    if(!have_postponed_directive && define_parsing_stack_size == 0){
+                    if(!have_postponed_directive && define_parsing_stack_size == define_parsing_stack_bottom){
                         if(out_token->type == TOKEN_identifier){
                             // @note: Do not apply keywords if we 'have_postponed_directive', because otherwise 
                             //        things like defined(__int64) will error.
@@ -3332,7 +3336,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             }
                             out_token->atom = token->atom;
                             
-                            if(define_parsing_stack_size == 0){
+                            if(define_parsing_stack_size == define_parsing_stack_bottom){
                                 out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
                                 
                                 if(!have_postponed_directive && out_token->type == TOKEN_identifier){
@@ -3349,10 +3353,10 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         
                         for(token = next_token_define(context); token != &globals.invalid_token; token = next_token_define(context)){
                             
-                            if((define_parsing_stack_size == 0 || context->in_static_if_condition) && token->type == TOKEN_whitespace) continue;
+                            if(define_parsing_stack_size == define_parsing_stack_bottom && token->type == TOKEN_whitespace) continue;
                             
                             if(token->type == TOKEN_identifier){
-                                if(define_parsing_stack_size == 0){
+                                if(define_parsing_stack_size == define_parsing_stack_bottom){
                                     define = lookup_define(context, token->atom);
                                     if(define && !define->is_disabled){
                                         
@@ -3374,7 +3378,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             out_token->location_index = macro_expansion_record->macro_expansion_index; // @cleanup: For argument tokens we could do better than this.
                             out_token->atom = token->atom;
                             
-                            if(define_parsing_stack_size == 0){
+                            if(define_parsing_stack_size == define_parsing_stack_bottom){
                                 out_token->type = (token->type == TOKEN_identifier_dont_expand_because_it_comes_from_a_fully_expanded_macro) ? TOKEN_identifier : token->type;
                                 
                                 if(!have_postponed_directive && out_token->type == TOKEN_identifier){
@@ -3400,7 +3404,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     
                                     struct define_parsing_stack *node = &define_parsing_stack[define_parsing_stack_index];
                                     node->define = got_function_like_define;
-                                    node->paren_depth = define_parsing_paren_depth++;
+                                    node->paren_depth = define_parsing_paren_depth-1;
                                     node->parameter_token_start = push_data(&context->emit_arena, struct token, 0) - 1;
                                     
                                     if(got_function_like_define->builtin_define_type == BUILTIN_DEFINE_defined){
@@ -3544,6 +3548,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         postponed_directive.directive = node->token;
                         postponed_directive.saved_postponed_directive_base = push_data(&context->emit_arena, struct token, 0);
                         postponed_directive.directive_kind = directive_kind;
+                        define_parsing_stack_bottom = define_parsing_stack_size;
                         context->in_static_if_condition = 1;
                         
                         end_counter(context, handle_directive);
@@ -3643,6 +3648,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             postponed_directive.directive = push_token_copy(&context->scratch, directive);
                             postponed_directive.saved_postponed_directive_base = push_data(&context->emit_arena, struct token, 0);
                             postponed_directive.directive_kind = directive_kind;
+                            define_parsing_stack_bottom = define_parsing_stack_size;
                             context->in_static_if_condition = 1;
                             
                             end_counter(context, handle_directive);
@@ -4239,6 +4245,7 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                             postponed_directive.directive = push_token_copy(&context->scratch, directive);
                             postponed_directive.directive_kind = directive_kind;
                             
+                            define_parsing_stack_bottom = define_parsing_stack_size;
                             have_postponed_directive = true;
                             continue;
                         }
