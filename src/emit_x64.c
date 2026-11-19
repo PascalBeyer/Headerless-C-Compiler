@@ -4462,6 +4462,18 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                 }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
                                 }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_x87){
                                     passed_in_memory = true;
+                                }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_none){
+                                    // This can happen for:
+                                    //    
+                                    //    union __attribute__((aligned(16))) {
+                                    //        char a;
+                                    //    };
+                                    //    
+                                    eight_byte_count = index;
+                                    if(eight_byte_count == 1){
+                                        argument->type = argument_type = &globals.typedef_u64;
+                                    }
+                                    break;
                                 }else invalid_code_path;
                             }
                             
@@ -4519,7 +4531,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                     //        and thus was passed in one register. Hence, the size should be 4, 8, 16 or 32. (Maybe 64 in the future?)
                                     assert(size == 4 || size == 8 || size == 16 || size == 32);
                                     assert(size == argument_type->size);
-
+                                    
                                     argument->type = get_system_v_sse_type_for_size(size);
                                     
                                     enum register_encoding arg_reg = allocate_specific_register(context, REGISTER_KIND_xmm, float_register_at);
@@ -4764,6 +4776,9 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                 float_register_at += 1;
                             }else if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_x87){
                                 not_implemented;
+                            }else if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_none){
+                                return_type_eight_byte_count = index;
+                                break;
                             }else invalid_code_path;
                         }
                         
@@ -4948,6 +4963,8 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
                                         
                                         size_left -= size;
                                         return_location->offset += size;
+                                    }else if(return_type_classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_none){
+                                        break;
                                     }else invalid_code_path;
                                     
                                     emit_location_prevent_spilling(context, register_location);
@@ -6329,6 +6346,11 @@ func void emit_code_for_function(struct context *context, struct ast_function *f
                     }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_sse_upper){
                     }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_x87){
                         passed_in_memory = true;
+                    }else if(classification.classification[index] == SYSTEM_V_TYPE_CLASSIFICATION_none){
+                        eight_byte_count = index;
+                        if(eight_byte_count == 1){
+                            argument_type = &globals.typedef_u64;
+                        }
                     }else invalid_code_path;
                 }
                 
