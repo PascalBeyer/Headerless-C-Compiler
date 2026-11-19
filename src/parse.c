@@ -5760,7 +5760,7 @@ case NUMBER_KIND_##type:{ \
                                 // "the arguments are implicitly converted, as if by assignment"
                                 maybe_load_address_for_array_or_function(context, IR_load_address, &expr);
                                 
-                                if((decl->type->flags & TYPE_FLAG_is_transparent_union)){
+                                if((decl->type->flags & TYPE_FLAG_is_transparent_union) && !types_are_equal(decl->type, expr.resolved_type)){
                                     int match = maybe_insert_cast_to_union(context, decl->type, decl->defined_type, &expr);
                                     if(!match){
                                         struct ast_compound_type *union_type = (struct ast_compound_type *)decl->type;
