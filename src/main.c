@@ -565,6 +565,7 @@ static struct{
     struct atom keyword_selectany;
     struct atom keyword_used;
     struct atom keyword_unused;
+    struct atom keyword_alias;
     
     // GNU declspecs
     struct atom keyword_transparent_union;
@@ -2030,6 +2031,27 @@ func struct ast_declaration *register_declaration(struct context *context, struc
             
             if(decl->flags & DECLARATION_FLAGS_is_used) redecl->flags |= DECLARATION_FLAGS_is_used;
             if(decl->flags & DECLARATION_FLAGS_is_unused) redecl->flags |= DECLARATION_FLAGS_is_unused;
+            
+            if(decl->flags & DECLARATION_FLAGS_is_alias){
+                struct string alias_target = decl->alias_target;
+                
+                if(!(redecl->flags & DECLARATION_FLAGS_is_alias)){
+                    if(redecl->assign_expr){
+                        begin_error_report(context);
+                        report_error(context, decl->identifier, "Redeclaration with __attribute__(alias(\"%.*s\")), but the previous declaration was defined.", alias_target.size, alias_target.data);
+                        report_error(context, get_initializer_token(redecl), "... Here is the previous declaration defined.");
+                        end_error_report(context);
+                    }
+                    
+                    redecl->flags |= DECLARATION_FLAGS_is_alias;
+                    redecl->alias_target = alias_target; // @cleanup: I Think there has to be mutex here somewhere.
+                }else if(!string_match(alias_target, redecl->alias_target)){
+                    begin_error_report(context);
+                    report_error(context, decl->identifier, "Redeclaration of with different alias '%.*s'.", alias_target.size, alias_target.data);
+                    report_error(context, redecl->identifier, "... Here is the previous declaration with alias '%.*s'.", redecl->alias_target.size, redecl->alias_target.data);
+                    end_error_report(context);
+                }
+            }
             if(redecl->kind == IR_declaration && decl->kind == IR_declaration){
                 
                 if((redecl->flags & DECLARATION_FLAGS_is_enum_member) && (decl->flags & DECLARATION_FLAGS_is_enum_member)){
@@ -4998,6 +5020,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         globals.keyword_selectany   = atom_for_string(string("selectany"));
         globals.keyword_used        = atom_for_string(string("used"));
         globals.keyword_unused      = atom_for_string(string("unused"));
+        globals.keyword_alias       = atom_for_string(string("alias"));
         globals.keyword_constructor = atom_for_string(string("constructor"));
         globals.keyword_cleanup     = atom_for_string(string("cleanup"));
         globals.keyword_fallthrough = atom_for_string(string("fallthrough"));
@@ -6511,6 +6534,20 @@ globals.typedef_##postfix = (struct ast_type){                                  
             initial_declaration->memory_location = evaluate_static_initializer(context, initial_declaration);
         }
         
+        if(initial_declaration->flags & DECLARATION_FLAGS_is_alias){
+            struct atom alias_target = atom_for_string(initial_declaration->alias_target);
+            struct ast_declaration *target = lookup_declaration(/*global scope*/null, initial_declaration->compilation_unit, alias_target);
+            if(!target){
+                // :Error this should have a better token.
+                report_error(context, initial_declaration->identifier, "Declaration hat __attribute__((alias(\"%.*s\"))), but '%.*s' was never defined.", alias_target.size, alias_target.data);
+            }else{
+                struct declaration_reference_node *node = push_struct(arena, struct declaration_reference_node);
+                node->declaration = target;
+                node->token = initial_declaration->identifier;
+                sll_push_back(initial_declaration->referenced_declarations, node);
+            }
+        }
+        
         // If this declaration does not reference any other declarations we are done.
         if(!initial_declaration->referenced_declarations.first) continue;
         
@@ -6542,7 +6579,21 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 if(!(declaration->flags & DECLARATION_FLAGS_is_reachable_from_entry)){
                     declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
                     
-                    if(declaration->kind == IR_function){
+                    if(declaration->flags & DECLARATION_FLAGS_is_alias){
+                        
+                        struct atom alias_target = atom_for_string(declaration->alias_target);
+                        struct ast_declaration *target = lookup_declaration(/*global scope*/null, declaration->compilation_unit, alias_target);
+                        if(!target){
+                            // :Error this should have a better token.
+                            report_error(context, declaration->identifier, "Declaration hat __attribute__((alias(\"%.*s\"))), but '%.*s' was never defined.", alias_target.size, alias_target.data);
+                        }else{
+                            struct declaration_reference_node *reference_node = push_struct(arena, struct declaration_reference_node);
+                            reference_node->declaration = target;
+                            reference_node->token = declaration->identifier;
+                            sll_push_back(declaration->referenced_declarations, reference_node);
+                        }
+                        
+                    }else if(declaration->kind == IR_function){
                         // 
                         // If the declaration is a defined function, queue it up.
                         // It might not be defined, as it might be a dllimport with missing `__declspec(dllimport)`.

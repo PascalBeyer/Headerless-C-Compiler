@@ -36,7 +36,6 @@ func void _parser_sleep(struct context *context, struct token *sleep_on, u32 lin
     if(context->should_sleep) return;
     assert(sleep_on);
     
-    
     context->should_sleep          = true;
     context->should_exit_statement = true;
     context->sleep_on              = sleep_on;
@@ -1078,6 +1077,7 @@ enum declaration_specifier_flag{
     SPECIFIER_weak        = 0x100000,
     SPECIFIER_used        = 0x200000,
     SPECIFIER_unused      = 0x400000,
+    SPECIFIER_alias       = 0x800000,
 };
 
 struct declaration_specifiers{
@@ -1091,6 +1091,8 @@ struct declaration_specifiers{
     
     struct token *transparent_union_token;
     struct token *cleanup_function;
+    
+    struct string alias_target; // '__attribute__((alias("<name>")))'
 };
 
 func struct expr invalid_ast(struct context *context){
@@ -8174,6 +8176,20 @@ func void parse_extended_attribute(struct context *context, struct declaration_s
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_used, directive, "__attribute__((used))");
         }else if(atoms_match(directive_string, globals.keyword_unused)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_unused, directive, "__attribute__((unused))");
+        }else if(atoms_match(directive_string, globals.keyword_alias)){
+            check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_alias, directive, "__attribute__((alias))");
+            
+            expect_token(context, TOKEN_open_paren, "Expected '(' after 'alias'.");
+            
+            struct token *target = expect_token(context, TOKEN_string_literal, "Expected a string literal in 'alias(\"<symbol>\")'.");
+            
+            struct string target_name = strip_quotes(token_get_string(target));
+            while(peek_token(context, TOKEN_string_literal)){
+                struct string more = strip_quotes(token_get_string(next_token(context)));
+                target_name = push_format_string(context->arena, "%.*s%.*s", target_name.size, target_name.data, more.size, more.data);
+            }
+            specifiers->alias_target = target_name;
+            expect_token(context, TOKEN_closed_paren, "Expected ')' at the end of 'alias(\"<symbol>\")'.");
         }else if(atoms_match(directive_string, globals.keyword_inline_asm)){
             check_and_set_declaration_specifier_flag(context, specifiers, SPECIFIER_inline_asm, directive, "__declspec(inline_asm)");
         }else if(atoms_match(directive_string, globals.keyword_packed)){
@@ -9733,6 +9749,17 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 }
             }
             
+            if(specifiers.specifier_flags & SPECIFIER_alias){
+                struct string alias_target = specifiers.alias_target;
+                
+                if(peek_token(context, TOKEN_open_curly)){
+                    report_error(context, identifier, "Cannot define function with __attribute__((alias(\"%.*s\"))).", alias_target.size, alias_target.data);
+                }
+                
+                function->as_decl.flags |= DECLARATION_FLAGS_is_alias;
+                function->alias_target = alias_target;
+            }
+            
             if(specifiers.specifier_flags & SPECIFIER_inline_asm){
                 
                 // @cleanup: dllexport and such
@@ -9984,6 +10011,20 @@ func struct declaration_list parse_declaration_list(struct context *context, str
             if(context->current_scope && (specifiers.specifier_flags & SPECIFIER_thread_local) && !(specifiers.specifier_flags & SPECIFIER_static)){
                 report_error(context, decl->identifier, "_Thread_local declaration at local scope needs to be static."); // :Error
                 goto end;
+            }
+            
+            if(specifiers.specifier_flags & SPECIFIER_alias){
+                if(!(decl->flags & (DECLARATION_FLAGS_is_global|DECLARATION_FLAGS_is_local_persist))){
+                    report_error(context, identifier, "Cannot use __attribute__((alias(\"%.*s\")) on a local variable.", specifiers.alias_target.size, specifiers.alias_target.data);
+                }else{
+                    
+                    if(peek_token(context, TOKEN_equals)){
+                        report_error(context, identifier, "Cannot define variable with __attribute__((alias(\"%.*s\"))).", specifiers.alias_target.size, specifiers.alias_target.data);
+                    }
+                    
+                    decl->flags |= DECLARATION_FLAGS_is_alias;
+                    decl->alias_target = specifiers.alias_target;
+                }
             }
             
             // 

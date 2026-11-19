@@ -634,6 +634,8 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
     struct ast_list uninitialized_declarations = zero_struct;
     struct ast_list tls_declarations = zero_struct;
     
+    struct ast_list aliases = zero_struct;
+    
     for(struct compilation_unit *compilation_unit = &globals.hacky_global_compilation_unit; compilation_unit; compilation_unit = compilation_unit->next){
         
         struct ast_table *table = &compilation_unit->static_declaration_table;
@@ -654,6 +656,11 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                     if(!(function->as_decl.flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
                     if(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic)  continue;
                     if(function->type->flags & FUNCTION_TYPE_FLAGS_is_inline_asm) continue;
+                    
+                    if(decl->flags & DECLARATION_FLAGS_is_alias){
+                        ast_list_append(&aliases, arena, ast);
+                        continue;
+                    }
                     
                     if(function->as_decl.flags & DECLARATION_FLAGS_is_dllimport){
                         assert(function->import_node);
@@ -692,6 +699,11 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
                 
                 case IR_declaration:{
                     if(!(decl->flags & DECLARATION_FLAGS_is_reachable_from_entry)) continue;
+                    
+                    if(decl->flags & DECLARATION_FLAGS_is_alias){
+                        ast_list_append(&aliases, arena, ast);
+                        continue;
+                    }
                     
                     if(decl->flags & DECLARATION_FLAGS_is_thread_local){
                         ast_list_append(&tls_declarations, arena, ast);
@@ -1859,6 +1871,14 @@ void write_elf(struct string output_file_path, struct memory_arena *arena, struc
         
         current_segment_start = arena_current(arena);
         current_relative_virtual_address += align_up(segment_size + bss_size, 0x1000);
+    }
+    
+    for_ast_list(aliases){
+        struct ast_declaration *alias = (struct ast_declaration *)it->value;
+        struct ast_declaration *referenced = alias->referenced_declarations.first->declaration;
+        
+        alias->relative_virtual_address = referenced->relative_virtual_address;
+        alias->memory_location = referenced->memory_location;
     }
     
     u64 absolute_patch_relocation_at = 0;

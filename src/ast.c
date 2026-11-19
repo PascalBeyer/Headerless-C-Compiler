@@ -598,6 +598,7 @@ func void ast_list_append(struct ast_list *list, struct memory_arena *arena, enu
 #define DECLARATION_FLAGS_is_intrinsic                             0x8000
 #define DECLARATION_FLAGS_is_used                                  0x10000
 #define DECLARATION_FLAGS_is_unused                                0x20000
+#define DECLARATION_FLAGS_is_alias                                 0x40000
 
 struct ast_declaration{
     // @WARNING: This needs to match the part in ast_function.
@@ -610,6 +611,7 @@ struct ast_declaration{
     enum ast_kind *defined_type; // Either 'AST_enum' or 'AST_typedef' or 'null' :defined_types
     struct token *identifier;
     struct string asm_name; // For: void fake_name() __asm__("real_name")
+    struct string alias_target; // For: '__attribute__((alias("real_name")))'
     
     smm offset_on_stack; // - stack relative if the declarations  is in a function scope
     
@@ -849,6 +851,7 @@ struct ast_function{
             struct ast *defined_type; // either 'AST_enum' or 'IR_typedef' or 'null'
             struct token *identifier;
             struct string asm_name; // For: void fake_name() __asm__("real_name")
+            struct string alias_target; // For: '__attribute__((alias("real_name")))'
             smm offset_in_text_section;
             u8 *memory_location; // @cleanup: rename? this is where the thing onces emitted. here for patching
             smm relative_virtual_address; // needs to be 64 bit, as we point to it not knowing its size
