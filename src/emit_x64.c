@@ -3096,7 +3096,7 @@ func struct emit_location *emit_call_to_inline_asm_function(struct context *cont
     emit_inline_asm_block(context, asm_block);
     
     // Patch in jumps
-    for(u32 jump_label_index = 0; jump_label_index < function->amount_of_jump_labels; jump_label_index++){
+    for(smm jump_label_index = 0; jump_label_index < function->amount_of_jump_labels; jump_label_index++){
         struct jump_label_information *jump_label_information = &context->jump_labels[jump_label_index];
         emit_end_jumps_location(jump_label_information->context, jump_label_information->jump_location);
     }
@@ -5012,6 +5012,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             case IR_jump_label:{
                 struct ir_jump_node *jump_label = (struct ir_jump_node *)ir;
                 ir_arena_at += sizeof(*jump_label);
+                assert(jump_label->label_number != -1);
                 
                 context->jump_labels[jump_label->label_number].jump_location = get_bytes_emitted(context);
             }break;
@@ -5019,6 +5020,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             case IR_jump:{
                 struct ir_jump_node *jump = (struct ir_jump_node *)ir;
                 ir_arena_at += sizeof(*jump);
+                assert(jump->label_number != -1);
                 
                 jump_context_emit(context, &context->jump_labels[jump->label_number].context, JUMP_CONTEXT_jump_always, COMP_none);
             }break;
@@ -5027,6 +5029,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
             case IR_jump_if_false:{
                 struct ir_jump_node *jump = (struct ir_jump_node *)ir;
                 ir_arena_at += sizeof(*jump);
+                assert(jump->label_number != -1);
                 
                 emit_location_stack_at -= 1;
                 
@@ -6052,7 +6055,7 @@ void emit_code_for_function__internal(struct context *context, struct ast_functi
         }
     }
     
-    for(u32 jump_label_index = 0; jump_label_index < current_function->amount_of_jump_labels; jump_label_index++){
+    for(smm jump_label_index = 0; jump_label_index < current_function->amount_of_jump_labels; jump_label_index++){
         struct jump_label_information *jump_label_information = &context->jump_labels[jump_label_index];
         emit_end_jumps_location(jump_label_information->context, jump_label_information->jump_location);
     }

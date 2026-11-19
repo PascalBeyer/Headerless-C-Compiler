@@ -133,6 +133,7 @@ static struct ir *push_ir(struct context *context, enum ir_kind ir_kind){
 static struct ir_jump_node *push_jump(struct context *context, enum ir_kind ir_kind){
     struct ir_jump_node *ir = push_struct_(&context->ir_arena, sizeof(struct ir_jump_node), 1);
     ir->base.kind  = ir_kind;
+    ir->label_number = -1;
     return ir;
 }
 
