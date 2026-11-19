@@ -600,6 +600,8 @@ __int64 _InterlockedIncrement64(__int64 volatile * _Addend);
 __int64 _InterlockedDecrement64(__int64 volatile * _Addend);
 __int64 _InterlockedExchangeAdd64(__int64 volatile * _Addend, __int64 _Value);
 
+unsigned long _byteswap_ulong(unsigned long value);
+
 // @note: return the initial value
 func s64 atomic_add(s64 *val, s64 to_add){
     return _InterlockedExchangeAdd64(val, to_add);
@@ -656,7 +658,7 @@ func u32 u32_atomic_preincrement(u32 *val){
 }
 
 func u32 byteswap_u32(u32 value){
-    return (u32)_byteswap_ulong(value);
+    return (u32)_byteswap_ulong((unsigned long)value);
 }
 
 ///////////////////////////////////////////////////////////////////////////
