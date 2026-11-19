@@ -1723,7 +1723,7 @@ func void handle_pointer_arithmetic(struct context *context, enum ir_kind ir_kin
         
         // @cleanup: Check for compile time overflow?
         if(type_is_signed(integer->resolved_type)){
-            lit->_s64 *= deref_type->size;
+            lit->_s64 = (s64)((u64)lit->_s64 * (u64)deref_type->size);
         }else{
             lit->_u64 *= deref_type->size;
         }
@@ -3034,8 +3034,8 @@ func void perform_integer_operation(struct context *context, struct token *opera
                     }
                 }break;
                 
-                case TOKEN_plus:  lhs->_s32 = lhs_val + rhs_val; break;
-                case TOKEN_minus: lhs->_s32 = lhs_val - rhs_val; break;
+                case TOKEN_plus:  lhs->_u32 = (u32)lhs_val + (u32)rhs_val; break;
+                case TOKEN_minus: lhs->_u32 = (u32)lhs_val - (u32)rhs_val; break;
                 
                 case TOKEN_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break;
                 case TOKEN_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break;
@@ -3046,7 +3046,7 @@ func void perform_integer_operation(struct context *context, struct token *opera
                 invalid_default_case();
             }
             
-            value = (lhs->_s32 < 0) ? -lhs->_s32 : lhs->_s32;
+            value = (lhs->_s32 < 0) ? -(s64)lhs->_s32 : (s64)lhs->_s32;
         }
     }else{
         assert(promoted_type->size == 8);
@@ -3158,8 +3158,8 @@ func void perform_integer_operation(struct context *context, struct token *opera
                     }
                 }break;
                 
-                case TOKEN_plus:  lhs->_s64 = lhs_val + rhs_val; break;
-                case TOKEN_minus: lhs->_s64 = lhs_val - rhs_val; break;
+                case TOKEN_plus:  lhs->_s64 = (s64)((u64)lhs_val + (u64)rhs_val); break;
+                case TOKEN_minus: lhs->_s64 = (s64)((u64)lhs_val - (u64)rhs_val); break;
                 
                 case TOKEN_logical_equals:   lhs->_u64 = (lhs_val == rhs_val); break;
                 case TOKEN_logical_unequals: lhs->_u64 = (lhs_val != rhs_val); break;
@@ -3170,7 +3170,7 @@ func void perform_integer_operation(struct context *context, struct token *opera
                 invalid_default_case();
             }
             
-            value = (lhs->_s64 < 0) ? -lhs->_s64 : lhs->_s64;
+            value = (lhs->_s64 < 0) ? (u64)(0 - (u64)lhs->_s64) : (u64)lhs->_s64;
         }
     }
     
@@ -6179,10 +6179,10 @@ case NUMBER_KIND_##type:{ \
                     // @note: Negation is the same of signed and unsigned values.
                     struct ir_integer_literal *lit = (struct ir_integer_literal *)operand.ir;
                     switch(operand.resolved_type->size){
-                        case 1: lit->_s8  = -lit->_s8;  break;
-                        case 2: lit->_s16 = -lit->_s16; break;
-                        case 4: lit->_s32 = -lit->_s32; break;
-                        case 8: lit->_s64 = -lit->_s64; break;
+                        case 1: lit->_s8  = (s8) (0 - (u8) lit->_s8);  break;
+                        case 2: lit->_s16 = (s16)(0 - (u16)lit->_s16); break;
+                        case 4: lit->_s32 = (s32)(0 - (u32)lit->_s32); break;
+                        case 8: lit->_s64 = (s64)(0 - (u64)lit->_s64); break;
                         invalid_default_case();
                     }
                     
