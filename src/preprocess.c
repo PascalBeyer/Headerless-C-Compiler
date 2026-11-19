@@ -3170,9 +3170,15 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         }
                         
                         if(in_current_token_array(context)){
-                            // @cleanup: Do I really have to copy?
+                            // 
+                            // @note: Currently, we make this an error. I am not 100% that that is the correct call.
+                            //        Maybe its the correct call everywhere? 
+                            //        We need this to be an error, otherwise the define_parsing_stack might get confused.
+                            // 
+                            
                             struct string directive_string = token_get_string(postponed_directive.directive);
-                            report_warning(context, WARNING_junk_after_directive, get_current_token(context), "Junk after '#%.*s'.", directive_string.size, directive_string.data);
+                            report_error(context, get_current_token(context), "Junk after '#%.*s'.", directive_string.size, directive_string.data);
+                            goto end;
                         }
                         
                         //
@@ -3272,6 +3278,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                         };
                         
                         push_to_token_stack(context, parameter_tokens, 0, null);
+                        
+                        got_function_like_define = null;
                         
                         context->emit_arena.current = (u8 *)(node->parameter_token_start - 1); // We emitted the identifier erroneously just in case it was not the define.
                     }
@@ -3428,6 +3436,8 @@ func struct token_array file_tokenize_and_preprocess(struct context *context, st
                                     push_to_token_stack(context, parameter_tokens, 0, null);
                                     
                                     context->emit_arena.current = (u8 *)(node->parameter_token_start - 1);
+                                    
+                                    got_function_like_define = null;
                                     
                                     // Handle the function-like define.
                                     break;

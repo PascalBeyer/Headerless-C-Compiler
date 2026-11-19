@@ -1,0 +1,3 @@
+// fail
+
+defined(i defined())
