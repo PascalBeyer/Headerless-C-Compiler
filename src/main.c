@@ -4140,6 +4140,41 @@ func struct string makefile_quote(struct memory_arena *arena, struct string targ
     return (struct string){.data = quoted, .size = size};
 }
 
+void resolve_used_alias_declaration(struct context *context, struct ast_declaration *initial_declaration){
+    struct ast_declaration *previous_target = initial_declaration;
+    struct ast_declaration *target = null;
+    
+    struct declaration_reference_node *node = push_struct(context->arena, struct declaration_reference_node);
+    node->token = initial_declaration->identifier;
+    
+    do{
+        // The previous alias was used.
+        previous_target->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
+        previous_target->referenced_declarations.first = node;
+        previous_target->referenced_declarations.last  = node;
+        
+        struct atom alias_target = atom_for_string(previous_target->alias_target);
+        target = lookup_declaration(/*global scope*/null, previous_target->compilation_unit, alias_target);
+        if(!target){
+            // :Error this should have a better token.
+            report_error(context, previous_target->identifier, "Declaration hat __attribute__((alias(\"%.*s\"))), but '%.*s' was never defined.", alias_target.size, alias_target.data);
+            break;
+        }
+        
+        if(!types_are_equal(target->type, previous_target->type)){
+            // @Hmm: We are in a giant error report.
+            report_error(context, previous_target->identifier, "Declaration has alias '%.*s' with mismatching type.", alias_target.size, alias_target.data);
+            report_error(context, target->identifier, "... Here is the alias-declaration.");
+            target = null;
+            break;
+        }
+        
+        previous_target = target;
+    }while(target->flags & DECLARATION_FLAGS_is_alias);
+    
+    node->declaration = target;
+}
+
 int main(int argc, char *argv[]){
     
     if(argc == 1){
@@ -6477,7 +6512,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 // Don't add a function_node as otherwise it would get marked as referenced 
                 // and hence we would emit a unresolved external, but we only want to do that,
                 // if it is actually used which we do in the depth first search below.
-                if(!function->scope) continue;
+                if(!function->scope && !(function->as_decl.flags & DECLARATION_FLAGS_is_alias)) continue;
                 
                 assert(!(function->as_decl.flags & DECLARATION_FLAGS_is_intrinsic)); // Intrinsic functions should not have a scope.
                 
@@ -6493,8 +6528,8 @@ globals.typedef_##postfix = (struct ast_type){                                  
                 assert(!(decl->flags & DECLARATION_FLAGS_is_static)); // These are 'global_declarations' they should not be static.
                 if(decl->flags & DECLARATION_FLAGS_is_enum_member) continue; // Don't add enum members.
                 
-                // Don't add reference nodes for explictly external declarations.
-                if((decl->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport)) && !decl->assign_expr) continue;
+                // Don't add reference nodes for explicitly external declarations.
+                if((decl->flags & (DECLARATION_FLAGS_is_extern | DECLARATION_FLAGS_is_dllimport)) && !(decl->flags & DECLARATION_FLAGS_is_alias) && !decl->assign_expr) continue;
                 
                 struct declaration_reference_node *declaration_node = push_struct(arena, struct declaration_reference_node);
                 declaration_node->declaration = decl;
@@ -6535,17 +6570,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
         }
         
         if(initial_declaration->flags & DECLARATION_FLAGS_is_alias){
-            struct atom alias_target = atom_for_string(initial_declaration->alias_target);
-            struct ast_declaration *target = lookup_declaration(/*global scope*/null, initial_declaration->compilation_unit, alias_target);
-            if(!target){
-                // :Error this should have a better token.
-                report_error(context, initial_declaration->identifier, "Declaration hat __attribute__((alias(\"%.*s\"))), but '%.*s' was never defined.", alias_target.size, alias_target.data);
-            }else{
-                struct declaration_reference_node *node = push_struct(arena, struct declaration_reference_node);
-                node->declaration = target;
-                node->token = initial_declaration->identifier;
-                sll_push_back(initial_declaration->referenced_declarations, node);
-            }
+            resolve_used_alias_declaration(context, initial_declaration);
         }
         
         // If this declaration does not reference any other declarations we are done.
@@ -6580,19 +6605,7 @@ globals.typedef_##postfix = (struct ast_type){                                  
                     declaration->flags |= DECLARATION_FLAGS_is_reachable_from_entry;
                     
                     if(declaration->flags & DECLARATION_FLAGS_is_alias){
-                        
-                        struct atom alias_target = atom_for_string(declaration->alias_target);
-                        struct ast_declaration *target = lookup_declaration(/*global scope*/null, declaration->compilation_unit, alias_target);
-                        if(!target){
-                            // :Error this should have a better token.
-                            report_error(context, declaration->identifier, "Declaration hat __attribute__((alias(\"%.*s\"))), but '%.*s' was never defined.", alias_target.size, alias_target.data);
-                        }else{
-                            struct declaration_reference_node *reference_node = push_struct(arena, struct declaration_reference_node);
-                            reference_node->declaration = target;
-                            reference_node->token = declaration->identifier;
-                            sll_push_back(declaration->referenced_declarations, reference_node);
-                        }
-                        
+                        resolve_used_alias_declaration(context, declaration);
                     }else if(declaration->kind == IR_function){
                         // 
                         // If the declaration is a defined function, queue it up.

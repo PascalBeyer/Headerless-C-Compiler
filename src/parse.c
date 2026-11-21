@@ -10068,10 +10068,6 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                     goto end;
                 }
                 
-                if(decl->flags & (DECLARATION_FLAGS_is_dllexport | DECLARATION_FLAGS_is_used)){
-                    add_global_reference_for_declaration(context->arena, decl);
-                }
-                
                 // :DeclarationReferenceThreadingBug
                 context->current_declaration = decl;
                 
@@ -10086,6 +10082,10 @@ func struct declaration_list parse_declaration_list(struct context *context, str
                 if(dead_code_marker) exit_dead_code(context, dead_code_marker);
                 
                 if(context->should_exit_statement) goto end;
+            }
+            
+            if((decl->flags & DECLARATION_FLAGS_is_dllexport) || ((decl->flags & (DECLARATION_FLAGS_is_local_persist|DECLARATION_FLAGS_is_static) && (decl->flags & DECLARATION_FLAGS_is_used)))){
+                add_global_reference_for_declaration(context->arena, decl);
             }
             
             if(specifiers.specifier_flags & SPECIFIER_auto){
